@@ -4,6 +4,7 @@ import {
   mergeRecipientLists,
   type JobNotificationRecipient,
 } from "@/lib/job-notification-recipients";
+import { toArraySafe } from "@/lib/to-array-safe";
 
 export type JobMemberRow = {
   authUserId?: string;
@@ -47,7 +48,7 @@ export function buildEmployeeRecipientCandidates(
   usersByUid: Map<string, UserRow>
 ): JobNotificationRecipient[] {
   const out: JobNotificationRecipient[] = [];
-  for (const m of members) {
+  for (const m of toArraySafe<JobMemberRow>(members)) {
     const uid = String(m.authUserId ?? "").trim();
     if (!uid) continue;
     const u = usersByUid.get(uid);
@@ -68,7 +69,7 @@ export function buildEmployeeRecipientCandidates(
 
 export function buildAdminRecipientCandidates(users: UserRow[]): JobNotificationRecipient[] {
   const out: JobNotificationRecipient[] = [];
-  for (const u of users) {
+  for (const u of toArraySafe<UserRow>(users)) {
     const role = String(u.role ?? "").trim();
     if (!PRIVILEGED_ROLES.has(role)) continue;
     const email = normalizeEmail(u.email);
@@ -93,7 +94,7 @@ export function buildCustomerRecipientCandidates(
   }>
 ): JobNotificationRecipient[] {
   const out: JobNotificationRecipient[] = [];
-  for (const c of candidates) {
+  for (const c of toArraySafe(candidates)) {
     const email = normalizeEmail(c.email);
     if (!email || !isValidEmail(email)) continue;
     out.push({
@@ -118,7 +119,7 @@ export function mergeFolderRecipientsForVisibility(
     customerCandidates: JobNotificationRecipient[];
   }
 ): JobNotificationRecipient[] {
-  let rows = [...existing];
+  let rows = [...toArraySafe<JobNotificationRecipient>(existing)];
 
   if (opts.employeeVisible) {
     rows = mergeRecipientLists(rows, opts.employeeCandidates, { defaultEnabled: true });
@@ -153,21 +154,33 @@ export function createCustomEmailRecipient(email: string): JobNotificationRecipi
 }
 
 export function buildDefaultInternalChatRecipients(
-  employeeCandidates: JobNotificationRecipient[],
-  adminCandidates: JobNotificationRecipient[]
+  employeeCandidates: JobNotificationRecipient[] | unknown,
+  adminCandidates: JobNotificationRecipient[] | unknown
 ): JobNotificationRecipient[] {
   return dedupeRecipientRows([
-    ...adminCandidates.map((r) => ({ ...r, enabled: true })),
-    ...employeeCandidates.map((r) => ({ ...r, enabled: true })),
+    ...toArraySafe<JobNotificationRecipient>(adminCandidates).map((r) => ({
+      ...r,
+      enabled: true,
+    })),
+    ...toArraySafe<JobNotificationRecipient>(employeeCandidates).map((r) => ({
+      ...r,
+      enabled: true,
+    })),
   ]);
 }
 
 export function buildDefaultCustomerChatRecipients(
-  customerCandidates: JobNotificationRecipient[],
-  adminCandidates: JobNotificationRecipient[]
+  customerCandidates: JobNotificationRecipient[] | unknown,
+  adminCandidates: JobNotificationRecipient[] | unknown
 ): JobNotificationRecipient[] {
   return dedupeRecipientRows([
-    ...customerCandidates.map((r) => ({ ...r, enabled: true })),
-    ...adminCandidates.map((r) => ({ ...r, enabled: true })),
+    ...toArraySafe<JobNotificationRecipient>(customerCandidates).map((r) => ({
+      ...r,
+      enabled: true,
+    })),
+    ...toArraySafe<JobNotificationRecipient>(adminCandidates).map((r) => ({
+      ...r,
+      enabled: true,
+    })),
   ]);
 }

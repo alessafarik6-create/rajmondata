@@ -13,6 +13,7 @@ import {
   type JobNotificationRecipient,
 } from "@/lib/job-notification-recipients";
 import { createCustomEmailRecipient } from "@/lib/job-notification-recipient-presets";
+import { toArraySafe } from "@/lib/to-array-safe";
 import { X } from "lucide-react";
 
 type Props = {
@@ -48,35 +49,39 @@ export function JobEmailNotificationRecipientsPanel({
   className,
 }: Props) {
   const [customEmail, setCustomEmail] = useState("");
+  const safeRecipients = useMemo(
+    () => toArraySafe<JobNotificationRecipient>(recipients),
+    [recipients]
+  );
   const summary = useMemo(
-    () => formatNotificationRecipientsSummary(recipients, enabled),
-    [recipients, enabled]
+    () => formatNotificationRecipientsSummary(safeRecipients, enabled),
+    [safeRecipients, enabled]
   );
 
   const setRecipientEnabled = (key: string, next: boolean) => {
     onRecipientsChange(
-      recipients.map((r) =>
+      safeRecipients.map((r) =>
         recipientRowKey(r) === key ? { ...r, enabled: next } : r
       )
     );
   };
 
   const removeRecipient = (key: string) => {
-    onRecipientsChange(recipients.filter((r) => recipientRowKey(r) !== key));
+    onRecipientsChange(safeRecipients.filter((r) => recipientRowKey(r) !== key));
   };
 
   const addCustomEmail = () => {
     const row = createCustomEmailRecipient(customEmail);
     if (!row) return;
-    const exists = recipients.some((r) => recipientRowKey(r) === recipientRowKey(row));
+    const exists = safeRecipients.some((r) => recipientRowKey(r) === recipientRowKey(row));
     if (exists) {
       onRecipientsChange(
-        recipients.map((r) =>
+        safeRecipients.map((r) =>
           recipientRowKey(r) === recipientRowKey(row) ? { ...r, enabled: true } : r
         )
       );
     } else {
-      onRecipientsChange([...recipients, row]);
+      onRecipientsChange([...safeRecipients, row]);
     }
     setCustomEmail("");
   };
@@ -108,13 +113,13 @@ export function JobEmailNotificationRecipientsPanel({
         <>
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground">Příjemci notifikací</p>
-            {!recipients.length ? (
+            {!safeRecipients.length ? (
               <p className="text-xs text-muted-foreground">
                 Zatím žádní příjemci. Zapněte viditelnost složky nebo přidejte e-mail.
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {recipients.map((r) => {
+                {safeRecipients.map((r) => {
                   const key = recipientRowKey(r);
                   const canRemove = r.type === "custom_email";
                   return (

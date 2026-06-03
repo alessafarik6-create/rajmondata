@@ -13,6 +13,9 @@ const recipients = readFileSync(
   join(root, "src/lib/job-notification-recipients.ts"),
   "utf8"
 );
+const toArraySafeLib = readFileSync(join(root, "src/lib/to-array-safe.ts"), "utf8");
+assert.match(toArraySafeLib, /export function toArraySafe/, "toArraySafe helper");
+assert.match(recipients, /toArraySafe/, "recipients use toArraySafe");
 const panel = readFileSync(
   join(root, "src/components/jobs/job-email-notification-recipients-panel.tsx"),
   "utf8"

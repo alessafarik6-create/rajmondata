@@ -128,6 +128,7 @@ import {
   mergeFolderRecipientsForVisibility,
   type UserRow,
 } from "@/lib/job-notification-recipient-presets";
+import { toArraySafe } from "@/lib/to-array-safe";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
 import { JobMediaExportNotesButtons } from "@/components/jobs/job-media-export-notes-buttons";
 import { JobImportFilesFromJobDialog } from "@/components/jobs/job-import-files-from-job-dialog";
@@ -834,9 +835,7 @@ function UserFolderBlock({
   const fileCommentStats = useMemo(() => {
     const uid = user?.uid || "";
     const m = new Map<string, { count: number; unread: number }>();
-    const list = (Array.isArray(fileCommentsRaw) ? fileCommentsRaw : []) as Array<
-      Record<string, unknown> & { id: string }
-    >;
+    const list = toArraySafe<Record<string, unknown> & { id: string }>(fileCommentsRaw);
     for (const c of list) {
       const folderIdRaw = c.folderId;
       const folderId = folderIdRaw != null ? String(folderIdRaw).trim() : "";
@@ -893,7 +892,7 @@ function UserFolderBlock({
   };
 
   const images = useMemo(() => {
-    const list = (imagesRaw ?? []) as JobFolderImageDoc[];
+    const list = toArraySafe<JobFolderImageDoc>(imagesRaw);
     return list
       .filter((x) => x && typeof x.id === "string")
       .slice()
@@ -3323,7 +3322,7 @@ export function JobMediaSection({
   const emailPresets = useMemo(() => {
     if (!canManageFolders || mediaScope !== "full") return null;
     const usersByUid = new Map<string, UserRow>();
-    for (const row of companyUsersRaw as Array<{ id: string } & Record<string, unknown>>) {
+    for (const row of toArraySafe<{ id: string } & Record<string, unknown>>(companyUsersRaw)) {
       if (!row?.id) continue;
       usersByUid.set(row.id, {
         id: row.id,
@@ -3333,7 +3332,7 @@ export function JobMediaSection({
         role: typeof row.role === "string" ? row.role : undefined,
       });
     }
-    const members = (jobMembersRaw as Array<Record<string, unknown>>).map((m) => ({
+    const members = toArraySafe<Record<string, unknown>>(jobMembersRaw).map((m) => ({
       authUserId: typeof m.authUserId === "string" ? m.authUserId : undefined,
       displayName: typeof m.displayName === "string" ? m.displayName : undefined,
       name: typeof m.name === "string" ? m.name : undefined,
@@ -3391,7 +3390,7 @@ export function JobMediaSection({
   const { data: customersForImportRaw } = useCollection(customersForImportRef);
   const customersByIdForImport = useMemo(() => {
     const m = new Map<string, Record<string, unknown>>();
-    for (const c of customersForImportRaw ?? []) {
+    for (const c of toArraySafe(customersForImportRaw)) {
       const id = String((c as { id?: string }).id ?? "").trim();
       if (id) m.set(id, c as Record<string, unknown>);
     }
@@ -3508,14 +3507,12 @@ export function JobMediaSection({
   const { data: mediaNotesRaw = [] } = useCollection(mediaNotesQuery);
   const [optimisticMediaNotes, setOptimisticMediaNotes] = useState<JobMediaFileNoteDoc[]>([]);
 
-  const legacyFileCommentsList = (Array.isArray(legacyFileCommentsRaw)
-    ? legacyFileCommentsRaw
-    : []) as Array<Record<string, unknown> & { id: string }>;
+  const legacyFileCommentsList = toArraySafe<
+    Record<string, unknown> & { id: string }
+  >(legacyFileCommentsRaw);
 
   const mediaNotesFromFirestore = useMemo(() => {
-    const list = (Array.isArray(mediaNotesRaw) ? mediaNotesRaw : []) as Array<
-      Record<string, unknown> & { id: string }
-    >;
+    const list = toArraySafe<Record<string, unknown> & { id: string }>(mediaNotesRaw);
     const parsed: JobMediaFileNoteDoc[] = [];
     for (const row of list) {
       const n = parseJobMediaFileNoteDoc(row, row.id);

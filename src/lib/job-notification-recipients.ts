@@ -10,6 +10,7 @@ import {
   isFolderInternalOnly,
 } from "@/lib/job-customer-access";
 import { isFolderEmployeeVisible } from "@/lib/job-employee-access";
+import { toArraySafe } from "@/lib/to-array-safe";
 
 export type JobNotificationRecipientType =
   | "employee"
@@ -45,9 +46,8 @@ export function recipientRowKey(r: Pick<JobNotificationRecipient, "type" | "id" 
 }
 
 export function parseNotificationRecipients(raw: unknown): JobNotificationRecipient[] {
-  if (!Array.isArray(raw)) return [];
   const out: JobNotificationRecipient[] = [];
-  for (const row of raw) {
+  for (const row of toArraySafe<unknown>(raw)) {
     if (!row || typeof row !== "object") continue;
     const o = row as Record<string, unknown>;
     const type = trimStr(o.type) as JobNotificationRecipientType;
@@ -66,9 +66,11 @@ export function parseNotificationRecipients(raw: unknown): JobNotificationRecipi
   return dedupeRecipientRows(out);
 }
 
-export function dedupeRecipientRows(rows: JobNotificationRecipient[]): JobNotificationRecipient[] {
+export function dedupeRecipientRows(
+  rows: JobNotificationRecipient[] | unknown
+): JobNotificationRecipient[] {
   const map = new Map<string, JobNotificationRecipient>();
-  for (const r of rows) {
+  for (const r of toArraySafe<JobNotificationRecipient>(rows)) {
     const key = recipientRowKey(r);
     const prev = map.get(key);
     if (!prev) {
@@ -86,11 +88,13 @@ export function dedupeRecipientRows(rows: JobNotificationRecipient[]): JobNotifi
 }
 
 export function formatNotificationRecipientsSummary(
-  recipients: JobNotificationRecipient[],
+  recipients: JobNotificationRecipient[] | unknown,
   enabled: boolean
 ): string {
   if (!enabled) return "Notifikace jsou vypnuté.";
-  const active = recipients.filter((r) => r.enabled && r.email);
+  const active = toArraySafe<JobNotificationRecipient>(recipients).filter(
+    (r) => r.enabled && r.email
+  );
   if (!active.length) return "Notifikace zapnuté — zatím bez příjemců.";
   const labels = active.map((r) => {
     const name = trimStr(r.name);
@@ -146,15 +150,15 @@ export function parseJobCustomerChatNotificationSettings(
 }
 
 export function mergeRecipientLists(
-  existing: JobNotificationRecipient[],
-  additions: JobNotificationRecipient[],
+  existing: JobNotificationRecipient[] | unknown,
+  additions: JobNotificationRecipient[] | unknown,
   opts?: { defaultEnabled?: boolean }
 ): JobNotificationRecipient[] {
   const map = new Map<string, JobNotificationRecipient>();
-  for (const r of existing) {
+  for (const r of toArraySafe<JobNotificationRecipient>(existing)) {
     map.set(recipientRowKey(r), r);
   }
-  for (const add of additions) {
+  for (const add of toArraySafe<JobNotificationRecipient>(additions)) {
     const key = recipientRowKey(add);
     const prev = map.get(key);
     if (prev) {
@@ -234,7 +238,7 @@ export async function resolveRecipientsFromConfiguredList(
   const folder = params.folder ?? null;
   const folderId = params.folderId?.trim() || null;
 
-  for (const row of params.recipients) {
+  for (const row of toArraySafe<JobNotificationRecipient>(params.recipients)) {
     if (!row.enabled) continue;
     const email = normalizeEmail(row.email);
     if (!email || !isValidEmail(email)) continue;

@@ -157,6 +157,7 @@ import {
   buildEmployeeRecipientCandidates,
   type UserRow,
 } from "@/lib/job-notification-recipient-presets";
+import { toArraySafe } from "@/lib/to-array-safe";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
 import { JobCuttingPlanExcelSection } from "@/components/jobs/job-cutting-plan-excel-section";
 import {
@@ -1407,7 +1408,7 @@ export function JobDetailPageContent({
   const jobExpenseTotals = useMemo(() => {
     let net = 0;
     let gross = 0;
-    for (const row of jobExpenses ?? []) {
+    for (const row of toArraySafe(jobExpenses)) {
       const r = resolveExpenseAmounts(row);
       net += r.amountNet;
       gross += r.amountGross;
@@ -1512,7 +1513,9 @@ export function JobDetailPageContent({
 
   const chatNotificationPresets = useMemo(() => {
     const usersByUid = new Map<string, UserRow>();
-    for (const row of companyUsersForNotifyRaw as Array<{ id: string } & Record<string, unknown>>) {
+    for (const row of toArraySafe<{ id: string } & Record<string, unknown>>(
+      companyUsersForNotifyRaw
+    )) {
       if (!row?.id) continue;
       usersByUid.set(row.id, {
         id: row.id,
@@ -1522,7 +1525,7 @@ export function JobDetailPageContent({
         role: typeof row.role === "string" ? row.role : undefined,
       });
     }
-    const members = (jobMembersForNotifyRaw as Array<Record<string, unknown>>).map((m) => ({
+    const members = toArraySafe<Record<string, unknown>>(jobMembersForNotifyRaw).map((m) => ({
       authUserId: typeof m.authUserId === "string" ? m.authUserId : undefined,
       displayName: typeof m.displayName === "string" ? m.displayName : undefined,
       name: typeof m.name === "string" ? m.name : undefined,
@@ -1559,7 +1562,7 @@ export function JobDetailPageContent({
   ]);
 
   const folderCustomerNotificationCandidates = useMemo(
-    () => chatNotificationPresets?.customerCandidates ?? [],
+    () => toArraySafe(chatNotificationPresets?.customerCandidates),
     [chatNotificationPresets]
   );
 
@@ -10256,7 +10259,7 @@ export function JobDetailPageContent({
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {job.assignedEmployeeIds?.map((empId: string) => (
+                {toArraySafe<string>(job.assignedEmployeeIds).map((empId: string) => (
                   <div
                     key={empId}
                     className={cn(JD.innerBox, "flex items-center justify-between")}
@@ -10273,7 +10276,7 @@ export function JobDetailPageContent({
                   </div>
                 ))}
 
-                {!job.assignedEmployeeIds?.length && (
+                {!toArraySafe(job.assignedEmployeeIds).length && (
                   <p className={JD.bodyMuted}>
                     Žádní pracovníci nejsou přiřazeni.
                   </p>

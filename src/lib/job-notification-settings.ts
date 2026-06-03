@@ -2,6 +2,8 @@
  * Přepínače e-mailových notifikací u složek zakázky a chatů.
  */
 
+import { toArraySafe } from "@/lib/to-array-safe";
+
 export {
   parseFolderEmailNotificationSettings,
   parseJobInternalChatNotificationSettings,
@@ -14,9 +16,7 @@ export function isFolderNotifyEmployeesEnabled(
 ): boolean {
   const enabled = folder?.emailNotificationsEnabled === true;
   const legacy = folder?.notifyEmployees === true;
-  const recipients = Array.isArray(folder?.notificationRecipients)
-    ? (folder!.notificationRecipients as unknown[])
-    : [];
+  const recipients = toArraySafe(folder?.notificationRecipients);
   if (enabled) {
     return recipients.some(
       (r) =>
@@ -35,9 +35,7 @@ export function isFolderNotifyCustomerEnabled(
 ): boolean {
   const enabled = folder?.emailNotificationsEnabled === true;
   const legacy = folder?.notifyCustomer === true;
-  const recipients = Array.isArray(folder?.notificationRecipients)
-    ? (folder!.notificationRecipients as unknown[])
-    : [];
+  const recipients = toArraySafe(folder?.notificationRecipients);
   if (enabled) {
     return recipients.some(
       (r) =>

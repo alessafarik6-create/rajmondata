@@ -14,6 +14,7 @@ import {
   buildDefaultCustomerChatRecipients,
   buildDefaultInternalChatRecipients,
 } from "@/lib/job-notification-recipient-presets";
+import { toArraySafe } from "@/lib/to-array-safe";
 
 type Presets = {
   employeeCandidates: JobNotificationRecipient[];
@@ -47,18 +48,25 @@ export function JobChatEmailNotificationsBlock({
   );
 
   const [enabled, setEnabled] = useState(parsed.enabled);
-  const [recipients, setRecipients] = useState(parsed.recipients);
+  const [recipients, setRecipients] = useState(() =>
+    toArraySafe<JobNotificationRecipient>(parsed.recipients)
+  );
   const [saving, setSaving] = useState(false);
 
-  const recipientsKey = useMemo(
-    () => JSON.stringify(parsed.recipients),
+  const parsedRecipients = useMemo(
+    () => toArraySafe<JobNotificationRecipient>(parsed.recipients),
     [parsed.recipients]
+  );
+
+  const recipientsKey = useMemo(
+    () => JSON.stringify(parsedRecipients),
+    [parsedRecipients]
   );
 
   useEffect(() => {
     setEnabled(parsed.enabled);
-    setRecipients(parsed.recipients);
-  }, [parsed.enabled, recipientsKey, parsed.recipients]);
+    setRecipients(parsedRecipients);
+  }, [parsed.enabled, recipientsKey, parsedRecipients]);
 
   const persist = useCallback(
     async (nextEnabled: boolean, nextRecipients: JobNotificationRecipient[]) => {
@@ -117,7 +125,7 @@ export function JobChatEmailNotificationsBlock({
           void persist(enabled, rows);
         }}
       />
-      {!recipients.length && enabled ? (
+      {!toArraySafe(recipients).length && enabled ? (
         <Button
           type="button"
           variant="outline"
