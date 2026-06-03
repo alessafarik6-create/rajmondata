@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { formatCsDateTimeDot } from "@/lib/date-safe";
-import { JobNoteTextBlock } from "@/components/jobs/job-note-text-block";
+import { ExpandableNoteText } from "@/components/jobs/job-note-text-block";
+import { JobMessageHeader } from "@/components/jobs/job-message-header";
 import { cn } from "@/lib/utils";
 import {
   buildCustomerMediaNotePayload,
@@ -144,17 +144,34 @@ export function JobMediaFileNotesPanel(props: Props) {
         </p>
       ) : (
         <ul className="space-y-2 max-h-48 overflow-y-auto overscroll-contain pr-1">
-          {fileNotes.map((n) => (
-            <li key={n.id}>
-              <JobNoteTextBlock
-                variant={n.authorType === "customer" ? "customer" : n.visibleToCustomer ? "admin_request" : "internal"}
-                label={`${n.authorName} · ${formatCsDateTimeDot(n.createdAt) || "—"}`}
-                dense={dense}
+          {fileNotes.map((n) => {
+            const noteRecord = {
+              authorName: n.authorName,
+              createdByName: n.authorName,
+              authorRole: n.authorType,
+              createdByRole: n.authorType,
+              createdAt: n.createdAt,
+              updatedAt: n.updatedAt,
+            } as Record<string, unknown>;
+            const shell =
+              n.authorType === "customer"
+                ? "border-amber-100 border-l-amber-500 bg-amber-50/40"
+                : n.visibleToCustomer
+                  ? "border-l-orange-500 bg-white"
+                  : "border-l-slate-400 bg-slate-50/80";
+            return (
+              <li
+                key={n.id}
+                className={cn(
+                  "rounded-md border border-border/50 border-l-[3px] px-2 py-2",
+                  shell
+                )}
               >
-                {n.text}
-              </JobNoteTextBlock>
-            </li>
-          ))}
+                <JobMessageHeader message={noteRecord} className="mb-1 space-y-0.5" />
+                <ExpandableNoteText text={n.text} dense={dense} />
+              </li>
+            );
+          })}
         </ul>
       )}
       {canPost ? (

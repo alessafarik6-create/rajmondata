@@ -33,9 +33,13 @@ import {
 import { ExpandableNoteText } from "@/components/jobs/job-note-text-block";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { formatCsDateTimeDot, safeTime } from "@/lib/date-safe";
+import { safeTime } from "@/lib/date-safe";
 import {
-  authorRoleLabelCs,
+  buildMessageAuthorPersistFields,
+  compareMessagesByCreatedAt,
+} from "@/lib/format-message-date";
+import { JobMessageHeader } from "@/components/jobs/job-message-header";
+import {
   buildJobCustomerChatContext,
   customerChatMessageMatchesJob,
   customerConversationId,
@@ -195,7 +199,7 @@ export function JobCustomerChatThread({
     return list
       .filter((m) => customerChatMessageMatchesJob(m, jobId, { includeLegacyWithoutJobId: true }))
       .slice()
-      .sort((a, b) => safeTime(a.createdAt) - safeTime(b.createdAt));
+      .sort(compareMessagesByCreatedAt);
   }, [messagesRaw, jobId]);
 
   useEffect(() => {
@@ -365,7 +369,13 @@ export function JobCustomerChatThread({
           senderName: authorName,
           text,
           jobId,
+          ...buildMessageAuthorPersistFields({
+            userId: user.uid,
+            authorName,
+            authorRole: "admin",
+          }),
           createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
           isRead: false,
           attachments: [],
         }
@@ -577,10 +587,10 @@ export function JobCustomerChatThread({
             </p>
           ) : (
             messages.map((m) => {
-              const mine = String(m.senderRole ?? "") === "admin";
-              const author = String(m.senderName ?? (mine ? authorName : "Zákazník"));
-              const role = authorRoleLabelCs(String(m.senderRole ?? ""));
-              const sentAt = formatCsDateTimeDot(m.createdAt);
+              const mine = String(m.senderRole ?? m.createdByRole ?? "") === "admin";
+              const authorOverride = mine
+                ? undefined
+                : String(m.senderName ?? m.createdByName ?? "Zákazník");
               const readLine =
                 m.isRead === true
                   ? "přečteno"
@@ -600,14 +610,8 @@ export function JobCustomerChatThread({
                         : "border-violet-200 rounded-bl-md"
                     )}
                   >
-                    <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-gray-600">
-                      <span className="font-semibold text-gray-900">{author}</span>
-                      <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                        {role}
-                      </Badge>
-                      <span>{sentAt}</span>
-                    </div>
-                    <ExpandableNoteText text={String(m.text ?? "")} />
+                    <JobMessageHeader message={m} authorNameOverride={authorOverride} />
+                    <ExpandableNoteText text={String(m.text ?? m.message ?? "")} />
                     <div className="mt-1.5 text-xs text-gray-600">{readLine}</div>
                   </div>
                 </div>

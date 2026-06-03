@@ -3,6 +3,7 @@
  */
 
 import { safeTime } from "@/lib/date-safe";
+import { buildMessageAuthorPersistFields } from "@/lib/format-message-date";
 
 export type JobMediaNoteAuthorType = "customer" | "admin" | "employee";
 export type JobMediaNoteSource = "customerPortal" | "admin" | "employee" | "approval" | "legacy";
@@ -120,7 +121,8 @@ export function parseJobMediaFileNoteDoc(
     folderId: raw.folderId != null ? String(raw.folderId) : null,
     authorType,
     authorId: String(raw.authorId ?? raw.createdBy ?? ""),
-    authorName: String(raw.authorName ?? "—").trim() || "—",
+    authorName:
+      String(raw.authorName ?? raw.createdByName ?? "—").trim() || "—",
     text,
     visibleToCustomer,
     source,
@@ -189,6 +191,11 @@ export function buildCustomerMediaNotePayload(params: {
 }): Omit<JobMediaFileNoteDoc, "id" | "createdAt"> & { createdAt: unknown } {
   const fileId = String(params.target.fileId).trim();
   const folderId = params.target.folderId != null ? String(params.target.folderId).trim() : "";
+  const authorFields = buildMessageAuthorPersistFields({
+    userId: params.authorId,
+    authorName: params.authorName.trim() || "Zákazník",
+    authorRole: "customer",
+  });
   return {
     companyId: params.companyId,
     jobId: params.jobId,
@@ -199,8 +206,7 @@ export function buildCustomerMediaNotePayload(params: {
     targetId: fileId,
     ...(folderId ? { folderId } : { folderId: null }),
     authorType: "customer",
-    authorId: params.authorId,
-    authorName: params.authorName.trim() || "Zákazník",
+    ...authorFields,
     text: params.text.trim(),
     visibleToCustomer: true,
     source: params.source ?? "customerPortal",
@@ -221,6 +227,11 @@ export function buildStaffMediaNotePayload(params: {
 }): Omit<JobMediaFileNoteDoc, "id" | "createdAt"> & { createdAt: unknown } {
   const fileId = String(params.target.fileId).trim();
   const folderId = params.target.folderId != null ? String(params.target.folderId).trim() : "";
+  const authorFields = buildMessageAuthorPersistFields({
+    userId: params.authorId,
+    authorName: params.authorName.trim() || "—",
+    authorRole: params.authorType,
+  });
   return {
     companyId: params.companyId,
     jobId: params.jobId,
@@ -231,8 +242,7 @@ export function buildStaffMediaNotePayload(params: {
     targetId: fileId,
     ...(folderId ? { folderId } : { folderId: null }),
     authorType: params.authorType,
-    authorId: params.authorId,
-    authorName: params.authorName.trim() || "—",
+    ...authorFields,
     text: params.text.trim(),
     visibleToCustomer: params.visibleToCustomer,
     source: params.authorType === "employee" ? "employee" : "admin",
@@ -307,11 +317,12 @@ export function commentRowToMediaNoteLike(
     mediaId: fileId,
     folderId: row.folderId != null ? String(row.folderId) : null,
     authorType,
-    authorId: String(row.authorId ?? ""),
-    authorName: String(row.authorName ?? "—").trim() || "—",
+    authorId: String(row.authorId ?? row.createdBy ?? ""),
+    authorName:
+      String(row.authorName ?? row.createdByName ?? "—").trim() || "—",
     text: msg,
     visibleToCustomer,
     source: "legacy",
-    createdAt: row.createdAt,
+    createdAt: row.createdAt ?? row.updatedAt ?? null,
   };
 }

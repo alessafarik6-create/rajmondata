@@ -35,7 +35,11 @@ import {
   isLegacyPhotoCustomerVisible,
 } from "@/lib/job-customer-access";
 import { isImageEmployeeVisible } from "@/lib/job-employee-access";
-import { formatCsDateTimeDot, safeTime } from "@/lib/date-safe";
+import { safeTime } from "@/lib/date-safe";
+import {
+  formatMessageDate,
+  messageAuthorNameFromRecord,
+} from "@/lib/format-message-date";
 import { PDF_FONT_FAMILY, registerDejaVuFontsForPdf } from "@/lib/pdf/register-dejavu-font";
 import { fetchImageAsDataUrl } from "@/lib/pdf/exportJobsToPdf";
 import { loadPdfDocumentFromUrl } from "@/lib/production-worksheet-pdf";
@@ -115,9 +119,9 @@ export function pickFileCommentsForExport(
     if (!msg) continue;
     rows.push({
       id: c.id,
-      authorName: String(c.authorName ?? "—").trim() || "—",
+      authorName: messageAuthorNameFromRecord(c),
       message: msg,
-      createdAtLabel: formatCsDateTimeDot(c.createdAt) || "—",
+      createdAtLabel: formatMessageDate(c),
     });
   }
   const withMs = rows.map((r) => {

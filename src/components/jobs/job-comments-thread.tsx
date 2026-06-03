@@ -21,7 +21,13 @@ import { Badge } from "@/components/ui/badge";
 import { ExpandableNoteText } from "@/components/jobs/job-note-text-block";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { formatCsDateTimeDot, safeTime } from "@/lib/date-safe";
+import { safeTime } from "@/lib/date-safe";
+import {
+  buildMessageAuthorPersistFields,
+  compareMessagesByCreatedAt,
+  formatMessageDateFromValue,
+} from "@/lib/format-message-date";
+import { JobMessageHeader } from "@/components/jobs/job-message-header";
 
 export type JobCommentsTarget =
   | { targetType: "job" }
@@ -33,8 +39,6 @@ export type JobCommentsTarget =
     };
 
 type CommentRow = Record<string, unknown> & { id: string };
-
-const millisFromTimestampLike = safeTime;
 
 function commentReadByUser(comment: CommentRow, userId: string): boolean {
   const readAtBy = comment.readAtBy as Record<string, unknown> | undefined;
@@ -49,7 +53,7 @@ function earliestOtherReaderMs(comment: CommentRow, authorId: string): number {
   let best = 0;
   for (const [uid, v] of Object.entries(readAtBy)) {
     if (uid === authorId) continue;
-    const ms = millisFromTimestampLike(v);
+    const ms = safeTime(v);
     if (!ms) continue;
     if (best === 0 || ms < best) best = ms;
   }
@@ -164,7 +168,7 @@ export function JobCommentsThread(props: {
           return ch !== "customer";
         })
         .slice()
-        .sort((a, b) => millisFromTimestampLike(a.createdAt) - millisFromTimestampLike(b.createdAt));
+        .sort(compareMessagesByCreatedAt);
     }
     const fileId = props.target.fileId;
     const folderId = props.target.folderId ?? null;
@@ -173,7 +177,7 @@ export function JobCommentsThread(props: {
       .filter((c) => String(c.fileId ?? "") === fileId)
       .filter((c) => (c.folderId ?? null) === folderId)
       .slice()
-      .sort((a, b) => millisFromTimestampLike(a.createdAt) - millisFromTimestampLike(b.createdAt));
+      .sort(compareMessagesByCreatedAt);
   }, [commentsRaw, props.target]);
 
   const unreadCount = useMemo(
@@ -232,9 +236,11 @@ export function JobCommentsThread(props: {
         fileName:
           props.target.targetType === "file" ? props.target.fileName ?? null : null,
         message,
-        authorId: props.userId,
-        authorName: props.authorName,
-        authorRole: props.authorRole,
+        ...buildMessageAuthorPersistFields({
+          userId: props.userId,
+          authorName: props.authorName,
+          authorRole: props.authorRole,
+        }),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         readBy: [props.userId],
@@ -328,29 +334,21 @@ export function JobCommentsThread(props: {
             <p className="text-sm text-muted-foreground">Zatím žádné zprávy.</p>
           ) : (
             comments.map((c) => {
-              const mine = String(c.authorId ?? "") === props.userId;
-              const authorId = String(c.authorId ?? "");
-              const author = String(c.authorName ?? "—");
-              const roleCs =
-                String(c.authorRole ?? "") === "employee"
-                  ? "Zaměstnanec"
-                  : String(c.authorRole ?? "") === "admin"
-                    ? "Administrátor"
-                    : String(c.authorRole ?? "") || "—";
+              const authorId = String(c.createdBy ?? c.authorId ?? "");
+              const mine = authorId === props.userId;
               const msg = String(c.message ?? "");
-              const sentAt = formatCsDateTimeDot(c.createdAt);
               const myReadMs = mine
                 ? 0
                 : safeTime((c.readAtBy as Record<string, unknown> | undefined)?.[props.userId]);
               const otherReadMs = mine ? earliestOtherReaderMs(c, authorId) : 0;
               const readLine = mine
                 ? otherReadMs > 0
-                  ? `přečteno ${formatCsDateTimeDot(otherReadMs)}`
+                  ? `přečteno ${formatMessageDateFromValue(otherReadMs)}`
                   : legacyOtherHasRead(c, authorId)
                     ? "přečteno"
                     : "nepřečteno"
                 : myReadMs > 0
-                  ? `přečteno ${formatCsDateTimeDot(myReadMs)}`
+                  ? `přečteno ${formatMessageDateFromValue(myReadMs)}`
                   : commentReadByUser(c, props.userId)
                     ? "přečteno"
                     : "nepřečteno";
@@ -371,13 +369,7 @@ export function JobCommentsThread(props: {
                         : "border-sky-200 rounded-bl-md",
                     )}
                   >
-                    <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-gray-600">
-                      <span className="font-semibold text-gray-900">{author}</span>
-                      <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                        {roleCs}
-                      </Badge>
-                      <span>{sentAt}</span>
-                    </div>
+                    <JobMessageHeader message={c} />
                     <ExpandableNoteText text={msg} />
                     <div className="mt-1.5 text-xs text-gray-600">{readLine}</div>
                   </div>

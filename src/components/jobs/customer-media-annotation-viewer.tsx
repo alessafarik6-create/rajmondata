@@ -61,6 +61,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { createCustomerActivity } from "@/lib/customer-activity";
 import { JobMediaFileNotesPanel } from "@/components/jobs/job-media-file-notes-panel";
+import { formatMessageDateFromValue } from "@/lib/format-message-date";
 import type { JobMediaFileNoteDoc, JobMediaFileNoteTarget } from "@/lib/job-media-file-notes";
 
 type Tool =
@@ -1938,7 +1939,7 @@ export function CustomerMediaAnnotationViewer({
                     <li key={n.id} className="rounded border border-white/10 bg-white/5 p-2">
                       {n.text}
                       <div className="mt-1 text-[10px] text-white/45">
-                        {new Date(n.createdAt).toLocaleString("cs-CZ")}
+                        {formatMessageDateFromValue(n.createdAt)}
                       </div>
                     </li>
                   ))}

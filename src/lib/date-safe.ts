@@ -37,28 +37,15 @@ export function safeTime(value: unknown): number {
   }
 }
 
-export function formatDateSafe(value: unknown): string {
-  try {
-    const ms = safeTime(value);
-    if (!ms) return "bez data";
-    const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) return "bez data";
-    return d.toLocaleString("cs-CZ", {
-      dateStyle: "short",
-      timeStyle: "short",
-    });
-  } catch {
-    return "bez data";
-  }
-}
+export const MESSAGE_DATE_UNKNOWN = "Neznámé datum";
 
-/** Např. `10.05.2026 14:22` (pevné nuly u data i času). */
-export function formatCsDateTimeDot(value: unknown): string {
+/** Formát `03.06.2026 15:28` z libovolné hodnoty času. */
+export function formatMessageDateFromValue(value: unknown): string {
   try {
     const ms = safeTime(value);
-    if (!ms) return "bez data";
+    if (!ms) return MESSAGE_DATE_UNKNOWN;
     const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) return "bez data";
+    if (Number.isNaN(d.getTime())) return MESSAGE_DATE_UNKNOWN;
     const dd = String(d.getDate()).padStart(2, "0");
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     const yyyy = String(d.getFullYear());
@@ -66,7 +53,27 @@ export function formatCsDateTimeDot(value: unknown): string {
     const min = String(d.getMinutes()).padStart(2, "0");
     return `${dd}.${mm}.${yyyy} ${hh}:${min}`;
   } catch {
-    return "bez data";
+    return MESSAGE_DATE_UNKNOWN;
   }
+}
+
+export function formatDateSafe(value: unknown): string {
+  try {
+    const ms = safeTime(value);
+    if (!ms) return MESSAGE_DATE_UNKNOWN;
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return MESSAGE_DATE_UNKNOWN;
+    return d.toLocaleString("cs-CZ", {
+      dateStyle: "short",
+      timeStyle: "short",
+    });
+  } catch {
+    return MESSAGE_DATE_UNKNOWN;
+  }
+}
+
+/** Např. `03.06.2026 15:28` (pevné nuly u data i času). */
+export function formatCsDateTimeDot(value: unknown): string {
+  return formatMessageDateFromValue(value);
 }
 

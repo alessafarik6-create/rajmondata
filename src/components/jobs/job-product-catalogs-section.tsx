@@ -23,7 +23,7 @@ export function JobProductCatalogsSection({ companyId, jobId }: Props) {
   const { toast } = useToast();
   const formatAnyDate = (value: unknown): string => {
     const s = formatDateSafe(value);
-    return s === "bez data" ? "" : s;
+    return s === "Neznámé datum" || s === "bez data" ? "" : s;
   };
   const { user } = useUser();
   const firestore = useFirestore();

@@ -21,13 +21,16 @@ import { Badge } from "@/components/ui/badge";
 import { ExpandableNoteText } from "@/components/jobs/job-note-text-block";
 import { createCustomerActivity } from "@/lib/customer-activity";
 import {
-  authorRoleLabelCs,
   customerChatMessageMatchesJob,
   customerConversationId,
 } from "@/lib/job-customer-chat";
 import { notifyJobActivity } from "@/lib/job-activity-notify-client";
 import { useToast } from "@/hooks/use-toast";
-import { formatCsDateTimeDot, safeTime } from "@/lib/date-safe";
+import {
+  buildMessageAuthorPersistFields,
+  compareMessagesByCreatedAt,
+} from "@/lib/format-message-date";
+import { JobMessageHeader } from "@/components/jobs/job-message-header";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -84,11 +87,11 @@ export function CustomerChatPanel({
 
   const messages = useMemo(() => {
     const list = (Array.isArray(messagesRaw) ? messagesRaw : []) as MessageRow[];
-    if (!jobId) return list.slice().sort((a, b) => safeTime(a.createdAt) - safeTime(b.createdAt));
+    if (!jobId) return list.slice().sort(compareMessagesByCreatedAt);
     return list
       .filter((m) => customerChatMessageMatchesJob(m, jobId, { includeLegacyWithoutJobId: true }))
       .slice()
-      .sort((a, b) => safeTime(a.createdAt) - safeTime(b.createdAt));
+      .sort(compareMessagesByCreatedAt);
   }, [messagesRaw, jobId]);
 
   useEffect(() => {
@@ -155,7 +158,13 @@ export function CustomerChatPanel({
         senderName: "Zákazník",
         text: msg,
         jobId: jobId ?? null,
+        ...buildMessageAuthorPersistFields({
+          userId: user.uid,
+          authorName: "Zákazník",
+          authorRole: "customer",
+        }),
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         isRead: false,
         attachments: [],
       }
@@ -236,10 +245,8 @@ export function CustomerChatPanel({
             <p className="text-sm text-muted-foreground">Zatím žádné zprávy.</p>
           ) : (
             messages.map((m) => {
-              const mine = String(m.senderRole ?? "") === "customer";
-              const author = String(m.senderName ?? (mine ? "Vy" : "Administrace"));
-              const role = authorRoleLabelCs(String(m.senderRole ?? ""));
-              const sentAt = formatCsDateTimeDot(m.createdAt);
+              const mine = String(m.senderRole ?? m.createdByRole ?? "") === "customer";
+              const authorOverride = mine ? "Vy" : String(m.senderName ?? m.createdByName ?? "Administrace");
               const readLine = m.isRead === true ? "přečteno" : mine ? "nepřečteno administrací" : "nepřečteno";
               return (
                 <div
@@ -254,14 +261,8 @@ export function CustomerChatPanel({
                         : "border-emerald-200 rounded-bl-md"
                     )}
                   >
-                    <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-gray-600">
-                      <span className="font-semibold text-gray-900">{author}</span>
-                      <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                        {role}
-                      </Badge>
-                      <span>{sentAt}</span>
-                    </div>
-                    <ExpandableNoteText text={String(m.text ?? "")} />
+                    <JobMessageHeader message={m} authorNameOverride={authorOverride} />
+                    <ExpandableNoteText text={String(m.text ?? m.message ?? "")} />
                     <div className="mt-1.5 text-xs text-gray-600">{readLine}</div>
                   </div>
                 </div>
