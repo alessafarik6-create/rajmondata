@@ -8,6 +8,7 @@ export const DOCUMENT_EMAIL_TYPES = [
   "advance_invoice",
   "received_document",
   "meeting_record",
+  "handover_protocol",
   "material_order",
   /** Jen vybrané přílohy zakázky (bez hlavního PDF dokladu). */
   "job_attachments",
@@ -21,6 +22,7 @@ export const DOCUMENT_EMAIL_TYPE_LABELS: Record<DocumentEmailType, string> = {
   advance_invoice: "Zálohová faktura",
   received_document: "Přijatý doklad",
   meeting_record: "Zápis ze schůzky",
+  handover_protocol: "Předávací protokol",
   material_order: "Objednávka materiálu",
   job_attachments: "Přílohy zakázky",
 };
@@ -101,6 +103,15 @@ export function defaultEmailTemplate(
         body:
           "Dobrý den,\n\n" +
           "v příloze zasíláme zápis ze schůzky ({{cislo_dokladu}}).\n\n" +
+          "S pozdravem\n{{nazev_firmy}}",
+      };
+    case "handover_protocol":
+      return {
+        subject: "Předávací protokol — {{cislo_dokladu}}",
+        body:
+          "Dobrý den,\n\n" +
+          "v příloze zasíláme předávací protokol ({{cislo_dokladu}}) k zakázce.\n\n" +
+          "Odkaz: {{odkaz_na_dokument}}\n\n" +
           "S pozdravem\n{{nazev_firmy}}",
       };
     case "material_order":

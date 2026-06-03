@@ -191,6 +191,19 @@ service firebase.storage {
     }
 
     /** Foto zaměření (anotované i originál) — pod ID dokumentu v Firestore. */
+    match /companies/{companyId}/handoverProtocols/{protocolId}/{allPaths=**} {
+      allow read: if request.auth != null && storageSameCompany(companyId);
+      allow write: if request.auth != null && storageSameCompany(companyId) && (
+        storageIsPrivileged() ||
+        (storageUserRole() == 'employee' && storageJobMemberFullInternal(companyId,
+          firestore.get(/databases/(default)/documents/companies/$(companyId)/handoverProtocols/$(protocolId)).data.jobId)) ||
+        (storageUserRole() == 'customer' &&
+          firestore.exists(/databases/(default)/documents/companies/$(companyId)/handoverProtocols/$(protocolId)) &&
+          (firestore.get(/databases/(default)/documents/companies/$(companyId)/handoverProtocols/$(protocolId)).data.sharedWithCustomer == true ||
+           firestore.get(/databases/(default)/documents/companies/$(companyId)/handoverProtocols/$(protocolId)).data.sentToCustomer == true))
+      );
+    }
+
     match /companies/{companyId}/measurement_photos/{photoDocId}/{allPaths=**} {
       allow read: if request.auth != null;
       allow write: if request.auth != null;

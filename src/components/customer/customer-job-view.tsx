@@ -15,6 +15,7 @@ import { CustomerJobTasksSection } from "@/components/customer/customer-job-task
 import { CustomerJobQuestionnaireSection } from "@/components/customer/customer-job-questionnaire-section";
 import { CustomerJobMediaApprovalsSection } from "@/components/customer/customer-job-media-approvals-section";
 import { CustomerJobMeetingRecordsSection } from "@/components/meeting-records/customer-job-meeting-records-section";
+import { CustomerJobHandoverProtocolsSection } from "@/components/handover-protocols/customer-job-handover-protocols-section";
 import { CustomerChatPanel } from "@/components/customer/customer-chat-panel";
 import { useCollection, useFirestore, useMemoFirebase } from "@/firebase";
 import {
@@ -125,6 +126,16 @@ export function CustomerJobView({
           firestore={firestore}
           companyId={companyId}
           jobId={jobId}
+        />
+      ) : null}
+
+      {firestore && companyId ? (
+        <CustomerJobHandoverProtocolsSection
+          firestore={firestore}
+          companyId={companyId}
+          jobId={jobId}
+          user={viewerUser}
+          readOnly={readOnly}
         />
       ) : null}
 

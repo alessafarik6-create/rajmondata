@@ -160,6 +160,7 @@ import {
 import { toArraySafe } from "@/lib/to-array-safe";
 import type { JobNotificationRecipient } from "@/lib/job-notification-recipients";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
+import { JobHandoverProtocolsSection } from "@/components/handover-protocols/job-handover-protocols-section";
 import { JobCuttingPlanExcelSection } from "@/components/jobs/job-cutting-plan-excel-section";
 import {
   staffCanEditMeetingRecords,
@@ -2244,6 +2245,10 @@ export function JobDetailPageContent({
   }, [bankAccounts, contractForm.bankAccountId]);
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [handoverFormOpen, setHandoverFormOpen] = useState(false);
+  const [handoverDefaultContractId, setHandoverDefaultContractId] = useState<string | null>(
+    null
+  );
   const [workContractTemplatesManagerOpen, setWorkContractTemplatesManagerOpen] =
     useState(false);
 
@@ -9905,6 +9910,31 @@ export function JobDetailPageContent({
                 >
                   Smlouva o dílo (standard)
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 w-full sm:w-auto"
+                  onClick={() => {
+                    const first = workContractsBaseForJob.find((c) => {
+                      const r = String(c.documentRole ?? "").trim();
+                      return r !== "attachment" && r !== "addendum";
+                    });
+                    if (!first) {
+                      toast({
+                        variant: "destructive",
+                        title: "Nejprve smlouva",
+                        description:
+                          "Předávací protokol lze vytvořit až po uložení smlouvy o dílo u zakázky.",
+                      });
+                      return;
+                    }
+                    setHandoverDefaultContractId(first.id);
+                    setHandoverFormOpen(true);
+                  }}
+                >
+                  Nový předávací protokol
+                </Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -10005,6 +10035,20 @@ export function JobDetailPageContent({
                               }
                             >
                               Vytvořit přílohu
+                            </Button>
+                          ) : null}
+                          {canAttach ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-9 text-xs"
+                              type="button"
+                              onClick={() => {
+                                setHandoverDefaultContractId(c.id);
+                                setHandoverFormOpen(true);
+                              }}
+                            >
+                              Vytvořit předávací protokol
                             </Button>
                           ) : null}
                           <Button
@@ -10125,6 +10169,32 @@ export function JobDetailPageContent({
                   })}
                 </div>
               )}
+              {user && companyId && jobFirestoreId ? (
+                <JobHandoverProtocolsSection
+                  firestore={firestore}
+                  companyId={companyId}
+                  jobId={jobFirestoreId}
+                  jobName={
+                    typeof job?.name === "string" && job.name.trim()
+                      ? job.name.trim()
+                      : "Zakázka"
+                  }
+                  user={user}
+                  profile={profile as ActivityActorProfile | null | undefined}
+                  companyDoc={(companyDoc ?? null) as Record<string, unknown> | null}
+                  workContracts={(workContractsForJob || []) as WorkContractDoc[]}
+                  defaultCustomerEmail={
+                    typeof job?.customerEmail === "string" ? job.customerEmail : null
+                  }
+                  canEdit={canManageFolders}
+                  formOpen={handoverFormOpen}
+                  onFormOpenChange={(o) => {
+                    setHandoverFormOpen(o);
+                    if (!o) setHandoverDefaultContractId(null);
+                  }}
+                  defaultWorkContractId={handoverDefaultContractId}
+                />
+              ) : null}
             </CardContent>
           </Card>
 

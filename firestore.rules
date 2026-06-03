@@ -183,6 +183,69 @@ service cloud.firestore {
       return mt || ti || mn;
     }
 
+    function handoverProtocolJobIdFromData(data) {
+      return ('jobId' in data) && data.jobId is string && data.jobId.size() > 0;
+    }
+
+    function handoverProtocolStaffRead(companyId) {
+      return signedIn() && sameCompany(companyId) && userRole() != 'customer' && (
+        isPrivileged() ||
+        isSuperAdminFirebase() ||
+        (handoverProtocolJobIdFromData(resource.data) &&
+          jobFinancialReadAccess(companyId, resource.data.jobId)) ||
+        (handoverProtocolJobIdFromData(resource.data) &&
+          jobPortalEmployeeEligible(companyId, resource.data.jobId))
+      );
+    }
+
+    function handoverProtocolStaffWrite(companyId) {
+      return signedIn() && sameCompany(companyId) && userRole() != 'customer' && (
+        isPrivileged() ||
+        isSuperAdminFirebase() ||
+        (handoverProtocolJobIdFromData(request.resource.data) &&
+          jobPortalEmployeeEligible(companyId, request.resource.data.jobId))
+      );
+    }
+
+    function handoverProtocolStaffMutateExisting(companyId) {
+      return signedIn() && sameCompany(companyId) && userRole() != 'customer' && (
+        isPrivileged() ||
+        isSuperAdminFirebase() ||
+        (handoverProtocolJobIdFromData(resource.data) &&
+          jobPortalEmployeeEligible(companyId, resource.data.jobId))
+      );
+    }
+
+    function handoverProtocolIsShared(data) {
+      return (('sharedWithCustomer' in data) && data.sharedWithCustomer is bool && data.sharedWithCustomer == true) ||
+        (('sentToCustomer' in data) && data.sentToCustomer is bool && data.sentToCustomer == true);
+    }
+
+    function handoverProtocolCustomerReadOk(companyId) {
+      if (!(userRole() == 'customer' && sameCompany(companyId) && handoverProtocolIsShared(resource.data))) {
+        return false;
+      }
+      return handoverProtocolJobIdFromData(resource.data) &&
+        customerPortalLinkedJob(companyId, resource.data.jobId);
+    }
+
+    function handoverProtocolCreateValid(companyId) {
+      let d = request.resource.data;
+      return d.companyId == companyId &&
+        d.jobId is string && d.jobId.size() > 0 &&
+        d.workContractId is string && d.workContractId.size() > 0 &&
+        d.form is map &&
+        d.form.documentTitle is string && d.form.documentTitle.size() > 0;
+    }
+
+    function handoverProtocolCustomerUpdateOk(companyId) {
+      return userRole() == 'customer' &&
+        sameCompany(companyId) &&
+        handoverProtocolIsShared(resource.data) &&
+        handoverProtocolJobIdFromData(resource.data) &&
+        customerPortalLinkedJob(companyId, resource.data.jobId);
+    }
+
     function meetingRecordCustomerReadOk(companyId) {
       if (!(userRole() == 'customer' && sameCompany(companyId) && meetingRecordIsSentToCustomerData(resource.data))) {
         return false;
@@ -1040,6 +1103,18 @@ service cloud.firestore {
           allow create, update: if meetingRecordStaffWrite(companyId) && docId == 'data';
           allow delete: if meetingRecordStaffWrite(companyId) && docId == 'data';
         }
+      }
+
+      /**
+       * Předávací protokoly — companies/{companyId}/handoverProtocols/{protocolId}
+       */
+      match /handoverProtocols/{protocolId} {
+        allow read: if handoverProtocolStaffRead(companyId) || handoverProtocolCustomerReadOk(companyId);
+        allow create: if handoverProtocolStaffWrite(companyId) && handoverProtocolCreateValid(companyId);
+        allow update: if handoverProtocolStaffWrite(companyId) ||
+          handoverProtocolStaffMutateExisting(companyId) ||
+          handoverProtocolCustomerUpdateOk(companyId);
+        allow delete: if handoverProtocolStaffMutateExisting(companyId);
       }
 
       match /jobs/{jobId} {
