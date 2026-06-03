@@ -49,6 +49,8 @@ import {
   type HandoverProtocolDraftPreview,
 } from "@/components/handover-protocols/handover-protocol-pdf-preview-dialog";
 import { buildHandoverProtocolHtmlForPreview } from "@/lib/handover-protocol-pdf-build";
+import { handoverCompanyPdfMeta } from "@/lib/handover-protocol-company-pdf";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   applyHandoverTemplateToForm,
   handoverTemplateContentFromForm,
@@ -58,10 +60,7 @@ import {
   fetchHandoverProtocolTemplates,
   type HandoverProtocolTemplateDoc,
 } from "@/lib/handover-protocol-templates-firestore";
-import {
-  downloadHandoverProtocolPdf,
-  downloadHandoverProtocolPdfFromHtml,
-} from "@/lib/handover-protocol-client-api";
+import { downloadHandoverProtocolPdfFromHtml } from "@/lib/handover-protocol-client-api";
 import { printInvoiceHtmlDocument } from "@/lib/print-html";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
 import { buildHandoverProtocolSnapshot } from "@/lib/handover-protocol-context";
@@ -78,6 +77,7 @@ import {
   type HandoverDefectRow,
   type HandoverDefectStatus,
   type HandoverProtocolForm,
+  type HandoverSignatureMeta,
 } from "@/lib/handover-protocol-types";
 import type { WorkContractDoc } from "@/lib/work-contract-print-html-build";
 import { getFirebaseStorage } from "@/firebase/storage";
@@ -158,6 +158,10 @@ export function HandoverProtocolFormDialog(props: {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [editContractorSignature, setEditContractorSignature] =
+    useState<HandoverSignatureMeta | null>(null);
+  const [editCustomerSignature, setEditCustomerSignature] =
+    useState<HandoverSignatureMeta | null>(null);
 
   const contractOptions = useMemo(
     () => handoverEligibleContracts(workContracts),
@@ -265,6 +269,8 @@ export function HandoverProtocolFormDialog(props: {
       setPreview(null);
       setSelectedTemplateId("");
       setPreviewOpen(false);
+      setEditContractorSignature(null);
+      setEditCustomerSignature(null);
       return;
     }
     if (editProtocolId) return;
@@ -302,6 +308,10 @@ export function HandoverProtocolFormDialog(props: {
         setWorkContractId(wcId);
         const parsed = handoverProtocolFormFromDoc(d);
         setForm({ ...parsed, defects: ensureDefects(parsed.defects) });
+        setEditContractorSignature(
+          (d.contractorSignature as HandoverSignatureMeta | null) ?? null
+        );
+        setEditCustomerSignature((d.customerSignature as HandoverSignatureMeta | null) ?? null);
         setPreview({
           jobName: String(d.jobName ?? jobName),
           jobNumber: String(d.jobNumber ?? ""),
@@ -339,49 +349,24 @@ export function HandoverProtocolFormDialog(props: {
     user.email?.split("@")[0] ||
     "Uživatel";
 
-  const validate = (): boolean => {
-    if (!hasContracts) {
+  const save = async () => {
+    const contractId =
+      workContractId.trim() || pickDefaultHandoverContractId(workContracts, null) || "";
+    if (!contractId) {
       toast({
         variant: "destructive",
-        title: "Nejdříve vytvořte smlouvu o dílo.",
+        title: "Uložení",
+        description:
+          "Pro uložení protokolu do zakázky je potřeba smlouva o dílo. PDF a tisk můžete vygenerovat i bez ní.",
       });
-      return false;
+      return;
     }
-    if (!form.documentTitle.trim()) {
-      toast({ variant: "destructive", title: "Vyplňte název dokumentu." });
-      return false;
-    }
-    if (!form.handoverDateLabel.trim()) {
-      toast({ variant: "destructive", title: "Vyplňte datum předání." });
-      return false;
-    }
-    if (!form.deliveredWork.trim()) {
-      toast({ variant: "destructive", title: "Vyplňte předané dílo." });
-      return false;
-    }
-    if (!form.completedWorkDescription.trim()) {
-      toast({ variant: "destructive", title: "Vyplňte popis dokončených prací." });
-      return false;
-    }
-    if (!form.handoverNote.trim()) {
-      toast({ variant: "destructive", title: "Vyplňte poznámku k předání." });
-      return false;
-    }
-    if (!workContractId.trim()) {
-      toast({ variant: "destructive", title: "Vyberte smlouvu o dílo." });
-      return false;
-    }
-    return true;
-  };
-
-  const save = async () => {
-    if (!validate()) return;
     setSaving(true);
     try {
       const [jobSnap, wcSnap, custSnap] = await Promise.all([
         getDoc(doc(firestore, "companies", companyId, "jobs", jobId)),
         getDoc(
-          doc(firestore, "companies", companyId, "jobs", jobId, "workContracts", workContractId)
+          doc(firestore, "companies", companyId, "jobs", jobId, "workContracts", contractId)
         ),
         (async () => {
           const j = await getDoc(doc(firestore, "companies", companyId, "jobs", jobId));
@@ -397,16 +382,19 @@ export function HandoverProtocolFormDialog(props: {
         customer: custSnap?.exists() ? (custSnap.data() as Record<string, unknown>) : null,
         companyDoc,
         workContract: wcSnap.exists()
-          ? ({ id: workContractId, ...wcSnap.data() } as WorkContractDoc)
+          ? ({ id: contractId, ...wcSnap.data() } as WorkContractDoc)
           : null,
-        workContractId,
+        workContractId: contractId,
         existingForm: { ...form, defects: ensureDefects(form.defects) },
       });
       const formToSave: HandoverProtocolForm = {
         ...built.form,
         ...form,
+        documentTitle: form.documentTitle.trim() || "Předávací protokol",
         defects: ensureDefects(form.defects),
         protocolNumber: form.protocolNumber.trim() || built.form.protocolNumber,
+        useElectronicSignatures: form.useElectronicSignatures !== false,
+        showDefects: form.showDefects !== false,
       };
 
       const isNew = !editProtocolId;
@@ -425,7 +413,7 @@ export function HandoverProtocolFormDialog(props: {
       const payload: Record<string, unknown> = {
         companyId,
         jobId,
-        workContractId,
+        workContractId: contractId,
         customerId: built.customerId,
         protocolNumber,
         ...(isNew ? { status: "draft", sharedWithCustomer: false } : {}),
@@ -574,52 +562,50 @@ export function HandoverProtocolFormDialog(props: {
 
   const defects = ensureDefects(form.defects);
 
-  const buildDraftSnapshot = (): HandoverProtocolDraftPreview["snapshot"] | null => {
-    if (!preview) return null;
+  const buildDraftSnapshot = (): HandoverProtocolDraftPreview["snapshot"] => {
     const today = new Intl.DateTimeFormat("cs-CZ").format(new Date());
+    const company = handoverCompanyPdfMeta(companyDoc);
+    if (preview) {
+      return {
+        jobNumber: preview.jobNumber,
+        jobName: preview.jobName,
+        workContractNumber: preview.workContractNumber,
+        customerName: preview.customerName,
+        realizationAddress: preview.realizationAddress,
+        customerPhone: preview.customerPhone,
+        customerEmail: preview.customerEmail,
+        createdAtLabel: today,
+        contractorCompanyName: company.contractorCompanyName,
+      };
+    }
     return {
-      jobNumber: preview.jobNumber,
-      jobName: preview.jobName,
-      workContractNumber: preview.workContractNumber,
-      customerName: preview.customerName,
-      realizationAddress: preview.realizationAddress,
-      customerPhone: preview.customerPhone,
-      customerEmail: preview.customerEmail,
+      jobNumber: "",
+      jobName: jobName,
+      workContractNumber: "",
+      customerName: "",
+      realizationAddress: "",
+      customerPhone: "",
+      customerEmail: "",
       createdAtLabel: today,
-      contractorCompanyName: "",
+      contractorCompanyName: company.contractorCompanyName,
     };
   };
 
-  const draftPreview: HandoverProtocolDraftPreview | null = preview
-    ? {
-        form: { ...form, defects },
-        snapshot: buildDraftSnapshot()!,
-        protocolNumber: form.protocolNumber.trim() || "Náhled",
-      }
-    : null;
+  const draftPreview: HandoverProtocolDraftPreview = {
+    form: { ...form, defects },
+    snapshot: buildDraftSnapshot(),
+    protocolNumber: form.protocolNumber.trim() || "Náhled",
+  };
 
-  const buildDraftHtml = (): string | null => {
-    const snap = buildDraftSnapshot();
-    if (!snap) return null;
-    return buildHandoverProtocolHtmlForPreview({
+  const buildDraftHtml = (): string =>
+    buildHandoverProtocolHtmlForPreview({
       companyDoc,
-      snapshot: snap,
+      snapshot: buildDraftSnapshot(),
       form: { ...form, defects },
       protocolNumber: form.protocolNumber.trim() || "Náhled",
+      contractorSignature: editContractorSignature,
+      customerSignature: editCustomerSignature,
     });
-  };
-
-  const requirePreviewData = (): boolean => {
-    if (!preview || !workContractId.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Náhled",
-        description: "Vyberte smlouvu a počkejte na načtení údajů zakázky.",
-      });
-      return false;
-    }
-    return true;
-  };
 
   const applyTemplate = (templateId: string) => {
     const tpl = templates.find((t) => t.id === templateId);
@@ -662,27 +648,16 @@ export function HandoverProtocolFormDialog(props: {
   };
 
   const handleFormPdf = async () => {
-    if (!requirePreviewData()) return;
     const html = buildDraftHtml();
-    if (!html) return;
     setPdfBusy(true);
     try {
-      let blob: Blob;
-      if (editProtocolId) {
-        blob = await downloadHandoverProtocolPdf({
-          user,
-          companyId,
-          protocolId: editProtocolId,
-        });
-      } else {
-        blob = await downloadHandoverProtocolPdfFromHtml({
-          user,
-          companyId,
-          jobId,
-          html,
-          filename: `predavaci-protokol-nahled.pdf`,
-        });
-      }
+      const blob = await downloadHandoverProtocolPdfFromHtml({
+        user,
+        companyId,
+        jobId,
+        html,
+        filename: `predavaci-protokol-nahled.pdf`,
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -701,9 +676,7 @@ export function HandoverProtocolFormDialog(props: {
   };
 
   const handleFormPrint = () => {
-    if (!requirePreviewData()) return;
     const html = buildDraftHtml();
-    if (!html) return;
     const result = printInvoiceHtmlDocument(html, form.documentTitle || "Předávací protokol");
     if (result === "blocked") {
       toast({
@@ -726,12 +699,16 @@ export function HandoverProtocolFormDialog(props: {
           <p className="text-sm text-muted-foreground flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" /> Načítání…
           </p>
-        ) : !hasContracts && !editProtocolId ? (
-          <Alert variant="destructive">
-            <AlertDescription>Nejdříve vytvořte smlouvu o dílo.</AlertDescription>
-          </Alert>
         ) : (
           <div className="space-y-4 text-sm">
+            {!hasContracts && !editProtocolId ? (
+              <Alert>
+                <AlertDescription>
+                  Bez smlouvy o dílo lze vygenerovat prázdný protokol pro ruční vyplnění (náhled,
+                  PDF, tisk). Uložení do zakázky vyžaduje smlouvu.
+                </AlertDescription>
+              </Alert>
+            ) : null}
             {preview ? (
               <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1">
                 <p>
@@ -814,9 +791,37 @@ export function HandoverProtocolFormDialog(props: {
               </p>
             </div>
 
+            <div className="rounded-md border p-3 space-y-3">
+              <p className="text-xs font-semibold">Nastavení PDF a tisku</p>
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id="hp-use-electronic-sig"
+                  checked={form.useElectronicSignatures !== false}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, useElectronicSignatures: v === true }))
+                  }
+                />
+                <Label htmlFor="hp-use-electronic-sig" className="font-normal leading-snug cursor-pointer">
+                  Použít elektronické podpisy
+                </Label>
+              </div>
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id="hp-show-defects"
+                  checked={form.showDefects !== false}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, showDefects: v === true }))
+                  }
+                />
+                <Label htmlFor="hp-show-defects" className="font-normal leading-snug cursor-pointer">
+                  Zobrazit vady a nedodělky
+                </Label>
+              </div>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5 sm:col-span-2">
-                <Label>Smlouva o dílo *</Label>
+                <Label>Smlouva o dílo</Label>
                 {hasContracts ? (
                   <Select
                     value={selectValue}
@@ -839,14 +844,14 @@ export function HandoverProtocolFormDialog(props: {
                 )}
               </div>
               <div className="space-y-1.5">
-                <Label>Název dokumentu *</Label>
+                <Label>Název dokumentu</Label>
                 <Input
                   value={form.documentTitle}
                   onChange={(e) => setForm((f) => ({ ...f, documentTitle: e.target.value }))}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Datum předání *</Label>
+                <Label>Datum předání</Label>
                 <Input
                   value={form.handoverDateLabel}
                   onChange={(e) => setForm((f) => ({ ...f, handoverDateLabel: e.target.value }))}
@@ -854,14 +859,14 @@ export function HandoverProtocolFormDialog(props: {
                 />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
-                <Label>Předané dílo *</Label>
+                <Label>Předané dílo</Label>
                 <Input
                   value={form.deliveredWork}
                   onChange={(e) => setForm((f) => ({ ...f, deliveredWork: e.target.value }))}
                 />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
-                <Label>Popis dokončených prací *</Label>
+                <Label>Popis dokončených prací</Label>
                 <Textarea
                   className="min-h-[80px]"
                   value={form.completedWorkDescription}
@@ -871,7 +876,7 @@ export function HandoverProtocolFormDialog(props: {
                 />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
-                <Label>Poznámka k předání *</Label>
+                <Label>Poznámka k předání</Label>
                 <Textarea
                   className="min-h-[60px]"
                   value={form.handoverNote}
@@ -1030,10 +1035,8 @@ export function HandoverProtocolFormDialog(props: {
               type="button"
               size="sm"
               variant="outline"
-              disabled={loading || !preview}
-              onClick={() => {
-                if (requirePreviewData()) setPreviewOpen(true);
-              }}
+              disabled={loading}
+              onClick={() => setPreviewOpen(true)}
             >
               <Eye className="h-4 w-4 mr-1" /> Náhled
             </Button>
@@ -1041,7 +1044,7 @@ export function HandoverProtocolFormDialog(props: {
               type="button"
               size="sm"
               variant="outline"
-              disabled={loading || pdfBusy || !preview}
+              disabled={loading || pdfBusy}
               onClick={() => void handleFormPdf()}
             >
               {pdfBusy ? (
@@ -1055,7 +1058,7 @@ export function HandoverProtocolFormDialog(props: {
               type="button"
               size="sm"
               variant="outline"
-              disabled={loading || !preview}
+              disabled={loading}
               onClick={handleFormPrint}
             >
               <Printer className="h-4 w-4 mr-1" /> Tisk
@@ -1073,7 +1076,7 @@ export function HandoverProtocolFormDialog(props: {
             <Button
               type="button"
               onClick={() => void save()}
-              disabled={saving || loading || (!hasContracts && !editProtocolId)}
+              disabled={saving || loading}
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               <span className={saving ? "ml-2" : ""}>Uložit</span>
@@ -1085,7 +1088,7 @@ export function HandoverProtocolFormDialog(props: {
       <HandoverProtocolPdfPreviewDialog
         open={previewOpen}
         onOpenChange={setPreviewOpen}
-        draft={draftPreview}
+        draft={previewOpen ? draftPreview : null}
         companyDoc={companyDoc}
         user={user}
       />

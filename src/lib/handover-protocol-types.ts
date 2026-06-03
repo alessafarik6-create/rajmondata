@@ -64,6 +64,10 @@ export type HandoverProtocolForm = {
   otherHandedItems: string;
   acceptanceText: string;
   protocolNumber: string;
+  /** Zobrazit podpisy z portálu v PDF; vypnuto = prázdné rámečky pro ruční podpis. */
+  useElectronicSignatures?: boolean;
+  /** Zobrazit sekci vad a nedodělků v PDF. */
+  showDefects?: boolean;
 };
 
 export type HandoverCustomerNote = {
@@ -165,10 +169,10 @@ export function handoverProtocolFormFromDoc(
     handedManuals: String(f?.handedManuals ?? "").trim(),
     handedKeys: String(f?.handedKeys ?? "").trim(),
     otherHandedItems: String(f?.otherHandedItems ?? "").trim(),
-    acceptanceText: String(
-      f?.acceptanceText ?? data?.acceptanceText ?? defaultHandoverAcceptanceText()
-    ).trim(),
+    acceptanceText: String(f?.acceptanceText ?? data?.acceptanceText ?? "").trim(),
     protocolNumber: String(f?.protocolNumber ?? data?.protocolNumber ?? "").trim(),
+    useElectronicSignatures: f?.useElectronicSignatures !== false,
+    showDefects: f?.showDefects !== false,
   };
 }
 
@@ -193,7 +197,9 @@ export function defaultHandoverProtocolForm(): HandoverProtocolForm {
     handedManuals: "",
     handedKeys: "",
     otherHandedItems: "",
-    acceptanceText: defaultHandoverAcceptanceText(),
+    acceptanceText: "",
     protocolNumber: "",
+    useElectronicSignatures: true,
+    showDefects: true,
   };
 }
