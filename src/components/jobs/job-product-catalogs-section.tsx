@@ -10,6 +10,7 @@ import {
   catalogIsAssignedToJob,
   type JobProductSelectionDoc,
   type ProductCatalogDoc,
+  type ProductSelectionSnapshot,
 } from "@/lib/product-catalogs";
 import { formatDateSafe } from "@/lib/date-safe";
 
@@ -148,27 +149,47 @@ export function JobProductCatalogsSection({ companyId, jobId }: Props) {
                                       categorySnapshot: cur?.category,
                                     };
                                   })
-                            ).map((p) => (
-                              <div key={p.productId} className="flex items-center gap-2 rounded border bg-white p-2">
-                                {p.productImageSnapshot ? (
+                            ).map((p) => {
+                              const row = p as ProductSelectionSnapshot;
+                              const customerNote =
+                                typeof row.customerNote === "string" ? row.customerNote.trim() : "";
+                              const hasSnapshotNotes = (sel.selectedProducts ?? []).length > 0;
+                              return (
+                              <div key={row.productId} className="flex items-center gap-2 rounded border bg-white p-2">
+                                {row.productImageSnapshot ? (
                                   // eslint-disable-next-line @next/next/no-img-element
                                   <img
-                                    src={p.productImageSnapshot}
-                                    alt={p.productNameSnapshot}
+                                    src={row.productImageSnapshot}
+                                    alt={row.productNameSnapshot}
                                     className="h-14 w-14 rounded-md object-cover"
                                   />
                                 ) : (
                                   <div className="h-14 w-14 rounded-md bg-muted" />
                                 )}
-                                <div className="min-w-0">
-                                  <p className="truncate font-medium">{p.productNameSnapshot || p.productId}</p>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate font-medium">{row.productNameSnapshot || row.productId}</p>
                                   <p className="truncate text-xs text-muted-foreground">
-                                    {p.catalogNameSnapshot || catalog.name || "Katalog"} ·{" "}
-                                    {p.categorySnapshot || "Bez kategorie"}
+                                    {row.catalogNameSnapshot || catalog.name || "Katalog"} ·{" "}
+                                    {row.categorySnapshot || "Bez kategorie"}
                                   </p>
+                                  {hasSnapshotNotes ? (
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                      {customerNote ? (
+                                        <>
+                                          Poznámka zákazníka:{" "}
+                                          <span className="whitespace-pre-wrap text-foreground">
+                                            {customerNote}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <span className="italic">Bez poznámky</span>
+                                      )}
+                                    </p>
+                                  ) : null}
                                 </div>
                               </div>
-                            ))
+                            );
+                            })
                           ) : (
                             <p className="text-xs text-muted-foreground">
                               Vybral:{" "}

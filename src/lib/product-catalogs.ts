@@ -11,6 +11,8 @@ export type ProductSelectionSnapshot = {
   catalogNameSnapshot?: string;
   categorySnapshot?: string;
   priceSnapshot?: number | null;
+  /** Volitelná poznámka zákazníka k vybrané položce. */
+  customerNote?: string | null;
 };
 
 export type ProductCatalogProduct = {

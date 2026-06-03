@@ -4,10 +4,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ExpandableDescription } from "@/components/customer/expandable-description";
 import {
+  getProductCustomerNote,
   persistCustomerCatalogSelection,
+  persistCustomerProductNote,
   computeToggledSelection,
 } from "@/lib/customer-catalog-selection";
 import { useFirestore } from "@/firebase";
@@ -53,7 +57,9 @@ export function CustomerProductDetailView({
   const firestore = useFirestore();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
   const [justSelected, setJustSelected] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
 
   const orderedProducts = useMemo(() => {
     return [...(catalog.products ?? [])]
@@ -79,7 +85,8 @@ export function CustomerProductDetailView({
   }, [product.id, gallery]);
   useEffect(() => {
     setJustSelected(false);
-  }, [product.id]);
+    setNoteDraft(getProductCustomerNote(selection?.existing, product.id));
+  }, [product.id, selection?.existing]);
 
   const isSelected = selection?.existing?.selectedProductIds?.includes(product.id) ?? false;
   const selectedUi = isSelected || justSelected;
@@ -111,6 +118,32 @@ export function CustomerProductDetailView({
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleNoteBlur = async () => {
+    if (!firestore || !jobId || !selection || selection.locked || !selectedUi) return;
+    setSavingNote(true);
+    try {
+      const result = await persistCustomerProductNote({
+        firestore,
+        companyId,
+        jobId,
+        customerUid,
+        customerId,
+        catalog,
+        productId: product.id,
+        productName: product.name || "Produkt",
+        note: noteDraft,
+        existing: selection.existing,
+      });
+      if (result.activityCreated) {
+        toast({ title: "Poznámka uložena" });
+      }
+    } catch {
+      toast({ variant: "destructive", title: "Poznámku se nepodařilo uložit" });
+    } finally {
+      setSavingNote(false);
     }
   };
 
@@ -226,7 +259,7 @@ export function CustomerProductDetailView({
           ) : null}
 
           {jobId && selection ? (
-            <div className="pt-2">
+            <div className="space-y-3 pt-2">
               {selection.locked ? (
                 <p className="text-sm font-medium text-emerald-800">
                   Výběr byl potvrzen administrátorem — změna není možná.
@@ -243,6 +276,27 @@ export function CustomerProductDetailView({
                   {saving ? "Ukládám…" : selectedUi ? "Vybráno" : "Vybrat"}
                 </Button>
               )}
+              {selectedUi ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor={`product-note-${product.id}`} className="text-sm text-neutral-800">
+                    Poznámka k produktu{" "}
+                    <span className="font-normal text-neutral-600">(volitelné)</span>
+                  </Label>
+                  <Textarea
+                    id={`product-note-${product.id}`}
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    onBlur={() => void handleNoteBlur()}
+                    disabled={selection.locked || savingNote}
+                    placeholder="Volitelná poznámka k tomuto produktu…"
+                    rows={3}
+                    className="resize-y border-neutral-300 bg-white text-black placeholder:text-neutral-500"
+                  />
+                  {savingNote ? (
+                    <p className="text-xs text-neutral-600">Ukládám poznámku…</p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : (
             <p className="text-sm text-neutral-800">

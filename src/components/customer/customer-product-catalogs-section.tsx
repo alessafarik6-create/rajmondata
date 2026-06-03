@@ -161,25 +161,31 @@ export function CustomerProductCatalogsSection({
       createdAt: existing?.createdAt ?? serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
+    const prevNote = (existing?.note ?? "").trim();
+    const nextNote = note.trim();
+    if (nextNote === prevNote) return;
+
     setSavingKey(`${catalog.id}:note`);
     try {
       await setDoc(ref, payload, { merge: true });
-      await createCustomerActivity(firestore, {
-        organizationId: companyId,
-        jobId,
-        customerId: customerId ?? null,
-        customerUserId: customerUid,
-        type: "customer_product_selection_updated",
-        title: "Poznámka k výběru",
-        message: "Zákazník doplnil poznámku k výběru produktů.",
-        createdBy: customerUid,
-        createdByRole: "customer",
-        isRead: false,
-        targetType: "catalog-selection",
-        targetId: catalog.id,
-        targetLink: `/portal/jobs/${jobId}`,
-      });
-      toast({ title: "Poznámka uložena" });
+      if (nextNote) {
+        await createCustomerActivity(firestore, {
+          organizationId: companyId,
+          jobId,
+          customerId: customerId ?? null,
+          customerUserId: customerUid,
+          type: "customer_note_added",
+          title: "Poznámka k výběru",
+          message: "Zákazník doplnil poznámku k výběru produktů.",
+          createdBy: customerUid,
+          createdByRole: "customer",
+          isRead: false,
+          targetType: "catalog-selection",
+          targetId: catalog.id,
+          targetLink: `/portal/jobs/${jobId}`,
+        });
+        toast({ title: "Poznámka uložena" });
+      }
     } finally {
       setSavingKey(null);
     }
@@ -267,7 +273,14 @@ export function CustomerProductCatalogsSection({
                         ) : (
                           <div className="h-8 w-8 rounded bg-muted" />
                         )}
-                        <span className="truncate">{sp.productNameSnapshot || sp.productId}</span>
+                        <span className="min-w-0 flex-1 truncate">
+                          {sp.productNameSnapshot || sp.productId}
+                          {typeof sp.customerNote === "string" && sp.customerNote.trim() ? (
+                            <span className="block truncate text-[10px] text-muted-foreground">
+                              {sp.customerNote.trim()}
+                            </span>
+                          ) : null}
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -316,7 +329,7 @@ export function CustomerProductCatalogsSection({
               ) : null}
               <Input
                 defaultValue={noteDefault || ""}
-                placeholder="Poznámka k výběru…"
+                placeholder="Poznámka k celému výběru (volitelné)…"
                 disabled={readOnly || isSelectionLocked}
                 onBlur={(e) => {
                   if (readOnly) return;
