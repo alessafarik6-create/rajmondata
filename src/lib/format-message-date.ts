@@ -5,6 +5,7 @@
 
 import {
   formatMessageDateFromValue,
+  isFirestoreServerTimestampPlaceholder,
   MESSAGE_DATE_UNKNOWN,
   safeTime,
 } from "@/lib/date-safe";
@@ -12,16 +13,20 @@ import { authorRoleLabelCs } from "@/lib/job-customer-chat";
 
 export { MESSAGE_DATE_UNKNOWN, formatMessageDateFromValue };
 
+/** Text u starých zpráv bez uloženého data. */
+export const MESSAGE_DATE_MISSING_LEGACY = "Datum nebylo uloženo";
+
+/** Pořadí čtení data u zpráv (bez updatedAt — může být jiné než odeslání). */
 const TIMESTAMP_KEYS = [
   "createdAt",
-  "updatedAt",
   "timestamp",
   "sentAt",
-  "created",
   "date",
-  "customerCommentAt",
   "created_at",
   "createdAtMs",
+  "created",
+  "customerCommentAt",
+  "updatedAt",
 ] as const;
 
 /** Vrátí první použitelný časový údaj ze záznamu zprávy. */
@@ -31,23 +36,40 @@ export function messageTimestampFromRecord(
   if (!message) return null;
   for (const key of TIMESTAMP_KEYS) {
     const v = message[key];
-    if (v != null && safeTime(v) > 0) return v;
+    if (v == null || isFirestoreServerTimestampPlaceholder(v)) continue;
+    if (safeTime(v) > 0) return v;
   }
-  return message.createdAt ?? message.updatedAt ?? null;
+  return null;
 }
 
 /** Datum zprávy z objektu (createdAt a legacy pole). */
 export function formatMessageDate(
   message: Record<string, unknown> | null | undefined
 ): string {
-  return formatMessageDateFromValue(messageTimestampFromRecord(message));
+  const formatted = formatMessageDateFromValue(messageTimestampFromRecord(message));
+  return formatted === MESSAGE_DATE_UNKNOWN ? MESSAGE_DATE_MISSING_LEGACY : formatted;
+}
+
+/** Číslo ms pro řazení — createdAt || timestamp || sentAt || createdAtMs … */
+export function messageTimestampMs(
+  message: Record<string, unknown> | null | undefined
+): number {
+  return safeTime(messageTimestampFromRecord(message));
+}
+
+/**
+ * Klient ihned čitelné datum (zápis spolu se serverTimestamp).
+ * Po potvrzení ze serveru stačí createdAt / timestamp / sentAt.
+ */
+export function buildMessageTimestampClientFields(): { createdAtMs: number } {
+  return { createdAtMs: Date.now() };
 }
 
 export function compareMessagesByCreatedAt(
   a: Record<string, unknown>,
   b: Record<string, unknown>
 ): number {
-  return safeTime(messageTimestampFromRecord(a)) - safeTime(messageTimestampFromRecord(b));
+  return messageTimestampMs(a) - messageTimestampMs(b);
 }
 
 function trimStr(v: unknown): string {

@@ -1,12 +1,34 @@
+/** Nevyřešený zápis `serverTimestamp()` v lokálním snapshotu — není použitelné pro zobrazení. */
+export function isFirestoreServerTimestampPlaceholder(value: unknown): boolean {
+  if (value == null || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (v._methodName === "serverTimestamp") return true;
+  const delegate = v._delegate as Record<string, unknown> | undefined;
+  if (delegate?._methodName === "serverTimestamp") return true;
+  return false;
+}
+
 export function safeTime(value: unknown): number {
   try {
     if (value == null) return 0;
+    if (isFirestoreServerTimestampPlaceholder(value)) return 0;
     if (value instanceof Date) {
       const ms = value.getTime();
       return Number.isFinite(ms) ? ms : 0;
     }
-    if (typeof value === "string" || typeof value === "number") {
-      const d = new Date(value);
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || value <= 0) return 0;
+      // sekundy vs milisekundy (Firestore seconds ~ 1e9, ms ~ 1e12)
+      return value < 1e12 ? value * 1000 : value;
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return 0;
+      const asNum = Number(trimmed);
+      if (Number.isFinite(asNum) && asNum > 0) {
+        return asNum < 1e12 ? asNum * 1000 : asNum;
+      }
+      const d = new Date(trimmed);
       const ms = d.getTime();
       return Number.isFinite(ms) ? ms : 0;
     }
@@ -23,13 +45,14 @@ export function safeTime(value: unknown): number {
         const ms = d?.getTime?.();
         return typeof ms === "number" && Number.isFinite(ms) ? ms : 0;
       }
-      const secRaw = v["seconds"];
+      const secRaw = v["seconds"] ?? v["_seconds"];
       const sec = typeof secRaw === "number" ? secRaw : Number(secRaw);
-      if (Number.isFinite(sec) && sec > 0) return sec * 1000;
-      const secLegacyRaw = v["_seconds"];
-      const secLegacy =
-        typeof secLegacyRaw === "number" ? secLegacyRaw : Number(secLegacyRaw);
-      if (Number.isFinite(secLegacy) && secLegacy > 0) return secLegacy * 1000;
+      const nanoRaw = v["nanoseconds"] ?? v["_nanoseconds"];
+      const nano = typeof nanoRaw === "number" ? nanoRaw : Number(nanoRaw);
+      if (Number.isFinite(sec) && sec > 0) {
+        const extra = Number.isFinite(nano) ? Math.floor(nano / 1e6) : 0;
+        return sec * 1000 + extra;
+      }
     }
     return 0;
   } catch {

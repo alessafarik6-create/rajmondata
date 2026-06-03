@@ -24,6 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { safeTime } from "@/lib/date-safe";
 import {
   buildMessageAuthorPersistFields,
+  buildMessageTimestampClientFields,
   compareMessagesByCreatedAt,
   formatMessageDateFromValue,
 } from "@/lib/format-message-date";
@@ -242,7 +243,10 @@ export function JobCommentsThread(props: {
           authorRole: props.authorRole,
         }),
         createdAt: serverTimestamp(),
+        timestamp: serverTimestamp(),
+        sentAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        ...buildMessageTimestampClientFields(),
         readBy: [props.userId],
         readAtBy: { [props.userId]: serverTimestamp() },
       };
