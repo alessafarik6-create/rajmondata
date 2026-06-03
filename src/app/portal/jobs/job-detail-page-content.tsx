@@ -150,10 +150,13 @@ import { getJobCustomerPortalPreviewGate } from "@/lib/job-customer-portal-previ
 import { JD } from "@/lib/job-detail-page-styles";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
 import { notifyJobActivity } from "@/lib/job-activity-notify-client";
+import { JobChatEmailNotificationsBlock } from "@/components/jobs/job-chat-email-notifications-block";
 import {
-  isJobCustomerChatEmailEnabled,
-  isJobInternalChatEmailEnabled,
-} from "@/lib/job-notification-settings";
+  buildAdminRecipientCandidates,
+  buildCustomerRecipientCandidates,
+  buildEmployeeRecipientCandidates,
+  type UserRow,
+} from "@/lib/job-notification-recipient-presets";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
 import { JobCuttingPlanExcelSection } from "@/components/jobs/job-cutting-plan-excel-section";
 import {
@@ -1487,31 +1490,77 @@ export function JobDetailPageContent({
     return String(j?.customerEmail ?? "").trim();
   }, [customer, job]);
 
-  const internalChatEmailNotify = useMemo(
-    () => isJobInternalChatEmailEnabled(job as Record<string, unknown> | null | undefined),
-    [job]
+  const companyUsersForNotifyQuery = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? query(collection(firestore, "users"), where("companyId", "==", companyId), limit(300))
+        : null,
+    [firestore, companyId]
   );
-  const customerChatEmailNotify = useMemo(
-    () => isJobCustomerChatEmailEnabled(job as Record<string, unknown> | null | undefined),
-    [job]
-  );
+  const { data: companyUsersForNotifyRaw = [] } = useCollection(companyUsersForNotifyQuery, {
+    suppressGlobalPermissionError: true,
+  });
 
-  const persistJobChatEmailNotify = useCallback(
-    async (
-      field: "internalChatEmailNotifications" | "customerChatEmailNotifications",
-      enabled: boolean
-    ) => {
-      if (!firestore || !jobRef) return;
-      try {
-        await updateDoc(jobRef, {
-          [field]: enabled,
-          updatedAt: serverTimestamp(),
-        });
-      } catch {
-        /* ignore */
-      }
-    },
-    [firestore, jobRef]
+  const jobMembersForNotifyQuery = useMemoFirebase(
+    () =>
+      firestore && companyId && jobFirestoreId
+        ? collection(firestore, "companies", companyId, "jobs", jobFirestoreId, "jobMembers")
+        : null,
+    [firestore, companyId, jobFirestoreId]
+  );
+  const { data: jobMembersForNotifyRaw = [] } = useCollection(jobMembersForNotifyQuery);
+
+  const chatNotificationPresets = useMemo(() => {
+    const usersByUid = new Map<string, UserRow>();
+    for (const row of companyUsersForNotifyRaw as Array<{ id: string } & Record<string, unknown>>) {
+      if (!row?.id) continue;
+      usersByUid.set(row.id, {
+        id: row.id,
+        email: typeof row.email === "string" ? row.email : undefined,
+        displayName: typeof row.displayName === "string" ? row.displayName : undefined,
+        name: typeof row.name === "string" ? row.name : undefined,
+        role: typeof row.role === "string" ? row.role : undefined,
+      });
+    }
+    const members = (jobMembersForNotifyRaw as Array<Record<string, unknown>>).map((m) => ({
+      authUserId: typeof m.authUserId === "string" ? m.authUserId : undefined,
+      displayName: typeof m.displayName === "string" ? m.displayName : undefined,
+      name: typeof m.name === "string" ? m.name : undefined,
+      email: typeof m.email === "string" ? m.email : undefined,
+      role: typeof m.role === "string" ? m.role : undefined,
+    }));
+    const customerName =
+      String(customer?.companyName ?? "").trim() ||
+      [String(customer?.firstName ?? "").trim(), String(customer?.lastName ?? "").trim()]
+        .filter(Boolean)
+        .join(" ") ||
+      String((job as { customerName?: string })?.customerName ?? "").trim();
+    const customerRows: Array<{ uid?: string | null; email?: string | null; name?: string | null }> =
+      [];
+    if (customerEmailForJob) {
+      customerRows.push({
+        uid: customerPortalUserDocId,
+        email: customerEmailForJob,
+        name: customerName || customerEmailForJob,
+      });
+    }
+    return {
+      employeeCandidates: buildEmployeeRecipientCandidates(members, usersByUid),
+      adminCandidates: buildAdminRecipientCandidates([...usersByUid.values()]),
+      customerCandidates: buildCustomerRecipientCandidates(customerRows),
+    };
+  }, [
+    companyUsersForNotifyRaw,
+    jobMembersForNotifyRaw,
+    customer,
+    customerEmailForJob,
+    customerPortalUserDocId,
+    job,
+  ]);
+
+  const folderCustomerNotificationCandidates = useMemo(
+    () => chatNotificationPresets?.customerCandidates ?? [],
+    [chatNotificationPresets]
   );
 
   const customerPortalPreviewGate = useMemo(
@@ -10549,14 +10598,18 @@ export function JobDetailPageContent({
                     // ignore
                   }
                 }}
-                emailNotifyEnabled={internalChatEmailNotify}
-                showEmailNotifyToggle
-                onEmailNotifyChange={(v) =>
-                  void persistJobChatEmailNotify("internalChatEmailNotifications", v)
-                }
                 wide
                 className={cn(JD.fullWidthCard, "border-gray-200")}
               />
+              {jobRef && chatNotificationPresets ? (
+                <JobChatEmailNotificationsBlock
+                  kind="internal"
+                  job={job as Record<string, unknown>}
+                  jobRef={jobRef}
+                  presets={chatNotificationPresets}
+                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4 -mt-2")}
+                />
+              ) : null}
               <JobCustomerChatThread
                 firestore={firestore}
                 companyId={companyId}
@@ -10564,11 +10617,6 @@ export function JobDetailPageContent({
                 job={job as Record<string, unknown>}
                 customer={customer ?? null}
                 customerPortalUserDocId={customerPortalUserDocId}
-                emailNotifyEnabled={customerChatEmailNotify}
-                showEmailNotifyToggle
-                onEmailNotifyChange={(v) =>
-                  void persistJobChatEmailNotify("customerChatEmailNotifications", v)
-                }
                 user={user}
                 authorName={
                   String(
@@ -10581,6 +10629,15 @@ export function JobDetailPageContent({
                 }
                 className={cn(JD.fullWidthCard, "border-gray-200")}
               />
+              {jobRef && chatNotificationPresets ? (
+                <JobChatEmailNotificationsBlock
+                  kind="customer"
+                  job={job as Record<string, unknown>}
+                  jobRef={jobRef}
+                  presets={chatNotificationPresets}
+                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4 -mt-2")}
+                />
+              ) : null}
             </>
           ) : null}
 
@@ -11046,6 +11103,7 @@ export function JobDetailPageContent({
               jobId={jobFirestoreId!}
               jobDisplayName={job?.name ?? null}
               jobRecord={job ? (job as Record<string, unknown>) : null}
+              folderCustomerNotificationCandidates={folderCustomerNotificationCandidates}
               user={user}
               canManageFolders={canManageFolders}
               photos={(photos ?? []).filter(isUsablePhotoRow) as PhotoDoc[]}

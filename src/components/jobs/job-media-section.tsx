@@ -118,6 +118,16 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { JobEmailNotificationRecipientsPanel } from "@/components/jobs/job-email-notification-recipients-panel";
+import { parseFolderEmailNotificationSettings } from "@/lib/job-notification-recipients";
+import type { JobNotificationRecipient } from "@/lib/job-notification-recipients";
+import {
+  buildAdminRecipientCandidates,
+  buildCustomerRecipientCandidates,
+  buildEmployeeRecipientCandidates,
+  mergeFolderRecipientsForVisibility,
+  type UserRow,
+} from "@/lib/job-notification-recipient-presets";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
 import { JobMediaExportNotesButtons } from "@/components/jobs/job-media-export-notes-buttons";
 import { JobImportFilesFromJobDialog } from "@/components/jobs/job-import-files-from-job-dialog";
@@ -641,6 +651,7 @@ function UserFolderBlock({
   mediaNotesAll = [],
   onMediaNoteAdded,
   authorDisplayName = "Uživatel",
+  emailPresets = null,
 }: {
   folder: JobFolderDoc;
   companyId: string;
@@ -675,8 +686,16 @@ function UserFolderBlock({
   mediaNotesAll?: JobMediaFileNoteDoc[];
   onMediaNoteAdded?: (note: JobMediaFileNoteDoc) => void;
   authorDisplayName?: string;
+  emailPresets?: {
+    employeeCandidates: JobNotificationRecipient[];
+    customerCandidates: JobNotificationRecipient[];
+  } | null;
 }) {
   const { toast } = useToast();
+  const folderEmailSettings = useMemo(
+    () => parseFolderEmailNotificationSettings(folder as Record<string, unknown>),
+    [folder]
+  );
   const actorRef = useMemoFirebase(
     () => (firestore && user ? doc(firestore, "users", user.uid) : null),
     [firestore, user?.uid]
@@ -1044,24 +1063,19 @@ function UserFolderBlock({
         )
       : canManageFolders);
 
-  const persistFolderNotifyFlags = async (patch: {
-    notifyEmployees?: boolean;
-    notifyCustomer?: boolean;
-  }) => {
+  const persistFolderEmailNotifications = async (
+    enabled: boolean,
+    recipients: JobNotificationRecipient[]
+  ) => {
     if (!firestore || folderPermBusy) return;
     setFolderPermBusy(true);
     try {
       await updateDoc(
-        doc(
-          firestore,
-          "companies",
-          companyId,
-          "jobs",
-          jobId,
-          "folders",
-          folder.id
-        ),
-        patch
+        doc(firestore, "companies", companyId, "jobs", jobId, "folders", folder.id),
+        {
+          emailNotificationsEnabled: enabled,
+          notificationRecipients: recipients,
+        }
       );
     } catch (e) {
       console.error(e);
@@ -1079,7 +1093,6 @@ function UserFolderBlock({
     employeeVisible: boolean;
     allowEmployeeUpload: boolean;
     employeeCanEdit: boolean;
-    notifyEmployees?: boolean;
   }) => {
     if (!firestore || folderPermBusy) return;
     setFolderPermBusy(true);
@@ -1098,11 +1111,21 @@ function UserFolderBlock({
           employeeVisible: patch.employeeVisible,
           allowEmployeeUpload: patch.allowEmployeeUpload,
           employeeCanEdit: patch.employeeCanEdit,
-          ...(patch.notifyEmployees !== undefined
-            ? { notifyEmployees: patch.notifyEmployees }
-            : {}),
-          /** Legacy (zpětná kompatibilita během přechodu) */
           employeeUploadAllowed: patch.allowEmployeeUpload,
+          ...(emailPresets
+            ? {
+                notificationRecipients: mergeFolderRecipientsForVisibility(
+                  folderEmailSettings.recipients,
+                  {
+                    employeeVisible: patch.employeeVisible,
+                    customerVisible: folder.customerVisible === true,
+                    internalOnly: folder.internalOnly === true,
+                    employeeCandidates: emailPresets.employeeCandidates,
+                    customerCandidates: emailPresets.customerCandidates,
+                  }
+                ),
+              }
+            : {}),
         }
       );
       if (patch.employeeVisible) {
@@ -1132,7 +1155,6 @@ function UserFolderBlock({
     customerVisible: boolean;
     customerAnnotatable: boolean;
     internalOnly: boolean;
-    notifyCustomer?: boolean;
   }) => {
     if (!firestore || folderPermBusy) return;
     setFolderPermBusy(true);
@@ -1151,8 +1173,19 @@ function UserFolderBlock({
           customerVisible: patch.customerVisible,
           customerAnnotatable: patch.customerAnnotatable,
           internalOnly: patch.internalOnly,
-          ...(patch.notifyCustomer !== undefined
-            ? { notifyCustomer: patch.notifyCustomer }
+          ...(emailPresets
+            ? {
+                notificationRecipients: mergeFolderRecipientsForVisibility(
+                  folderEmailSettings.recipients,
+                  {
+                    employeeVisible: folder.employeeVisible === true,
+                    customerVisible: patch.customerVisible,
+                    internalOnly: patch.internalOnly,
+                    employeeCandidates: emailPresets.employeeCandidates,
+                    customerCandidates: emailPresets.customerCandidates,
+                  }
+                ),
+              }
             : {}),
         }
       );
@@ -2261,7 +2294,6 @@ function UserFolderBlock({
                               (folder as { employeeUploadAllowed?: unknown }).employeeUploadAllowed === true)
                           : false,
                         employeeCanEdit: v ? folder.employeeCanEdit === true : false,
-                        notifyEmployees: v ? folder.notifyEmployees === true : false,
                       })
                     }
                   />
@@ -2319,27 +2351,10 @@ function UserFolderBlock({
                     Zaměstnanec může upravovat
                   </Label>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    id={`emp-notify-${folder.id}`}
-                    checked={folder.notifyEmployees === true}
-                    disabled={folderPermBusy || folder.employeeVisible !== true}
-                    onCheckedChange={(v) =>
-                      void persistFolderNotifyFlags({ notifyEmployees: v })
-                    }
-                  />
-                  <Label
-                    htmlFor={`emp-notify-${folder.id}`}
-                    className="cursor-pointer text-sm font-normal"
-                  >
-                    Posílat notifikace zaměstnancům
-                  </Label>
-                </div>
               </div>
               <p className="text-[11px] leading-snug text-muted-foreground">
-                Bez zaškrtnutí „Viditelné zaměstnanci“ je složka jen pro interní
-                přístup (výchozí u starších dat). E-mail zaměstnancům jen při zapnutých
-                obou přepínačích viditelnosti a notifikací.
+                Bez zaškrtnutí „Viditelné zaměstnanci“ je složka jen pro interní přístup
+                (výchozí u starších dat).
               </p>
             </div>
           ) : null}
@@ -2359,7 +2374,6 @@ function UserFolderBlock({
                         customerVisible: v,
                         customerAnnotatable: v ? folder.customerAnnotatable === true : false,
                         internalOnly: folder.internalOnly === true,
-                        notifyCustomer: v ? folder.notifyCustomer === true : false,
                       })
                     }
                   />
@@ -2396,7 +2410,6 @@ function UserFolderBlock({
                         customerVisible: v ? false : folder.customerVisible === true,
                         customerAnnotatable: v ? false : folder.customerAnnotatable === true,
                         internalOnly: v,
-                        notifyCustomer: v ? false : folder.notifyCustomer === true,
                       })
                     }
                   />
@@ -2404,33 +2417,36 @@ function UserFolderBlock({
                     Interní pouze pro firmu
                   </Label>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    id={`cust-notify-${folder.id}`}
-                    checked={folder.notifyCustomer === true}
-                    disabled={
-                      folderPermBusy ||
-                      folder.customerVisible !== true ||
-                      folder.internalOnly === true
-                    }
-                    onCheckedChange={(v) =>
-                      void persistFolderNotifyFlags({ notifyCustomer: v })
-                    }
-                  />
-                  <Label
-                    htmlFor={`cust-notify-${folder.id}`}
-                    className="cursor-pointer text-sm font-normal"
-                  >
-                    Posílat notifikace zákazníkovi
-                  </Label>
-                </div>
               </div>
               <p className="text-[11px] leading-snug text-muted-foreground">
-                Bez „Viditelné zákazníkovi“ zákazník složku neuvidí. E-mail zákazníkovi jen při zapnutých
-                obou přepínačích viditelnosti a notifikací. Účetní složky typu Doklady se v klientském portálu
-                nezobrazují.
+                Bez „Viditelné zákazníkovi“ zákazník složku neuvidí. Účetní složky typu Doklady se v
+                klientském portálu nezobrazují.
               </p>
             </div>
+          ) : null}
+          {canManageFolders && !isEmployeeLimited && !isCustomerScope && emailPresets ? (
+            <JobEmailNotificationRecipientsPanel
+              enabled={folderEmailSettings.enabled}
+              recipients={folderEmailSettings.recipients}
+              disabled={folderPermBusy}
+              onEnabledChange={(v) => {
+                let rows = folderEmailSettings.recipients;
+                if (v && !rows.length && emailPresets) {
+                  rows = mergeFolderRecipientsForVisibility([], {
+                    employeeVisible: folder.employeeVisible === true,
+                    customerVisible: folder.customerVisible === true,
+                    internalOnly: folder.internalOnly === true,
+                    employeeCandidates: emailPresets.employeeCandidates,
+                    customerCandidates: emailPresets.customerCandidates,
+                  });
+                }
+                void persistFolderEmailNotifications(v, rows);
+              }}
+              onRecipientsChange={(rows) =>
+                void persistFolderEmailNotifications(folderEmailSettings.enabled, rows)
+              }
+              className="mt-2"
+            />
           ) : null}
           {showFolderUpload ? (
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -3240,6 +3256,8 @@ export type JobMediaSectionProps = {
   showLegacyPhotosForEmployee?: boolean;
   /** Dokument zakázky z Firestore — pro určení zákazníka u schvalování médií. */
   jobRecord?: Record<string, unknown> | null;
+  /** Předvyplnění zákazníka v notifikacích složek (z detailu zakázky). */
+  folderCustomerNotificationCandidates?: JobNotificationRecipient[] | null;
   /** Deep link z e-mailu (?photoComment=…) — otevře chat u souboru v příslušné složce. */
   photoCommentDeepLink?: {
     folderId: string;
@@ -3268,6 +3286,7 @@ export function JobMediaSection({
   jobRecord = null,
   photoCommentDeepLink = null,
   onPhotoCommentDeepLinkConsumed,
+  folderCustomerNotificationCandidates = null,
 }: JobMediaSectionProps) {
   /** Skrýt nahrávání / mazání / interní akce — zaměstnanec i zákazník. */
   const hideJobMediaAdminUi =
@@ -3280,6 +3299,73 @@ export function JobMediaSection({
     [firestore, user?.uid]
   );
   const { data: actorProfile } = useDoc(actorRef);
+
+  const jobMembersRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId && canManageFolders && mediaScope === "full"
+        ? collection(firestore, "companies", companyId, "jobs", jobId, "jobMembers")
+        : null,
+    [firestore, companyId, jobId, canManageFolders, mediaScope]
+  );
+  const { data: jobMembersRaw = [] } = useCollection(jobMembersRef);
+
+  const companyUsersRef = useMemoFirebase(
+    () =>
+      firestore && companyId && canManageFolders && mediaScope === "full"
+        ? query(collection(firestore, "users"), where("companyId", "==", companyId), limit(300))
+        : null,
+    [firestore, companyId, canManageFolders, mediaScope]
+  );
+  const { data: companyUsersRaw = [] } = useCollection(companyUsersRef, {
+    suppressGlobalPermissionError: true,
+  });
+
+  const emailPresets = useMemo(() => {
+    if (!canManageFolders || mediaScope !== "full") return null;
+    const usersByUid = new Map<string, UserRow>();
+    for (const row of companyUsersRaw as Array<{ id: string } & Record<string, unknown>>) {
+      if (!row?.id) continue;
+      usersByUid.set(row.id, {
+        id: row.id,
+        email: typeof row.email === "string" ? row.email : undefined,
+        displayName: typeof row.displayName === "string" ? row.displayName : undefined,
+        name: typeof row.name === "string" ? row.name : undefined,
+        role: typeof row.role === "string" ? row.role : undefined,
+      });
+    }
+    const members = (jobMembersRaw as Array<Record<string, unknown>>).map((m) => ({
+      authUserId: typeof m.authUserId === "string" ? m.authUserId : undefined,
+      displayName: typeof m.displayName === "string" ? m.displayName : undefined,
+      name: typeof m.name === "string" ? m.name : undefined,
+      email: typeof m.email === "string" ? m.email : undefined,
+      role: typeof m.role === "string" ? m.role : undefined,
+    }));
+    const employeeCandidates = buildEmployeeRecipientCandidates(members, usersByUid);
+    const adminCandidates = buildAdminRecipientCandidates([...usersByUid.values()]);
+    const customerCandidates =
+      folderCustomerNotificationCandidates?.length
+        ? folderCustomerNotificationCandidates
+        : buildCustomerRecipientCandidates([]);
+    return {
+      employeeCandidates,
+      customerCandidates,
+      adminCandidates,
+    };
+  }, [
+    canManageFolders,
+    mediaScope,
+    jobMembersRaw,
+    companyUsersRaw,
+    folderCustomerNotificationCandidates,
+  ]);
+
+  const folderEmailPresetsForBlocks = useMemo(() => {
+    if (!emailPresets) return null;
+    return {
+      employeeCandidates: emailPresets.employeeCandidates,
+      customerCandidates: emailPresets.customerCandidates,
+    };
+  }, [emailPresets]);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderType, setNewFolderType] = useState<JobFolderType>("files");
@@ -4686,6 +4772,7 @@ export function JobMediaSection({
                           mediaNotesAll={mediaNotesAll}
                           onMediaNoteAdded={handleMediaNoteAdded}
                           authorDisplayName={authorDisplayName}
+                          emailPresets={folderEmailPresetsForBlocks}
                         />
                       ))}
                     </div>

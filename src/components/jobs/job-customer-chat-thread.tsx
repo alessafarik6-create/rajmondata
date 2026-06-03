@@ -21,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -59,9 +58,6 @@ type Props = {
   /** CRM zákazník z detailu zakázky (volitelné — urychlí rozlišení). */
   customer?: Record<string, unknown> | null;
   customerPortalUserDocId?: string | null;
-  emailNotifyEnabled?: boolean;
-  showEmailNotifyToggle?: boolean;
-  onEmailNotifyChange?: (enabled: boolean) => void;
 };
 
 export function JobCustomerChatThread({
@@ -74,9 +70,6 @@ export function JobCustomerChatThread({
   className,
   customer = null,
   customerPortalUserDocId = null,
-  emailNotifyEnabled = false,
-  showEmailNotifyToggle = false,
-  onEmailNotifyChange,
 }: Props) {
   const { toast } = useToast();
   const fs = firestore as ReturnType<typeof import("firebase/firestore").getFirestore> | null;
@@ -649,21 +642,6 @@ export function JobCustomerChatThread({
             Nepřečtené zprávy od zákazníka:{" "}
             {(conversation as { unreadForAdminCount?: number }).unreadForAdminCount}
           </p>
-        ) : null}
-        {showEmailNotifyToggle && onEmailNotifyChange ? (
-          <div className="flex items-center gap-2 border-t border-border pt-3">
-            <Switch
-              id={`job-customer-chat-email-${jobId}`}
-              checked={emailNotifyEnabled === true}
-              onCheckedChange={(v) => onEmailNotifyChange(v)}
-            />
-            <Label
-              htmlFor={`job-customer-chat-email-${jobId}`}
-              className="cursor-pointer text-sm font-normal text-muted-foreground"
-            >
-              Posílat e-mailové notifikace
-            </Label>
-          </div>
         ) : null}
       </CardContent>
     </Card>

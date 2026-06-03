@@ -18,8 +18,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { ExpandableNoteText } from "@/components/jobs/job-note-text-block";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -97,10 +95,6 @@ export function JobCommentsThread(props: {
   /** Plná šířka detailu zakázky — bez úzkého scroll panelu */
   wide?: boolean;
   className?: string;
-  /** Přepínač e-mailových notifikací (ukládá se na zakázku). */
-  emailNotifyEnabled?: boolean;
-  showEmailNotifyToggle?: boolean;
-  onEmailNotifyChange?: (enabled: boolean) => void;
   /** zavolat po odeslání (např. notifikace) */
   onAfterSend?: (comment: {
     id: string;
@@ -421,21 +415,6 @@ export function JobCommentsThread(props: {
             Nemáte oprávnění odesílat zprávy k této zakázce.
           </p>
         )}
-        {props.showEmailNotifyToggle && props.onEmailNotifyChange ? (
-          <div className="flex items-center gap-2 border-t border-border pt-3">
-            <Switch
-              id={`job-internal-chat-email-${props.jobId}`}
-              checked={props.emailNotifyEnabled === true}
-              onCheckedChange={(v) => props.onEmailNotifyChange?.(v)}
-            />
-            <Label
-              htmlFor={`job-internal-chat-email-${props.jobId}`}
-              className="cursor-pointer text-sm font-normal text-muted-foreground"
-            >
-              Posílat e-mailové notifikace
-            </Label>
-          </div>
-        ) : null}
       </CardContent>
     </Card>
   );
