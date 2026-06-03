@@ -3,6 +3,7 @@ import { createCustomerActivity } from "@/lib/customer-activity";
 import type {
   JobProductSelectionDoc,
   ProductCatalogDoc,
+  ProductCatalogProduct,
   ProductSelectionSnapshot,
 } from "@/lib/product-catalogs";
 import {
@@ -11,6 +12,30 @@ import {
   getAssignedProductCatalogsForJob,
   isProductSelectionSatisfiedForUid,
 } from "@/lib/customer-job-tasks";
+
+function productDisplayName(
+  catalog: { id: string } & Partial<ProductCatalogDoc>,
+  productId: string,
+  existing?: (JobProductSelectionDoc & { id?: string }) | undefined
+): string {
+  const p = (catalog.products ?? []).find((x) => x.id === productId);
+  if (p?.name?.trim()) return p.name.trim();
+  const snap = (existing?.selectedProducts ?? []).find((s) => s.productId === productId);
+  return (
+    snap?.productName?.trim() ||
+    snap?.productNameSnapshot?.trim() ||
+    productId
+  );
+}
+
+function selectionDiff(prev: string[], next: string[]): { added: string[]; removed: string[] } {
+  const prevSet = new Set(prev);
+  const nextSet = new Set(next);
+  return {
+    added: next.filter((id) => !prevSet.has(id)),
+    removed: prev.filter((id) => !nextSet.has(id)),
+  };
+}
 
 export function getProductCustomerNote(
   existing: (JobProductSelectionDoc & { id?: string }) | undefined,
@@ -23,7 +48,7 @@ export function getProductCustomerNote(
 export function buildProductSelectionSnapshots(
   catalog: { id: string } & Partial<ProductCatalogDoc>,
   selectedIds: string[],
-  existing?: (JobProductSelectionDoc & { id: string }) | undefined,
+  existing?: (JobProductSelectionDoc & { id?: string }) | undefined,
   noteOverrides?: Record<string, string | null | undefined>
 ): ProductSelectionSnapshot[] {
   const products = [...(catalog.products ?? [])];
@@ -31,30 +56,51 @@ export function buildProductSelectionSnapshots(
   const existingById = new Map(
     (existing?.selectedProducts ?? []).map((s) => [s.productId, s] as const)
   );
+  const nowIso = new Date().toISOString();
+
   return selectedIds.map((id) => {
     const p = byId.get(id);
     const prev = existingById.get(id);
-    const out: ProductSelectionSnapshot = {
-      productId: id,
-      productNameSnapshot: p?.name || prev?.productNameSnapshot || id,
-    };
-    const image = p?.imageUrl || prev?.productImageSnapshot;
-    const catalogName = catalog.name || prev?.catalogNameSnapshot || "Katalog";
-    const category = p?.category || prev?.categorySnapshot;
+    const name = p?.name?.trim() || prev?.productName?.trim() || prev?.productNameSnapshot?.trim() || id;
+    const image = p?.imageUrl || p?.gallery?.[0] || prev?.imageUrl || prev?.productImageSnapshot;
+    const category = p?.category?.trim() || prev?.categoryId || prev?.categorySnapshot || "";
+    const catalogName = catalog.name?.trim() || prev?.catalogNameSnapshot || "Katalog";
     const price =
       typeof p?.price === "number" ? p.price : prev?.priceSnapshot ?? null;
-    if (image) out.productImageSnapshot = image;
-    if (catalogName) out.catalogNameSnapshot = catalogName;
-    if (category) out.categorySnapshot = category;
-    if (price != null) out.priceSnapshot = price;
 
     const override = noteOverrides?.[id];
     const customerNote =
       override !== undefined
-        ? (typeof override === "string" ? override.trim() : "")
+        ? typeof override === "string"
+          ? override.trim()
+          : ""
         : typeof prev?.customerNote === "string"
           ? prev.customerNote.trim()
           : "";
+
+    const keptSelectedAt = prev?.selectedAt;
+    const selectedAt =
+      keptSelectedAt != null && keptSelectedAt !== ""
+        ? keptSelectedAt
+        : nowIso;
+
+    const out: ProductSelectionSnapshot = {
+      productId: id,
+      productNameSnapshot: name,
+      productName: name,
+      catalogId: catalog.id,
+      catalogNameSnapshot: catalogName,
+      selectedAt,
+    };
+    if (image) {
+      out.productImageSnapshot = image;
+      out.imageUrl = image;
+    }
+    if (category) {
+      out.categorySnapshot = category;
+      out.categoryId = category;
+    }
+    if (price != null) out.priceSnapshot = price;
     if (customerNote) out.customerNote = customerNote;
 
     return out;
@@ -114,6 +160,59 @@ async function refreshProductSelectionTasks(
   }
 }
 
+async function logSelectionToggleActivities(params: {
+  firestore: Firestore;
+  companyId: string;
+  jobId: string;
+  customerId: string | null;
+  customerUid: string;
+  catalog: { id: string } & Partial<ProductCatalogDoc>;
+  existing?: (JobProductSelectionDoc & { id: string }) | undefined;
+  prevIds: string[];
+  nextIds: string[];
+}): Promise<void> {
+  const { added, removed } = selectionDiff(params.prevIds, params.nextIds);
+  const catalogLabel = params.catalog.name?.trim() || "katalog";
+
+  for (const productId of added) {
+    const name = productDisplayName(params.catalog, productId, params.existing);
+    await createCustomerActivity(params.firestore, {
+      organizationId: params.companyId,
+      jobId: params.jobId,
+      customerId: params.customerId,
+      customerUserId: params.customerUid,
+      type: "customer_product_selected",
+      title: "Produkt vybrán",
+      message: `Zákazník vybral produkt „${name}“ v katalogu ${catalogLabel}.`,
+      createdBy: params.customerUid,
+      createdByRole: "customer",
+      isRead: false,
+      targetType: "catalog-selection",
+      targetId: params.catalog.id,
+      targetLink: `/portal/jobs/${params.jobId}`,
+    });
+  }
+
+  for (const productId of removed) {
+    const name = productDisplayName(params.catalog, productId, params.existing);
+    await createCustomerActivity(params.firestore, {
+      organizationId: params.companyId,
+      jobId: params.jobId,
+      customerId: params.customerId,
+      customerUserId: params.customerUid,
+      type: "customer_product_deselected",
+      title: "Produkt odznačen",
+      message: `Zákazník odznačil produkt „${name}“ v katalogu ${catalogLabel}.`,
+      createdBy: params.customerUid,
+      createdByRole: "customer",
+      isRead: false,
+      targetType: "catalog-selection",
+      targetId: params.catalog.id,
+      targetLink: `/portal/jobs/${params.jobId}`,
+    });
+  }
+}
+
 export async function persistCustomerCatalogSelection(
   params: PersistSelectionParams
 ): Promise<void> {
@@ -127,6 +226,7 @@ export async function persistCustomerCatalogSelection(
     selectedProductIds,
     existing,
   } = params;
+  const prevIds = existing?.selectedProductIds ?? [];
   const docId = `${catalog.id}__${customerUid}`;
   const ref = doc(
     firestore,
@@ -155,6 +255,17 @@ export async function persistCustomerCatalogSelection(
     updatedAt: serverTimestamp(),
   };
   await writeSelectionDoc(ref, payload);
+  await logSelectionToggleActivities({
+    firestore,
+    companyId,
+    jobId,
+    customerId,
+    customerUid,
+    catalog,
+    existing,
+    prevIds,
+    nextIds: selectedProductIds,
+  });
   await refreshProductSelectionTasks(firestore, companyId, jobId, customerUid, customerId);
 }
 
@@ -171,7 +282,7 @@ export type PersistProductNoteParams = {
   existing?: (JobProductSelectionDoc & { id: string }) | undefined;
 };
 
-/** Uloží poznámku k vybranému produktu; aktivitu vytvoří jen při neprázdné změněném textu. */
+/** Uloží poznámku k vybranému produktu; aktivitu vytvoří jen při změně textu (ne prázdná→prázdná). */
 export async function persistCustomerProductNote(
   params: PersistProductNoteParams
 ): Promise<{ saved: boolean; activityCreated: boolean }> {
@@ -231,7 +342,9 @@ export async function persistCustomerProductNote(
   };
   await writeSelectionDoc(ref, payload);
 
-  if (!trimmed) {
+  const hadChange = trimmed !== prev;
+  const shouldNotify = hadChange && (trimmed.length > 0 || prev.length > 0);
+  if (!shouldNotify) {
     return { saved: true, activityCreated: false };
   }
 
@@ -240,9 +353,11 @@ export async function persistCustomerProductNote(
     jobId,
     customerId: customerId ?? null,
     customerUserId: customerUid,
-    type: "customer_note_added",
-    title: "Poznámka k produktu",
-    message: `Zákazník doplnil poznámku k produktu „${productName || productId}“ v katalogu ${catalog.name || "katalog"}.`,
+    type: "customer_product_selection_updated",
+    title: trimmed ? "Poznámka k produktu" : "Poznámka odstraněna",
+    message: trimmed
+      ? `Zákazník ${prev ? "upravil" : "doplnil"} poznámku k produktu „${productName || productId}“ v katalogu ${catalog.name || "katalog"}.`
+      : `Zákazník odstranil poznámku u produktu „${productName || productId}“ v katalogu ${catalog.name || "katalog"}.`,
     createdBy: customerUid,
     createdByRole: "customer",
     isRead: false,
@@ -271,4 +386,11 @@ export function computeToggledSelection(
     prev.add(productId);
   }
   return Array.from(prev);
+}
+
+export function findCatalogProduct(
+  catalog: { id: string } & Partial<ProductCatalogDoc>,
+  productId: string
+): ProductCatalogProduct | undefined {
+  return (catalog.products ?? []).find((p) => p.id === productId);
 }

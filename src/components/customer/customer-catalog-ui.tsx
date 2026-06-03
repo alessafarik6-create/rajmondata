@@ -84,6 +84,8 @@ type ProductRowProps = {
   className?: string;
   trailing?: React.ReactNode;
   navigationDisabled?: boolean;
+  /** Zvýraznění vybraného produktu v katalogu zakázky. */
+  selected?: boolean;
 };
 
 /** Kompaktní řádek produktu: miniatura, název, krátký popis. */
@@ -93,6 +95,7 @@ export function CustomerProductCompactRow({
   className,
   trailing,
   navigationDisabled,
+  selected = false,
 }: ProductRowProps) {
   const img = product.imageUrl || product.gallery?.[0];
   const sub = productSubtitleForCustomerList(product);
@@ -128,6 +131,7 @@ export function CustomerProductCompactRow({
     <div
       className={cn(
         "flex gap-3 rounded-lg border border-slate-200 bg-card p-2 transition-colors dark:border-slate-700",
+        selected && "border-primary/50 bg-primary/5 ring-2 ring-primary/25",
         className
       )}
     >

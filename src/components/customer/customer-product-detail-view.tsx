@@ -58,7 +58,6 @@ export function CustomerProductDetailView({
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
-  const [justSelected, setJustSelected] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
 
   const orderedProducts = useMemo(() => {
@@ -84,23 +83,20 @@ export function CustomerProductDetailView({
     setMainImage((prev) => (prev && gallery.includes(prev) ? prev : gallery[0] ?? ""));
   }, [product.id, gallery]);
   useEffect(() => {
-    setJustSelected(false);
     setNoteDraft(getProductCustomerNote(selection?.existing, product.id));
   }, [product.id, selection?.existing]);
 
   const isSelected = selection?.existing?.selectedProductIds?.includes(product.id) ?? false;
-  const selectedUi = isSelected || justSelected;
 
   const handleToggle = async () => {
     if (!firestore || !jobId || !selection || selection.locked) return;
-    if (selectedUi) {
-      toast({
-        title: "Produkt je již vybraný",
-      });
-      return;
-    }
-    const nextIds = computeToggledSelection(catalog, product.id, selection.existing?.selectedProductIds ?? []);
+    const prevIds = selection.existing?.selectedProductIds ?? [];
+    const wasSelected = prevIds.includes(product.id);
+    const nextIds = computeToggledSelection(catalog, product.id, prevIds);
     setSaving(true);
+    if (wasSelected) {
+      setNoteDraft("");
+    }
     try {
       await persistCustomerCatalogSelection({
         firestore,
@@ -112,8 +108,12 @@ export function CustomerProductDetailView({
         selectedProductIds: nextIds,
         existing: selection.existing,
       });
-      toast({ title: "Produkt byl uložen k zakázce" });
-      setJustSelected(true);
+      toast({
+        title: wasSelected ? "Produkt odznačen" : "Produkt vybrán",
+        description: wasSelected
+          ? "Položka byla odebrána z výběru."
+          : "Položka byla přidána do výběru.",
+      });
     } catch {
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
     } finally {
@@ -122,7 +122,7 @@ export function CustomerProductDetailView({
   };
 
   const handleNoteBlur = async () => {
-    if (!firestore || !jobId || !selection || selection.locked || !selectedUi) return;
+    if (!firestore || !jobId || !selection || selection.locked || !isSelected) return;
     setSavingNote(true);
     try {
       const result = await persistCustomerProductNote({
@@ -270,13 +270,13 @@ export function CustomerProductDetailView({
                   size="lg"
                   className="min-h-12 w-full sm:w-auto"
                   disabled={saving}
-                  variant={selectedUi ? "outlineLight" : "default"}
+                  variant={isSelected ? "outlineLight" : "default"}
                   onClick={() => void handleToggle()}
                 >
-                  {saving ? "Ukládám…" : selectedUi ? "Vybráno" : "Vybrat"}
+                  {saving ? "Ukládám…" : isSelected ? "Vybráno" : "Vybrat"}
                 </Button>
               )}
-              {selectedUi ? (
+              {isSelected ? (
                 <div className="space-y-1.5">
                   <Label htmlFor={`product-note-${product.id}`} className="text-sm text-neutral-800">
                     Poznámka k produktu{" "}
@@ -289,8 +289,8 @@ export function CustomerProductDetailView({
                     onBlur={() => void handleNoteBlur()}
                     disabled={selection.locked || savingNote}
                     placeholder="Volitelná poznámka k tomuto produktu…"
-                    rows={3}
-                    className="resize-y border-neutral-300 bg-white text-black placeholder:text-neutral-500"
+                    rows={4}
+                    className="min-h-[5.5rem] resize-y border-neutral-300 bg-white text-base text-black placeholder:text-neutral-500 sm:text-sm"
                   />
                   {savingNote ? (
                     <p className="text-xs text-neutral-600">Ukládám poznámku…</p>

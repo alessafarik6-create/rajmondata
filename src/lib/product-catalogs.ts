@@ -7,10 +7,17 @@ export type ProductCatalogSelectionStatus =
 export type ProductSelectionSnapshot = {
   productId: string;
   productNameSnapshot: string;
+  /** Kanonické pole pro export / admin (duplicitně k productNameSnapshot). */
+  productName?: string;
   productImageSnapshot?: string;
+  imageUrl?: string;
+  catalogId?: string;
   catalogNameSnapshot?: string;
   categorySnapshot?: string;
+  categoryId?: string;
   priceSnapshot?: number | null;
+  /** ISO řetězec nebo Firestore timestamp — čas výběru položky. */
+  selectedAt?: string | unknown;
   /** Volitelná poznámka zákazníka k vybrané položce. */
   customerNote?: string | null;
 };

@@ -153,7 +153,7 @@ export function JobProductCatalogsSection({ companyId, jobId }: Props) {
                               const row = p as ProductSelectionSnapshot;
                               const customerNote =
                                 typeof row.customerNote === "string" ? row.customerNote.trim() : "";
-                              const hasSnapshotNotes = (sel.selectedProducts ?? []).length > 0;
+                              const showPerProductNotes = (sel.selectedProducts ?? []).length > 0;
                               return (
                               <div key={row.productId} className="flex items-center gap-2 rounded border bg-white p-2">
                                 {row.productImageSnapshot ? (
@@ -167,12 +167,14 @@ export function JobProductCatalogsSection({ companyId, jobId }: Props) {
                                   <div className="h-14 w-14 rounded-md bg-muted" />
                                 )}
                                 <div className="min-w-0 flex-1">
-                                  <p className="truncate font-medium">{row.productNameSnapshot || row.productId}</p>
+                                  <p className="truncate font-medium">
+                                    {row.productName || row.productNameSnapshot || row.productId}
+                                  </p>
                                   <p className="truncate text-xs text-muted-foreground">
                                     {row.catalogNameSnapshot || catalog.name || "Katalog"} ·{" "}
-                                    {row.categorySnapshot || "Bez kategorie"}
+                                    {row.categoryId || row.categorySnapshot || "Bez kategorie"}
                                   </p>
-                                  {hasSnapshotNotes ? (
+                                  {showPerProductNotes ? (
                                     <p className="mt-1 text-xs text-muted-foreground">
                                       {customerNote ? (
                                         <>

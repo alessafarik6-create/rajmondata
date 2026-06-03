@@ -2,6 +2,7 @@ import { addDoc, collection, serverTimestamp, type Firestore } from "firebase/fi
 
 export type CustomerActivityType =
   | "customer_product_selected"
+  | "customer_product_deselected"
   | "customer_product_selection_updated"
   | "customer_annotation_created"
   | "customer_annotation_updated"

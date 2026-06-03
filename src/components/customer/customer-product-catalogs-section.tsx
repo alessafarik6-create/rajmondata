@@ -7,11 +7,17 @@ import { useCollection, useFirestore, useMemoFirebase } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { createCustomerActivity } from "@/lib/customer-activity";
 import {
   buildProductSelectionSnapshots,
+  computeToggledSelection,
+  getProductCustomerNote,
   persistCustomerCatalogSelection,
+  persistCustomerProductNote,
 } from "@/lib/customer-catalog-selection";
 import {
   catalogIsAssignedToCustomer,
@@ -43,6 +49,7 @@ export function CustomerProductCatalogsSection({
   const { toast } = useToast();
   const firestore = useFirestore();
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const catalogsRef = useMemoFirebase(
     () => (firestore && companyId ? collection(firestore, "companies", companyId, "product_catalogs") : null),
     [firestore, companyId]
@@ -92,14 +99,18 @@ export function CustomerProductCatalogsSection({
       });
       return;
     }
-    if ((existing?.selectedProductIds ?? []).includes(productId)) {
-      toast({ title: "Produkt je již vybraný" });
-      return;
-    }
-    const mode = catalog.selectionMode === "single" ? "single" : "multi";
     const prevIds = existing?.selectedProductIds ?? [];
-    const nextIds = mode === "single" ? [productId] : [...new Set([...prevIds, productId])];
+    const nextIds = computeToggledSelection(catalog, productId, prevIds);
+    const wasSelected = prevIds.includes(productId);
     setSavingKey(`${catalog.id}:${productId}`);
+    const noteKey = `${catalog.id}:${productId}`;
+    if (wasSelected) {
+      setNoteDrafts((d) => {
+        const next = { ...d };
+        delete next[noteKey];
+        return next;
+      });
+    }
     try {
       await persistCustomerCatalogSelection({
         firestore,
@@ -111,9 +122,52 @@ export function CustomerProductCatalogsSection({
         selectedProductIds: nextIds,
         existing,
       });
-      toast({ title: "Výběr uložen", description: "Vaše volba byla uložena." });
+      toast({
+        title: wasSelected ? "Produkt odznačen" : "Produkt vybrán",
+        description: wasSelected
+          ? "Položka byla odebrána z výběru."
+          : "Položka byla přidána do výběru.",
+      });
     } catch {
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const saveProductNote = async (
+    catalog: { id: string } & Partial<ProductCatalogDoc>,
+    productId: string,
+    productName: string,
+    note: string
+  ) => {
+    if (readOnly || !firestore) return;
+    const existing = selectionMap.get(catalog.id);
+    if (existing?.status === "confirmed") {
+      toast({ variant: "destructive", title: "Výběr je uzamčen a nelze ho změnit" });
+      return;
+    }
+    if (!(existing?.selectedProductIds ?? []).includes(productId)) return;
+    const noteKey = `${catalog.id}:${productId}`;
+    setSavingKey(`${noteKey}:note`);
+    try {
+      const result = await persistCustomerProductNote({
+        firestore,
+        companyId,
+        jobId,
+        customerUid,
+        customerId: customerId ?? null,
+        catalog,
+        productId,
+        productName,
+        note,
+        existing,
+      });
+      if (result.saved && result.activityCreated) {
+        toast({ title: "Poznámka uložena" });
+      }
+    } catch {
+      toast({ variant: "destructive", title: "Poznámku se nepodařilo uložit" });
     } finally {
       setSavingKey(null);
     }
@@ -296,11 +350,17 @@ export function CustomerProductCatalogsSection({
                 {visibleProducts.map((p) => {
                   const isSelected = selected.has(p.id);
                   const productHref = `${catalogHref}/products/${p.id}`;
+                  const noteKey = `${catalog.id}:${p.id}`;
+                  const existing = selectionMap.get(catalog.id);
+                  const savedNote = getProductCustomerNote(existing, p.id);
+                  const noteValue =
+                    noteDrafts[noteKey] !== undefined ? noteDrafts[noteKey] : savedNote;
                   return (
-                    <li key={p.id}>
+                    <li key={p.id} className="space-y-2">
                       <CustomerProductCompactRow
                         href={productHref}
                         product={p}
+                        selected={isSelected}
                         navigationDisabled={navOff}
                         trailing={
                           readOnly ? null : (
@@ -312,6 +372,7 @@ export function CustomerProductCatalogsSection({
                               disabled={savingKey === `${catalog.id}:${p.id}` || isSelectionLocked}
                               onClick={(e) => {
                                 e.preventDefault();
+                                e.stopPropagation();
                                 void toggleProduct(catalog, p.id);
                               }}
                             >
@@ -320,6 +381,41 @@ export function CustomerProductCatalogsSection({
                           )
                         }
                       />
+                      {isSelected && !readOnly ? (
+                        <div
+                          className={cn(
+                            "rounded-lg border border-primary/20 bg-primary/5 p-3",
+                            "ml-0 sm:ml-[3.75rem]"
+                          )}
+                        >
+                          <Label
+                            htmlFor={`product-note-${noteKey}`}
+                            className="text-sm font-medium"
+                          >
+                            Poznámka k produktu{" "}
+                            <span className="font-normal text-muted-foreground">(volitelné)</span>
+                          </Label>
+                          <Textarea
+                            id={`product-note-${noteKey}`}
+                            value={noteValue}
+                            onChange={(e) =>
+                              setNoteDrafts((d) => ({ ...d, [noteKey]: e.target.value }))
+                            }
+                            onBlur={() =>
+                              void saveProductNote(
+                                catalog,
+                                p.id,
+                                p.name || "Produkt",
+                                noteValue
+                              )
+                            }
+                            disabled={isSelectionLocked || savingKey === `${noteKey}:note`}
+                            placeholder="Volitelná poznámka k tomuto produktu…"
+                            rows={3}
+                            className="mt-1.5 min-h-[5.5rem] resize-y text-base sm:text-sm"
+                          />
+                        </div>
+                      ) : null}
                     </li>
                   );
                 })}
