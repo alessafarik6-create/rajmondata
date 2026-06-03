@@ -88,7 +88,9 @@ export type JobCustomerPortalPreviewGate =
 
 function hasLinkedCrmCustomer(job: Record<string, unknown> | null | undefined): boolean {
   const crm =
-    typeof job?.customerId === "string" ? String(job.customerId).trim() : "";
+    (typeof job?.customerId === "string" ? String(job.customerId).trim() : "") ||
+    (typeof job?.clientId === "string" ? String(job.clientId).trim() : "") ||
+    (typeof job?.customerRecordId === "string" ? String(job.customerRecordId).trim() : "");
   return crm.length > 0;
 }
 
@@ -122,8 +124,12 @@ export function getJobCustomerPortalPreviewGate(
   const accessEnabled = job.customerAccessEnabled === true;
   const crm = hasLinkedCrmCustomer(job);
   const customerHint = customerSuggestsPortalAccount(opts?.customer ?? null);
+  const emailOnJob =
+    trimStr(job.customerEmail) ||
+    trimStr(job.clientEmail) ||
+    trimStr(job.email);
 
-  if (accessEnabled || crm || customerHint) {
+  if (accessEnabled || crm || customerHint || emailOnJob) {
     return { show: true, disabled: true, reason: "no_portal_login" };
   }
   return { show: false };

@@ -1418,11 +1418,25 @@ export function JobDetailPageContent({
     return jobBudgetBreakdown.budgetGross - jobExpenseTotals.gross;
   }, [jobBudgetBreakdown, jobExpenseTotals.gross]);
 
-  const customerId =
-    (job as any)?.customerId ||
-    (job as any)?.customer_id ||
-    (job as any)?.customerID ||
-    null;
+  const customerId = useMemo(() => {
+    const j = job as Record<string, unknown> | null | undefined;
+    if (!j) return null;
+    const nested =
+      j.customer && typeof j.customer === "object" && !Array.isArray(j.customer)
+        ? (j.customer as Record<string, unknown>)
+        : null;
+    const id =
+      String(j.customerId ?? "").trim() ||
+      String(j.clientId ?? "").trim() ||
+      String(j.customerRecordId ?? "").trim() ||
+      String(j.customer_id ?? "").trim() ||
+      String(j.customerID ?? "").trim() ||
+      String(j.portalCustomerId ?? "").trim() ||
+      String(nested?.id ?? "").trim() ||
+      String(nested?.customerId ?? "").trim() ||
+      "";
+    return id || null;
+  }, [job]);
 
   const customerRef = useMemoFirebase(
     () =>
@@ -10512,6 +10526,8 @@ export function JobDetailPageContent({
                 companyId={companyId}
                 jobId={String(jobFirestoreId)}
                 job={job as Record<string, unknown>}
+                customer={customer ?? null}
+                customerPortalUserDocId={customerPortalUserDocId}
                 user={user}
                 authorName={
                   String(
