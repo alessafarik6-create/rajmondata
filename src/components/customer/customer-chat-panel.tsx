@@ -27,7 +27,7 @@ import {
 import { notifyJobActivity } from "@/lib/job-activity-notify-client";
 import { useToast } from "@/hooks/use-toast";
 import {
-  buildMessageAuthorPersistFields,
+  buildCustomerChatMessageEnvelope,
   compareMessagesByCreatedAt,
 } from "@/lib/format-message-date";
 import { JobMessageHeader } from "@/components/jobs/job-message-header";
@@ -153,20 +153,20 @@ export function CustomerChatPanel({
         "messages"
       ),
       {
-        senderId: user.uid,
-        senderRole: "customer",
-        senderName: "Zákazník",
-        text: msg,
-        jobId: jobId ?? null,
-        ...buildMessageAuthorPersistFields({
+        ...buildCustomerChatMessageEnvelope({
+          senderId: user.uid,
+          senderRole: "customer",
+          senderName: "Zákazník",
+          text: msg,
+          jobId: jobId ?? null,
           userId: user.uid,
           authorName: "Zákazník",
           authorRole: "customer",
         }),
         createdAt: serverTimestamp(),
+        timestamp: serverTimestamp(),
+        sentAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        isRead: false,
-        attachments: [],
       }
     );
     await setDoc(

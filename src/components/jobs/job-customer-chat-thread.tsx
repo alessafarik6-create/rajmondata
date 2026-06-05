@@ -35,7 +35,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { safeTime } from "@/lib/date-safe";
 import {
-  buildMessageAuthorPersistFields,
+  buildCustomerChatMessageEnvelope,
   compareMessagesByCreatedAt,
 } from "@/lib/format-message-date";
 import { JobMessageHeader } from "@/components/jobs/job-message-header";
@@ -364,20 +364,20 @@ export function JobCustomerChatThread({
           "messages"
         ),
         {
-          senderId: user.uid,
-          senderRole: "admin",
-          senderName: authorName,
-          text,
-          jobId,
-          ...buildMessageAuthorPersistFields({
+          ...buildCustomerChatMessageEnvelope({
+            senderId: user.uid,
+            senderRole: "admin",
+            senderName: authorName,
+            text,
+            jobId,
             userId: user.uid,
             authorName,
             authorRole: "admin",
           }),
           createdAt: serverTimestamp(),
+          timestamp: serverTimestamp(),
+          sentAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          isRead: false,
-          attachments: [],
         }
       );
       await setDoc(

@@ -16,7 +16,7 @@ export { MESSAGE_DATE_UNKNOWN, formatMessageDateFromValue };
 /** Text u starých zpráv bez uloženého data. */
 export const MESSAGE_DATE_MISSING_LEGACY = "Datum nebylo uloženo";
 
-/** Pořadí čtení data u zpráv (bez updatedAt — může být jiné než odeslání). */
+/** Pořadí čtení data u zpráv (chat, poznámky). */
 const TIMESTAMP_KEYS = [
   "createdAt",
   "timestamp",
@@ -27,6 +27,17 @@ const TIMESTAMP_KEYS = [
   "created",
   "customerCommentAt",
   "updatedAt",
+] as const;
+
+/** Řazení: createdAt || timestamp || sentAt || updatedAt (nejstarší nahoře). */
+const SORT_TIMESTAMP_KEYS = [
+  "createdAt",
+  "timestamp",
+  "sentAt",
+  "updatedAt",
+  "date",
+  "created_at",
+  "createdAtMs",
 ] as const;
 
 /** Vrátí první použitelný časový údaj ze záznamu zprávy. */
@@ -50,11 +61,23 @@ export function formatMessageDate(
   return formatted === MESSAGE_DATE_UNKNOWN ? MESSAGE_DATE_MISSING_LEGACY : formatted;
 }
 
-/** Číslo ms pro řazení — createdAt || timestamp || sentAt || createdAtMs … */
+function messageSortTimestampFromRecord(
+  message: Record<string, unknown> | null | undefined
+): unknown {
+  if (!message) return null;
+  for (const key of SORT_TIMESTAMP_KEYS) {
+    const v = message[key];
+    if (v == null || isFirestoreServerTimestampPlaceholder(v)) continue;
+    if (safeTime(v) > 0) return v;
+  }
+  return messageTimestampFromRecord(message);
+}
+
+/** Číslo ms pro řazení — createdAt || timestamp || sentAt || updatedAt … */
 export function messageTimestampMs(
   message: Record<string, unknown> | null | undefined
 ): number {
-  return safeTime(messageTimestampFromRecord(message));
+  return safeTime(messageSortTimestampFromRecord(message));
 }
 
 /**
@@ -139,5 +162,49 @@ export function buildMessageAuthorPersistFields(params: {
     authorId: userId,
     authorName,
     authorRole,
+  };
+}
+
+/** Společná těla zprávy chatu se zákazníkem (časová razítka doplní volající přes serverTimestamp). */
+export function buildCustomerChatMessageEnvelope(params: {
+  senderId: string;
+  senderRole: "admin" | "customer";
+  senderName: string;
+  text: string;
+  jobId?: string | null;
+  userId: string;
+  authorName: string;
+  authorRole: string;
+}): {
+  senderId: string;
+  senderRole: string;
+  senderName: string;
+  text: string;
+  jobId: string | null;
+  createdBy: string;
+  createdByName: string;
+  createdByRole: string;
+  authorId: string;
+  authorName: string;
+  authorRole: string;
+  createdAtMs: number;
+  isRead: boolean;
+  attachments: [];
+} {
+  const text = trimStr(params.text);
+  return {
+    senderId: trimStr(params.senderId),
+    senderRole: params.senderRole,
+    senderName: trimStr(params.senderName) || "—",
+    text,
+    jobId: params.jobId?.trim() ? params.jobId.trim() : null,
+    ...buildMessageAuthorPersistFields({
+      userId: params.userId,
+      authorName: params.authorName,
+      authorRole: params.authorRole,
+    }),
+    ...buildMessageTimestampClientFields(),
+    isRead: false,
+    attachments: [],
   };
 }

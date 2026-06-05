@@ -14,7 +14,7 @@ import {
   setDoc,
   where,
 } from "firebase/firestore";
-import { useCollection, useCompany, useFirestore, useMemoFirebase } from "@/firebase";
+import { useCollection, useCompany, useFirestore, useMemoFirebase, useUser } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,12 @@ import { useSearchParams } from "next/navigation";
 import { deriveCustomerDisplayNameFromCustomerDoc } from "@/lib/customer-address-display";
 import { deriveCustomerDisplayNameFromJob } from "@/lib/job-customer-client";
 import { cn } from "@/lib/utils";
+import { JobMessageHeader } from "@/components/jobs/job-message-header";
+import { ExpandableNoteText } from "@/components/jobs/job-note-text-block";
+import {
+  buildCustomerChatMessageEnvelope,
+  compareMessagesByCreatedAt,
+} from "@/lib/format-message-date";
 
 type ConversationRow = {
   id: string;
@@ -32,6 +38,8 @@ type ConversationRow = {
 };
 
 type JobMeta = { name: string; customerName: string };
+
+type MessageRow = Record<string, unknown> & { id: string };
 
 function chunkIds<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -70,7 +78,13 @@ function jobLine(c: ConversationRow, jobMeta: Record<string, JobMeta>): string |
 
 export default function CustomerChatsPage() {
   const firestore = useFirestore();
-  const { companyId } = useCompany();
+  const { user } = useUser();
+  const { companyId, userProfile } = useCompany();
+  const authorName =
+    (typeof userProfile?.displayName === "string" && userProfile.displayName.trim()) ||
+    user?.displayName?.trim() ||
+    user?.email?.split("@")[0]?.trim() ||
+    "Administrace";
   const searchParams = useSearchParams();
   const conversationIdFromUrl = (searchParams.get("conversationId") || "").trim();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -191,23 +205,38 @@ export default function CustomerChatsPage() {
         : null,
     [firestore, companyId, selected?.id]
   );
-  const { data: messages } = useCollection(messagesRef);
+  const { data: messagesRaw } = useCollection(messagesRef);
+
+  const messages = React.useMemo(() => {
+    const list = (Array.isArray(messagesRaw) ? messagesRaw : []) as MessageRow[];
+    return list.slice().sort(compareMessagesByCreatedAt);
+  }, [messagesRaw]);
 
   const sendAdminReply = async () => {
-    if (!firestore || !companyId || !selected || !text.trim()) return;
+    if (!firestore || !companyId || !selected || !text.trim() || !user?.uid) return;
+    const body = text.trim();
+    const jobId = String(selected.jobId ?? "").trim() || null;
     await addDoc(collection(firestore, "companies", companyId, "customer_conversations", selected.id, "messages"), {
-      senderId: "admin",
-      senderRole: "admin",
-      text: text.trim(),
+      ...buildCustomerChatMessageEnvelope({
+        senderId: user.uid,
+        senderRole: "admin",
+        senderName: authorName,
+        text: body,
+        jobId,
+        userId: user.uid,
+        authorName,
+        authorRole: "admin",
+      }),
       createdAt: serverTimestamp(),
-      isRead: false,
-      attachments: [],
+      timestamp: serverTimestamp(),
+      sentAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
     await setDoc(
       doc(firestore, "companies", companyId, "customer_conversations", selected.id),
       {
         lastMessageAt: serverTimestamp(),
-        lastMessagePreview: text.trim().slice(0, 180),
+        lastMessagePreview: body.slice(0, 180),
         unreadForCustomerCount: increment(1),
         unreadForAdminCount: 0,
       },
@@ -265,18 +294,41 @@ export default function CustomerChatsPage() {
           {!selected ? (
             <p className="text-sm text-muted-foreground">Konverzace nebyla nalezena.</p>
           ) : null}
-          <div className="max-h-[60vh] space-y-2 overflow-auto rounded border p-2">
-            {!selected ? null : (messages ?? []).length === 0 ? (
+          <div className="max-h-[60vh] space-y-3 overflow-auto rounded border p-3">
+            {!selected ? null : messages.length === 0 ? (
               <p className="text-sm text-muted-foreground">Chat zatím neobsahuje žádné zprávy.</p>
             ) : (
-              (messages ?? []).map((m) => (
-                <div
-                  key={m.id}
-                  className={`rounded px-3 py-2 text-sm ${(m as { senderRole?: string }).senderRole === "admin" ? "ml-auto max-w-[80%] bg-primary/10" : "mr-auto max-w-[80%] bg-muted"}`}
-                >
-                  {String((m as { text?: string }).text ?? "")}
-                </div>
-              ))
+              messages.map((m) => {
+                const mine = String(m.senderRole ?? m.createdByRole ?? "") === "admin";
+                const authorOverride = mine
+                  ? authorName
+                  : String(m.senderName ?? m.createdByName ?? "Zákazník");
+                const readLine =
+                  m.isRead === true
+                    ? "přečteno"
+                    : mine
+                      ? "nepřečteno zákazníkem"
+                      : "nepřečteno";
+                return (
+                  <div
+                    key={m.id}
+                    className={cn("flex w-full", mine ? "justify-end" : "justify-start")}
+                  >
+                    <div
+                      className={cn(
+                        "max-w-[92%] min-w-0 rounded-2xl border bg-white px-3 py-2.5 shadow-sm break-words sm:max-w-[80%]",
+                        mine
+                          ? "border-emerald-300 rounded-br-md"
+                          : "border-violet-200 rounded-bl-md"
+                      )}
+                    >
+                      <JobMessageHeader message={m} authorNameOverride={authorOverride} />
+                      <ExpandableNoteText text={String(m.text ?? m.message ?? "")} />
+                      <div className="mt-1.5 text-xs text-gray-600">{readLine}</div>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
           <div className="flex gap-2">
