@@ -75,7 +75,7 @@ export function DashboardTerminalActiveWidget({
   }, [employees, attendanceTodayRows, openWorkSegmentRows]);
 
   return (
-    <Card className="border-border bg-card shadow-sm">
+    <Card className="flex h-full w-full flex-col border-border bg-card shadow-sm">
       <CardHeader className="space-y-1 pb-3">
         <CardTitle className="flex items-center gap-2 text-base font-semibold">
           <UserCheck className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
@@ -86,9 +86,9 @@ export function DashboardTerminalActiveWidget({
           tarif nebo zakázka z otevřeného úseku práce.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3 pt-0">
+      <CardContent className="flex min-h-0 flex-1 flex-col space-y-3 pt-0">
         {loading ? (
-          <div className="flex min-h-[4rem] items-center justify-center">
+          <div className="flex min-h-[4rem] flex-1 items-center justify-center">
             <span className="inline-block h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
         ) : active.length === 0 ? (
@@ -96,7 +96,7 @@ export function DashboardTerminalActiveWidget({
             Momentálně není nikdo přihlášen na terminálu.
           </p>
         ) : (
-          <ul className="max-h-[280px] space-y-2 overflow-y-auto pr-1 [-webkit-overflow-scrolling:touch]">
+          <ul className="min-h-0 max-h-[min(55vh,420px)] flex-1 space-y-2 overflow-y-auto pr-1 [-webkit-overflow-scrolling:touch] lg:max-h-none">
             {active.map((item) => (
               <li
                 key={item.employeeKey}

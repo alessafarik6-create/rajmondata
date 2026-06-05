@@ -75,14 +75,14 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
 
   if (isLoading) {
     return (
-      <Card className="mx-auto w-full max-w-xl border border-gray-300 bg-white text-gray-900 shadow-sm">
+      <Card className="flex h-full w-full flex-col border border-gray-300 bg-white text-gray-900 shadow-sm">
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-base font-semibold text-gray-900">
             <Banknote className="h-5 w-5 shrink-0" aria-hidden />
             Nutno uhradit
           </CardTitle>
         </CardHeader>
-        <CardContent className="flex justify-center py-8">
+        <CardContent className="flex flex-1 justify-center py-8">
           <Loader2 className="h-8 w-8 animate-spin text-gray-600" />
         </CardContent>
       </Card>
@@ -94,7 +94,7 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
   }
 
   return (
-    <Card className="mx-auto w-full max-w-xl border border-gray-300 bg-white text-gray-900 shadow-sm">
+    <Card className="flex h-full w-full flex-col border border-gray-300 bg-white text-gray-900 shadow-sm">
       <CardHeader className="space-y-1 pb-2">
         <CardTitle className="flex items-center gap-2 text-base font-semibold text-gray-900">
           <Banknote className="h-5 w-5 shrink-0" aria-hidden />
@@ -114,8 +114,8 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
           ) : null}
         </CardDescription>
       </CardHeader>
-      <CardContent className="pt-0">
-        <div className="max-h-[min(55vh,420px)] overflow-y-auto rounded-md border border-gray-200">
+      <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
+        <div className="min-h-0 max-h-[min(55vh,420px)] flex-1 overflow-y-auto rounded-md border border-gray-200 lg:max-h-none">
           <ul className="divide-y divide-gray-200">
             {rows.map((row, index) => {
               const u = getDocumentPaymentUrgency(row, todayIso);

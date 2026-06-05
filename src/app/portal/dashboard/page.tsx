@@ -1240,17 +1240,18 @@ export default function CompanyDashboard() {
           ) : null}
 
           {companyId ? (
-            <DashboardDocumentsToPayWidget companyId={companyId} todayIso={todayIso} />
-          ) : null}
-
-          {companyId ? (
-            <div className="mx-auto w-full max-w-xl">
-              <DashboardTerminalActiveWidget
-                employees={employees as Record<string, unknown>[] | undefined}
-                attendanceTodayRows={attendanceTodayRows as AttendanceRow[]}
-                openWorkSegmentRows={openWorkSegmentsRaw ?? []}
-                loading={attendanceTodayLoading || openWorkSegmentsLoading}
-              />
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch lg:gap-6">
+              <div className="peer/pay min-w-0 h-full">
+                <DashboardDocumentsToPayWidget companyId={companyId} todayIso={todayIso} />
+              </div>
+              <div className="min-w-0 h-full peer-empty/pay:lg:col-span-2">
+                <DashboardTerminalActiveWidget
+                  employees={employees as Record<string, unknown>[] | undefined}
+                  attendanceTodayRows={attendanceTodayRows as AttendanceRow[]}
+                  openWorkSegmentRows={openWorkSegmentsRaw ?? []}
+                  loading={attendanceTodayLoading || openWorkSegmentsLoading}
+                />
+              </div>
             </div>
           ) : null}
 
