@@ -111,13 +111,23 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
+  Eye,
+  FileDown,
   FileText,
   ImageIcon,
   Pencil,
   Plus,
+  Printer,
   Trash2,
   Wallet,
 } from "lucide-react";
+import {
+  jobExpenseMatchesSourceFilter,
+  type JobExpenseSourceFilter,
+} from "@/lib/job-expense-display";
+import { buildJobExpensesReportPdfHtml } from "@/lib/job-expenses-report-pdf";
+import { printInvoiceHtmlDocument } from "@/lib/print-html";
+import { JobExpensesPdfPreviewDialog } from "@/components/jobs/job-expenses-pdf-preview-dialog";
 
 export type { JobExpenseFileType, JobExpenseRow } from "@/lib/job-expense-types";
 
@@ -162,6 +172,11 @@ type Props = {
   jobBudget: JobBudgetBreakdown | null;
   /** Širší rozvržení pro detail zakázky (celá šířka stránky). */
   layout?: "default" | "jobDetailWide";
+  /** Metadata pro PDF report nákladů. */
+  companyDoc?: Record<string, unknown> | null;
+  jobNumber?: string | null;
+  customerName?: string | null;
+  realizationAddress?: string | null;
 };
 
 export function JobExpensesSection({
@@ -173,6 +188,10 @@ export function JobExpensesSection({
   canEdit,
   jobBudget,
   layout = "default",
+  companyDoc = null,
+  jobNumber = null,
+  customerName = null,
+  realizationAddress = null,
 }: Props) {
   const isJobDetailWide = layout === "jobDetailWide";
   const firestore = useFirestore();
@@ -205,6 +224,13 @@ export function JobExpensesSection({
   );
   /** Seznam — po 5 položkách „Zobrazit více“. */
   const [expensesListExpanded, setExpensesListExpanded] = useState(false);
+  const [expenseSourceFilter, setExpenseSourceFilter] =
+    useState<JobExpenseSourceFilter>("all");
+  const [exportScope, setExportScope] = useState<"all" | "filtered">("all");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState("");
+
+  const REPORT_TITLE = "Výpočet nákladů zakázky";
 
   useEffect(() => {
     if (!pendingFile || !isAllowedJobImageFile(pendingFile)) {
@@ -258,10 +284,138 @@ export function JobExpensesSection({
   const remainingGrossKc =
     jobBudget != null ? jobBudget.budgetGross - expenseTotals.gross : null;
 
+  const filteredExpenses = useMemo(() => {
+    if (expenseSourceFilter === "all") return sortedExpenses;
+    return sortedExpenses.filter((row) =>
+      jobExpenseMatchesSourceFilter(row, expenseSourceFilter)
+    );
+  }, [sortedExpenses, expenseSourceFilter]);
+
   const visibleExpenses = useMemo(() => {
-    if (expensesListExpanded) return sortedExpenses;
-    return sortedExpenses.slice(0, 5);
-  }, [sortedExpenses, expensesListExpanded]);
+    if (expensesListExpanded) return filteredExpenses;
+    return filteredExpenses.slice(0, 5);
+  }, [filteredExpenses, expensesListExpanded]);
+
+  const exportScopeLabel = useMemo(() => {
+    if (expenseSourceFilter === "all") return null;
+    return exportScope === "filtered"
+      ? "Pouze filtrované náklady"
+      : "Všechny náklady";
+  }, [expenseSourceFilter, exportScope]);
+
+  const buildReportHtml = useCallback(
+    (scope: "all" | "filtered") => {
+      const rows =
+        scope === "filtered" && expenseSourceFilter !== "all"
+          ? filteredExpenses
+          : sortedExpenses;
+      const scopeLabel =
+        expenseSourceFilter !== "all"
+          ? scope === "filtered"
+            ? "Pouze filtrované náklady"
+            : "Všechny náklady"
+          : null;
+      return buildJobExpensesReportPdfHtml({
+        companyDoc,
+        jobName: jobDisplayName?.trim() || "Zakázka",
+        jobNumber,
+        customerName,
+        realizationAddress,
+        jobBudget,
+        expenses: rows,
+        exportScopeLabel: scopeLabel,
+      });
+    },
+    [
+      companyDoc,
+      jobDisplayName,
+      jobNumber,
+      customerName,
+      realizationAddress,
+      jobBudget,
+      sortedExpenses,
+      filteredExpenses,
+      expenseSourceFilter,
+    ]
+  );
+
+  const openExpensesPreview = useCallback(
+    (scope: "all" | "filtered" = exportScope) => {
+      setPreviewHtml(buildReportHtml(scope));
+      setPreviewOpen(true);
+    },
+    [buildReportHtml, exportScope]
+  );
+
+  const handlePrintExpensesReport = useCallback(() => {
+    const html = buildReportHtml(exportScope);
+    const result = printInvoiceHtmlDocument(html, REPORT_TITLE);
+    if (result === "blocked") {
+      toast({
+        variant: "destructive",
+        title: "Tisk byl zablokován",
+        description: "Povolte vyskakovací okna pro tento web.",
+      });
+      return;
+    }
+    logActivitySafe(firestore, companyId, user, actorProfile, {
+      actionType: "job.expense_export",
+      actionLabel: "Export nákladů zakázky",
+      entityType: "job",
+      entityId: jobId,
+      entityName: jobDisplayName?.trim() || jobId,
+      details: `Tisk reportu nákladů${exportScopeLabel ? ` · ${exportScopeLabel}` : ""}`,
+      sourceModule: "jobs",
+      route: `/portal/jobs/${jobId}`,
+      metadata: {
+        jobId,
+        exportKind: "print",
+        exportScope,
+        expenseSourceFilter,
+      },
+    });
+  }, [
+    buildReportHtml,
+    exportScope,
+    exportScopeLabel,
+    firestore,
+    companyId,
+    user,
+    actorProfile,
+    jobId,
+    jobDisplayName,
+    expenseSourceFilter,
+    toast,
+  ]);
+
+  const handleExpensesPdfExported = useCallback(() => {
+    logActivitySafe(firestore, companyId, user, actorProfile, {
+      actionType: "job.expense_export",
+      actionLabel: "Export nákladů zakázky",
+      entityType: "job",
+      entityId: jobId,
+      entityName: jobDisplayName?.trim() || jobId,
+      details: `Stažení PDF reportu nákladů${exportScopeLabel ? ` · ${exportScopeLabel}` : ""}`,
+      sourceModule: "jobs",
+      route: `/portal/jobs/${jobId}`,
+      metadata: {
+        jobId,
+        exportKind: "pdf",
+        exportScope,
+        expenseSourceFilter,
+      },
+    });
+  }, [
+    firestore,
+    companyId,
+    user,
+    actorProfile,
+    jobId,
+    jobDisplayName,
+    exportScopeLabel,
+    exportScope,
+    expenseSourceFilter,
+  ]);
 
   const resetForm = useCallback(() => {
     setEditingId(null);
@@ -943,6 +1097,81 @@ export function JobExpensesSection({
               </p>
             </div>
           </div>
+
+          {isJobDetailWide ? (
+            <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white px-4 py-4 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+                <div className="flex min-w-0 flex-col gap-2 sm:max-w-xs">
+                  <Label className={EXP.labelSm}>Filtr zdroje nákladů</Label>
+                  <Select
+                    value={expenseSourceFilter}
+                    onValueChange={(v) => {
+                      const next = v as JobExpenseSourceFilter;
+                      setExpenseSourceFilter(next);
+                      setExportScope(next === "all" ? "all" : "filtered");
+                      setExpensesListExpanded(false);
+                    }}
+                  >
+                    <SelectTrigger className={LIGHT_SELECT_TRIGGER_CLASS}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className={LIGHT_SELECT_CONTENT_CLASS}>
+                      <SelectItem value="all">Všechny zdroje</SelectItem>
+                      <SelectItem value="manual">Ruční záznamy</SelectItem>
+                      <SelectItem value="document">Doklady</SelectItem>
+                      <SelectItem value="work_report">Výkazy práce</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {expenseSourceFilter !== "all" ? (
+                  <div className="flex min-w-0 flex-col gap-2 sm:max-w-xs">
+                    <Label className={EXP.labelSm}>Rozsah exportu / tisku</Label>
+                    <Select
+                      value={exportScope}
+                      onValueChange={(v) => setExportScope(v as "all" | "filtered")}
+                    >
+                      <SelectTrigger className={LIGHT_SELECT_TRIGGER_CLASS}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className={LIGHT_SELECT_CONTENT_CLASS}>
+                        <SelectItem value="filtered">Pouze filtrované</SelectItem>
+                        <SelectItem value="all">Všechny náklady</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                <Button
+                  type="button"
+                  variant="outlineLight"
+                  className="gap-2"
+                  onClick={() => openExpensesPreview(exportScope)}
+                >
+                  <Eye className="h-4 w-4" aria-hidden />
+                  Náhled nákladů
+                </Button>
+                <Button
+                  type="button"
+                  variant="outlineLight"
+                  className="gap-2"
+                  onClick={() => openExpensesPreview(exportScope)}
+                >
+                  <FileDown className="h-4 w-4" aria-hidden />
+                  Export nákladů do PDF
+                </Button>
+                <Button
+                  type="button"
+                  variant="outlineLight"
+                  className="gap-2"
+                  onClick={handlePrintExpensesReport}
+                >
+                  <Printer className="h-4 w-4" aria-hidden />
+                  Tisk nákladů
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardHeader>
 
         <Collapsible
@@ -964,10 +1193,16 @@ export function JobExpensesSection({
               >
                 <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
                   <span>Seznam nákladů</span>
-                  {sortedExpenses.length > 0 ? (
+                  {filteredExpenses.length > 0 ? (
                     <span className="tabular-nums font-medium text-gray-700">
-                      ({sortedExpenses.length})
+                      ({filteredExpenses.length}
+                      {expenseSourceFilter !== "all" && sortedExpenses.length !== filteredExpenses.length
+                        ? ` / ${sortedExpenses.length}`
+                        : ""}
+                      )
                     </span>
+                  ) : sortedExpenses.length > 0 ? (
+                    <span className="tabular-nums font-medium text-gray-700">(0)</span>
                   ) : null}
                 </span>
                 <ChevronRight
@@ -1022,7 +1257,7 @@ export function JobExpensesSection({
                 </Button>
               ) : null}
 
-              {sortedExpenses.length === 0 ? (
+              {filteredExpenses.length === 0 ? (
                 <p
                   className={cn(
                     "py-2 text-gray-800",
@@ -1031,7 +1266,9 @@ export function JobExpensesSection({
                       : "py-1 text-sm"
                   )}
                 >
-                  Zatím žádné náklady. {canEdit ? "Přidejte první záznam." : ""}
+                  {sortedExpenses.length === 0
+                    ? `Zatím žádné náklady. ${canEdit ? "Přidejte první záznam." : ""}`
+                    : "Žádné náklady neodpovídají zvolenému filtru."}
                 </p>
               ) : (
                 <>
@@ -1388,7 +1625,7 @@ export function JobExpensesSection({
                       })}
                     </ul>
                   </div>
-                  {sortedExpenses.length > 5 ? (
+                  {filteredExpenses.length > 5 ? (
                     <Button
                       type="button"
                       variant="outlineLight"
@@ -1755,6 +1992,18 @@ export function JobExpensesSection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <JobExpensesPdfPreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        html={previewHtml}
+        title={REPORT_TITLE}
+        user={user}
+        companyId={companyId}
+        jobId={jobId}
+        pdfFilename={`${REPORT_TITLE}.pdf`}
+        onExported={handleExpensesPdfExported}
+      />
     </>
   );
 }

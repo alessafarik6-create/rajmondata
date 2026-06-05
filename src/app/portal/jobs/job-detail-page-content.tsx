@@ -1758,6 +1758,32 @@ export function JobDetailPageContent({
     [job, customer]
   );
 
+  const jobExpensesReportMeta = useMemo(() => {
+    const j = (job ?? {}) as Record<string, unknown>;
+    const c = customer as Record<string, unknown> | null | undefined;
+    const jobNumber =
+      String(j.jobNumber ?? j.orderNumber ?? j.documentNumber ?? j.jobTag ?? "").trim() ||
+      null;
+    const customerLabel = c
+      ? String(
+          c.companyName ||
+            [c.firstName, c.lastName].filter(Boolean).join(" ").trim() ||
+            ""
+        ).trim()
+      : deriveCustomerDisplayNameFromJob(j);
+    const realizationAddress =
+      (jobCustomerAddressBlock.addressLines.length > 0
+        ? jobCustomerAddressBlock.addressLines.join("\n")
+        : "") ||
+      String(j.address ?? j.siteAddress ?? j.realizationAddress ?? "").trim() ||
+      null;
+    return {
+      jobNumber,
+      customerName: customerLabel.trim() || null,
+      realizationAddress,
+    };
+  }, [job, customer, jobCustomerAddressBlock]);
+
   const formatContractDate = useCallback((t: any): string => {
     try {
       if (!t) return "-";
@@ -11220,6 +11246,10 @@ export function JobDetailPageContent({
               canEdit={canManageFolders}
               jobBudget={jobBudgetBreakdown}
               layout="jobDetailWide"
+              companyDoc={(companyDoc ?? null) as Record<string, unknown> | null}
+              jobNumber={jobExpensesReportMeta.jobNumber}
+              customerName={jobExpensesReportMeta.customerName}
+              realizationAddress={jobExpensesReportMeta.realizationAddress}
             />
           </div>
         </section>

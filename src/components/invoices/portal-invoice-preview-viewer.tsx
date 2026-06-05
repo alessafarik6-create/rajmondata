@@ -84,6 +84,8 @@ export type PortalInvoicePreviewViewerProps = {
   fullscreen?: boolean;
   onFullscreenChange?: (fullscreen: boolean) => void;
   showFullscreenToggle?: boolean;
+  /** Vlastní stažení PDF (např. report nákladů zakázky). */
+  onDownloadPdf?: (args: { html: string; title: string }) => Promise<void>;
 };
 
 export function PortalInvoicePreviewViewer({
@@ -98,6 +100,7 @@ export function PortalInvoicePreviewViewer({
   fullscreen = false,
   onFullscreenChange,
   showFullscreenToggle = true,
+  onDownloadPdf,
 }: PortalInvoicePreviewViewerProps) {
   const { toast } = useToast();
   const isFullscreenLayout = layout === "fullscreen" || fullscreen;
@@ -196,6 +199,22 @@ export function PortalInvoicePreviewViewer({
   };
 
   const handleDownloadPdf = async () => {
+    if (onDownloadPdf) {
+      setPdfBusy(true);
+      try {
+        await onDownloadPdf({ html, title });
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "Export PDF",
+          description: e instanceof Error ? e.message : "Zkuste tisk → Uložit jako PDF.",
+        });
+        handlePrint();
+      } finally {
+        setPdfBusy(false);
+      }
+      return;
+    }
     if (!user) {
       handlePrint();
       return;

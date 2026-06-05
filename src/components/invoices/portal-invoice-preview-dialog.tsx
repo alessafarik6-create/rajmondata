@@ -14,6 +14,7 @@ type Props = {
   user?: User | null;
   onSendEmail?: () => void;
   showSendEmail?: boolean;
+  onDownloadPdf?: (args: { html: string; title: string }) => Promise<void>;
 };
 
 export function PortalInvoicePreviewDialog({
@@ -24,6 +25,7 @@ export function PortalInvoicePreviewDialog({
   user,
   onSendEmail,
   showSendEmail = false,
+  onDownloadPdf,
 }: Props) {
   const [fullscreen, setFullscreen] = useState(false);
 
@@ -69,6 +71,7 @@ export function PortalInvoicePreviewDialog({
           onClose={() => onOpenChange(false)}
           onSendEmail={onSendEmail}
           showSendEmail={showSendEmail}
+          onDownloadPdf={onDownloadPdf}
           className="h-full min-h-0"
         />
       </DialogContent>
