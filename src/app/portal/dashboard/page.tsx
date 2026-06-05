@@ -60,7 +60,10 @@ import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-ter
 import { DashboardDocumentsToPayWidget } from "@/components/portal/dashboard-documents-to-pay-widget";
 import { DashboardActivitySection } from "@/components/portal/dashboard-activity-section";
 import { DashboardUnassignedMeasurementPhotos } from "@/components/portal/dashboard-unassigned-measurement-photos";
-import { isCustomerActivityUnresolved } from "@/lib/customer-activity";
+import {
+  isCustomerActivityUnresolved,
+  sortCustomerActivitiesByNewest,
+} from "@/lib/customer-activity";
 import { isEmployeeActivityUnresolved } from "@/lib/employee-activity";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { AttendanceRow } from "@/lib/employee-attendance";
@@ -421,13 +424,18 @@ export default function CompanyDashboard() {
     title?: string;
     message?: string;
     createdAt?: unknown;
+    timestamp?: unknown;
+    sentAt?: unknown;
+    updatedAt?: unknown;
     targetLink?: string;
     resolved?: boolean;
   };
 
   const customerActivitiesUnresolved = useMemo(() => {
     const rows = (customerActivitiesRaw ?? []) as ActivityRow[];
-    return rows.filter((a) => isCustomerActivityUnresolved(a));
+    return sortCustomerActivitiesByNewest(
+      rows.filter((a) => isCustomerActivityUnresolved(a))
+    );
   }, [customerActivitiesRaw]);
 
   const employeeActivitiesUnresolved = useMemo(() => {
@@ -1167,7 +1175,7 @@ export default function CompanyDashboard() {
           ) : null}
           <DashboardActivitySection
             title="Aktivita zákazníků"
-            description="Nové akce a zprávy od zákazníků (jen nevyřízené)."
+            description="Nové akce a zprávy od zákazníků (jen nevyřízené). Zelené = do 3 dnů, červené = starší než 3 dny."
             items={customerActivitiesUnresolved}
             expanded={customerActivitiesExpanded}
             onToggleExpand={() => setCustomerActivitiesExpanded((v) => !v)}
@@ -1175,6 +1183,7 @@ export default function CompanyDashboard() {
             resolvingId={resolvingCustomerActivityId}
             badgeCount={customerActivitiesUnresolved.length}
             highlightBorder
+            highlightCustomerAge
           />
 
           <DashboardActivitySection

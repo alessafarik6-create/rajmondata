@@ -1,4 +1,61 @@
 import { addDoc, collection, serverTimestamp, type Firestore } from "firebase/firestore";
+import {
+  formatMessageDateFromValue,
+  MESSAGE_DATE_UNKNOWN,
+  safeTime,
+} from "@/lib/date-safe";
+
+const CUSTOMER_ACTIVITY_TIMESTAMP_KEYS = [
+  "createdAt",
+  "timestamp",
+  "sentAt",
+  "updatedAt",
+] as const;
+
+/** Milisekundy aktivity — createdAt, pak timestamp, sentAt, updatedAt. */
+export function resolveCustomerActivityAtMs(
+  data: Record<string, unknown> | null | undefined
+): number {
+  if (!data) return 0;
+  for (const key of CUSTOMER_ACTIVITY_TIMESTAMP_KEYS) {
+    const ms = safeTime(data[key]);
+    if (ms > 0) return ms;
+  }
+  return 0;
+}
+
+/** Formát DD.MM.YYYY HH:mm nebo „Neznámé datum“. */
+export function formatCustomerActivityDateTime(
+  data: Record<string, unknown> | null | undefined
+): string {
+  const ms = resolveCustomerActivityAtMs(data);
+  if (!ms) return MESSAGE_DATE_UNKNOWN;
+  return formatMessageDateFromValue(ms);
+}
+
+const CUSTOMER_ACTIVITY_FRESH_MS = 72 * 60 * 60 * 1000;
+
+export type CustomerActivityVisualAge = "fresh" | "stale" | "resolved";
+
+/** Vizuální stáří pro dashboard (hranice 72 h). */
+export function customerActivityVisualAge(
+  data: Record<string, unknown> | null | undefined,
+  nowMs: number = Date.now()
+): CustomerActivityVisualAge {
+  if (!data || data.resolved === true) return "resolved";
+  const ms = resolveCustomerActivityAtMs(data);
+  if (!ms) return "stale";
+  return nowMs - ms < CUSTOMER_ACTIVITY_FRESH_MS ? "fresh" : "stale";
+}
+
+/** Seřadí aktivity od nejnovějších (podle času aktivity). */
+export function sortCustomerActivitiesByNewest<T extends { id: string }>(
+  rows: T[],
+  readMs: (row: T) => number = (row) =>
+    resolveCustomerActivityAtMs(row as unknown as Record<string, unknown>)
+): T[] {
+  return [...rows].sort((a, b) => readMs(b) - readMs(a));
+}
 
 export type CustomerActivityType =
   | "customer_product_selected"
