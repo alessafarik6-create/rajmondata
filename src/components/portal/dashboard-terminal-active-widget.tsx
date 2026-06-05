@@ -22,6 +22,8 @@ import {
   getTerminalActiveSegmentForEmployee,
   terminalActiveSegmentDashboardLabel,
 } from "@/lib/terminal-active-segment";
+import { DASHBOARD_WIDGET_LIST_SCROLL_CLASS } from "@/lib/dashboard-widget-list-styles";
+import { cn } from "@/lib/utils";
 
 type EmployeeDoc = Record<string, unknown> & { id?: string };
 
@@ -96,7 +98,12 @@ export function DashboardTerminalActiveWidget({
             Momentálně není nikdo přihlášen na terminálu.
           </p>
         ) : (
-          <ul className="min-h-0 max-h-[min(55vh,420px)] flex-1 space-y-2 overflow-y-auto pr-1 [-webkit-overflow-scrolling:touch] lg:max-h-none">
+          <ul
+            className={cn(
+              "space-y-2 pr-1",
+              DASHBOARD_WIDGET_LIST_SCROLL_CLASS
+            )}
+          >
             {active.map((item) => (
               <li
                 key={item.employeeKey}

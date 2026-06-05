@@ -20,6 +20,7 @@ import {
   urgencyLabel,
 } from "@/lib/company-document-payment";
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
+import { DASHBOARD_WIDGET_LIST_SCROLL_CLASS } from "@/lib/dashboard-widget-list-styles";
 
 type Props = {
   companyId: string;
@@ -115,7 +116,12 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
-        <div className="min-h-0 max-h-[min(55vh,420px)] flex-1 overflow-y-auto rounded-md border border-gray-200 lg:max-h-none">
+        <div
+          className={cn(
+            "rounded-md border border-gray-200",
+            DASHBOARD_WIDGET_LIST_SCROLL_CLASS
+          )}
+        >
           <ul className="divide-y divide-gray-200">
             {rows.map((row, index) => {
               const u = getDocumentPaymentUrgency(row, todayIso);
