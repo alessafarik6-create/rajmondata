@@ -82,4 +82,16 @@ assert.ok(customerView.some((n) => n.text === "visible"));
 assert.ok(customerView.some((n) => n.text === "reply"));
 assert.ok(!customerView.some((n) => n.text === "hidden"));
 
+assert.match(src, /resolveVisibleFileNotesForTarget/, "unified note resolver");
+assert.match(src, /countVisibleFileNotesForTarget/, "unified note count");
+assert.match(src, /countAnnotationTextNotesInPhotoDoc/, "annotation note count");
+
+const section = readFileSync(
+  join(root, "src/components/jobs/job-media-section.tsx"),
+  "utf8"
+);
+assert.match(section, /fileNoteStats/, "folder note stats map");
+assert.match(section, /openFileNotes/, "customer opens drawing notes");
+assert.doesNotMatch(section, /fileCommentStats/, "removed legacy-only stats");
+
 console.log("OK: test-job-media-file-notes");

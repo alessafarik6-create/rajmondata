@@ -4,6 +4,7 @@
 
 import { safeTime } from "@/lib/date-safe";
 import { buildMessageAuthorPersistFields } from "@/lib/format-message-date";
+import { readAnnotationPayloadFromPhotoDoc } from "@/lib/job-photo-annotations";
 
 export type JobMediaNoteAuthorType = "customer" | "admin" | "employee";
 export type JobMediaNoteSource = "customerPortal" | "admin" | "employee" | "approval" | "legacy";
@@ -146,6 +147,97 @@ export function filterMediaNotesForCustomerView(
       isMediaNoteVisibleToCustomer(n) ||
       (uid && n.authorId === uid && n.authorType === "customer")
   );
+}
+
+export type JobMediaNoteViewerRole = "admin" | "customer" | "employee";
+
+function legacyCommentMatchesFileTarget(
+  row: Record<string, unknown>,
+  target: JobMediaFileNoteTarget,
+  opts?: { legacyPhotos?: boolean }
+): boolean {
+  const fid = String(row.fileId ?? "").trim();
+  if (fid !== String(target.fileId ?? "").trim()) return false;
+  const cFolder = row.folderId != null ? String(row.folderId).trim() : "";
+  const targetFolder = target.folderId != null ? String(target.folderId).trim() : "";
+  if (opts?.legacyPhotos) {
+    return !cFolder;
+  }
+  if (targetFolder) return cFolder === targetFolder;
+  return true;
+}
+
+/** Textové poznámky z anotací (note / arrowNote / shapeLabel) na výkresu. */
+export function countAnnotationTextNotesInPhotoDoc(
+  fileRow: Record<string, unknown> | null | undefined
+): number {
+  const raw = readAnnotationPayloadFromPhotoDoc(fileRow ?? {});
+  if (!raw || typeof raw !== "object") return 0;
+  const annotations = (raw as { annotations?: unknown[] }).annotations;
+  if (!Array.isArray(annotations)) return 0;
+  let count = 0;
+  for (const item of annotations) {
+    if (!item || typeof item !== "object") continue;
+    const a = item as Record<string, unknown>;
+    const type = String(a.type ?? "");
+    if (type === "note" && String(a.text ?? "").trim()) count += 1;
+    if (type === "arrowNote" && String(a.description ?? "").trim()) count += 1;
+    if (type === "shapeLabel") {
+      if (String(a.note ?? "").trim()) count += 1;
+      if (String(a.legendDescription ?? "").trim()) count += 1;
+    }
+  }
+  return count;
+}
+
+/** Sjednocený seznam poznámek u souboru podle role prohlížeče. */
+export function resolveVisibleFileNotesForTarget(params: {
+  allNotes: JobMediaFileNoteDoc[];
+  legacyComments?: Array<Record<string, unknown> & { id: string }>;
+  target: JobMediaFileNoteTarget;
+  legacyFileRow?: Record<string, unknown> | null;
+  viewerRole: JobMediaNoteViewerRole;
+  viewerUid?: string;
+  legacyPhotos?: boolean;
+}): JobMediaFileNoteDoc[] {
+  let picked = pickMediaNotesForFile(params.allNotes, params.target);
+  if (params.legacyFileRow) {
+    picked = mergeFileMediaNotesWithLegacyApprovalComment(
+      picked,
+      params.legacyFileRow,
+      params.target
+    );
+  }
+  const seen = new Set(picked.map((n) => n.id));
+  for (const row of params.legacyComments ?? []) {
+    if (
+      !legacyCommentMatchesFileTarget(row, params.target, {
+        legacyPhotos: params.legacyPhotos,
+      })
+    ) {
+      continue;
+    }
+    const legacy = commentRowToMediaNoteLike(row);
+    if (!legacy || seen.has(legacy.id)) continue;
+    if (params.viewerRole === "customer" && !isMediaNoteVisibleToCustomer(legacy)) {
+      continue;
+    }
+    picked.push(legacy);
+    seen.add(legacy.id);
+  }
+  picked = sortMediaNotesChronologically(picked);
+  if (params.viewerRole === "customer") {
+    picked = filterMediaNotesForCustomerView(picked, params.viewerUid ?? "");
+  }
+  return picked;
+}
+
+export function countVisibleFileNotesForTarget(
+  params: Parameters<typeof resolveVisibleFileNotesForTarget>[0]
+): number {
+  const notes = resolveVisibleFileNotesForTarget(params);
+  const annotations = countAnnotationTextNotesInPhotoDoc(params.legacyFileRow);
+  return notes.length + annotations;
 }
 
 export function sortMediaNotesChronologically(notes: JobMediaFileNoteDoc[]): JobMediaFileNoteDoc[] {

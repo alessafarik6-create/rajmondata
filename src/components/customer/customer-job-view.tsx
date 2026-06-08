@@ -112,7 +112,7 @@ export function CustomerJobView({
   );
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-3 py-6 sm:px-4">
+    <div className="mx-auto max-w-5xl space-y-6 px-3 py-6 sm:px-4 max-lg:space-y-8 max-lg:px-4 max-lg:pb-8">
       {topBar ? <div className="flex flex-wrap items-center gap-3">{topBar}</div> : null}
 
       <CustomerJobProgressCard

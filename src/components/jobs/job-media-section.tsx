@@ -139,13 +139,13 @@ import {
 } from "@/lib/job-media-export-with-notes";
 import {
   commentRowToMediaNoteLike,
-  filterMediaNotesForCustomerView,
-  mergeFileMediaNotesWithLegacyApprovalComment,
+  countVisibleFileNotesForTarget,
   parseJobMediaFileNoteDoc,
-  pickMediaNotesForFile,
+  resolveVisibleFileNotesForTarget,
   sortMediaNotesChronologically,
   type JobMediaFileNoteDoc,
   type JobMediaFileNoteTarget,
+  type JobMediaNoteViewerRole,
 } from "@/lib/job-media-file-notes";
 import { JobMediaFileNotesPanel } from "@/components/jobs/job-media-file-notes-panel";
 import {
@@ -214,7 +214,7 @@ function todayIsoDate(): string {
 }
 
 const jobMediaIconBtnClassName =
-  "min-h-[38px] shrink-0 gap-1 rounded-md border-border/70 bg-background px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-accent [&_svg]:!size-[16px]";
+  "min-h-[38px] shrink-0 gap-1 rounded-md border-border/70 bg-background px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-accent max-lg:min-h-[44px] max-lg:w-full max-lg:justify-center max-lg:px-3 [&_svg]:!size-[16px]";
 
 function JobMediaIconButton({
   label,
@@ -233,7 +233,7 @@ function JobMediaIconButton({
           {...props}
         >
           {children}
-          <span className="hidden md:inline">{label}</span>
+          <span className="inline max-lg:text-sm">{label}</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-[220px] text-xs">
@@ -377,7 +377,9 @@ function MediaCompactDocRow({
           </p>
           <p className="truncate text-xs text-gray-700">{dateLine}</p>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">{actions}</div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1 max-lg:w-full max-lg:flex-col max-lg:items-stretch max-lg:gap-2">
+          {actions}
+        </div>
       </div>
       {footer ? (
         <div className="border-t border-border/40 pt-2">{footer}</div>
@@ -577,7 +579,7 @@ function JobMediaFileCard({
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-3 pt-2.5">
         <p
-          className="truncate text-sm font-semibold leading-tight text-foreground sm:text-[15px]"
+          className="truncate text-sm font-semibold leading-tight text-foreground sm:text-[15px] max-lg:whitespace-normal max-lg:break-words max-lg:line-clamp-3 max-lg:text-base max-lg:leading-snug"
           title={title}
         >
           {title}
@@ -613,13 +615,13 @@ function JobMediaFileCard({
         {extraFooter ? (
           <div className="rounded-md border border-border/40 bg-muted/20 px-2 py-1.5">{extraFooter}</div>
         ) : null}
-        <div className="mt-auto flex flex-wrap items-center justify-start gap-2 border-t border-border/45 pt-2">
+        <div className="mt-auto flex flex-wrap items-center justify-start gap-2 border-t border-border/45 pt-2 max-lg:flex-col max-lg:items-stretch max-lg:gap-2.5">
           {onOpenDrawingNotes ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="h-8 gap-1 text-xs"
+              className="h-8 gap-1 text-xs max-lg:min-h-[44px] max-lg:w-full max-lg:text-sm"
               onClick={onOpenDrawingNotes}
             >
               Poznámky{(drawingNotesCount ?? 0) > 0 ? ` (${drawingNotesCount})` : ""}
@@ -723,25 +725,33 @@ function UserFolderBlock({
   /** Mazání, poznámky, anotace v seznamu souborů — ne pro zákaznický portál. */
   const allowFolderStaffFileActions = !isEmployeeLimited && !isCustomerScope;
 
-  const drawingNotesForTarget = useCallback(
-    (fileId: string, fileRow?: Record<string, unknown>) => {
-      const target: JobMediaFileNoteTarget = { fileId, folderId: folder.id };
-      let picked = pickMediaNotesForFile(mediaNotesAll, target);
-      if (fileRow) {
-        picked = mergeFileMediaNotesWithLegacyApprovalComment(picked, fileRow, target);
-      }
-      if (!isCustomerScope) return picked;
-      return filterMediaNotesForCustomerView(picked, user.uid);
-    },
-    [mediaNotesAll, folder.id, isCustomerScope, user.uid]
-  );
-
   const openDrawingNotes = useCallback(
     (target: JobMediaFileNoteTarget & { legacyRow?: Record<string, unknown> }) => {
       setDrawingNotesTarget(target);
       setDrawingNotesOpen(true);
     },
     []
+  );
+
+  const openFileNotes = useCallback(
+    (img: JobFolderImageDoc, title: string) => {
+      if (isCustomerScope) {
+        openDrawingNotes({
+          fileId: img.id,
+          folderId: folder.id,
+          fileName: title,
+          legacyRow: img as unknown as Record<string, unknown>,
+        });
+        return;
+      }
+      setFileChatTarget({
+        fileId: img.id,
+        folderId: folder.id,
+        fileName: title,
+      });
+      setFileChatOpen(true);
+    },
+    [isCustomerScope, folder.id, openDrawingNotes]
   );
 
   const openFolderMediaViewer = useCallback(
@@ -832,36 +842,32 @@ function UserFolderBlock({
 
   const { data: fileCommentsRaw = [] } = useCollection(fileCommentsQuery);
 
-  const fileCommentStats = useMemo(() => {
-    const uid = user?.uid || "";
-    const m = new Map<string, { count: number; unread: number }>();
-    const list = toArraySafe<Record<string, unknown> & { id: string }>(fileCommentsRaw);
-    for (const c of list) {
-      const folderIdRaw = c.folderId;
-      const folderId = folderIdRaw != null ? String(folderIdRaw).trim() : "";
-      if (folderId !== folder.id) continue;
-      const fid = String(c.fileId ?? "").trim();
-      if (!fid) continue;
-      const key = fid;
-      const prev = m.get(key) ?? { count: 0, unread: 0 };
-      prev.count += 1;
-      const readBy = (c.readBy as unknown) as string[] | undefined;
-      const readAtBy = c.readAtBy as Record<string, unknown> | undefined;
-      const read =
-        Boolean(uid) &&
-        ((readAtBy && readAtBy[uid] != null) ||
-          (Array.isArray(readBy) && readBy.includes(uid)));
-      if (!read) prev.unread += 1;
-      m.set(key, prev);
-    }
-    return m;
-  }, [fileCommentsRaw, user?.uid, folder.id]);
-
   const hideJobMediaAdminUi = isCustomerScope || isEmployeeLimited;
 
   const fileCommentsList = (Array.isArray(fileCommentsRaw) ? fileCommentsRaw : []) as Array<
     Record<string, unknown> & { id: string }
   >;
+
+  const noteViewerRole: JobMediaNoteViewerRole = isCustomerScope
+    ? "customer"
+    : isEmployeeLimited
+      ? "employee"
+      : "admin";
+
+  const drawingNotesForTarget = useCallback(
+    (fileId: string, fileRow?: Record<string, unknown>) => {
+      const target: JobMediaFileNoteTarget = { fileId, folderId: folder.id };
+      return resolveVisibleFileNotesForTarget({
+        allNotes: mediaNotesAll,
+        legacyComments: fileCommentsList,
+        target,
+        legacyFileRow: fileRow,
+        viewerRole: noteViewerRole,
+        viewerUid: user?.uid,
+      });
+    },
+    [mediaNotesAll, folder.id, fileCommentsList, noteViewerRole, user?.uid]
+  );
 
   const renderExportNotesButtons = (img: JobFolderImageDoc, title: string) => {
     if (
@@ -931,6 +937,45 @@ function UserFolderBlock({
     }
     return list;
   }, [images, isEmployeeLimited, isCustomerScope, folder]);
+
+  const fileNoteStats = useMemo(() => {
+    const uid = user?.uid || "";
+    const m = new Map<string, { count: number; unread: number }>();
+    for (const img of imagesForUi) {
+      const count = countVisibleFileNotesForTarget({
+        allNotes: mediaNotesAll,
+        legacyComments: fileCommentsList,
+        target: { fileId: img.id, folderId: folder.id },
+        legacyFileRow: img as unknown as Record<string, unknown>,
+        viewerRole: noteViewerRole,
+        viewerUid: uid,
+      });
+      let unread = 0;
+      if (!isCustomerScope && uid) {
+        for (const c of fileCommentsList) {
+          const folderId = c.folderId != null ? String(c.folderId).trim() : "";
+          if (folderId !== folder.id) continue;
+          if (String(c.fileId ?? "").trim() !== img.id) continue;
+          const readBy = (c.readBy as unknown) as string[] | undefined;
+          const readAtBy = c.readAtBy as Record<string, unknown> | undefined;
+          const read =
+            (readAtBy && readAtBy[uid] != null) ||
+            (Array.isArray(readBy) && readBy.includes(uid));
+          if (!read) unread += 1;
+        }
+      }
+      m.set(img.id, { count, unread });
+    }
+    return m;
+  }, [
+    imagesForUi,
+    mediaNotesAll,
+    fileCommentsList,
+    noteViewerRole,
+    user?.uid,
+    folder.id,
+    isCustomerScope,
+  ]);
 
   const [folderOpen, setFolderOpen] = useState(false);
   const [showAllInFolder, setShowAllInFolder] = useState(false);
@@ -2235,27 +2280,39 @@ function UserFolderBlock({
             <CollapsibleTrigger asChild>
               <button
                 type="button"
-                className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1.5 pl-1.5 pr-2 text-left hover:bg-muted/60"
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1.5 pl-1.5 pr-2 text-left hover:bg-muted/60 max-lg:flex-col max-lg:items-stretch max-lg:gap-2.5 max-lg:p-3"
               >
-                <ChevronDown
-                  className={cn(
-                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                    folderOpen && "rotate-180"
-                  )}
-                  aria-hidden
-                />
-                <span className="truncate text-base font-semibold text-gray-900">
-                  {folder.name || "Bez názvu"}
-                </span>
-                <span
-                  className="shrink-0 rounded-full border border-border/80 bg-background px-2 py-0.5 text-xs font-medium text-gray-900"
-                  title="Typ složky"
-                >
-                  {folderTypeLabel(folderType)}
-                </span>
-                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
-                  {imagesForUi.length}
-                </span>
+                <div className="flex min-w-0 w-full items-center gap-2">
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 shrink-0 text-muted-foreground transition-transform max-lg:h-5 max-lg:w-5",
+                      folderOpen && "rotate-180"
+                    )}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1 truncate text-base font-semibold text-gray-900 max-lg:whitespace-normal max-lg:break-words max-lg:text-lg max-lg:font-bold max-lg:leading-snug">
+                    {folder.name || "Bez názvu"}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 max-lg:w-full">
+                  <span
+                    className="shrink-0 rounded-full border border-border/80 bg-background px-2 py-0.5 text-xs font-medium text-gray-900 max-lg:text-sm"
+                    title="Typ složky"
+                  >
+                    {folderTypeLabel(folderType)}
+                  </span>
+                  <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold tabular-nums text-gray-900 max-lg:text-sm">
+                    {imagesForUi.length}{" "}
+                    {imagesForUi.length === 1
+                      ? "soubor"
+                      : imagesForUi.length >= 2 && imagesForUi.length <= 4
+                        ? "soubory"
+                        : "souborů"}
+                  </span>
+                  <span className="text-xs text-muted-foreground max-lg:ml-auto max-lg:font-medium">
+                    {folderOpen ? "Sbalit" : "Rozbalit"}
+                  </span>
+                </div>
               </button>
             </CollapsibleTrigger>
             <div className="flex flex-wrap gap-2">
@@ -2582,14 +2639,22 @@ function UserFolderBlock({
                 uploaderFallback: authorDisplayName,
               });
               const hasNote = !!img.note?.trim();
-              const fileDrawingNotes =
-                kind === "image" || kind === "pdf"
-                  ? drawingNotesForTarget(img.id, img as unknown as Record<string, unknown>)
-                  : [];
+              const fileDrawingNotes = drawingNotesForTarget(
+                img.id,
+                img as unknown as Record<string, unknown>
+              );
+              const fileNotesCount = fileNoteStats.get(img.id)?.count ?? 0;
               const fileDrawingPreview =
                 fileDrawingNotes.length > 0
                   ? fileDrawingNotes[fileDrawingNotes.length - 1]?.text
                   : null;
+              const openDrawingNotesHandler = () =>
+                openDrawingNotes({
+                  fileId: img.id,
+                  folderId: folder.id,
+                  fileName: title,
+                  legacyRow: img as unknown as Record<string, unknown>,
+                });
               const showInternalNote = !isCustomerScope && hasNote;
               const mediaApprovalSummary =
                 !isCustomerScope
@@ -2638,16 +2703,10 @@ function UserFolderBlock({
                     note={isCustomerScope ? undefined : img.note}
                     hasNote={showInternalNote}
                     customerNotesPreview={kind === "pdf" ? fileDrawingPreview : null}
-                    drawingNotesCount={kind === "pdf" ? fileDrawingNotes.length : 0}
+                    drawingNotesCount={fileNotesCount}
                     onOpenDrawingNotes={
-                      kind === "pdf"
-                        ? () =>
-                            openDrawingNotes({
-                              fileId: img.id,
-                              folderId: folder.id,
-                              fileName: title,
-                              legacyRow: img as unknown as Record<string, unknown>,
-                            })
+                      kind === "pdf" || fileNotesCount > 0
+                        ? openDrawingNotesHandler
                         : undefined
                     }
                     mediaApprovalSummary={mediaApprovalSummary}
@@ -2687,22 +2746,15 @@ function UserFolderBlock({
                           </JobMediaIconButton>
                         ) : null}
                         <JobMediaIconButton
-                          label={`Poznámky (${fileCommentStats.get(img.id)?.count ?? 0})`}
+                          label={`Poznámky (${fileNoteStats.get(img.id)?.count ?? 0})`}
                           disabled={!user?.uid}
-                          onClick={() => {
-                            setFileChatTarget({
-                              fileId: img.id,
-                              folderId: folder.id,
-                              fileName: title,
-                            });
-                            setFileChatOpen(true);
-                          }}
+                          onClick={() => openFileNotes(img, title)}
                         >
                           <span className="relative inline-flex items-center">
                             <MessageSquare className="size-[18px]" aria-hidden />
-                            {(fileCommentStats.get(img.id)?.unread ?? 0) > 0 ? (
+                            {(fileNoteStats.get(img.id)?.unread ?? 0) > 0 ? (
                               <span className="absolute -right-2 -top-2 rounded-full bg-orange-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                                {fileCommentStats.get(img.id)?.unread ?? 0}
+                                {fileNoteStats.get(img.id)?.unread ?? 0}
                               </span>
                             ) : null}
                           </span>
@@ -2830,15 +2882,8 @@ function UserFolderBlock({
                     note={isCustomerScope ? undefined : img.note}
                     hasNote={showInternalNote}
                     customerNotesPreview={fileDrawingPreview}
-                    drawingNotesCount={fileDrawingNotes.length}
-                    onOpenDrawingNotes={() =>
-                      openDrawingNotes({
-                        fileId: img.id,
-                        folderId: folder.id,
-                        fileName: title,
-                        legacyRow: img as unknown as Record<string, unknown>,
-                      })
-                    }
+                    drawingNotesCount={fileNotesCount}
+                    onOpenDrawingNotes={openDrawingNotesHandler}
                     mediaApprovalSummary={mediaApprovalSummary}
                     onResendApprovalEmail={
                       mediaApprovalSummary?.requiresCustomerApproval
@@ -2860,22 +2905,15 @@ function UserFolderBlock({
                       <>
                         {renderExportNotesButtons(img, title)}
                         <JobMediaIconButton
-                          label={`Poznámky (${fileCommentStats.get(img.id)?.count ?? 0})`}
-                        disabled={!user?.uid}
-                        onClick={() => {
-                          setFileChatTarget({
-                            fileId: img.id,
-                            folderId: folder.id,
-                            fileName: title,
-                          });
-                          setFileChatOpen(true);
-                        }}
-                      >
+                          label={`Poznámky (${fileNoteStats.get(img.id)?.count ?? 0})`}
+                          disabled={!user?.uid}
+                          onClick={() => openFileNotes(img, title)}
+                        >
                         <span className="relative inline-flex items-center">
                           <MessageSquare className="size-[18px]" aria-hidden />
-                          {(fileCommentStats.get(img.id)?.unread ?? 0) > 0 ? (
+                          {(fileNoteStats.get(img.id)?.unread ?? 0) > 0 ? (
                             <span className="absolute -right-2 -top-2 rounded-full bg-orange-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                              {fileCommentStats.get(img.id)?.unread ?? 0}
+                              {fileNoteStats.get(img.id)?.unread ?? 0}
                             </span>
                           ) : null}
                         </span>
@@ -3483,14 +3521,14 @@ export function JobMediaSection({
 
   const legacyFileCommentsQuery = useMemoFirebase(
     () =>
-      firestore && companyId && jobId && mediaScope !== "customer"
+      firestore && companyId && jobId
         ? query(
             collection(firestore, "companies", companyId, "jobs", jobId, "comments"),
             where("targetType", "==", "file"),
             limit(500)
           )
         : null,
-    [firestore, companyId, jobId, mediaScope]
+    [firestore, companyId, jobId]
   );
   const { data: legacyFileCommentsRaw = [] } = useCollection(legacyFileCommentsQuery);
 
@@ -3568,19 +3606,27 @@ export function JobMediaSection({
   const [legacyDrawingNotesTarget, setLegacyDrawingNotesTarget] =
     useState<(JobMediaFileNoteTarget & { legacyRow?: Record<string, unknown> }) | null>(null);
 
+  const legacyNoteViewerRole: JobMediaNoteViewerRole =
+    mediaScope === "customer"
+      ? "customer"
+      : mediaScope === "employeeLimited"
+        ? "employee"
+        : "admin";
+
   const legacyDrawingNotesFor = useCallback(
     (fileId: string, fileRow?: Record<string, unknown>) => {
       const target = { fileId, folderId: null as string | null };
-      let picked = pickMediaNotesForFile(mediaNotesAll, target);
-      if (fileRow) {
-        picked = mergeFileMediaNotesWithLegacyApprovalComment(picked, fileRow, target);
-      }
-      if (mediaScope !== "customer") return picked;
-      return user?.uid
-        ? filterMediaNotesForCustomerView(picked, user.uid)
-        : picked;
+      return resolveVisibleFileNotesForTarget({
+        allNotes: mediaNotesAll,
+        legacyComments: legacyFileCommentsList,
+        target,
+        legacyFileRow: fileRow,
+        viewerRole: legacyNoteViewerRole,
+        viewerUid: user?.uid,
+        legacyPhotos: true,
+      });
     },
-    [mediaNotesAll, mediaScope, user?.uid]
+    [mediaNotesAll, legacyFileCommentsList, legacyNoteViewerRole, user?.uid]
   );
 
   const renderLegacyExportNotesButtons = useCallback(
@@ -4298,14 +4344,32 @@ export function JobMediaSection({
                   });
                   const hasNote = !!p.note?.trim();
                   const showLegacyInternalNote = mediaScope !== "customer" && hasNote;
-                  const legacyFileDrawingNotes =
-                    kind === "image" || kind === "pdf"
-                      ? legacyDrawingNotesFor(p.id, p as unknown as Record<string, unknown>)
-                      : [];
+                  const legacyFileDrawingNotes = legacyDrawingNotesFor(
+                    p.id,
+                    p as unknown as Record<string, unknown>
+                  );
+                  const legacyFileNotesCount = countVisibleFileNotesForTarget({
+                    allNotes: mediaNotesAll,
+                    legacyComments: legacyFileCommentsList,
+                    target: { fileId: p.id, folderId: null },
+                    legacyFileRow: p as unknown as Record<string, unknown>,
+                    viewerRole: legacyNoteViewerRole,
+                    viewerUid: user?.uid,
+                    legacyPhotos: true,
+                  });
                   const legacyFileDrawingPreview =
                     legacyFileDrawingNotes.length > 0
                       ? legacyFileDrawingNotes[legacyFileDrawingNotes.length - 1]?.text
                       : null;
+                  const openLegacyDrawingNotesHandler = () => {
+                    setLegacyDrawingNotesTarget({
+                      fileId: p.id,
+                      folderId: null,
+                      fileName: title,
+                      legacyRow: p as unknown as Record<string, unknown>,
+                    });
+                    setLegacyDrawingNotesOpen(true);
+                  };
                   const legacyMediaApprovalSummary =
                     mediaScope !== "customer"
                       ? parseJobMediaApproval(p as unknown as Record<string, unknown>)
@@ -4353,18 +4417,10 @@ export function JobMediaSection({
                         note={mediaScope === "customer" ? undefined : p.note}
                         hasNote={showLegacyInternalNote}
                         customerNotesPreview={kind === "pdf" ? legacyFileDrawingPreview : null}
-                        drawingNotesCount={kind === "pdf" ? legacyFileDrawingNotes.length : 0}
+                        drawingNotesCount={legacyFileNotesCount}
                         onOpenDrawingNotes={
-                          kind === "pdf"
-                            ? () => {
-                                setLegacyDrawingNotesTarget({
-                                  fileId: p.id,
-                                  folderId: null,
-                                  fileName: title,
-                                  legacyRow: p as unknown as Record<string, unknown>,
-                                });
-                                setLegacyDrawingNotesOpen(true);
-                              }
+                          kind === "pdf" || legacyFileNotesCount > 0
+                            ? openLegacyDrawingNotesHandler
                             : undefined
                         }
                         mediaApprovalSummary={legacyMediaApprovalSummary}
@@ -4495,16 +4551,8 @@ export function JobMediaSection({
                       note={mediaScope === "customer" ? undefined : p.note}
                       hasNote={showLegacyInternalNote}
                       customerNotesPreview={legacyFileDrawingPreview}
-                      drawingNotesCount={legacyFileDrawingNotes.length}
-                      onOpenDrawingNotes={() => {
-                        setLegacyDrawingNotesTarget({
-                          fileId: p.id,
-                          folderId: null,
-                          fileName: title,
-                          legacyRow: p as unknown as Record<string, unknown>,
-                        });
-                        setLegacyDrawingNotesOpen(true);
-                      }}
+                      drawingNotesCount={legacyFileNotesCount}
+                      onOpenDrawingNotes={openLegacyDrawingNotesHandler}
                       mediaApprovalSummary={legacyMediaApprovalSummary}
                       onResendApprovalEmail={
                         legacyMediaApprovalSummary?.requiresCustomerApproval
