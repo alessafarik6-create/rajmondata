@@ -510,6 +510,19 @@ service cloud.firestore {
         (isPrivileged() || jobMemberFullInternal(companyId, jobId));
     }
 
+    function jobMemberCanViewBudgets(companyId, jobId) {
+      let m = jobMemberPathForEmp(companyId, jobId, ownEmployeeId());
+      return ownEmployeeId() != null && exists(m) &&
+        ('jobPermissions' in get(m).data) &&
+        get(m).data.jobPermissions.canViewBudgets == true;
+    }
+
+    /** Položkový rozpočet prací — admin, full_internal nebo zaměstnanec s canViewBudgets. */
+    function jobWorkBudgetReadAccess(companyId, jobId) {
+      return jobFinancialReadAccess(companyId, jobId) ||
+        (jobPortalEmployeeEligible(companyId, jobId) && jobMemberCanViewBudgets(companyId, jobId));
+    }
+
     function jobEmployeeMustUseSummaryOnly(companyId, jobId) {
       return jobEmployeeLimitedMediaProfile(companyId, jobId);
     }
@@ -1676,6 +1689,50 @@ service cloud.firestore {
             resource.data.jobId == jobId;
         }
 
+        /** Položkový rozpočet / vyúčtování prací u zakázky. */
+        match /workBudgetItems/{itemId} {
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobWorkBudgetReadAccess(companyId, jobId);
+          allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.createdBy == request.auth.uid &&
+            request.resource.data.title is string &&
+            request.resource.data.title.size() > 0 &&
+            request.resource.data.title.size() <= 500 &&
+            request.resource.data.quantity is number &&
+            request.resource.data.quantity > 0 &&
+            request.resource.data.unitPriceNet is number &&
+            request.resource.data.unitPriceNet >= 0 &&
+            request.resource.data.vatRate is number &&
+            request.resource.data.vatRate in [0, 12, 21] &&
+            request.resource.data.done == false &&
+            request.resource.data.invoiced == false;
+          allow update: if signedIn() && sameCompany(companyId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            (
+              (isPrivileged() && jobDetailReadAccess(companyId, jobId)) ||
+              (jobWorkBudgetReadAccess(companyId, jobId) &&
+                resource.data.invoiced != true &&
+                request.resource.data.invoiced == false &&
+                request.resource.data.title == resource.data.title &&
+                request.resource.data.quantity == resource.data.quantity &&
+                request.resource.data.unitPriceNet == resource.data.unitPriceNet &&
+                request.resource.data.vatRate == resource.data.vatRate &&
+                request.resource.data.amountNet == resource.data.amountNet &&
+                request.resource.data.amountGross == resource.data.amountGross)
+            );
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            resource.data.invoiced != true;
+        }
+
         /**
          * Smlouvy o dílo u zakázky — companies/{companyId}/jobs/{jobId}/workContracts/{contractId}
          */
@@ -2597,6 +2654,20 @@ service cloud.firestore {
       allow create: if signedIn() &&
         request.resource.data.companyId == userCompanyId() &&
         isPrivileged();
+      allow update, delete: if signedIn() &&
+        resource.data.companyId == userCompanyId() &&
+        isPrivileged();
+    }
+
+    match /workBudgetTemplates/{tid} {
+      allow read: if signedIn() &&
+        resource.data.companyId == userCompanyId();
+      allow create: if signedIn() &&
+        request.resource.data.companyId == userCompanyId() &&
+        isPrivileged() &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 120;
       allow update, delete: if signedIn() &&
         resource.data.companyId == userCompanyId() &&
         isPrivileged();

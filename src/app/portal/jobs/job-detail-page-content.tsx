@@ -54,6 +54,7 @@ import {
   companyDocumentRefForJobLegacyPhoto,
 } from "@/lib/job-linked-document-sync";
 import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
+import { JobWorkBudgetSection } from "@/components/jobs/job-work-budget-section";
 import { JobBillingInvoicesSection } from "@/components/jobs/job-billing-invoices-section";
 import { JobContractDepositSection } from "@/components/jobs/job-contract-deposit-section";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
@@ -11250,6 +11251,39 @@ export function JobDetailPageContent({
               jobNumber={jobExpensesReportMeta.jobNumber}
               customerName={jobExpensesReportMeta.customerName}
               realizationAddress={jobExpensesReportMeta.realizationAddress}
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {user && companyId && jobFirestoreId && (isAdmin || canManageFolders) ? (
+        <section
+          className={JD.sectionBand}
+          aria-labelledby="job-work-budget-heading"
+        >
+          <div className={JD.sectionBandInner}>
+            <JobWorkBudgetSection
+              companyId={companyId}
+              jobId={jobFirestoreId!}
+              jobDisplayName={
+                job?.name != null && String(job.name).trim() !== ""
+                  ? String(job.name).trim()
+                  : null
+              }
+              user={user}
+              canManage={canManageFolders}
+              canMarkDone={canManageFolders}
+              companyDoc={(companyDoc ?? null) as Record<string, unknown> | null}
+              jobNumber={jobExpensesReportMeta.jobNumber}
+              customerName={jobExpensesReportMeta.customerName}
+              realizationAddress={jobExpensesReportMeta.realizationAddress}
+              customerId={customerId ?? null}
+              customer={customer}
+              orgBankAccounts={bankAccounts ?? []}
+              profileDisplayName={
+                String(profile?.displayName ?? user?.email ?? "").trim() || undefined
+              }
+              layout="jobDetailWide"
             />
           </div>
         </section>

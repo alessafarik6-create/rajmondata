@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, ChevronLeft, MapPin, Calendar } from "lucide-react";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
+import { JobWorkBudgetSection } from "@/components/jobs/job-work-budget-section";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
 import type { JobMemberPermissions } from "@/lib/job-employee-access";
 import {
@@ -453,6 +454,17 @@ export default function EmployeeJobDetailPage() {
                 photoCommentDeepLink={photoCommentDeepLink}
                 onPhotoCommentDeepLinkConsumed={consumePhotoCommentDeepLink}
               />
+
+              {effectivePermissions.canViewBudgets ? (
+                <JobWorkBudgetSection
+                  companyId={companyId}
+                  jobId={jobId}
+                  jobDisplayName={overview?.name?.trim() ?? null}
+                  user={user}
+                  canManage={false}
+                  canMarkDone={effectivePermissions.canViewBudgets}
+                />
+              ) : null}
 
               <JobCommentsThread
                 firestore={firestore}
