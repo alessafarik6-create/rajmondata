@@ -45,6 +45,11 @@ import {
   normalizeEmailBodyToHtml,
   parseCommaSeparatedEmails,
 } from "@/lib/document-email-outbound";
+import {
+  companyDocumentEmailSubject,
+  invoiceDocumentEmailSubject,
+  resolveInvoiceDocumentEmailType,
+} from "@/lib/document-email-invoice-helpers";
 import { sendJobDocumentEmailFromBrowser } from "@/lib/document-email-send-client";
 import { DocumentEmailRecipientPicker } from "@/components/documents/document-email-recipient-picker";
 import { DocumentEmailOutboundHistory } from "@/components/documents/document-email-outbound-history";
@@ -241,7 +246,9 @@ type CompanyDocumentRow = {
   uploadedByName?: string;
   assignmentType?: AssignmentType;
   invoiceId?: string | null;
+  sourceInvoiceId?: string | null;
   invoiceNumber?: string | null;
+  pdfHtml?: string | null;
   assignedTo?: {
     jobId?: string | null;
     companyId?: string | null;
@@ -4960,7 +4967,7 @@ function DocumentTableReceived({
     setEmailDoc(row);
     setEmailTo("");
     setEmailCc("");
-    setEmailSubject(`Přijatý doklad — ${num}`);
+    setEmailSubject(companyDocumentEmailSubject(row, "received"));
     setEmailBodyPlain(
       [
         "Dobrý den,",
@@ -5026,9 +5033,7 @@ function DocumentTableReceived({
       });
       toast({
         title: "E-mail odeslán",
-        description: emailDoc.fileUrl?.trim()
-          ? "Doklad byl odeslán včetně přílohy."
-          : "Doklad byl odeslán bez přílohy (jen text).",
+        description: "Doklad byl odeslán včetně přílohy (uložený soubor nebo vygenerované PDF).",
       });
       setEmailOpen(false);
       setEmailDoc(null);
@@ -5960,6 +5965,7 @@ function DocumentTableIssued({
   const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailInv, setEmailInv] = useState<(Record<string, unknown> & { id: string }) | null>(null);
+  const [emailIssuedDoc, setEmailIssuedDoc] = useState<CompanyDocumentRow | null>(null);
   const [emailTo, setEmailTo] = useState("");
   const [emailCc, setEmailCc] = useState("");
   const [emailSubject, setEmailSubject] = useState("");
@@ -6096,19 +6102,41 @@ function DocumentTableIssued({
     const num = String(inv.invoiceNumber ?? inv.documentNumber ?? inv.id).trim() || inv.id;
     const cust = String(inv.customerName ?? "").trim();
     const toGuess = String((inv as { customerEmail?: unknown }).customerEmail ?? "").trim();
+    setEmailIssuedDoc(null);
     setEmailInv(inv);
     setEmailTo(toGuess);
     setEmailCc("");
-    setEmailSubject(`Doklad ${num}`);
+    setEmailSubject(invoiceDocumentEmailSubject(inv));
     setEmailBodyPlain(
       `Dobrý den,\n\nv příloze zasíláme doklad ${num}${cust ? ` (${cust})` : ""}.\n\nS pozdravem`
     );
     setEmailOpen(true);
   };
 
-  const sendInvoiceEmail = async () => {
-    if (!emailInv) return;
-    const jid = String(emailInv.jobId ?? "").trim() || null;
+  const openIssuedDocEmailDialog = (row: CompanyDocumentRow) => {
+    const title = docDisplayTitle(row);
+    setEmailInv(null);
+    setEmailIssuedDoc(row);
+    setEmailTo("");
+    setEmailCc("");
+    setEmailSubject(companyDocumentEmailSubject(row, "issued"));
+    setEmailBodyPlain(
+      [
+        "Dobrý den,",
+        "",
+        `v příloze zasíláme vydaný doklad: ${title}`,
+        row.number?.trim() ? `- Číslo: ${row.number.trim()}` : "",
+        "",
+        "S pozdravem",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+    setEmailOpen(true);
+  };
+
+  const sendIssuedEmail = async () => {
+    if (!emailInv && !emailIssuedDoc) return;
     const to = emailTo.trim();
     const subject = emailSubject.trim();
     const bodyPlain = emailBodyPlain.trim();
@@ -6129,21 +6157,44 @@ function DocumentTableIssued({
     }
     setEmailSending(true);
     try {
-      const typeRaw = String(emailInv.type ?? "").trim();
-      const type = typeRaw === "advance_invoice" ? "advance_invoice" : "invoice";
-      await sendJobDocumentEmailFromBrowser({
-        companyId,
-        ...(jid ? { jobId: jid } : {}),
-        type: type as "invoice" | "advance_invoice",
-        to,
-        cc: ccNorm.join(", "),
-        subject,
-        html: normalizeEmailBodyToHtml(bodyPlain),
-        invoiceId: String(emailInv.id),
-      });
-      toast({ title: "E-mail odeslán", description: `Doklad ${String(emailInv.invoiceNumber ?? emailInv.documentNumber ?? emailInv.id)}` });
+      if (emailInv) {
+        const jid = String(emailInv.jobId ?? "").trim() || null;
+        const type = resolveInvoiceDocumentEmailType(emailInv);
+        await sendJobDocumentEmailFromBrowser({
+          companyId,
+          ...(jid ? { jobId: jid } : {}),
+          type,
+          to,
+          cc: ccNorm.join(", "),
+          subject,
+          html: normalizeEmailBodyToHtml(bodyPlain),
+          invoiceId: String(emailInv.id),
+        });
+        toast({
+          title: "E-mail odeslán",
+          description: invoiceDocumentEmailSubject(emailInv),
+        });
+        setEmailInv(null);
+      } else if (emailIssuedDoc) {
+        const jid = documentJobLinkId(emailIssuedDoc)?.trim() || null;
+        await sendJobDocumentEmailFromBrowser({
+          companyId,
+          ...(jid ? { jobId: jid } : {}),
+          type: "issued_document",
+          to,
+          cc: ccNorm.join(", "),
+          subject,
+          html: normalizeEmailBodyToHtml(bodyPlain),
+          documentId: emailIssuedDoc.id,
+          documentUrl: emailIssuedDoc.fileUrl ?? null,
+        });
+        toast({
+          title: "E-mail odeslán",
+          description: companyDocumentEmailSubject(emailIssuedDoc, "issued"),
+        });
+        setEmailIssuedDoc(null);
+      }
       setEmailOpen(false);
-      setEmailInv(null);
     } catch (e) {
       toast({
         variant: "destructive",
@@ -6271,7 +6322,7 @@ function DocumentTableIssued({
                 placeholder="např. ucetni@firma.cz"
               />
             </div>
-            {emailInv ? (
+            {emailInv || emailIssuedDoc ? (
               <DocumentEmailRecipientPicker
                 firestore={firestore}
                 companyId={companyId}
@@ -6279,9 +6330,11 @@ function DocumentTableIssued({
                 onToChange={setEmailTo}
                 suggestionEmails={(() => {
                   const out: Array<{ email: string; label: string }> = [];
-                  const cust = String((emailInv as { customerEmail?: unknown }).customerEmail ?? "").trim();
-                  if (cust && isValidEmailAddress(cust)) {
-                    out.push({ email: cust, label: "Zákazník" });
+                  if (emailInv) {
+                    const cust = String((emailInv as { customerEmail?: unknown }).customerEmail ?? "").trim();
+                    if (cust && isValidEmailAddress(cust)) {
+                      out.push({ email: cust, label: "Zákazník" });
+                    }
                   }
                   const org = String(companyDoc?.email ?? "").trim();
                   if (org && isValidEmailAddress(org)) {
@@ -6324,12 +6377,20 @@ function DocumentTableIssued({
                 entityId={emailInv.id}
               />
             ) : null}
+            {emailIssuedDoc ? (
+              <DocumentEmailOutboundHistory
+                firestore={firestore}
+                companyId={companyId}
+                kind="document"
+                entityId={emailIssuedDoc.id}
+              />
+            ) : null}
           </div>
           <DialogFooter className="border-t border-gray-100 px-4 py-3 sm:px-5">
             <Button type="button" variant="outline" disabled={emailSending} onClick={() => setEmailOpen(false)}>
               Zavřít
             </Button>
-            <Button type="button" disabled={emailSending} className="gap-2" onClick={() => void sendInvoiceEmail()}>
+            <Button type="button" disabled={emailSending} className="gap-2" onClick={() => void sendIssuedEmail()}>
               {emailSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               Odeslat
             </Button>
@@ -6420,6 +6481,18 @@ function DocumentTableIssued({
                           onClick={() => onAssign(docRow)}
                         >
                           <Link2 className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : null}
+                      {!readOnlyTrash ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className={ib}
+                          title="Odeslat e-mailem"
+                          onClick={() => openIssuedDocEmailDialog(docRow)}
+                        >
+                          <Mail className="h-3.5 w-3.5" />
                         </Button>
                       ) : null}
                       {showDeleteButton && !readOnlyTrash ? (

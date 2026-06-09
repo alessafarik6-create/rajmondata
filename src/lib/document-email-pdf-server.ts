@@ -15,11 +15,21 @@ import type { Firestore } from "firebase-admin/firestore";
 import type { Browser } from "puppeteer-core";
 import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
+import { getAdminStorageBucket } from "@/lib/firebase-admin";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import type { DocumentEmailType } from "@/lib/document-email-outbound";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
+import { handoverCompanyPdfMeta } from "@/lib/handover-protocol-company-pdf";
+import { buildCompanyRegisteredAddress } from "@/lib/inquiry-offer-footer";
+import type { OrgBankAccountRow } from "@/lib/invoice-billing-meta";
 import { sanitizeInvoicePreviewHtml } from "@/lib/invoice-a4-html";
+import {
+  buildPortalManualInvoiceHtml,
+  parseInvoiceRecipientFromInvoiceDoc,
+  parsePortalManualFormItemFromFirestore,
+  PORTAL_MANUAL_INVOICE_TYPE,
+} from "@/lib/portal-manual-invoice";
 import {
   errorStackFromUnknown,
   serializeUnknownForLog,
@@ -327,6 +337,333 @@ export type GetDocumentPdfBufferResult =
   | { ok: true; buffer: Buffer; filename: string }
   | { ok: false; error: string; detail: string | null };
 
+function trimField(v: unknown): string {
+  return String(v ?? "").trim();
+}
+
+function invoicePdfFilename(data: Record<string, unknown>, invoiceId: string): string {
+  const num =
+    trimField(data.invoiceNumber) || trimField(data.documentNumber) || invoiceId;
+  const safeNum = num.replace(/[^\w.-]+/g, "_").slice(0, 80);
+  const invType = trimField(data.type);
+  if (invType === JOB_INVOICE_TYPES.ADVANCE) return `zalohova-faktura-${safeNum}.pdf`;
+  if (invType === JOB_INVOICE_TYPES.TAX_RECEIPT) return `danovy-doklad-${safeNum}.pdf`;
+  if (invType === JOB_INVOICE_TYPES.FINAL_INVOICE) return `vyuctovaci-faktura-${safeNum}.pdf`;
+  if (invType === PORTAL_MANUAL_INVOICE_TYPE) return `faktura-${safeNum}.pdf`;
+  return `doklad-${safeNum}.pdf`;
+}
+
+function companyDocAttachmentFilename(
+  data: Record<string, unknown>,
+  documentId: string
+): string {
+  const base =
+    trimField(data.fileName) ||
+    trimField(data.number) ||
+    trimField(data.nazev) ||
+    trimField(data.entityName) ||
+    documentId;
+  const safe = base.replace(/[^\w.\-]+/g, "_").slice(0, 80);
+  const lower = safe.toLowerCase();
+  if (/\.(pdf|png|jpe?g|webp)$/i.test(lower)) return safe;
+  return `${safe || "doklad"}.pdf`;
+}
+
+async function downloadStorageBuffer(
+  storagePath: string,
+  filename: string,
+  errorLabel: string
+): Promise<GetDocumentPdfBufferResult> {
+  const bucket = getAdminStorageBucket();
+  if (!bucket) {
+    return {
+      ok: false,
+      error: "Úložiště souborů není dostupné.",
+      detail: "getAdminStorageBucket null",
+    };
+  }
+  try {
+    const [buf] = await bucket.file(storagePath).download();
+    if (buf.length > MAX_PDF_BYTES) {
+      return {
+        ok: false,
+        error: "Soubor je příliš velký pro odeslání e-mailem.",
+        detail: `bytes=${buf.length}`,
+      };
+    }
+    return { ok: true, buffer: buf, filename };
+  } catch (e) {
+    return {
+      ok: false,
+      error: errorLabel,
+      detail: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+async function htmlToPdfAttachment(
+  rawHtml: string,
+  filename: string,
+  errorLabel = "Nepodařilo se vygenerovat PDF."
+): Promise<GetDocumentPdfBufferResult> {
+  const html = sanitizeInvoicePreviewHtml(rawHtml);
+  if (!html) {
+    return { ok: false, error: errorLabel, detail: "empty html after sanitize" };
+  }
+  try {
+    const buffer = await renderStoredHtmlToPdfBuffer(html);
+    if (buffer.length > MAX_PDF_BYTES) {
+      return {
+        ok: false,
+        error: "Vygenerované PDF je příliš velké pro odeslání e-mailem.",
+        detail: `pdfBytes=${buffer.length}`,
+      };
+    }
+    return { ok: true, buffer, filename };
+  } catch (e) {
+    return {
+      ok: false,
+      error: errorLabel,
+      detail: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+async function loadOrgBankAccountsAdmin(
+  db: Firestore,
+  companyId: string
+): Promise<OrgBankAccountRow[]> {
+  const snap = await db
+    .collection(COMPANIES_COLLECTION)
+    .doc(companyId)
+    .collection("bankAccounts")
+    .get();
+  return snap.docs.map((d) => {
+    const row = d.data() as Record<string, unknown>;
+    return {
+      id: d.id,
+      name: trimField(row.name) || null,
+      accountNumber: trimField(row.accountNumber) || null,
+      bankCode: trimField(row.bankCode) || null,
+      iban: trimField(row.iban) || null,
+      swift: trimField(row.swift) || null,
+      isDefault: row.isDefault === true,
+    };
+  });
+}
+
+async function rebuildPortalManualInvoiceHtmlAdmin(
+  db: Firestore,
+  companyId: string,
+  data: Record<string, unknown>
+): Promise<string | null> {
+  const companySnap = await db.collection(COMPANIES_COLLECTION).doc(companyId).get();
+  const company = (companySnap.data() ?? {}) as Record<string, unknown>;
+  const companyMeta = handoverCompanyPdfMeta(company);
+  const recipient = parseInvoiceRecipientFromInvoiceDoc(data);
+  if (!recipient) return null;
+
+  const itemsRaw = Array.isArray(data.items) ? data.items : [];
+  const items = itemsRaw.map((row, idx) =>
+    parsePortalManualFormItemFromFirestore(row as Record<string, unknown>, idx)
+  );
+  if (items.length === 0) return null;
+
+  const invoiceNumber =
+    trimField(data.invoiceNumber) || trimField(data.documentNumber) || "doklad";
+  const issueDate = trimField(data.issueDate) || new Date().toISOString().slice(0, 10);
+  const dueDate = trimField(data.dueDate) || issueDate;
+  const taxSupplyDate = trimField(data.taxSupplyDate) || issueDate;
+  const bankAccounts = await loadOrgBankAccountsAdmin(db, companyId);
+  const legacyBank = trimField(company.bankAccount ?? company.companyBankAccount) || null;
+
+  try {
+    const built = buildPortalManualInvoiceHtml({
+      invoiceNumber,
+      issueDate,
+      dueDate,
+      taxSupplyDate,
+      jobName: trimField(data.jobName) || "—",
+      notes: trimField(data.notes) || null,
+      recipient,
+      supplierName: companyMeta.contractorCompanyName,
+      supplierAddressLines:
+        buildCompanyRegisteredAddress(company) ?? companyMeta.companyAddressText,
+      supplierIco: trimField(company.ico ?? company.companyIco) || null,
+      supplierDic: trimField(company.dic ?? company.companyDic) || null,
+      logoUrl: companyMeta.logoUrl,
+      items,
+      orgBankAccounts: bankAccounts,
+      overrideBankAccountId: trimField(data.bankAccountId) || null,
+      legacyCompanyBankLine: legacyBank,
+    });
+    return built.html;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveInvoiceDocumentEmailPdf(
+  db: Firestore,
+  input: { companyId: string; invoiceId: string; jobId?: string | null }
+): Promise<GetDocumentPdfBufferResult> {
+  const companyId = trimField(input.companyId);
+  const invoiceId = trimField(input.invoiceId);
+  if (!companyId || !invoiceId) {
+    return {
+      ok: false,
+      error: "Chybí identifikátor dokladu.",
+      detail: "companyId or invoiceId missing",
+    };
+  }
+
+  const iref = db
+    .collection(COMPANIES_COLLECTION)
+    .doc(companyId)
+    .collection("invoices")
+    .doc(invoiceId);
+  const snap = await iref.get();
+  if (!snap.exists) {
+    return { ok: false, error: "Doklad nebyl nalezen.", detail: iref.path };
+  }
+
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  if (!isActiveFirestoreDoc(data)) {
+    return { ok: false, error: "Doklad byl odebrán.", detail: iref.path };
+  }
+
+  const jobIdExpected = trimField(input.jobId);
+  const jobIdOnDoc = trimField(data.jobId);
+  if (jobIdExpected && jobIdOnDoc && jobIdOnDoc !== jobIdExpected) {
+    return {
+      ok: false,
+      error: "Doklad nepatří k této zakázce.",
+      detail: `invoice.jobId=${jobIdOnDoc} expected=${jobIdExpected}`,
+    };
+  }
+
+  const filename = invoicePdfFilename(data, invoiceId);
+  const storagePath = trimField(data.storagePath ?? data.pdfStoragePath);
+  if (storagePath) {
+    const stored = await downloadStorageBuffer(
+      storagePath,
+      filename,
+      "Nepodařilo se načíst uložený PDF soubor dokladu."
+    );
+    if (stored.ok) return stored;
+  }
+
+  const linkedDocumentId = trimField(data.linkedDocumentId);
+  if (linkedDocumentId) {
+    const docSnap = await db
+      .collection(COMPANIES_COLLECTION)
+      .doc(companyId)
+      .collection("documents")
+      .doc(linkedDocumentId)
+      .get();
+    if (docSnap.exists) {
+      const docData = (docSnap.data() ?? {}) as Record<string, unknown>;
+      const docStorage = trimField(docData.storagePath);
+      if (docStorage) {
+        const docFile =
+          trimField(docData.fileName) || filename.replace(/\.pdf$/i, "") + ".pdf";
+        const stored = await downloadStorageBuffer(
+          docStorage,
+          docFile,
+          "Nepodařilo se načíst přílohu propojeného dokladu."
+        );
+        if (stored.ok) return stored;
+      }
+      const docHtml = trimField(docData.pdfHtml);
+      if (docHtml) {
+        const rendered = await htmlToPdfAttachment(docHtml, filename);
+        if (rendered.ok) return rendered;
+      }
+    }
+  }
+
+  const pdfHtml = trimField(data.pdfHtml);
+  if (pdfHtml) {
+    return htmlToPdfAttachment(pdfHtml, filename);
+  }
+
+  if (trimField(data.type) === PORTAL_MANUAL_INVOICE_TYPE) {
+    const rebuilt = await rebuildPortalManualInvoiceHtmlAdmin(db, companyId, data);
+    if (rebuilt) {
+      return htmlToPdfAttachment(rebuilt, filename);
+    }
+  }
+
+  return {
+    ok: false,
+    error: "Nepodařilo se vygenerovat PDF.",
+    detail: `invoice ${invoiceId} has no storagePath, pdfHtml, or rebuildable items`,
+  };
+}
+
+/** PDF / soubor pro doklad z companies/{companyId}/documents. */
+export async function resolveCompanyDocumentEmailPdf(
+  db: Firestore,
+  input: { companyId: string; documentId: string; jobId?: string | null }
+): Promise<GetDocumentPdfBufferResult> {
+  const companyId = trimField(input.companyId);
+  const documentId = trimField(input.documentId);
+  if (!companyId || !documentId) {
+    return {
+      ok: false,
+      error: "Chybí identifikátor dokladu.",
+      detail: "companyId or documentId missing",
+    };
+  }
+
+  const docRef = db
+    .collection(COMPANIES_COLLECTION)
+    .doc(companyId)
+    .collection("documents")
+    .doc(documentId);
+  const snap = await docRef.get();
+  if (!snap.exists) {
+    return { ok: false, error: "Doklad nenalezen.", detail: docRef.path };
+  }
+
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  if (!isActiveFirestoreDoc(data)) {
+    return { ok: false, error: "Doklad byl odebrán.", detail: docRef.path };
+  }
+
+  const filename = companyDocAttachmentFilename(data, documentId);
+  const storagePath = trimField(data.storagePath);
+  if (storagePath) {
+    const stored = await downloadStorageBuffer(
+      storagePath,
+      filename,
+      "Přílohu dokladu se nepodařilo načíst."
+    );
+    if (stored.ok) return stored;
+  }
+
+  const pdfHtml = trimField(data.pdfHtml);
+  if (pdfHtml) {
+    return htmlToPdfAttachment(pdfHtml, filename);
+  }
+
+  const sourceInvoiceId = trimField(data.sourceInvoiceId) || trimField(data.invoiceId);
+  if (sourceInvoiceId) {
+    return resolveInvoiceDocumentEmailPdf(db, {
+      companyId,
+      invoiceId: sourceInvoiceId,
+      jobId:
+        input.jobId ?? (trimField(data.jobId) || trimField(data.zakazkaId) || null),
+    });
+  }
+
+  return {
+    ok: false,
+    error: "Nepodařilo se vygenerovat PDF.",
+    detail: `document ${documentId} has no storagePath, pdfHtml, or linked invoice`,
+  };
+}
+
 /**
  * Načte HTML dokladu z Firestore a převede ho na PDF buffer.
  */
@@ -421,103 +758,16 @@ export async function getDocumentPdfBuffer(
           detail: "invoiceId missing in getDocumentPdfBuffer input",
         };
       }
-
       logPdf("firestore", `invoice companyId=${companyId} invoiceId=${iid}`);
-      const iref = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("invoices").doc(iid);
-      const snap = await iref.get();
-      if (!snap.exists) {
-        logPdf("firestore", "invoice snapshot missing");
-        return {
-          ok: false,
-          error: "Doklad nebyl nalezen.",
-          detail: `Firestore path=${iref.path} exists=false`,
-        };
+      const result = await resolveInvoiceDocumentEmailPdf(db, {
+        companyId,
+        invoiceId: iid,
+        jobId: jobId || null,
+      });
+      if (result.ok) {
+        logPdf("done", `invoice filename=${result.filename} bytes=${result.buffer.length}`);
       }
-
-      const data = (snap.data() ?? {}) as Record<string, unknown>;
-      if (!isActiveFirestoreDoc(data)) {
-        return {
-          ok: false,
-          error: "Doklad byl odebrán.",
-          detail: `Firestore path=${iref.path} isDeleted/inactive`,
-        };
-      }
-
-      const jobIdOnDoc = String(data.jobId ?? "").trim();
-      const jobIdExpected = String(jobId ?? "").trim();
-      if (jobIdExpected && jobIdOnDoc !== jobIdExpected) {
-        logPdf("firestore", `invoice jobId mismatch doc=${jobIdOnDoc} expected=${jobIdExpected}`);
-        return {
-          ok: false,
-          error: "Doklad nepatří k této zakázce.",
-          detail: `invoice.jobId=${jobIdOnDoc || "(empty)"} expected=${jobIdExpected}`,
-        };
-      }
-
-      const invType = String(data.type ?? "");
-      if (type === "invoice") {
-        if (invType !== JOB_INVOICE_TYPES.FINAL_INVOICE) {
-          return {
-            ok: false,
-            error: "Vybraný doklad není vyúčtovací faktura.",
-            detail: `invoice.type=${invType || "(empty)"} expected=${JOB_INVOICE_TYPES.FINAL_INVOICE}`,
-          };
-        }
-      } else if (invType !== JOB_INVOICE_TYPES.ADVANCE) {
-        return {
-          ok: false,
-          error: "Vybraný doklad není zálohová faktura.",
-          detail: `invoice.type=${invType || "(empty)"} expected=${JOB_INVOICE_TYPES.ADVANCE}`,
-        };
-      }
-
-      const rawHtml = String(data.pdfHtml ?? "").trim();
-      logPdf("firestore", `invoice pdfHtmlEmpty=${rawHtml.length === 0}`);
-      if (!rawHtml) {
-        logPdf("firestore", "invoice pdfHtml empty");
-        return {
-          ok: false,
-          error: "Doklad nemá uložený obsah pro PDF. Otevřete ho v portálu a uložte znovu.",
-          detail: `Firestore path=${iref.path} exists=true pdfHtmlLen=0`,
-        };
-      }
-      logPdf("firestore", `invoice pdfHtml ok len=${rawHtml.length}`);
-
-      const html = sanitizeInvoicePreviewHtml(rawHtml);
-      logPdf("html", `invoice sanitized len=${html.length}`);
-
-      let buffer: Buffer;
-      try {
-        buffer = await renderStoredHtmlToPdfBuffer(html);
-      } catch (pdfErr: unknown) {
-        const stack = String(
-          errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr) ?? ""
-        );
-        logPdfError("invoice.renderPdf", pdfErr);
-        return {
-          ok: false,
-          error: "Nepodařilo se vykreslit PDF z dokladu.",
-          detail: stack.slice(0, 12_000),
-        };
-      }
-      if (buffer.length > MAX_PDF_BYTES) {
-        return {
-          ok: false,
-          error: "Vygenerované PDF je příliš velké pro odeslání e-mailem.",
-          detail: `pdfBytes=${buffer.length} max=${MAX_PDF_BYTES}`,
-        };
-      }
-
-      const num =
-        String(
-          (data.invoiceNumber as string | undefined) ??
-            (data.documentNumber as string | undefined) ??
-            ""
-        ).trim() || iid;
-      const safeNum = num.replace(/[^\w.\-]+/g, "_").slice(0, 80);
-      const prefix = type === "advance_invoice" ? "zalohova-faktura" : "faktura";
-      logPdf("done", `invoice filename=${prefix}-${safeNum}.pdf bytes=${buffer.length}`);
-      return { ok: true, buffer, filename: `${prefix}-${safeNum}.pdf` };
+      return result;
   }
 
   if (type === "material_order") {

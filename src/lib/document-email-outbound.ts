@@ -7,6 +7,7 @@ export const DOCUMENT_EMAIL_TYPES = [
   "invoice",
   "advance_invoice",
   "received_document",
+  "issued_document",
   "meeting_record",
   "handover_protocol",
   "material_order",
@@ -21,6 +22,7 @@ export const DOCUMENT_EMAIL_TYPE_LABELS: Record<DocumentEmailType, string> = {
   invoice: "Faktura",
   advance_invoice: "Zálohová faktura",
   received_document: "Přijatý doklad",
+  issued_document: "Vydaný doklad",
   meeting_record: "Zápis ze schůzky",
   handover_protocol: "Předávací protokol",
   material_order: "Objednávka materiálu",
@@ -88,12 +90,29 @@ export function defaultEmailTemplate(
           "S pozdravem\n{{nazev_firmy}}",
       };
     case "advance_invoice":
+      return {
+        subject: "Zálohová faktura — {{cislo_dokladu}}",
+        body:
+          "Dobrý den,\n\n" +
+          "v příloze zasíláme zálohovou fakturu č. {{cislo_dokladu}} (částka {{castka}}).\n\n" +
+          "Odkaz: {{odkaz_na_dokument}}\n\n" +
+          "S pozdravem\n{{nazev_firmy}}",
+      };
     case "received_document":
       return {
         subject: "Přijatý doklad — {{cislo_dokladu}}",
         body:
           "Dobrý den,\n\n" +
           "v příloze zasíláme přijatý doklad č. {{cislo_dokladu}}.\n\n" +
+          "Odkaz: {{odkaz_na_dokument}}\n\n" +
+          "S pozdravem\n{{nazev_firmy}}",
+      };
+    case "issued_document":
+      return {
+        subject: "Vydaný doklad — {{cislo_dokladu}}",
+        body:
+          "Dobrý den,\n\n" +
+          "v příloze zasíláme vydaný doklad č. {{cislo_dokladu}}.\n\n" +
           "Odkaz: {{odkaz_na_dokument}}\n\n" +
           "S pozdravem\n{{nazev_firmy}}",
       };

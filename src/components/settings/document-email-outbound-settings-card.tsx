@@ -43,6 +43,7 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
     invoice: { subject: "", body: "" },
     advance_invoice: { subject: "", body: "" },
     received_document: { subject: "", body: "" },
+    issued_document: { subject: "", body: "" },
     meeting_record: { subject: "", body: "" },
     handover_protocol: { subject: "", body: "" },
     material_order: { subject: "", body: "" },
