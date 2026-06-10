@@ -31,6 +31,12 @@ for (const id of requiredIds) {
 }
 
 if (!lib.includes("localStorage")) throw new Error("lib must use localStorage");
+if (!lib.includes("normalizeJobDetailSectionOrder")) {
+  throw new Error("lib must normalize section order");
+}
+if (!page.includes("if (!job || !jobFirestoreId)")) {
+  throw new Error("collapsible sections must guard missing job");
+}
 if (!panel.includes("moveSectionInOrder")) throw new Error("panel must reorder sections");
 if (!section.includes("CollapsibleTrigger")) throw new Error("section must use collapsible trigger");
 if (!page.includes("JobDetailCollapsibleSectionsPanel")) {

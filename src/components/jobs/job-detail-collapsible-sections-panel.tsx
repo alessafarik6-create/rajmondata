@@ -5,6 +5,7 @@ import { JobDetailCollapsibleSection } from "@/components/jobs/job-detail-collap
 import {
   JOB_DETAIL_COLLAPSIBLE_SECTION_LABELS,
   moveSectionInOrder,
+  normalizeJobDetailSectionOrder,
   readJobDetailSectionOpenMap,
   readJobDetailSectionOrder,
   sortSectionsByOrder,
@@ -27,32 +28,37 @@ export function JobDetailCollapsibleSectionsPanel(props: {
   sections: JobDetailCollapsibleSectionDef[];
 }) {
   const { jobId, userId, sections } = props;
-  const visibleSections = useMemo(
-    () => sections.filter((s) => s.visible),
+  const safeSections = useMemo(
+    () => (Array.isArray(sections) ? sections : []).filter((s) => s && s.id),
     [sections]
+  );
+  const visibleSections = useMemo(
+    () => safeSections.filter((s) => s.visible),
+    [safeSections]
   );
 
   const [order, setOrder] = useState<JobDetailCollapsibleSectionId[]>(() =>
-    readJobDetailSectionOrder(userId)
+    normalizeJobDetailSectionOrder(readJobDetailSectionOrder(userId))
   );
   const [openMap, setOpenMap] = useState<
     Partial<Record<JobDetailCollapsibleSectionId, boolean>>
   >(() => readJobDetailSectionOpenMap(userId, jobId));
 
   useEffect(() => {
-    setOrder(readJobDetailSectionOrder(userId));
+    setOrder(normalizeJobDetailSectionOrder(readJobDetailSectionOrder(userId)));
     setOpenMap(readJobDetailSectionOpenMap(userId, jobId));
   }, [userId, jobId]);
 
   const ordered = useMemo(
-    () => sortSectionsByOrder(visibleSections, order),
+    () => sortSectionsByOrder(visibleSections, normalizeJobDetailSectionOrder(order)),
     [visibleSections, order]
   );
 
   const persistOrder = useCallback(
     (next: JobDetailCollapsibleSectionId[]) => {
-      setOrder(next);
-      writeJobDetailSectionOrder(userId, next);
+      const normalized = normalizeJobDetailSectionOrder(next);
+      setOrder(normalized);
+      writeJobDetailSectionOrder(userId, normalized);
     },
     [userId]
   );

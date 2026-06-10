@@ -1723,8 +1723,11 @@ export function JobDetailPageContent({
     useCollection<WorkContractDoc>(workContractsColRef);
 
   const workContractsForJob = useMemo(() => {
-    const list = (Array.isArray(workContracts) ? workContracts : []) as WorkContractDoc[];
+    const list = (Array.isArray(workContracts) ? workContracts : []).filter(
+      Boolean
+    ) as WorkContractDoc[];
     const filtered = list.filter((c) => {
+      if (!c) return false;
       if (c.isTemplate === true) return false;
       const ct = String(c.contractType ?? "").trim();
       if (!ct || ct === "smlouva_o_dilo" || ct === "contract_document") {
@@ -1791,6 +1794,13 @@ export function JobDetailPageContent({
   }, [job, customer, jobCustomerAddressBlock]);
 
   const jobDetailCollapsibleSections = useMemo((): JobDetailCollapsibleSectionDef[] => {
+    if (!job || !jobFirestoreId) {
+      return [];
+    }
+
+    const jobRecord = job as Record<string, unknown>;
+    const jobStatus = String(jobRecord.status ?? "");
+
     const cuttingPlanAuthorName =
       String(
         (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
@@ -1801,7 +1811,7 @@ export function JobDetailPageContent({
       ).trim() || "Uživatel";
     const expenseCount = toArraySafe<JobExpenseRow>(jobExpenses).length;
     const contractCount = (workContractsForJob ?? []).length;
-    const qTpl = readJobQuestionnaireSnapshot(job as Record<string, unknown>);
+    const qTpl = readJobQuestionnaireSnapshot(jobRecord);
 
     return [
       {
@@ -1826,16 +1836,16 @@ export function JobDetailPageContent({
       },
       {
         id: "customer_tasks",
-        visible: Boolean(companyId && jobFirestoreId),
+        visible: Boolean(companyId && jobFirestoreId && job),
         summary: qTpl?.questions?.length
           ? `Dotazník · ${qTpl.questions.length} otázek`
           : "Úkoly zákazníka a dotazník",
         children:
-          companyId && jobFirestoreId ? (
+          companyId && jobFirestoreId && job ? (
             <JobCustomerTasksAdminSection
               companyId={companyId}
               jobId={jobFirestoreId!}
-              job={job as Record<string, unknown>}
+              job={jobRecord}
               canEdit={canManageFolders}
             />
           ) : null,
@@ -2114,7 +2124,7 @@ export function JobDetailPageContent({
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-800">Vyfakturováno (s DPH)</span>
                 <span className="font-semibold text-emerald-700">
-                  {job.status === "fakturována" && jobBudgetBreakdown
+                  {jobStatus === "fakturována" && jobBudgetBreakdown
                     ? `${jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč`
                     : "0 Kč"}
                 </span>
@@ -2128,11 +2138,11 @@ export function JobDetailPageContent({
         visible: Boolean(companyId && jobFirestoreId),
         summary: customerEmailForJob || "Odeslání dokumentu e-mailem",
         children:
-          companyId && jobFirestoreId ? (
+          companyId && jobFirestoreId && job ? (
             <JobDocumentEmailSection
               companyId={companyId}
               jobId={String(jobFirestoreId)}
-              job={job as Record<string, unknown>}
+              job={jobRecord}
               companyDoc={companyDoc as Record<string, unknown> | null | undefined}
               companyDisplayName={
                 companyNameFromDoc ||
@@ -2153,7 +2163,7 @@ export function JobDetailPageContent({
         visible: Boolean(companyId && jobFirestoreId && user),
         summary: "Materiál a objednávky",
         children:
-          companyId && jobFirestoreId && user ? (
+          companyId && jobFirestoreId && user && job ? (
             <JobMaterialOrdersSection
               companyId={companyId}
               companyDisplayName={
@@ -2162,7 +2172,7 @@ export function JobDetailPageContent({
                 "Organizace"
               }
               jobId={jobFirestoreId}
-              job={job as Record<string, unknown>}
+              job={jobRecord}
               customerName={jobCustomerAddressBlock.displayName}
               customerAddressLines={jobCustomerAddressBlock.addressLines.join("\n")}
               userId={user.uid}
@@ -2176,12 +2186,12 @@ export function JobDetailPageContent({
         visible: Boolean(companyId && jobFirestoreId && user && vyrobaModuleOn && firestore),
         summary: "Přiřazení a viditelnost ve výrobě",
         children:
-          companyId && jobFirestoreId && user && vyrobaModuleOn && firestore ? (
+          companyId && jobFirestoreId && user && vyrobaModuleOn && firestore && job ? (
             <JobProductionTeamSection
               firestore={firestore}
               companyId={companyId}
               jobId={String(jobFirestoreId)}
-              job={job as Record<string, unknown>}
+              job={jobRecord}
               canManage={canManageFolders}
               user={user}
               layout="wide"
@@ -2200,11 +2210,12 @@ export function JobDetailPageContent({
         children:
           companyId &&
           jobFirestoreId &&
+          job &&
           profile?.role !== "customer" &&
           (isAdmin || canManageFolders) ? (
             <JobContractDepositSection
               jobRef={jobRef}
-              job={job as Record<string, unknown>}
+              job={jobRecord}
               canEdit={isAdmin}
               canView={isAdmin || canManageFolders}
               defaultTotalPriceGross={jobBudgetBreakdown?.budgetGross ?? null}
@@ -10170,7 +10181,7 @@ export function JobDetailPageContent({
 
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {isAdmin && (
-            <Select value={job.status} onValueChange={handleStatusChange}>
+            <Select value={job?.status ?? "nová"} onValueChange={handleStatusChange}>
               <SelectTrigger
                 className={cn(LIGHT_SELECT_TRIGGER_CLASS, "h-10 w-[min(100%,180px)] min-w-[140px]")}
               >
@@ -10773,14 +10784,14 @@ export function JobDetailPageContent({
                 <div className="mb-2 flex justify-between text-sm text-gray-900">
                   <span>Celkový pokrok</span>
                   <span className="font-bold">
-                    {job.status === "dokončená" || job.status === "fakturována"
+                    {(job?.status ?? "") === "dokončená" || (job?.status ?? "") === "fakturována"
                       ? "100%"
                       : "45%"}
                   </span>
                 </div>
                 <Progress
                   value={
-                    job.status === "dokončená" || job.status === "fakturována"
+                    (job?.status ?? "") === "dokončená" || (job?.status ?? "") === "fakturována"
                       ? 100
                       : 45
                   }
@@ -10847,7 +10858,7 @@ export function JobDetailPageContent({
       </div>
       </div>
 
-      {user && companyId && jobFirestoreId ? (
+      {user && companyId && jobFirestoreId && job ? (
         <section className={JD.sectionBand} aria-label="Sekce zakázky">
           <div className={JD.sectionBandInner}>
             <JobDetailCollapsibleSectionsPanel
@@ -10993,7 +11004,7 @@ export function JobDetailPageContent({
                 <div className="flex gap-3">
                   <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                   <div>
-                    <p className="font-semibold text-gray-950">Stav změněn na &quot;{job.status}&quot;</p>
+                    <p className="font-semibold text-gray-950">Stav změněn na &quot;{job?.status ?? ""}&quot;</p>
                     <p className="text-xs text-gray-800">
                       {job.updatedAt?.toDate
                         ? job.updatedAt.toDate().toLocaleString("cs-CZ")

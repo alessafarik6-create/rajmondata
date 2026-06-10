@@ -45,6 +45,31 @@ export function defaultJobDetailSectionOrder(): JobDetailCollapsibleSectionId[] 
   return [...JOB_DETAIL_COLLAPSIBLE_SECTION_IDS];
 }
 
+/** Odstraní neznámé/duplicitní ID a doplní chybějící sekce z výchozího pořadí. */
+export function normalizeJobDetailSectionOrder(
+  raw: readonly string[] | JobDetailCollapsibleSectionId[] | null | undefined
+): JobDetailCollapsibleSectionId[] {
+  const seen = new Set<JobDetailCollapsibleSectionId>();
+  const out: JobDetailCollapsibleSectionId[] = [];
+
+  if (Array.isArray(raw)) {
+    for (const id of raw) {
+      if (typeof id === "string" && isSectionId(id) && !seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+  }
+
+  for (const id of JOB_DETAIL_COLLAPSIBLE_SECTION_IDS) {
+    if (!seen.has(id)) {
+      out.push(id);
+    }
+  }
+
+  return out.length > 0 ? out : defaultJobDetailSectionOrder();
+}
+
 export function readJobDetailSectionOrder(
   userId: string | null | undefined
 ): JobDetailCollapsibleSectionId[] {
@@ -56,11 +81,7 @@ export function readJobDetailSectionOrder(
     if (!raw) return defaultJobDetailSectionOrder();
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return defaultJobDetailSectionOrder();
-    const ids = parsed.filter((x): x is JobDetailCollapsibleSectionId =>
-      typeof x === "string" && isSectionId(x)
-    );
-    const missing = JOB_DETAIL_COLLAPSIBLE_SECTION_IDS.filter((id) => !ids.includes(id));
-    return [...ids, ...missing];
+    return normalizeJobDetailSectionOrder(parsed as string[]);
   } catch {
     return defaultJobDetailSectionOrder();
   }
@@ -72,7 +93,8 @@ export function writeJobDetailSectionOrder(
 ): void {
   if (typeof window === "undefined" || !userId?.trim()) return;
   try {
-    localStorage.setItem(`${ORDER_STORAGE_KEY}:${userId.trim()}`, JSON.stringify(order));
+    const normalized = normalizeJobDetailSectionOrder(order);
+    localStorage.setItem(`${ORDER_STORAGE_KEY}:${userId.trim()}`, JSON.stringify(normalized));
   } catch {
     /* ignore quota */
   }
@@ -135,11 +157,12 @@ export function moveSectionInOrder(
   id: JobDetailCollapsibleSectionId,
   direction: "up" | "down"
 ): JobDetailCollapsibleSectionId[] {
-  const idx = order.indexOf(id);
-  if (idx < 0) return order;
+  const normalized = normalizeJobDetailSectionOrder(order);
+  const idx = normalized.indexOf(id);
+  if (idx < 0) return normalized;
   const swap = direction === "up" ? idx - 1 : idx + 1;
-  if (swap < 0 || swap >= order.length) return order;
-  const next = [...order];
+  if (swap < 0 || swap >= normalized.length) return normalized;
+  const next = [...normalized];
   [next[idx], next[swap]] = [next[swap], next[idx]];
   return next;
 }
