@@ -63,6 +63,11 @@ import { JobDocumentEmailSection } from "@/components/jobs/job-document-email-se
 import { JobTasksSection } from "@/components/jobs/job-tasks-section";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
 import { JobProductionTeamSection } from "@/components/jobs/job-production-team-section";
+import {
+  JobDetailCollapsibleSectionsPanel,
+  type JobDetailCollapsibleSectionDef,
+} from "@/components/jobs/job-detail-collapsible-sections-panel";
+import { readJobQuestionnaireSnapshot } from "@/lib/customer-job-tasks";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { canAccessCompanyModule } from "@/lib/platform-access";
 import { isCompanyPrivileged } from "@/lib/company-privilege";
@@ -1784,6 +1789,500 @@ export function JobDetailPageContent({
       realizationAddress,
     };
   }, [job, customer, jobCustomerAddressBlock]);
+
+  const jobDetailCollapsibleSections = useMemo((): JobDetailCollapsibleSectionDef[] => {
+    const cuttingPlanAuthorName =
+      String(
+        (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
+          (profile as { name?: unknown })?.name ??
+          (profile as { email?: unknown })?.email ??
+          user?.email ??
+          ""
+      ).trim() || "Uživatel";
+    const expenseCount = toArraySafe<JobExpenseRow>(jobExpenses).length;
+    const contractCount = (workContractsForJob ?? []).length;
+    const qTpl = readJobQuestionnaireSnapshot(job as Record<string, unknown>);
+
+    return [
+      {
+        id: "meeting_records",
+        visible: Boolean(user && companyId && jobFirestoreId && canSeeMeetingRecords),
+        summary: "Záznamy ze schůzek k zakázce",
+        children:
+          user && companyId && jobFirestoreId && canSeeMeetingRecords ? (
+            <JobMeetingRecordsSection
+              firestore={firestore}
+              companyId={companyId}
+              jobId={jobFirestoreId}
+              jobName={
+                typeof job?.name === "string" && job.name.trim() ? job.name.trim() : "Zakázka"
+              }
+              jobs={jobOptionsForMeeting}
+              user={user}
+              profile={profile as ActivityActorProfile | null | undefined}
+              canEdit={canEditMeetingRecords}
+            />
+          ) : null,
+      },
+      {
+        id: "customer_tasks",
+        visible: Boolean(companyId && jobFirestoreId),
+        summary: qTpl?.questions?.length
+          ? `Dotazník · ${qTpl.questions.length} otázek`
+          : "Úkoly zákazníka a dotazník",
+        children:
+          companyId && jobFirestoreId ? (
+            <JobCustomerTasksAdminSection
+              companyId={companyId}
+              jobId={jobFirestoreId!}
+              job={job as Record<string, unknown>}
+              canEdit={canManageFolders}
+            />
+          ) : null,
+      },
+      {
+        id: "cutting_plan",
+        visible: Boolean(
+          profile?.role !== "customer" && companyId && jobFirestoreId && user && firestore
+        ),
+        summary: "Nářezový plánek / Excel",
+        children:
+          profile?.role !== "customer" && companyId && jobFirestoreId && user && firestore ? (
+            <JobCuttingPlanExcelSection
+              firestore={firestore}
+              companyId={companyId}
+              jobId={String(jobFirestoreId)}
+              user={user}
+              authorName={cuttingPlanAuthorName}
+              canManage={isAdmin}
+              canView={isAdmin || canManageFolders || profile?.role === "employee"}
+            />
+          ) : null,
+      },
+      {
+        id: "financial",
+        visible: true,
+        summary: jobBudgetBreakdown
+          ? `Rozpočet ${jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč`
+          : "Rozpočet neuveden",
+        children: (
+          <Card className={cn(JD.fullWidthCard)}>
+            <CardHeader>
+              <CardTitle className={JD.cardTitlePlain}>Finanční údaje</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {jobBudgetBreakdown ? (
+                <div className={JD.financeHighlight}>
+                  <p className={cn(JD.label, "normal-case")}>Přehled (s DPH)</p>
+                  <div className="flex justify-between gap-4 tabular-nums">
+                    <span>Rozpočet</span>
+                    <span className="font-semibold">
+                      {jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4 tabular-nums">
+                    <span>Náklady</span>
+                    <span className="font-semibold">
+                      {jobExpenseTotals.gross.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div
+                    className={cn(
+                      "flex justify-between gap-4 border-t border-gray-200 pt-2 text-base font-semibold tabular-nums",
+                      remainingBudgetAfterExpensesGrossKc != null &&
+                        remainingBudgetAfterExpensesGrossKc < 0
+                        ? "text-destructive"
+                        : "text-slate-900"
+                    )}
+                  >
+                    <span>Zbývá</span>
+                    <span>
+                      {remainingBudgetAfterExpensesGrossKc != null
+                        ? `${remainingBudgetAfterExpensesGrossKc.toLocaleString("cs-CZ")} Kč`
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+              {jobBudgetBreakdown ? (
+                <div className={JD.financeBreakdown}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary" className="font-normal text-gray-900">
+                      Zadáno
+                    </Badge>
+                    <span className="text-gray-800">
+                      {jobBudgetBreakdown.budgetType === "gross" ? "s DPH" : "bez DPH"}:
+                    </span>
+                    <span className="font-semibold tabular-nums">
+                      {jobBudgetBreakdown.budgetInput.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-gray-800">Rozpočet bez DPH</span>
+                    <span className="font-semibold tabular-nums">
+                      {jobBudgetBreakdown.budgetNet.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-gray-800">DPH ({jobBudgetBreakdown.vatRate} %)</span>
+                    <span className="font-semibold tabular-nums">
+                      {jobBudgetBreakdown.budgetVat.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2 text-base font-bold">
+                    <span>Rozpočet s DPH</span>
+                    <span className="tabular-nums">
+                      {jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-gray-800">Rozpočet</span>
+                  <span className="text-xl font-bold tabular-nums text-gray-950">—</span>
+                </div>
+              )}
+              {jobBudgetBreakdown ? (
+                <div className="space-y-1 border-t border-gray-200 pt-3 text-sm">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-800">Zaplaceno bez DPH</span>
+                    <span className="font-semibold tabular-nums text-slate-900">
+                      {jobPaid.paidNet.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-800">Zaplaceno s DPH</span>
+                    <span className="font-semibold tabular-nums text-slate-900">
+                      {jobPaid.paidGross.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  {jobPaymentSummary &&
+                  (jobPaymentSummary.totalPriceGross > 0 ||
+                    jobPaymentSummary.totalPaidGross > 0) ? (
+                    <div className="mt-2 space-y-1 rounded-md border border-orange-200 bg-orange-50/70 px-2 py-2 text-xs">
+                      <p className="font-semibold text-gray-900">Platby zakázky (souhrn)</p>
+                      <div className="flex justify-between gap-2">
+                        <span>Celkem zaplaceno</span>
+                        <span className="font-semibold tabular-nums">
+                          {formatMoneyKc(jobPaymentSummary.totalPaidGross)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <span>Zbývá doplatit</span>
+                        <span className="font-semibold tabular-nums">
+                          {formatMoneyKc(jobPaymentSummary.remainingToPayGross)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <span>Stav zakázky</span>
+                        <span className="font-semibold">
+                          {paymentStatusLabelCs(jobPaymentSummary.jobPaymentStatus)}
+                        </span>
+                      </div>
+                      {jobPaymentSummary.requiredDepositGross > 0 ? (
+                        <div className="flex justify-between gap-2 border-t border-orange-200/80 pt-1">
+                          <span>Stav zálohy</span>
+                          <span className="font-semibold">
+                            {paymentStatusLabelCs(jobPaymentSummary.depositStatus)}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-800">K doplatení (bez DPH)</span>
+                    <span
+                      className={cn(
+                        "font-semibold tabular-nums",
+                        remainingToPayNetKc != null && remainingToPayNetKc < 0
+                          ? "text-destructive"
+                          : "text-slate-900"
+                      )}
+                    >
+                      {remainingToPayNetKc != null
+                        ? `${remainingToPayNetKc.toLocaleString("cs-CZ")} Kč`
+                        : "—"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2 text-base font-semibold">
+                    <span className="text-slate-900">K doplatení (s DPH)</span>
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        remainingToPayGrossKc != null && remainingToPayGrossKc < 0
+                          ? "text-destructive"
+                          : "text-slate-900"
+                      )}
+                    >
+                      {remainingToPayGrossKc != null
+                        ? `${remainingToPayGrossKc.toLocaleString("cs-CZ")} Kč`
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between items-center gap-3 flex-wrap">
+                  <span className="text-slate-800">Náklady bez DPH</span>
+                  <span className="text-lg font-semibold tabular-nums text-slate-900">
+                    {jobExpenseTotals.net.toLocaleString("cs-CZ")} Kč
+                  </span>
+                </div>
+                <div className="flex justify-between items-center gap-3 flex-wrap">
+                  <span className="text-slate-800">Náklady s DPH</span>
+                  <span className="text-lg font-semibold tabular-nums text-slate-900">
+                    {jobExpenseTotals.gross.toLocaleString("cs-CZ")} Kč
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between items-center gap-3 flex-wrap">
+                  <span className="text-gray-800">Zbývá bez DPH</span>
+                  <span
+                    className={cn(
+                      "font-semibold tabular-nums",
+                      remainingBudgetAfterExpensesNetKc != null &&
+                        remainingBudgetAfterExpensesNetKc < 0
+                        ? "text-destructive"
+                        : "text-emerald-700 dark:text-emerald-400"
+                    )}
+                  >
+                    {remainingBudgetAfterExpensesNetKc != null
+                      ? `${remainingBudgetAfterExpensesNetKc.toLocaleString("cs-CZ")} Kč`
+                      : "-"}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center gap-3 flex-wrap">
+                  <span className="text-muted-foreground">Zbývá s DPH</span>
+                  <span
+                    className={cn(
+                      "font-semibold tabular-nums",
+                      remainingBudgetAfterExpensesGrossKc != null &&
+                        remainingBudgetAfterExpensesGrossKc < 0
+                        ? "text-destructive"
+                        : "text-emerald-700 dark:text-emerald-400"
+                    )}
+                  >
+                    {remainingBudgetAfterExpensesGrossKc != null
+                      ? `${remainingBudgetAfterExpensesGrossKc.toLocaleString("cs-CZ")} Kč`
+                      : "-"}
+                  </span>
+                </div>
+              </div>
+              {jobIncomesSorted.length > 0 || folderSourceExpenses.length > 0 ? (
+                <div className="space-y-2 border-t border-gray-200 pt-3 text-sm">
+                  <p className="font-semibold text-gray-950">Doklady ze složky dokladů</p>
+                  <ul className="space-y-2">
+                    {jobIncomesSorted.map((row) => (
+                      <li
+                        key={`inc-${row.id}`}
+                        className="flex flex-wrap justify-between gap-2 rounded-md border border-gray-200 bg-white px-2 py-1.5"
+                      >
+                        <span className="text-slate-800">
+                          {row.source === "company_document"
+                            ? `Vydaný doklad · ${row.fileName || row.number || row.id}`
+                            : `Příjem · ${row.fileName || row.id}`}
+                        </span>
+                        <span className="tabular-nums text-slate-900">
+                          {typeof row.amountGross === "number"
+                            ? row.amountGross.toLocaleString("cs-CZ")
+                            : "—"}{" "}
+                          Kč · {row.date || "—"}
+                        </span>
+                      </li>
+                    ))}
+                    {folderSourceExpenses.map((row) => {
+                      const r = resolveExpenseAmounts(row);
+                      return (
+                        <li
+                          key={`exp-${row.id}`}
+                          className="flex flex-wrap justify-between gap-2 rounded-md border border-gray-200 bg-white px-2 py-1.5"
+                        >
+                          <span className="text-slate-800">
+                            Náklad · {row.fileName || row.note || row.id}
+                          </span>
+                          <span className="tabular-nums text-slate-900">
+                            {r.amountGross.toLocaleString("cs-CZ")} Kč · {row.date || "—"}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+              <Separator />
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-800">Vyfakturováno (s DPH)</span>
+                <span className="font-semibold text-emerald-700">
+                  {job.status === "fakturována" && jobBudgetBreakdown
+                    ? `${jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč`
+                    : "0 Kč"}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        ),
+      },
+      {
+        id: "document_email",
+        visible: Boolean(companyId && jobFirestoreId),
+        summary: customerEmailForJob || "Odeslání dokumentu e-mailem",
+        children:
+          companyId && jobFirestoreId ? (
+            <JobDocumentEmailSection
+              companyId={companyId}
+              jobId={String(jobFirestoreId)}
+              job={job as Record<string, unknown>}
+              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
+              companyDisplayName={
+                companyNameFromDoc ||
+                (companyDoc as { companyName?: string } | null | undefined)?.companyName ||
+                "Organizace"
+              }
+              customerName={jobCustomerAddressBlock.displayName}
+              customerEmail={customerEmailForJob}
+              workContractsForJob={workContractsForJob}
+              jobBudgetBreakdown={jobBudgetBreakdown}
+              canManage={canManageFolders}
+              layout="wide"
+            />
+          ) : null,
+      },
+      {
+        id: "material_orders",
+        visible: Boolean(companyId && jobFirestoreId && user),
+        summary: "Materiál a objednávky",
+        children:
+          companyId && jobFirestoreId && user ? (
+            <JobMaterialOrdersSection
+              companyId={companyId}
+              companyDisplayName={
+                companyNameFromDoc ||
+                (companyDoc as { companyName?: string } | null | undefined)?.companyName ||
+                "Organizace"
+              }
+              jobId={jobFirestoreId}
+              job={job as Record<string, unknown>}
+              customerName={jobCustomerAddressBlock.displayName}
+              customerAddressLines={jobCustomerAddressBlock.addressLines.join("\n")}
+              userId={user.uid}
+              canManage={canManageFolders}
+              companyDoc={(companyDoc as Record<string, unknown> | null | undefined) ?? null}
+            />
+          ) : null,
+      },
+      {
+        id: "production_team",
+        visible: Boolean(companyId && jobFirestoreId && user && vyrobaModuleOn && firestore),
+        summary: "Přiřazení a viditelnost ve výrobě",
+        children:
+          companyId && jobFirestoreId && user && vyrobaModuleOn && firestore ? (
+            <JobProductionTeamSection
+              firestore={firestore}
+              companyId={companyId}
+              jobId={String(jobFirestoreId)}
+              job={job as Record<string, unknown>}
+              canManage={canManageFolders}
+              user={user}
+              layout="wide"
+            />
+          ) : null,
+      },
+      {
+        id: "contract_deposit",
+        visible: Boolean(
+          companyId &&
+            jobFirestoreId &&
+            profile?.role !== "customer" &&
+            (isAdmin || canManageFolders)
+        ),
+        summary: contractCount > 0 ? `${contractCount} smluv` : "Smlouva a zálohy",
+        children:
+          companyId &&
+          jobFirestoreId &&
+          profile?.role !== "customer" &&
+          (isAdmin || canManageFolders) ? (
+            <JobContractDepositSection
+              jobRef={jobRef}
+              job={job as Record<string, unknown>}
+              canEdit={isAdmin}
+              canView={isAdmin || canManageFolders}
+              defaultTotalPriceGross={jobBudgetBreakdown?.budgetGross ?? null}
+              workContractsForJob={workContractsForJob}
+              jobInvoices={jobInvoicesForDeposit}
+              jobIncomes={jobIncomesSorted}
+            />
+          ) : null,
+      },
+      {
+        id: "expenses",
+        visible: Boolean(user && companyId && jobFirestoreId),
+        summary: expenseCount > 0 ? `${expenseCount} položek` : "Bez nákladů",
+        children:
+          user && companyId && jobFirestoreId ? (
+            <JobExpensesSection
+              companyId={companyId}
+              jobId={jobFirestoreId!}
+              jobDisplayName={
+                job?.name != null && String(job.name).trim() !== ""
+                  ? String(job.name).trim()
+                  : null
+              }
+              user={user}
+              expenses={jobExpenses}
+              canEdit={canManageFolders}
+              jobBudget={jobBudgetBreakdown}
+              layout="jobDetailWide"
+              companyDoc={(companyDoc ?? null) as Record<string, unknown> | null}
+              jobNumber={jobExpensesReportMeta.jobNumber}
+              customerName={jobExpensesReportMeta.customerName}
+              realizationAddress={jobExpensesReportMeta.realizationAddress}
+            />
+          ) : null,
+      },
+      {
+        id: "product_catalogs",
+        visible: Boolean(user && companyId && jobFirestoreId),
+        summary: "Katalogy pro zákazníka",
+        children:
+          user && companyId && jobFirestoreId ? (
+            <JobProductCatalogsSection companyId={companyId} jobId={jobFirestoreId!} />
+          ) : null,
+      },
+    ];
+  }, [
+    user,
+    companyId,
+    jobFirestoreId,
+    canSeeMeetingRecords,
+    firestore,
+    job,
+    jobOptionsForMeeting,
+    profile,
+    canEditMeetingRecords,
+    canManageFolders,
+    isAdmin,
+    jobBudgetBreakdown,
+    jobExpenseTotals,
+    remainingBudgetAfterExpensesGrossKc,
+    remainingBudgetAfterExpensesNetKc,
+    jobPaid,
+    jobPaymentSummary,
+    remainingToPayNetKc,
+    remainingToPayGrossKc,
+    jobIncomesSorted,
+    folderSourceExpenses,
+    companyDoc,
+    companyNameFromDoc,
+    jobCustomerAddressBlock,
+    customerEmailForJob,
+    workContractsForJob,
+    vyrobaModuleOn,
+    jobRef,
+    jobInvoicesForDeposit,
+    jobExpenses,
+    jobExpensesReportMeta,
+  ]);
 
   const formatContractDate = useCallback((t: any): string => {
     try {
@@ -9720,21 +10219,6 @@ export function JobDetailPageContent({
         />
       ) : null}
 
-      {user && companyId && jobFirestoreId && canSeeMeetingRecords ? (
-        <JobMeetingRecordsSection
-          firestore={firestore}
-          companyId={companyId}
-          jobId={jobFirestoreId}
-          jobName={
-            typeof job?.name === "string" && job.name.trim() ? job.name.trim() : "Zakázka"
-          }
-          jobs={jobOptionsForMeeting}
-          user={user}
-          profile={profile as ActivityActorProfile | null | undefined}
-          canEdit={canEditMeetingRecords}
-        />
-      ) : null}
-
       <div className={JD.stackCol}>
           <Card className={cn(JD.card)}>
             <CardHeader>
@@ -9754,15 +10238,6 @@ export function JobDetailPageContent({
               companyId={companyId}
               jobId={jobFirestoreId!}
               jobRef={jobRef}
-              job={job as Record<string, unknown>}
-              canEdit={canManageFolders}
-            />
-          ) : null}
-
-          {companyId && jobFirestoreId ? (
-            <JobCustomerTasksAdminSection
-              companyId={companyId}
-              jobId={jobFirestoreId!}
               job={job as Record<string, unknown>}
               canEdit={canManageFolders}
             />
@@ -10287,26 +10762,6 @@ export function JobDetailPageContent({
               </Card>
             )}
 
-          {profile?.role !== "customer" && companyId && jobFirestoreId && user && firestore ? (
-            <JobCuttingPlanExcelSection
-              firestore={firestore}
-              companyId={companyId}
-              jobId={String(jobFirestoreId)}
-              user={user}
-              authorName={
-                String(
-                  (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
-                    (profile as { name?: unknown })?.name ??
-                    (profile as { email?: unknown })?.email ??
-                    user.email ??
-                    ""
-                ).trim() || "Uživatel"
-              }
-              canManage={isAdmin}
-              canView={isAdmin || canManageFolders || profile?.role === "employee"}
-            />
-          ) : null}
-
           <Card className={cn(JD.card)}>
             <CardHeader>
               <CardTitle className={JD.cardTitle}>
@@ -10392,278 +10847,24 @@ export function JobDetailPageContent({
       </div>
       </div>
 
+      {user && companyId && jobFirestoreId ? (
+        <section className={JD.sectionBand} aria-label="Sekce zakázky">
+          <div className={JD.sectionBandInner}>
+            <JobDetailCollapsibleSectionsPanel
+              jobId={String(jobFirestoreId)}
+              userId={user.uid}
+              sections={jobDetailCollapsibleSections}
+            />
+          </div>
+        </section>
+      ) : null}
+
       <section
         className={JD.sectionBand}
         aria-label="Finanční přehled, komunikace a výroba"
       >
         <div className={JD.sectionBandInner}>
           <div className={JD.stackCol}>
-          <Card className={cn(JD.fullWidthCard)}>
-            <CardHeader>
-              <CardTitle className={JD.cardTitlePlain}>Finanční údaje</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {jobBudgetBreakdown ? (
-                <div className={JD.financeHighlight}>
-                  <p className={cn(JD.label, "normal-case")}>
-                    Přehled (s DPH)
-                  </p>
-                  <div className="flex justify-between gap-4 tabular-nums">
-                    <span>Rozpočet</span>
-                    <span className="font-semibold">
-                      {jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-4 tabular-nums">
-                    <span>Náklady</span>
-                    <span className="font-semibold">
-                      {jobExpenseTotals.gross.toLocaleString("cs-CZ")} Kč
-                    </span>
-                  </div>
-                  <div
-                    className={cn(
-                      "flex justify-between gap-4 border-t border-gray-200 pt-2 text-base font-semibold tabular-nums",
-                      remainingBudgetAfterExpensesGrossKc != null &&
-                        remainingBudgetAfterExpensesGrossKc < 0
-                        ? "text-destructive"
-                        : "text-slate-900"
-                    )}
-                  >
-                    <span>Zbývá</span>
-                    <span>
-                      {remainingBudgetAfterExpensesGrossKc != null
-                        ? `${remainingBudgetAfterExpensesGrossKc.toLocaleString("cs-CZ")} Kč`
-                        : "—"}
-                    </span>
-                  </div>
-                </div>
-              ) : null}
-              {jobBudgetBreakdown ? (
-                <div className={JD.financeBreakdown}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="secondary" className="font-normal text-gray-900">
-                      Zadáno
-                    </Badge>
-                    <span className="text-gray-800">
-                      {jobBudgetBreakdown.budgetType === "gross"
-                        ? "s DPH"
-                        : "bez DPH"}
-                      :
-                    </span>
-                    <span className="font-semibold tabular-nums">
-                      {jobBudgetBreakdown.budgetInput.toLocaleString("cs-CZ")} Kč
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-gray-800">Rozpočet bez DPH</span>
-                    <span className="font-semibold tabular-nums">
-                      {jobBudgetBreakdown.budgetNet.toLocaleString("cs-CZ")} Kč
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-gray-800">
-                      DPH ({jobBudgetBreakdown.vatRate} %)
-                    </span>
-                    <span className="font-semibold tabular-nums">
-                      {jobBudgetBreakdown.budgetVat.toLocaleString("cs-CZ")} Kč
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2 text-base font-bold">
-                    <span>Rozpočet s DPH</span>
-                    <span className="tabular-nums">
-                      {jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <span className="text-gray-800">Rozpočet</span>
-                  <span className="text-xl font-bold tabular-nums text-gray-950">—</span>
-                </div>
-              )}
-              {jobBudgetBreakdown ? (
-                <div className="space-y-1 border-t border-gray-200 pt-3 text-sm">
-                  <div className="flex justify-between gap-2">
-                    <span className="text-slate-800">Zaplaceno bez DPH</span>
-                    <span className="font-semibold tabular-nums text-slate-900">
-                      {jobPaid.paidNet.toLocaleString("cs-CZ")} Kč
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-slate-800">Zaplaceno s DPH</span>
-                    <span className="font-semibold tabular-nums text-slate-900">
-                      {jobPaid.paidGross.toLocaleString("cs-CZ")} Kč
-                    </span>
-                  </div>
-                  {jobPaymentSummary &&
-                  (jobPaymentSummary.totalPriceGross > 0 ||
-                    jobPaymentSummary.totalPaidGross > 0) ? (
-                    <div className="mt-2 space-y-1 rounded-md border border-orange-200 bg-orange-50/70 px-2 py-2 text-xs">
-                      <p className="font-semibold text-gray-900">Platby zakázky (souhrn)</p>
-                      <div className="flex justify-between gap-2">
-                        <span>Celkem zaplaceno</span>
-                        <span className="font-semibold tabular-nums">
-                          {formatMoneyKc(jobPaymentSummary.totalPaidGross)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between gap-2">
-                        <span>Zbývá doplatit</span>
-                        <span className="font-semibold tabular-nums">
-                          {formatMoneyKc(jobPaymentSummary.remainingToPayGross)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between gap-2">
-                        <span>Stav zakázky</span>
-                        <span className="font-semibold">
-                          {paymentStatusLabelCs(jobPaymentSummary.jobPaymentStatus)}
-                        </span>
-                      </div>
-                      {jobPaymentSummary.requiredDepositGross > 0 ? (
-                        <div className="flex justify-between gap-2 border-t border-orange-200/80 pt-1">
-                          <span>Stav zálohy</span>
-                          <span className="font-semibold">
-                            {paymentStatusLabelCs(jobPaymentSummary.depositStatus)}
-                          </span>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className="flex justify-between gap-2">
-                    <span className="text-slate-800">K doplatení (bez DPH)</span>
-                    <span
-                      className={cn(
-                        "font-semibold tabular-nums",
-                        remainingToPayNetKc != null && remainingToPayNetKc < 0
-                          ? "text-destructive"
-                          : "text-slate-900"
-                      )}
-                    >
-                      {remainingToPayNetKc != null
-                        ? `${remainingToPayNetKc.toLocaleString("cs-CZ")} Kč`
-                        : "—"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-2 text-base font-semibold">
-                    <span className="text-slate-900">K doplatení (s DPH)</span>
-                    <span
-                      className={cn(
-                        "tabular-nums",
-                        remainingToPayGrossKc != null && remainingToPayGrossKc < 0
-                          ? "text-destructive"
-                          : "text-slate-900"
-                      )}
-                    >
-                      {remainingToPayGrossKc != null
-                        ? `${remainingToPayGrossKc.toLocaleString("cs-CZ")} Kč`
-                        : "—"}
-                    </span>
-                  </div>
-                </div>
-              ) : null}
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between items-center gap-3 flex-wrap">
-                  <span className="text-slate-800">Náklady bez DPH</span>
-                  <span className="text-lg font-semibold tabular-nums text-slate-900">
-                    {jobExpenseTotals.net.toLocaleString("cs-CZ")} Kč
-                  </span>
-                </div>
-                <div className="flex justify-between items-center gap-3 flex-wrap">
-                  <span className="text-slate-800">Náklady s DPH</span>
-                  <span className="text-lg font-semibold tabular-nums text-slate-900">
-                    {jobExpenseTotals.gross.toLocaleString("cs-CZ")} Kč
-                  </span>
-                </div>
-              </div>
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between items-center gap-3 flex-wrap">
-                  <span className="text-gray-800">Zbývá bez DPH</span>
-                  <span
-                    className={cn(
-                      "font-semibold tabular-nums",
-                      remainingBudgetAfterExpensesNetKc != null &&
-                        remainingBudgetAfterExpensesNetKc < 0
-                        ? "text-destructive"
-                        : "text-emerald-700 dark:text-emerald-400"
-                    )}
-                  >
-                    {remainingBudgetAfterExpensesNetKc != null
-                      ? `${remainingBudgetAfterExpensesNetKc.toLocaleString("cs-CZ")} Kč`
-                      : "-"}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center gap-3 flex-wrap">
-                  <span className="text-muted-foreground">Zbývá s DPH</span>
-                  <span
-                    className={cn(
-                      "font-semibold tabular-nums",
-                      remainingBudgetAfterExpensesGrossKc != null &&
-                        remainingBudgetAfterExpensesGrossKc < 0
-                        ? "text-destructive"
-                        : "text-emerald-700 dark:text-emerald-400"
-                    )}
-                  >
-                    {remainingBudgetAfterExpensesGrossKc != null
-                      ? `${remainingBudgetAfterExpensesGrossKc.toLocaleString("cs-CZ")} Kč`
-                      : "-"}
-                  </span>
-                </div>
-              </div>
-              {jobIncomesSorted.length > 0 || folderSourceExpenses.length > 0 ? (
-                <div className="space-y-2 border-t border-gray-200 pt-3 text-sm">
-                  <p className="font-semibold text-gray-950">
-                    Doklady ze složky dokladů
-                  </p>
-                  <ul className="space-y-2">
-                    {jobIncomesSorted.map((row) => (
-                      <li
-                        key={`inc-${row.id}`}
-                        className="flex flex-wrap justify-between gap-2 rounded-md border border-gray-200 bg-white px-2 py-1.5"
-                      >
-                        <span className="text-slate-800">
-                          {row.source === "company_document"
-                            ? `Vydaný doklad · ${row.fileName || row.number || row.id}`
-                            : `Příjem · ${row.fileName || row.id}`}
-                        </span>
-                        <span className="tabular-nums text-slate-900">
-                          {typeof row.amountGross === "number"
-                            ? row.amountGross.toLocaleString("cs-CZ")
-                            : "—"}{" "}
-                          Kč · {row.date || "—"}
-                        </span>
-                      </li>
-                    ))}
-                    {folderSourceExpenses.map((row) => {
-                      const r = resolveExpenseAmounts(row);
-                      return (
-                        <li
-                          key={`exp-${row.id}`}
-                          className="flex flex-wrap justify-between gap-2 rounded-md border border-gray-200 bg-white px-2 py-1.5"
-                        >
-                          <span className="text-slate-800">
-                            Náklad · {row.fileName || row.note || row.id}
-                          </span>
-                          <span className="tabular-nums text-slate-900">
-                            {r.amountGross.toLocaleString("cs-CZ")} Kč ·{" "}
-                            {row.date || "—"}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ) : null}
-              <Separator />
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-800">Vyfakturováno (s DPH)</span>
-                <span className="font-semibold text-emerald-700">
-                  {job.status === "fakturována" && jobBudgetBreakdown
-                    ? `${jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč`
-                    : "0 Kč"}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
           {companyId && jobFirestoreId && user && firestore ? (
             <>
               <JobCommentsThread
@@ -10749,44 +10950,6 @@ export function JobDetailPageContent({
             </>
           ) : null}
 
-          {companyId && jobFirestoreId ? (
-            <JobDocumentEmailSection
-              companyId={companyId}
-              jobId={String(jobFirestoreId)}
-              job={job as Record<string, unknown>}
-              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
-              companyDisplayName={
-                companyNameFromDoc ||
-                (companyDoc as { companyName?: string } | null | undefined)?.companyName ||
-                "Organizace"
-              }
-              customerName={jobCustomerAddressBlock.displayName}
-              customerEmail={customerEmailForJob}
-              workContractsForJob={workContractsForJob}
-              jobBudgetBreakdown={jobBudgetBreakdown}
-              canManage={canManageFolders}
-              layout="wide"
-            />
-          ) : null}
-
-          {companyId && jobFirestoreId && user ? (
-            <JobMaterialOrdersSection
-              companyId={companyId}
-              companyDisplayName={
-                companyNameFromDoc ||
-                (companyDoc as { companyName?: string } | null | undefined)?.companyName ||
-                "Organizace"
-              }
-              jobId={jobFirestoreId}
-              job={job as Record<string, unknown>}
-              customerName={jobCustomerAddressBlock.displayName}
-              customerAddressLines={jobCustomerAddressBlock.addressLines.join("\n")}
-              userId={user.uid}
-              canManage={canManageFolders}
-              companyDoc={(companyDoc as Record<string, unknown> | null | undefined) ?? null}
-            />
-          ) : null}
-
           {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
             <Card className={cn(JD.fullWidthCard, "border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
               <CardHeader className="pb-2">
@@ -10807,18 +10970,6 @@ export function JobDetailPageContent({
                 </Button>
               </CardContent>
             </Card>
-          ) : null}
-
-          {companyId && jobFirestoreId && user && vyrobaModuleOn && firestore ? (
-            <JobProductionTeamSection
-              firestore={firestore}
-              companyId={companyId}
-              jobId={String(jobFirestoreId)}
-              job={job as Record<string, unknown>}
-              canManage={canManageFolders}
-              user={user}
-              layout="wide"
-            />
           ) : null}
 
           <Card className={cn(JD.fullWidthCard)}>
@@ -10853,21 +11004,6 @@ export function JobDetailPageContent({
               </div>
             </CardContent>
           </Card>
-
-          {companyId && jobFirestoreId &&
-          profile?.role !== "customer" &&
-          (isAdmin || canManageFolders) ? (
-            <JobContractDepositSection
-              jobRef={jobRef}
-              job={job as Record<string, unknown>}
-              canEdit={isAdmin}
-              canView={isAdmin || canManageFolders}
-              defaultTotalPriceGross={jobBudgetBreakdown?.budgetGross ?? null}
-              workContractsForJob={workContractsForJob}
-              jobInvoices={jobInvoicesForDeposit}
-              jobIncomes={jobIncomesSorted}
-            />
-          ) : null}
 
           {companyId && jobFirestoreId ? (
             <JobBillingInvoicesSection
@@ -11228,34 +11364,6 @@ export function JobDetailPageContent({
         </section>
       ) : null}
 
-      {user && companyId && jobFirestoreId ? (
-        <section
-          className={JD.sectionBand}
-          aria-labelledby="job-expenses-heading"
-        >
-          <div className={JD.sectionBandInner}>
-            <JobExpensesSection
-              companyId={companyId}
-              jobId={jobFirestoreId!}
-              jobDisplayName={
-                job?.name != null && String(job.name).trim() !== ""
-                  ? String(job.name).trim()
-                  : null
-              }
-              user={user}
-              expenses={jobExpenses}
-              canEdit={canManageFolders}
-              jobBudget={jobBudgetBreakdown}
-              layout="jobDetailWide"
-              companyDoc={(companyDoc ?? null) as Record<string, unknown> | null}
-              jobNumber={jobExpensesReportMeta.jobNumber}
-              customerName={jobExpensesReportMeta.customerName}
-              realizationAddress={jobExpensesReportMeta.realizationAddress}
-            />
-          </div>
-        </section>
-      ) : null}
-
       {user && companyId && jobFirestoreId && (isAdmin || canManageFolders) ? (
         <section
           className={JD.sectionBand}
@@ -11285,14 +11393,6 @@ export function JobDetailPageContent({
               }
               layout="jobDetailWide"
             />
-          </div>
-        </section>
-      ) : null}
-
-      {user && companyId && jobFirestoreId ? (
-        <section className={JD.sectionBand} aria-labelledby="job-product-catalogs-heading">
-          <div className={JD.sectionBandInner}>
-            <JobProductCatalogsSection companyId={companyId} jobId={jobFirestoreId!} />
           </div>
         </section>
       ) : null}
