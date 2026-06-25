@@ -35,6 +35,11 @@ import {
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
 import { parsePhotoCommentQueryParam } from "@/lib/job-photo-comment-email-settings";
+import {
+  parseJobMediaActivityFocus,
+  shouldScrollToJobMediaSection,
+  type JobMediaActivityFocus,
+} from "@/lib/job-document-activity-link";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
 import { JobMediaFileNotesPanel } from "@/components/jobs/job-media-file-notes-panel";
 import {
@@ -1050,17 +1055,47 @@ export function JobDetailPageContent({
     jobIdParam && !isStandaloneMeasurementEditorRoute ? jobIdParam : null;
   const pathname = usePathname() || "";
   const photoCommentParam = searchParams.get("photoComment");
-  const photoCommentDeepLink = useMemo(
-    () => parsePhotoCommentQueryParam(photoCommentParam),
-    [photoCommentParam]
-  );
-  const consumePhotoCommentDeepLink = useCallback(() => {
+  const mediaActivityFocus = useMemo((): JobMediaActivityFocus | null => {
+    const fromQuery = parseJobMediaActivityFocus(searchParams);
+    if (fromQuery) return fromQuery;
+    const legacy = parsePhotoCommentQueryParam(photoCommentParam);
+    if (!legacy) return null;
+    return {
+      folderId: legacy.folderId,
+      fileId: legacy.fileId,
+      fileName: legacy.fileName,
+      open: "chat",
+    };
+  }, [searchParams, photoCommentParam]);
+  const consumeMediaActivityDeepLink = useCallback(() => {
     const p = new URLSearchParams(searchParams.toString());
     p.delete("photoComment");
+    for (const key of [
+      "mediaSection",
+      "mediaFileId",
+      "mediaFolderId",
+      "mediaCommentId",
+      "mediaDocType",
+      "mediaOpen",
+      "mediaFileName",
+    ]) {
+      p.delete(key);
+    }
     const q = p.toString();
     if (!pathname) return;
     router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
   }, [router, pathname, searchParams]);
+
+  useEffect(() => {
+    if (!shouldScrollToJobMediaSection(searchParams)) return;
+    const t = window.setTimeout(() => {
+      document.getElementById("job-media-section")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 120);
+    return () => window.clearTimeout(t);
+  }, [searchParams, jobFirestoreId]);
 
   const mediaAnnotationAuthorName = useMemo(() => {
     const p = profile as Record<string, unknown> | null | undefined;
@@ -11349,6 +11384,7 @@ export function JobDetailPageContent({
 
       {user && companyId && jobFirestoreId ? (
         <section
+          id="job-media-section"
           className={JD.sectionBand}
           aria-labelledby="job-media-heading"
         >
@@ -11368,8 +11404,8 @@ export function JobDetailPageContent({
               legacyUploading={isUploading}
               layout="jobDetailWide"
               onAnnotatePhoto={openPhotoAnnotationEditor}
-              photoCommentDeepLink={photoCommentDeepLink}
-              onPhotoCommentDeepLinkConsumed={consumePhotoCommentDeepLink}
+              mediaActivityFocus={mediaActivityFocus}
+              onMediaActivityFocusConsumed={consumeMediaActivityDeepLink}
             />
           </div>
         </section>

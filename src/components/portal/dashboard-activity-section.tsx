@@ -15,6 +15,7 @@ import {
   customerActivityVisualAge,
   formatCustomerActivityDateTime,
 } from "@/lib/customer-activity";
+import { resolveCustomerActivityOpenLink } from "@/lib/job-document-activity-link";
 
 export type DashboardActivityRow = {
   id: string;
@@ -26,6 +27,16 @@ export type DashboardActivityRow = {
   updatedAt?: unknown;
   targetLink?: string;
   resolved?: boolean;
+  organizationId?: string;
+  jobId?: string;
+  customerId?: string | null;
+  documentId?: string | null;
+  folderId?: string | null;
+  documentType?: string | null;
+  commentId?: string | null;
+  fileName?: string | null;
+  type?: string;
+  targetId?: string;
 };
 
 function resolveActivityAtMs(row: DashboardActivityRow): number {
@@ -115,6 +126,9 @@ export function DashboardActivitySection({
                   ? customerActivityVisualAge(a as Record<string, unknown>)
                   : null;
                 const dateLabel = formatDashboardActivityTime(a);
+                const openHref = resolveCustomerActivityOpenLink(
+                  a as Record<string, unknown>
+                );
                 return (
                   <li key={a.id} className={activityRowClassName(a, highlightCustomerAge)}>
                     <div className="min-w-0 flex-1 space-y-1">
@@ -142,8 +156,8 @@ export function DashboardActivitySection({
                       ) : null}
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
-                      {a.targetLink ? (
-                        <Link href={a.targetLink}>
+                      {openHref ? (
+                        <Link href={openHref}>
                           <Button size="sm" variant="outline" className="h-8">
                             Otevřít
                           </Button>

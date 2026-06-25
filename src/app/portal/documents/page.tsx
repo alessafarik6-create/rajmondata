@@ -18,6 +18,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import {
+  clearDocumentsAddDialogDraft,
+  defaultDocumentsAddFormData,
+  readDocumentsAddDialogDraft,
+  writeDocumentsAddDialogDraft,
+} from "@/lib/documents-add-dialog-draft";
+import {
   Plus,
   FileText,
   Upload,
@@ -1141,35 +1147,93 @@ function DocumentsPageContent() {
     [jobs]
   );
 
-  const [isAddDocOpen, setIsAddDocOpen] = useState(false);
-  const [newDocKind, setNewDocKind] = useState<"document" | "delivery_note">(
-    "document"
+  const restoredAddDocDraft = useMemo(() => readDocumentsAddDialogDraft(), []);
+
+  const [isAddDocOpen, setIsAddDocOpen] = useState(
+    () => restoredAddDocDraft?.open === true
   );
-  const [newDocType, setNewDocType] = useState<"received" | "issued">("received");
+  const [newDocKind, setNewDocKind] = useState<"document" | "delivery_note">(
+    () => restoredAddDocDraft?.newDocKind ?? "document"
+  );
+  const [newDocType, setNewDocType] = useState<"received" | "issued">(
+    () => restoredAddDocDraft?.newDocType ?? "received"
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newDocFile, setNewDocFile] = useState<File | null>(null);
+  const [pendingRestoredFileName, setPendingRestoredFileName] = useState<string | null>(
+    () => restoredAddDocDraft?.pendingFileName ?? null
+  );
   const [assignmentType, setAssignmentType] =
-    useState<AssignmentType>("pending_assignment");
-  const [selectedJobId, setSelectedJobId] = useState<string>("");
-  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>("");
-  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("");
-  const [formData, setFormData] = useState({
-    number: "",
-    entityName: "",
-    amount: "",
-    currency: "CZK" as "CZK" | "EUR",
-    vat: "21",
-    date: new Date().toISOString().split("T")[0],
-    description: "",
-    costCategory: "other" as DocumentCostCategoryKey,
-    requiresPayment: false,
-    dueDate: "",
-    paymentStatus: "unpaid" as "unpaid" | "partial" | "paid",
-    paidAmount: "",
-    paidAt: "",
-    paymentMethod: "bank" as "cash" | "bank" | "card" | "other",
-    paymentNote: "",
-  });
+    useState<AssignmentType>(
+      () => restoredAddDocDraft?.assignmentType ?? "pending_assignment"
+    );
+  const [selectedJobId, setSelectedJobId] = useState<string>(
+    () => restoredAddDocDraft?.selectedJobId ?? ""
+  );
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>(
+    () => restoredAddDocDraft?.selectedInvoiceId ?? ""
+  );
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>(
+    () => restoredAddDocDraft?.selectedWarehouseId ?? ""
+  );
+  const [formData, setFormData] = useState(() =>
+    restoredAddDocDraft?.formData ?? defaultDocumentsAddFormData()
+  );
+
+  const resetAddDocForm = useCallback(() => {
+    setNewDocKind("document");
+    setNewDocType("received");
+    setFormData(defaultDocumentsAddFormData());
+    setNewDocFile(null);
+    setPendingRestoredFileName(null);
+    setAssignmentType("pending_assignment");
+    setSelectedJobId("");
+    setSelectedInvoiceId("");
+    setSelectedWarehouseId("");
+  }, []);
+
+  const closeAddDocDialog = useCallback(() => {
+    clearDocumentsAddDialogDraft();
+    setIsAddDocOpen(false);
+    resetAddDocForm();
+  }, [resetAddDocForm]);
+
+  const handleAddDocOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setIsAddDocOpen(true);
+        return;
+      }
+      closeAddDocDialog();
+    },
+    [closeAddDocDialog]
+  );
+
+  useEffect(() => {
+    if (!isAddDocOpen) return;
+    writeDocumentsAddDialogDraft({
+      open: true,
+      newDocKind,
+      newDocType,
+      assignmentType,
+      selectedJobId,
+      selectedInvoiceId,
+      selectedWarehouseId,
+      pendingFileName: newDocFile?.name ?? pendingRestoredFileName,
+      formData,
+    });
+  }, [
+    isAddDocOpen,
+    newDocKind,
+    newDocType,
+    assignmentType,
+    selectedJobId,
+    selectedInvoiceId,
+    selectedWarehouseId,
+    newDocFile,
+    pendingRestoredFileName,
+    formData,
+  ]);
 
   const todayIso = useMemo(
     () => new Date().toISOString().split("T")[0],
@@ -1681,30 +1745,7 @@ function DocumentsPageContent() {
           });
         }
         toast({ title: "Dodací list uložen" });
-        setIsAddDocOpen(false);
-        setNewDocKind("document");
-        setFormData({
-          number: "",
-          entityName: "",
-          amount: "",
-          currency: "CZK",
-          vat: "21",
-          date: new Date().toISOString().split("T")[0],
-          description: "",
-          costCategory: "other",
-          requiresPayment: false,
-          dueDate: "",
-          paymentStatus: "unpaid",
-          paidAmount: "",
-          paidAt: "",
-          paymentMethod: "bank",
-          paymentNote: "",
-        });
-        setNewDocFile(null);
-        setAssignmentType("pending_assignment");
-        setSelectedJobId("");
-        setSelectedInvoiceId("");
-        setSelectedWarehouseId("");
+        closeAddDocDialog();
         return;
       }
 
@@ -1805,29 +1846,7 @@ function DocumentsPageContent() {
           title: "Fotodokumentace uložena",
           description: `Soubor byl přidán k zakázce „${selectedJob?.name ?? selectedJobId}“. V seznamu dokladů se nezobrazí (bez částky).`,
         });
-        setIsAddDocOpen(false);
-      setFormData({
-        number: "",
-        entityName: "",
-        amount: "",
-        currency: "CZK",
-        vat: "21",
-        date: new Date().toISOString().split("T")[0],
-        description: "",
-        costCategory: "other",
-        requiresPayment: false,
-        dueDate: "",
-        paymentStatus: "unpaid",
-        paidAmount: "",
-        paidAt: "",
-        paymentMethod: "bank",
-        paymentNote: "",
-      });
-        setNewDocFile(null);
-        setAssignmentType("pending_assignment");
-        setSelectedJobId("");
-        setSelectedInvoiceId("");
-        setSelectedWarehouseId("");
+        closeAddDocDialog();
         return;
       }
 
@@ -2157,29 +2176,7 @@ function DocumentsPageContent() {
             : `Záznam ${formData.number} byl úspěšně přidán.`,
         variant: docCurrency === "EUR" && rateUsedFallback ? "default" : undefined,
       });
-      setIsAddDocOpen(false);
-      setFormData({
-        number: "",
-        entityName: "",
-        amount: "",
-        currency: "CZK",
-        vat: "21",
-        date: new Date().toISOString().split("T")[0],
-        description: "",
-        costCategory: "other",
-        requiresPayment: false,
-        dueDate: "",
-        paymentStatus: "unpaid",
-        paidAmount: "",
-        paidAt: "",
-        paymentMethod: "bank",
-        paymentNote: "",
-      });
-      setNewDocFile(null);
-      setAssignmentType("pending_assignment");
-      setSelectedJobId("");
-      setSelectedInvoiceId("");
-      setSelectedWarehouseId("");
+      closeAddDocDialog();
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Nepodařilo se uložit doklad.";
@@ -3043,7 +3040,7 @@ function DocumentsPageContent() {
               <ReceiptText className="h-4 w-4 shrink-0" /> Nová faktura
             </Link>
           </Button>
-          <Dialog open={isAddDocOpen} onOpenChange={setIsAddDocOpen}>
+          <Dialog open={isAddDocOpen} onOpenChange={handleAddDocOpenChange}>
             <DialogTrigger asChild>
               <Button className="h-10 gap-2 px-4 text-sm sm:min-h-0">
                 <Plus className="h-4 w-4 shrink-0" /> Přidat doklad
@@ -3086,9 +3083,18 @@ function DocumentsPageContent() {
                       type="file"
                       accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
                       capture="environment"
-                      onChange={(e) => setNewDocFile(e.target.files?.[0] ?? null)}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        setNewDocFile(f);
+                        setPendingRestoredFileName(f?.name ?? null);
+                      }}
                       className="bg-background"
                     />
+                    {pendingRestoredFileName && !newDocFile ? (
+                      <p className="text-xs text-amber-800">
+                        Po návratu na stránku znovu vyberte soubor: {pendingRestoredFileName}
+                      </p>
+                    ) : null}
                     <p className="text-xs text-muted-foreground">
                       Na mobilu lze využít fotoaparát a doklad nahrát přímo z terénu.
                     </p>

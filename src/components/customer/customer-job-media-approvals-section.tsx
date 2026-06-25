@@ -38,6 +38,10 @@ import {
   type JobMediaRef,
 } from "@/lib/job-media-customer-approval";
 import { createCustomerActivity } from "@/lib/customer-activity";
+import {
+  buildJobDocumentActivityLink,
+  type JobDocumentMediaType,
+} from "@/lib/job-document-activity-link";
 import { notifyJobActivity } from "@/lib/job-activity-notify-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,6 +52,13 @@ import { cn } from "@/lib/utils";
 import { FileText, Maximize2 } from "lucide-react";
 
 type LegacyPhoto = Record<string, unknown> & { id: string };
+
+function jobDocumentMediaTypeFromRow(raw: Record<string, unknown>): JobDocumentMediaType {
+  const k = inferJobMediaItemType(raw as JobFolderImageDoc);
+  if (k === "pdf") return "pdf";
+  if (k === "image") return "image";
+  return "other";
+}
 
 export type PendingMediaItem = {
   key: string;
@@ -290,6 +301,11 @@ export function CustomerJobMediaApprovalsSection({
         target: it.target,
         enabled: false,
       });
+      const approvedFileId =
+        it.target.kind === "photos" ? it.target.photoId : it.target.imageId;
+      const approvedFolderId =
+        it.target.kind === "folderImages" ? it.target.folderId : null;
+      const approvedDocType = jobDocumentMediaTypeFromRow(it.raw);
       await createCustomerActivity(firestore, {
         organizationId: companyId,
         jobId,
@@ -302,20 +318,32 @@ export function CustomerJobMediaApprovalsSection({
         createdByRole: "customer",
         isRead: false,
         targetType: "job",
-        targetId: it.target.kind === "photos" ? it.target.photoId : it.target.imageId,
-        targetLink: `/portal/jobs/${jobId}`,
+        targetId: approvedFileId,
+        documentId: approvedFileId,
+        folderId: approvedFolderId,
+        documentType: approvedDocType,
+        fileName: it.title,
+        targetLink: buildJobDocumentActivityLink({
+          organizationId: companyId,
+          jobId,
+          customerId: null,
+          documentId: approvedFileId,
+          folderId: approvedFolderId,
+          documentType: approvedDocType,
+          fileName: it.title,
+          activityType: "customer_media_approval_approved",
+          open: "preview",
+        }),
       });
       toast({ title: "Děkujeme", description: "Souhlas byl uložen." });
       if (user) {
-        const approvedFileId =
-          it.target.kind === "photos" ? it.target.photoId : it.target.imageId;
         const token = await user.getIdToken();
         void notifyJobActivity({
           idToken: token,
           companyId,
           jobId,
           eventType: "drawing_approved",
-          folderId: it.target.kind === "folderImages" ? it.target.folderId : null,
+          folderId: approvedFolderId,
           fileId: approvedFileId,
           fileName: it.title,
           entityId: it.key,
@@ -367,11 +395,13 @@ export function CustomerJobMediaApprovalsSection({
         authorName: "Zákazník",
         source: "approval",
       });
-      await addDoc(collection(firestore, "companies", companyId, "jobs", jobId, "media_notes"), {
+      const noteRef = await addDoc(collection(firestore, "companies", companyId, "jobs", jobId, "media_notes"), {
         ...notePayload,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      const commentId = noteRef.id;
+      const documentType = jobDocumentMediaTypeFromRow(it.raw);
 
       await createCustomerActivity(firestore, {
         organizationId: companyId,
@@ -386,7 +416,22 @@ export function CustomerJobMediaApprovalsSection({
         isRead: false,
         targetType: "job",
         targetId: fileId,
-        targetLink: `/portal/jobs/${jobId}`,
+        documentId: fileId,
+        folderId,
+        documentType,
+        commentId,
+        fileName: it.title,
+        targetLink: buildJobDocumentActivityLink({
+          organizationId: companyId,
+          jobId,
+          customerId: null,
+          documentId: fileId,
+          folderId,
+          documentType,
+          commentId,
+          fileName: it.title,
+          activityType: "customer_media_changes_requested",
+        }),
       });
       toast({ title: "Odesláno", description: "Vaše připomínka byla uložena." });
       if (user) {

@@ -60,6 +60,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { createCustomerActivity } from "@/lib/customer-activity";
+import { buildJobDocumentActivityLink } from "@/lib/job-document-activity-link";
 import { JobMediaFileNotesPanel } from "@/components/jobs/job-media-file-notes-panel";
 import { formatMessageDateFromValue } from "@/lib/format-message-date";
 import type { JobMediaFileNoteDoc, JobMediaFileNoteTarget } from "@/lib/job-media-file-notes";
@@ -1533,6 +1534,9 @@ export function CustomerMediaAnnotationViewer({
       }
       await setDoc(annRef, sanitizedPayload, { merge: true });
       if (!isAdmin) {
+        const folderId =
+          storagePath.kind === "folderImages" ? storagePath.folderId ?? null : null;
+        const activityDocType = fileType === "pdf" ? "pdf" : "image";
         await createCustomerActivity(firestore, {
           organizationId: companyId,
           jobId,
@@ -1549,7 +1553,20 @@ export function CustomerMediaAnnotationViewer({
           isRead: false,
           targetType: "annotation",
           targetId: targetId,
-          targetLink: `/portal/jobs/${jobId}`,
+          documentId: String(documentId),
+          folderId,
+          documentType: activityDocType,
+          targetLink: buildJobDocumentActivityLink({
+            organizationId: companyId,
+            jobId,
+            customerId: null,
+            documentId: String(documentId),
+            folderId,
+            documentType: activityDocType,
+            activityType:
+              fileType === "pdf" ? "customer_pdf_annotation" : "customer_image_annotation",
+            open: "annotate",
+          }),
         });
       }
       initialItemsRef.current = JSON.parse(JSON.stringify(securedItems)) as CustomerOverlayItem[];

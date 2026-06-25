@@ -86,6 +86,12 @@ export type CustomerActivityPayload = {
   targetType: "job" | "chat" | "annotation" | "catalog-selection";
   targetId: string;
   targetLink?: string;
+  /** ID souboru ve fotodokumentaci (složka / legacy photos). */
+  documentId?: string | null;
+  folderId?: string | null;
+  documentType?: "image" | "pdf" | "other" | null;
+  commentId?: string | null;
+  fileName?: string | null;
   priority?: "low" | "normal" | "high";
 };
 

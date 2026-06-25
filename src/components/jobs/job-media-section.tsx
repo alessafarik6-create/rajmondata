@@ -148,6 +148,7 @@ import {
   type JobMediaNoteViewerRole,
 } from "@/lib/job-media-file-notes";
 import { JobMediaFileNotesPanel } from "@/components/jobs/job-media-file-notes-panel";
+import type { JobMediaActivityFocus } from "@/lib/job-document-activity-link";
 import {
   ExpandableNoteText,
   JobNoteMetaLine,
@@ -651,6 +652,8 @@ function UserFolderBlock({
   onOpenMediaApprovalDialog,
   photoCommentDeepLink = null,
   onPhotoCommentDeepLinkConsumed,
+  mediaActivityFocus = null,
+  onMediaActivityFocusConsumed,
   mediaNotesAll = [],
   onMediaNoteAdded,
   authorDisplayName = "Uživatel",
@@ -686,6 +689,9 @@ function UserFolderBlock({
     fileName: string;
   } | null;
   onPhotoCommentDeepLinkConsumed?: () => void;
+  /** Deep link z dashboardu / aktivity — otevře konkrétní soubor ve složce. */
+  mediaActivityFocus?: JobMediaActivityFocus | null;
+  onMediaActivityFocusConsumed?: () => void;
   mediaNotesAll?: JobMediaFileNoteDoc[];
   onMediaNoteAdded?: (note: JobMediaFileNoteDoc) => void;
   authorDisplayName?: string;
@@ -708,6 +714,7 @@ function UserFolderBlock({
   const [drawingNotesOpen, setDrawingNotesOpen] = useState(false);
   const [drawingNotesTarget, setDrawingNotesTarget] =
     useState<(JobMediaFileNoteTarget & { legacyRow?: Record<string, unknown> }) | null>(null);
+  const [drawingNotesHighlightId, setDrawingNotesHighlightId] = useState<string | undefined>();
 
   const [pdfConvertTarget, setPdfConvertTarget] = useState<{
     pdfDoc: JobFolderImageDoc;
@@ -982,16 +989,30 @@ function UserFolderBlock({
 
   const photoCommentDeepLinkHandledKey = useRef<string | null>(null);
 
+  const resolvedMediaFocus = useMemo((): JobMediaActivityFocus | null => {
+    if (mediaActivityFocus) return mediaActivityFocus;
+    if (photoCommentDeepLink) {
+      return {
+        folderId: photoCommentDeepLink.folderId,
+        fileId: photoCommentDeepLink.fileId,
+        fileName: photoCommentDeepLink.fileName,
+        open: "chat",
+      };
+    }
+    return null;
+  }, [mediaActivityFocus, photoCommentDeepLink]);
+
   useEffect(() => {
-    if (!photoCommentDeepLink) {
+    const focus = resolvedMediaFocus;
+    if (!focus) {
       photoCommentDeepLinkHandledKey.current = null;
       return;
     }
     if (!user?.uid) return;
-    if (String(folder.id) !== String(photoCommentDeepLink.folderId)) return;
-    const fid = String(photoCommentDeepLink.fileId || "").trim();
+    if (String(folder.id) !== String(focus.folderId)) return;
+    const fid = String(focus.fileId || "").trim();
     if (!fid) return;
-    const key = `${folder.id}:${fid}`;
+    const key = `${focus.folderId}:${fid}:${focus.open}:${focus.commentId ?? ""}`;
     if (photoCommentDeepLinkHandledKey.current === key) return;
     if (imagesRaw === undefined) return;
     const hit = imagesForUi.find((img) => img.id === fid);
@@ -1002,22 +1023,41 @@ function UserFolderBlock({
         (hit as { name?: unknown }).name ??
         ""
     ).trim();
+    const title =
+      String(focus.fileName || "").trim() || titleFromRow || "Soubor";
     setFolderOpen(true);
-    setFileChatTarget({
-      fileId: fid,
-      folderId: folder.id,
-      fileName:
-        String(photoCommentDeepLink.fileName || "").trim() || titleFromRow || "Soubor",
-    });
-    setFileChatOpen(true);
-    onPhotoCommentDeepLinkConsumed?.();
+
+    if (focus.open === "annotate" || focus.open === "preview") {
+      const openUrl = getJobMediaPreviewUrl(hit as JobFolderImageDoc) ?? "";
+      openFolderMediaViewer(hit, openUrl, title);
+    } else if (focus.open === "chat") {
+      setFileChatTarget({
+        fileId: fid,
+        folderId: folder.id,
+        fileName: title,
+      });
+      setFileChatOpen(true);
+    } else {
+      setDrawingNotesHighlightId(focus.commentId);
+      setDrawingNotesTarget({
+        fileId: fid,
+        folderId: folder.id,
+        fileName: title,
+        legacyRow: hit as unknown as Record<string, unknown>,
+      });
+      setDrawingNotesOpen(true);
+    }
+
+    (onMediaActivityFocusConsumed ?? onPhotoCommentDeepLinkConsumed)?.();
   }, [
-    photoCommentDeepLink,
+    resolvedMediaFocus,
     folder.id,
     imagesRaw,
     imagesForUi,
     user?.uid,
+    onMediaActivityFocusConsumed,
     onPhotoCommentDeepLinkConsumed,
+    openFolderMediaViewer,
   ]);
 
   const visibleFolderImages = useMemo(() => {
@@ -3258,6 +3298,7 @@ function UserFolderBlock({
             allNotes={mediaNotesAll}
             customerPortal={isCustomerScope}
             onNoteAdded={onMediaNoteAdded}
+            highlightNoteId={drawingNotesHighlightId}
           />
         ) : null}
       </DialogContent>
@@ -3303,6 +3344,9 @@ export type JobMediaSectionProps = {
   } | null;
   /** Po úspěšném otevření chatu z deep linku (např. odstranění query z URL). */
   onPhotoCommentDeepLinkConsumed?: () => void;
+  /** Deep link z dashboard aktivity — konkrétní dokument, poznámky nebo editor. */
+  mediaActivityFocus?: JobMediaActivityFocus | null;
+  onMediaActivityFocusConsumed?: () => void;
 };
 
 export function JobMediaSection({
@@ -3323,6 +3367,8 @@ export function JobMediaSection({
   jobRecord = null,
   photoCommentDeepLink = null,
   onPhotoCommentDeepLinkConsumed,
+  mediaActivityFocus = null,
+  onMediaActivityFocusConsumed,
   folderCustomerNotificationCandidates = null,
 }: JobMediaSectionProps) {
   /** Skrýt nahrávání / mazání / interní akce — zaměstnanec i zákazník. */
@@ -4076,6 +4122,31 @@ export function JobMediaSection({
     return photosSortedForUi.slice(0, JOB_MEDIA_INITIAL_COUNT);
   }, [photosSortedForUi, showAllLegacyPhotos]);
 
+  const legacyMediaFocusHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    const focus = mediaActivityFocus;
+    if (!focus?.fileId || focus.folderId) return;
+    if (!user?.uid) return;
+    const key = `${focus.fileId}:${focus.open}:${focus.commentId ?? ""}`;
+    if (legacyMediaFocusHandledRef.current === key) return;
+    const hit = photosSortedForUi.find((p) => p.id === focus.fileId);
+    if (!hit) return;
+    legacyMediaFocusHandledRef.current = key;
+    setMediaGalleryOpen(true);
+    const title = String(
+      focus.fileName || hit.fileName || hit.name || "Soubor"
+    ).trim();
+    const openUrl = getJobMediaPreviewUrl(hit) ?? "";
+    openLegacyMediaViewer(hit, openUrl, title);
+    onMediaActivityFocusConsumed?.();
+  }, [
+    mediaActivityFocus,
+    photosSortedForUi,
+    user?.uid,
+    openLegacyMediaViewer,
+    onMediaActivityFocusConsumed,
+  ]);
+
   const legacyDocPhotos = useMemo(
     () =>
       visibleLegacyPhotos.filter((p) => {
@@ -4814,6 +4885,8 @@ export function JobMediaSection({
                           onOpenMediaApprovalDialog={openMediaApprovalDialog}
                           photoCommentDeepLink={photoCommentDeepLink}
                           onPhotoCommentDeepLinkConsumed={onPhotoCommentDeepLinkConsumed}
+                          mediaActivityFocus={mediaActivityFocus}
+                          onMediaActivityFocusConsumed={onMediaActivityFocusConsumed}
                           mediaNotesAll={mediaNotesAll}
                           onMediaNoteAdded={handleMediaNoteAdded}
                           authorDisplayName={authorDisplayName}

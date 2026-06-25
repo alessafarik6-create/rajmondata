@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addDoc, collection, serverTimestamp, type Firestore } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,6 +35,8 @@ type Props = {
   /** Volitelný řádek souboru — doplní customerComment ze schválení do historie. */
   legacyFileRow?: Record<string, unknown> | null;
   onNoteAdded?: (note: JobMediaFileNoteDoc) => void;
+  /** Zvýrazní a scrollne na konkrétní poznámku (deep link z aktivity). */
+  highlightNoteId?: string;
 };
 
 export function JobMediaFileNotesPanel(props: Props) {
@@ -52,6 +54,7 @@ export function JobMediaFileNotesPanel(props: Props) {
     className,
     legacyFileRow,
     onNoteAdded,
+    highlightNoteId,
   } = props;
   const { toast } = useToast();
   const [draft, setDraft] = useState("");
@@ -67,6 +70,15 @@ export function JobMediaFileNotesPanel(props: Props) {
   }, [allNotes, target, legacyFileRow, customerPortal, userId]);
 
   const canPost = !readOnly && Boolean(userId) && Boolean(firestore);
+
+  useEffect(() => {
+    if (!highlightNoteId?.trim()) return;
+    const t = window.setTimeout(() => {
+      const el = document.getElementById(`media-note-${highlightNoteId.trim()}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 150);
+    return () => window.clearTimeout(t);
+  }, [highlightNoteId, fileNotes]);
 
   const send = useCallback(async () => {
     const fs = firestore as Firestore | null;
@@ -162,9 +174,11 @@ export function JobMediaFileNotesPanel(props: Props) {
             return (
               <li
                 key={n.id}
+                id={`media-note-${n.id}`}
                 className={cn(
                   "rounded-md border border-border/50 border-l-[3px] px-2 py-2",
-                  shell
+                  shell,
+                  highlightNoteId === n.id && "ring-2 ring-primary/50 bg-primary/5"
                 )}
               >
                 <JobMessageHeader message={noteRecord} className="mb-1 space-y-0.5" />
