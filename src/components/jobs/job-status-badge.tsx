@@ -13,6 +13,16 @@ type JobStatusBadgeProps = {
   className?: string;
 };
 
+const DARK_BADGE_CLASSES: Record<string, string> = {
+  nová: "border-blue-400 bg-blue-950/70 text-blue-100",
+  rozpracovaná: "border-orange-400 bg-orange-950/60 text-orange-100",
+  čeká: "border-amber-400 bg-amber-950/50 text-amber-100",
+  pozastavená: "border-slate-400 bg-slate-800/90 text-slate-100",
+  dokončená: "border-emerald-400 bg-emerald-950/60 text-emerald-100",
+  fakturována: "border-emerald-500 bg-emerald-900/70 text-emerald-100",
+  zrušená: "border-red-400 bg-red-950/60 text-red-100",
+};
+
 export function JobStatusBadge({
   status,
   compact = false,
@@ -21,14 +31,16 @@ export function JobStatusBadge({
 }: JobStatusBadgeProps) {
   const cfg = getJobStatusConfig(status);
   const Icon = cfg.icon;
+  const darkCls =
+    DARK_BADGE_CLASSES[String(cfg.value)] ??
+    "border-white/25 bg-slate-800 text-slate-100";
 
   return (
     <span
       className={cn(
-        "inline-flex max-w-full shrink-0 items-center gap-1 rounded-full border font-medium",
-        compact ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-0.5 text-xs",
-        cfg.badgeClassName,
-        dark && cfg.filterGroup === "completed" && "border-emerald-400/40",
+        "inline-flex max-w-full shrink-0 items-center gap-1 rounded-full border font-semibold leading-tight",
+        compact ? "px-2 py-0.5 text-[12px]" : "px-2.5 py-1 text-[13px]",
+        dark ? darkCls : cfg.badgeClassName,
         className
       )}
       title={cfg.label}

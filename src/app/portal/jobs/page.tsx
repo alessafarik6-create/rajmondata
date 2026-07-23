@@ -1813,8 +1813,8 @@ function JobsPageContent() {
       >
         <CardContent
           className={cn(
-            "p-0",
-            belowLg ? "overflow-x-hidden bg-slate-950" : "overflow-x-auto"
+            "min-w-0 p-0",
+            belowLg ? "overflow-x-hidden bg-slate-950" : "overflow-x-hidden"
           )}
         >
           {isLoading ? (

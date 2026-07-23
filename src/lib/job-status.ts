@@ -63,7 +63,7 @@ const JOB_STATUS_CONFIGS: JobStatusConfig[] = [
     label: "Nová",
     sortOrder: 20,
     badgeClassName:
-      "border-blue-500/30 bg-blue-500/10 text-blue-800 dark:text-blue-200",
+      "border-blue-600 bg-blue-50 text-blue-950",
     icon: CircleDot,
     filterGroup: "new",
   },
@@ -72,7 +72,7 @@ const JOB_STATUS_CONFIGS: JobStatusConfig[] = [
     label: "Rozpracovaná",
     sortOrder: 10,
     badgeClassName:
-      "border-orange-500/35 bg-orange-500/15 text-orange-800 dark:text-orange-200",
+      "border-orange-600 bg-orange-50 text-orange-950",
     icon: Wrench,
     filterGroup: "in_progress",
   },
@@ -81,7 +81,7 @@ const JOB_STATUS_CONFIGS: JobStatusConfig[] = [
     label: "Čekající",
     sortOrder: 30,
     badgeClassName:
-      "border-amber-500/35 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+      "border-amber-600 bg-amber-50 text-amber-950",
     icon: Clock3,
     filterGroup: "waiting",
   },
@@ -90,7 +90,7 @@ const JOB_STATUS_CONFIGS: JobStatusConfig[] = [
     label: "Pozastavená",
     sortOrder: 40,
     badgeClassName:
-      "border-slate-400/40 bg-slate-500/10 text-slate-700 dark:text-slate-200",
+      "border-slate-500 bg-slate-100 text-slate-800",
     icon: PauseCircle,
     filterGroup: "paused",
   },
@@ -99,8 +99,8 @@ const JOB_STATUS_CONFIGS: JobStatusConfig[] = [
     label: "Dokončená",
     sortOrder: 100,
     badgeClassName:
-      "border-emerald-500/35 bg-emerald-500/15 text-emerald-800 dark:text-emerald-100",
-    rowClassName: "bg-emerald-500/[0.06] hover:bg-emerald-500/10",
+      "border-emerald-600 bg-emerald-50 text-emerald-950",
+    rowClassName: "bg-emerald-50/80 hover:bg-emerald-100/90",
     icon: CheckCircle2,
     filterGroup: "completed",
   },
@@ -109,8 +109,8 @@ const JOB_STATUS_CONFIGS: JobStatusConfig[] = [
     label: "Fakturována",
     sortOrder: 110,
     badgeClassName:
-      "border-emerald-600/35 bg-emerald-600/20 text-emerald-900 dark:text-emerald-100",
-    rowClassName: "bg-emerald-500/[0.06] hover:bg-emerald-500/10",
+      "border-emerald-700 bg-emerald-100 text-emerald-950",
+    rowClassName: "bg-emerald-50/80 hover:bg-emerald-100/90",
     icon: Receipt,
     filterGroup: "completed",
   },
@@ -119,7 +119,7 @@ const JOB_STATUS_CONFIGS: JobStatusConfig[] = [
     label: "Zrušená",
     sortOrder: 120,
     badgeClassName:
-      "border-red-500/35 bg-red-500/10 text-red-800 dark:text-red-200",
+      "border-red-600 bg-red-50 text-red-950",
     icon: XCircle,
     filterGroup: "cancelled",
   },
