@@ -40,6 +40,7 @@ import {
   shouldScrollToJobMediaSection,
   type JobMediaActivityFocus,
 } from "@/lib/job-document-activity-link";
+import { jobStatusSelectOptions } from "@/lib/job-status";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
 import { JobMediaFileNotesPanel } from "@/components/jobs/job-media-file-notes-panel";
 import {
@@ -10223,11 +10224,11 @@ export function JobDetailPageContent({
                 <SelectValue placeholder="Změnit stav" />
               </SelectTrigger>
               <SelectContent className={LIGHT_SELECT_CONTENT_CLASS}>
-                <SelectItem value="nová">Nová</SelectItem>
-                <SelectItem value="rozpracovaná">Rozpracovaná</SelectItem>
-                <SelectItem value="čeká">Čeká</SelectItem>
-                <SelectItem value="dokončená">Dokončená</SelectItem>
-                <SelectItem value="fakturována">Fakturována</SelectItem>
+                {jobStatusSelectOptions().map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           )}
@@ -11499,11 +11500,11 @@ export function JobDetailPageContent({
                       <SelectValue placeholder="Vyberte stav" />
                     </SelectTrigger>
                     <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
-                      <SelectItem value="nová">Nová</SelectItem>
-                      <SelectItem value="rozpracovaná">Rozpracovaná</SelectItem>
-                      <SelectItem value="čeká">Čeká</SelectItem>
-                      <SelectItem value="dokončená">Dokončená</SelectItem>
-                      <SelectItem value="fakturována">Fakturována</SelectItem>
+                      {jobStatusSelectOptions().map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

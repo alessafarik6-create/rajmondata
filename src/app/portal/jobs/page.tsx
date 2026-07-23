@@ -4,28 +4,18 @@ import React, {
   useState,
   useEffect,
   useMemo,
+  useCallback,
   Component,
   type ErrorInfo,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import {
   Plus,
   Loader2,
   Briefcase,
-  Calendar,
-  Building2,
   FileStack,
   FileText,
   Ruler,
@@ -35,7 +25,6 @@ import {
   Camera,
   FileDown,
   ArrowLeft,
-  MapPin,
 } from "lucide-react";
 import {
   useFirestore,
@@ -112,6 +101,25 @@ import {
   downloadContractedJobsCsv,
 } from "@/lib/contracted-jobs-export";
 import { useIsBelowLg } from "@/hooks/use-mobile";
+import {
+  countJobsByStatusFilter,
+  DEFAULT_JOB_LIST_SORT,
+  DEFAULT_JOB_STATUS_FILTER,
+  jobStatusLabel,
+  parseJobDeadlineFilterParam,
+  parseJobListSortParam,
+  parseJobStatusFilterParam,
+  type JobDeadlineFilterKey,
+  type JobListSortKey,
+  type JobStatusFilterKey,
+} from "@/lib/job-status";
+import {
+  applyJobListFilters,
+  computeJobListSummary,
+  sortJobs,
+} from "@/lib/job-list-filters";
+import { JobsListControls } from "@/components/jobs/jobs-list-controls";
+import { JobsListView } from "@/components/jobs/jobs-list-view";
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
 
@@ -168,6 +176,10 @@ type JobRow = {
   assignedEmployeeIds?: string[];
   /** Typ / štítek zakázky (např. pergola, domy). */
   jobTag?: string | null;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+  completedAt?: unknown;
+  completedByName?: string;
 };
 
 function jobAssignsToUser(
@@ -201,6 +213,7 @@ function normalizeJobsList(
 
 function JobsPageContent() {
   const belowLg = useIsBelowLg();
+  const router = useRouter();
   const { user } = useUser();
   const firestore = useFirestore();
   const { company, companyName: tenantCompanyName } = useCompany();
@@ -286,6 +299,60 @@ function JobsPageContent() {
   );
 
   const searchParams = useSearchParams();
+  const statusFilter = parseJobStatusFilterParam(searchParams.get("status"));
+  const sortKey = parseJobListSortParam(searchParams.get("sort"));
+  const deadlineFilter = parseJobDeadlineFilterParam(searchParams.get("deadline"));
+  const jobListSearch = searchParams.get("q") ?? "";
+  const jobTagFilter = searchParams.get("tag") ?? "";
+
+  const syncJobsListUrl = useCallback(
+    (patch: {
+      status?: JobStatusFilterKey;
+      sort?: JobListSortKey;
+      search?: string;
+      tag?: string;
+      deadline?: JobDeadlineFilterKey | null;
+    }) => {
+      const params = new URLSearchParams(searchParams.toString());
+      const nextStatus = patch.status ?? statusFilter;
+      const nextSort = patch.sort ?? sortKey;
+      const nextSearch =
+        patch.search !== undefined ? patch.search : jobListSearch;
+      const nextTag = patch.tag !== undefined ? patch.tag : jobTagFilter;
+      const nextDeadline =
+        patch.deadline !== undefined ? patch.deadline : deadlineFilter;
+
+      if (nextStatus === DEFAULT_JOB_STATUS_FILTER) params.delete("status");
+      else params.set("status", nextStatus);
+
+      if (nextSort === DEFAULT_JOB_LIST_SORT) params.delete("sort");
+      else params.set("sort", nextSort);
+
+      const q = nextSearch.trim();
+      if (q) params.set("q", q);
+      else params.delete("q");
+
+      const tag = nextTag.trim();
+      if (tag) params.set("tag", tag);
+      else params.delete("tag");
+
+      if (nextDeadline) params.set("deadline", nextDeadline);
+      else params.delete("deadline");
+
+      const qs = params.toString();
+      router.replace(qs ? `/portal/jobs?${qs}` : "/portal/jobs", { scroll: false });
+    },
+    [
+      router,
+      searchParams,
+      statusFilter,
+      sortKey,
+      jobListSearch,
+      jobTagFilter,
+      deadlineFilter,
+    ]
+  );
+
   const [isNewJobOpen, setIsNewJobOpen] = useState(false);
   const [newJob, setNewJob] = useState({
     name: "",
@@ -307,45 +374,76 @@ function JobsPageContent() {
     jobTag: "",
     jobTagCustom: "",
   });
-  const [jobListSearch, setJobListSearch] = useState("");
-  const [jobTagFilter, setJobTagFilter] = useState("");
 
   const jobTagFilterOptions = useMemo(
     () => collectJobTagFilterOptions(jobs as { jobTag?: string | null }[]),
     [jobs]
   );
 
-  const filteredJobs = useMemo(() => {
-    const q = jobListSearch.trim().toLowerCase();
-    let list = jobs;
-    if (q) {
-      list = list.filter((j) => {
-        const name = String(j?.name ?? "").toLowerCase();
-        const desc = String(j?.description ?? "").toLowerCase();
-        return name.includes(q) || desc.includes(q);
-      });
-    }
-    if (jobTagFilter) {
-      list = list.filter(
-        (j) => String(j?.jobTag ?? "").trim() === jobTagFilter
+  const getCustomerName = useCallback(
+    (id: string | undefined | null) => {
+      if (id == null || id === "") return "Neznámý zákazník";
+      const customer = customers.find((c) => c?.id === id);
+      if (!customer) return "Neznámý zákazník";
+      return (
+        customer.companyName ||
+        `${customer.firstName ?? ""} ${customer.lastName ?? ""}`.trim() ||
+        "Neznámý zákazník"
       );
-    }
-    return list;
-  }, [jobs, jobListSearch, jobTagFilter]);
+    },
+    [customers]
+  );
 
-  const statusOptions = useMemo(() => {
-    const s = new Set<string>();
-    for (const j of jobs) {
-      const st = String(j?.status ?? "").trim();
-      if (st) s.add(st);
+  const getCustomerAddress = useCallback(
+    (id: string | undefined | null) => {
+      if (id == null || id === "") return "";
+      const customer = customers.find((c) => c?.id === id) as
+        | { address?: unknown }
+        | undefined;
+      if (!customer || customer.address == null) return "";
+      return String(customer.address).trim();
+    },
+    [customers]
+  );
+
+  const listSummary = useMemo(() => computeJobListSummary(jobs), [jobs]);
+
+  const statusCounts = useMemo(() => {
+    const counts = {} as Record<JobStatusFilterKey, number>;
+    const keys: JobStatusFilterKey[] = [
+      "active",
+      "all",
+      "new",
+      "in_progress",
+      "waiting",
+      "paused",
+      "completed",
+      "cancelled",
+    ];
+    for (const key of keys) {
+      counts[key] = countJobsByStatusFilter(jobs, key);
     }
-    return Array.from(s.values()).sort((a, b) => a.localeCompare(b, "cs"));
+    return counts;
   }, [jobs]);
-  const [statusFilter, setStatusFilter] = useState("");
-  const filteredJobsMobile = useMemo(() => {
-    if (!statusFilter) return filteredJobs;
-    return filteredJobs.filter((j) => String(j?.status ?? "").trim() === statusFilter);
-  }, [filteredJobs, statusFilter]);
+
+  const displayJobs = useMemo(() => {
+    const filtered = applyJobListFilters(jobs, {
+      search: jobListSearch,
+      tagFilter: jobTagFilter,
+      statusFilter,
+      deadlineFilter,
+      getCustomerName,
+    });
+    return sortJobs(filtered, sortKey, getCustomerName);
+  }, [
+    jobs,
+    jobListSearch,
+    jobTagFilter,
+    statusFilter,
+    deadlineFilter,
+    sortKey,
+    getCustomerName,
+  ]);
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [templateValues, setTemplateValues] = useState<JobTemplateValues>({});
@@ -367,7 +465,7 @@ function JobsPageContent() {
     return m;
   }, [customers]);
 
-  const jobsForExport = belowLg ? filteredJobsMobile : filteredJobs;
+  const jobsForExport = displayJobs;
   useEffect(() => {
     if (!isAdmin && workContractTemplatesManagerOpen) {
       setWorkContractTemplatesManagerOpen(false);
@@ -697,90 +795,6 @@ function JobsPageContent() {
     }
   };
 
-  const getStatusBadge = (status: string | undefined | null) => {
-    const key = typeof status === "string" ? status : "";
-    const statuses: Record<
-      string,
-      {
-        label: string;
-        variant: "default" | "secondary" | "outline" | "destructive";
-      }
-    > = {
-      nová: { label: "Nová", variant: "outline" },
-      rozpracovaná: { label: "Rozpracovaná", variant: "secondary" },
-      čeká: { label: "Čeká", variant: "outline" },
-      dokončená: { label: "Dokončená", variant: "default" },
-      fakturována: { label: "Fakturována", variant: "default" },
-    };
-    const s = statuses[key] || {
-      label: key || "—",
-      variant: "outline" as const,
-    };
-    return (
-      <Badge variant={s.variant} className="capitalize">
-        {s.label}
-      </Badge>
-    );
-  };
-
-  const getCustomerName = (id: string | undefined | null) => {
-    if (id == null || id === "") return "Neznámý zákazník";
-    const customer = customers.find((c) => c?.id === id);
-    if (!customer) return "Neznámý zákazník";
-    return (
-      customer.companyName ||
-      `${customer.firstName ?? ""} ${customer.lastName ?? ""}`.trim() ||
-      "Neznámý zákazník"
-    );
-  };
-
-  const getCustomerAddress = (id: string | undefined | null) => {
-    if (id == null || id === "") return "";
-    const customer = customers.find((c) => c?.id === id) as
-      | { address?: unknown }
-      | undefined;
-    if (!customer || customer.address == null) return "";
-    const a = String(customer.address).trim();
-    return a;
-  };
-
-  const jobStatusLabel = (status: string | undefined | null) => {
-    const key = typeof status === "string" ? status : "";
-    const map: Record<string, string> = {
-      nová: "Nová",
-      rozpracovaná: "Rozpracovaná",
-      čeká: "Čeká",
-      dokončená: "Dokončená",
-      fakturována: "Fakturována",
-    };
-    return map[key] || (key ? key : "—");
-  };
-
-  const getStatusBadgeMobile = (status: string | undefined | null) => {
-    const key = typeof status === "string" ? status : "";
-    const styleMap: Record<string, string> = {
-      nová: "border-slate-500/40 bg-slate-800/90 text-slate-200",
-      rozpracovaná: "border-orange-500/35 bg-orange-500/15 text-orange-200",
-      čeká: "border-amber-500/35 bg-amber-500/10 text-amber-100",
-      dokončená: "border-emerald-500/35 bg-emerald-500/15 text-emerald-100",
-      fakturována: "border-emerald-500/35 bg-emerald-600/20 text-emerald-100",
-    };
-    const label = jobStatusLabel(status);
-    const cls =
-      styleMap[key] || "border-white/15 bg-slate-800/70 text-slate-200";
-    return (
-      <span
-        className={cn(
-          "inline-flex max-w-full shrink-0 truncate rounded-full border px-2 py-0.5 text-[10px] font-medium",
-          cls
-        )}
-        title={label}
-      >
-        {label}
-      </span>
-    );
-  };
-
   const handleExportJobsPdf = async () => {
     if (!isAdmin || !firestore || !companyId) {
       toast({
@@ -790,7 +804,7 @@ function JobsPageContent() {
       });
       return;
     }
-    if (filteredJobs.length === 0) {
+    if (displayJobs.length === 0) {
       toast({
         variant: "destructive",
         title: "Export",
@@ -807,7 +821,7 @@ function JobsPageContent() {
       }
 
       const rows: JobPdfExportRow[] = [];
-      for (const job of filteredJobs) {
+      for (const job of displayJobs) {
         const jid = job?.id;
         if (!jid) continue;
         const raw = job as unknown as Record<string, unknown>;
@@ -1025,10 +1039,10 @@ function JobsPageContent() {
                   type="button"
                   className={cn(
                     "min-w-0 text-left",
-                    (exportPdfLoading || filteredJobs.length === 0) &&
+                    (exportPdfLoading || displayJobs.length === 0) &&
                       "pointer-events-none opacity-50"
                   )}
-                  disabled={exportPdfLoading || filteredJobs.length === 0}
+                  disabled={exportPdfLoading || displayJobs.length === 0}
                   onClick={() => void handleExportJobsPdf()}
                 >
                   <div className={tileClass}>
@@ -1163,7 +1177,7 @@ function JobsPageContent() {
               <Button
                 type="button"
                 className="gap-2 min-h-[44px] bg-orange-600 text-white hover:bg-orange-700 border-0 shadow-md shadow-orange-600/25"
-                disabled={exportPdfLoading || filteredJobs.length === 0}
+                disabled={exportPdfLoading || displayJobs.length === 0}
                 onClick={() => void handleExportJobsPdf()}
               >
                 {exportPdfLoading ? (
@@ -1694,24 +1708,11 @@ function JobsPageContent() {
                     className="!h-9 !min-h-9 rounded-md border border-white/35 !bg-slate-950 pl-8 !py-1 !text-xs !text-white shadow-none !placeholder:text-slate-400 focus-visible:border-orange-500/70 focus-visible:!ring-2 focus-visible:!ring-orange-500/40 [color-scheme:dark]"
                     placeholder="Hledat…"
                     value={jobListSearch}
-                    onChange={(e) => setJobListSearch(e.target.value)}
+                    onChange={(e) =>
+                      syncJobsListUrl({ search: e.target.value })
+                    }
                   />
                 </div>
-                <select
-                  aria-label="Filtrovat podle stavu"
-                  className={cn(
-                    "h-9 max-w-[42%] min-[360px]:max-w-[46%] shrink-0 cursor-pointer appearance-none rounded-md border border-white/35 !bg-slate-950 px-2 py-0 text-xs !text-white shadow-none outline-none focus:border-orange-500/70 focus:ring-2 focus:ring-orange-500/40 [color-scheme:dark]"
-                  )}
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                >
-                  <option value="">Všechny stavy</option>
-                  {statusOptions.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
               </div>
               <div className="flex min-w-0 items-center gap-2">
                 <Tag className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
@@ -1720,7 +1721,7 @@ function JobsPageContent() {
                   aria-label="Filtrovat podle štítku"
                   className="h-9 min-w-0 flex-1 cursor-pointer appearance-none rounded-md border border-white/35 !bg-slate-950 px-2 py-0 text-xs !text-white shadow-none outline-none focus:border-orange-500/70 focus:ring-2 focus:ring-orange-500/40 [color-scheme:dark]"
                   value={jobTagFilter}
-                  onChange={(e) => setJobTagFilter(e.target.value)}
+                  onChange={(e) => syncJobsListUrl({ tag: e.target.value })}
                 >
                   <option value="">Všechny zakázky</option>
                   {jobTagFilterOptions.map((o) => (
@@ -1744,7 +1745,9 @@ function JobsPageContent() {
                     className="pl-9"
                     placeholder="Název nebo popis zakázky…"
                     value={jobListSearch}
-                    onChange={(e) => setJobListSearch(e.target.value)}
+                    onChange={(e) =>
+                      syncJobsListUrl({ search: e.target.value })
+                    }
                   />
                 </div>
               </div>
@@ -1760,7 +1763,7 @@ function JobsPageContent() {
                   id="jobs-tag-filter"
                   className={NATIVE_SELECT_CLASS}
                   value={jobTagFilter}
-                  onChange={(e) => setJobTagFilter(e.target.value)}
+                  onChange={(e) => syncJobsListUrl({ tag: e.target.value })}
                 >
                   <option value="">Všechny zakázky</option>
                   {jobTagFilterOptions.map((o) => (
@@ -1772,6 +1775,33 @@ function JobsPageContent() {
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card
+        className={cn(
+          "shadow-sm",
+          belowLg
+            ? "border-white/10 bg-slate-900/85 text-slate-50 shadow-none"
+            : "border-slate-200"
+        )}
+      >
+        <CardContent className={cn(belowLg ? "p-2.5" : "p-4 sm:p-5")}>
+          <JobsListControls
+            summary={listSummary}
+            statusFilter={statusFilter}
+            sortKey={sortKey}
+            deadlineFilter={deadlineFilter}
+            statusCounts={statusCounts}
+            dark={belowLg}
+            onStatusFilterChange={(key) =>
+              syncJobsListUrl({ status: key, deadline: null })
+            }
+            onSortChange={(key) => syncJobsListUrl({ sort: key })}
+            onSummaryClick={({ status, deadline }) =>
+              syncJobsListUrl({ status, deadline })
+            }
+          />
         </CardContent>
       </Card>
 
@@ -1801,7 +1831,7 @@ function JobsPageContent() {
                 )}
               />
             </div>
-          ) : jobs.length > 0 && filteredJobs.length === 0 ? (
+          ) : jobs.length > 0 && displayJobs.length === 0 ? (
             <div
               className={cn(
                 "space-y-3 px-4 py-16 text-center",
@@ -1809,7 +1839,7 @@ function JobsPageContent() {
               )}
             >
               <p className={belowLg ? "text-slate-200" : undefined}>
-                Žádná zakázka neodpovídá vyhledávání nebo filtru štítku.
+                Žádná zakázka neodpovídá zadaným filtrům nebo vyhledávání.
               </p>
               <Button
                 type="button"
@@ -1820,184 +1850,28 @@ function JobsPageContent() {
                   belowLg &&
                     "border-white/25 bg-slate-800 text-slate-100 hover:bg-slate-700 hover:text-white"
                 )}
-                onClick={() => {
-                  setJobListSearch("");
-                  setJobTagFilter("");
-                  setStatusFilter("");
-                }}
+                onClick={() =>
+                  syncJobsListUrl({
+                    status: DEFAULT_JOB_STATUS_FILTER,
+                    sort: DEFAULT_JOB_LIST_SORT,
+                    search: "",
+                    tag: "",
+                    deadline: null,
+                  })
+                }
               >
                 Zrušit filtry
               </Button>
             </div>
-          ) : belowLg && filteredJobsMobile.length > 0 ? (
-            <div className="space-y-1.5 bg-slate-950 p-2">
-              {filteredJobsMobile.map((job) => {
-                const jid = job?.id;
-                const raw = job as unknown as Record<string, unknown>;
-                const bd = resolveJobBudgetFromFirestore(raw);
-                const budgetGross =
-                  bd?.budgetGross != null && Number.isFinite(Number(bd.budgetGross))
-                    ? Math.round(Number(bd.budgetGross))
-                    : null;
-                const addr = getCustomerAddress(job?.customerId);
-                const term =
-                  job?.endDate && job?.startDate
-                    ? `${job.startDate} → ${job.endDate}`
-                    : job?.endDate || job?.startDate || "—";
-                return (
-                  <div
-                    key={jid ?? `job-${job?.name}`}
-                    className="rounded-lg border border-white/10 bg-slate-900/90 px-2.5 py-2"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold leading-tight text-white">
-                          {job?.name ?? "—"}
-                        </p>
-                        <p className="mt-0.5 truncate text-[11px] text-slate-200">
-                          {getCustomerName(job?.customerId)}
-                        </p>
-                        {addr ? (
-                          <p className="mt-0.5 flex items-start gap-1 text-[10px] leading-snug text-slate-300">
-                            <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" aria-hidden />
-                            <span className="line-clamp-2">{addr}</span>
-                          </p>
-                        ) : (
-                          <p className="mt-0.5 text-[10px] text-slate-400">Adresa —</p>
-                        )}
-                      </div>
-                      <div className="shrink-0 pt-0.5">{getStatusBadgeMobile(job?.status)}</div>
-                    </div>
-
-                    <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px]">
-                      <div>
-                        <span className="text-slate-400">Termín </span>
-                        <span className="font-medium text-slate-100">{term}</span>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-slate-400">Částka </span>
-                        <span className="font-medium tabular-nums text-orange-200">
-                          {budgetGross != null
-                            ? `${budgetGross.toLocaleString("cs-CZ")} Kč`
-                            : "—"}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="mt-2 flex flex-wrap justify-end gap-1.5">
-                      {jid ? (
-                        <Button
-                          asChild
-                          className="h-8 min-h-8 rounded-md px-3 text-xs bg-orange-500 text-slate-950 hover:bg-orange-400"
-                        >
-                          <Link
-                            href={
-                              isPortalEmployee
-                                ? `/portal/employee/jobs/${jid}`
-                                : `/portal/jobs/${jid}`
-                            }
-                          >
-                            Detail
-                          </Link>
-                        </Button>
-                      ) : null}
-                      {isAdmin && jid ? (
-                        <Button
-                          asChild
-                          variant="outline"
-                          className="h-8 min-h-8 rounded-md border-white/20 bg-slate-950/40 px-3 text-xs text-slate-100 hover:bg-white/10"
-                        >
-                          <Link href={`/portal/jobs/${jid}`}>Upravit</Link>
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : filteredJobs.length > 0 ? (
-            <Table className="min-w-[520px] w-full">
-              <TableHeader>
-                <TableRow className="border-slate-200 hover:bg-transparent">
-                  <TableHead className="pl-4 sm:pl-6 min-w-0">Zakázka</TableHead>
-                  <TableHead className="hidden md:table-cell">Zákazník</TableHead>
-                  <TableHead>Stav</TableHead>
-                  <TableHead className="hidden lg:table-cell">Termíny</TableHead>
-                  <TableHead className="pr-4 sm:pr-6 text-right">Akce</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredJobs.map((job) => (
-                  <TableRow
-                    key={job?.id ?? `job-${job?.name}`}
-                    className="border-slate-200 hover:bg-slate-50"
-                  >
-                    <TableCell className="pl-4 sm:pl-6 font-medium text-slate-900">
-                      <div className="flex flex-col min-w-0 gap-1">
-                        <div className="flex flex-wrap items-center gap-2 min-w-0">
-                          <span className="truncate">{job?.name ?? "—"}</span>
-                          {job?.jobTag && String(job.jobTag).trim() ? (
-                            <Badge
-                              variant="secondary"
-                              className="shrink-0 text-xs font-normal max-w-[10rem] truncate"
-                              title={jobTagLabel(job.jobTag)}
-                            >
-                              {jobTagLabel(job.jobTag)}
-                            </Badge>
-                          ) : null}
-                        </div>
-                        <span className="text-xs text-slate-800 font-normal truncate max-w-[200px] sm:max-w-xs">
-                          {job?.description ?? ""}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-slate-700 hidden md:table-cell">
-                      <div className="flex items-center gap-2 text-sm min-w-0">
-                        <Building2 className="w-3 h-3 text-slate-800 shrink-0" />
-                        <span className="truncate">
-                          {getCustomerName(job?.customerId)}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      {getStatusBadge(job?.status)}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      <div className="flex flex-col text-xs text-slate-700">
-                        <span className="flex items-center gap-1 text-slate-800">
-                          <Calendar className="w-3 h-3 shrink-0" /> Od:{" "}
-                          {job?.startDate || "-"}
-                        </span>
-                        <span className="flex items-center gap-1 font-medium">
-                          Do: {job?.endDate || "-"}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="pr-4 sm:pr-6 text-right">
-                      {job?.id ? (
-                        <Link
-                          href={
-                            isPortalEmployee
-                              ? `/portal/employee/jobs/${job.id}`
-                              : `/portal/jobs/${job.id}`
-                          }
-                        >
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-slate-700 min-h-[44px] sm:min-h-0"
-                          >
-                            Detaily
-                          </Button>
-                        </Link>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          ) : displayJobs.length > 0 ? (
+            <JobsListView
+              jobs={displayJobs}
+              getCustomerName={getCustomerName}
+              getCustomerAddress={getCustomerAddress}
+              isPortalEmployee={isPortalEmployee}
+              isAdmin={isAdmin}
+              dark={belowLg}
+            />
           ) : (
             <div
               className={cn(
