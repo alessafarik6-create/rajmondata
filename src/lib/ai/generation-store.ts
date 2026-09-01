@@ -10,6 +10,7 @@ import type { AiInquiryCrmContext } from "@/lib/ai/crm-context-builder";
 import { summarizeAiCrmContext } from "@/lib/ai/crm-context-builder";
 import type { AiQuoteModelOutput } from "@/lib/ai/types";
 import type { AiTokenUsage } from "@/lib/ai/types";
+import { computeAiUserChangesDiff } from "@/lib/ai/response-validator";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 
 export async function saveAiGenerationCompleted(
@@ -130,6 +131,49 @@ export async function markAiGenerationUsed(
       usedByUid: params.callerUid,
       finalOfferSnapshot: params.finalOfferSnapshot,
       aiSnapshotAtUse: params.aiSnapshot ?? null,
+      userChanges:
+        params.aiSnapshot && params.finalOfferSnapshot
+          ? computeAiUserChangesDiff(params.aiSnapshot, params.finalOfferSnapshot)
+          : null,
+    },
+    { merge: true }
+  );
+}
+
+export async function markAiGenerationOfferSent(
+  db: Firestore,
+  params: {
+    companyId: string;
+    generationId: string;
+    offerId: string;
+    finalSentSnapshot: Record<string, unknown>;
+  }
+): Promise<void> {
+  const ref = db
+    .collection(COMPANIES_COLLECTION)
+    .doc(params.companyId)
+    .collection(AI_GENERATIONS_COLLECTION)
+    .doc(params.generationId);
+
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const data = snap.data() as Record<string, unknown>;
+  if (String(data.companyId ?? "") !== params.companyId) return;
+
+  const aiSnapshot = (data.aiSnapshotAtUse ?? data.validatedOutput) as
+    | Record<string, unknown>
+    | undefined;
+
+  await ref.set(
+    {
+      offerSent: true,
+      offerSentAt: FieldValue.serverTimestamp(),
+      offerId: params.offerId,
+      finalSentSnapshot: params.finalSentSnapshot,
+      userChanges:
+        aiSnapshot && params.finalSentSnapshot
+          ? computeAiUserChangesDiff(aiSnapshot, params.finalSentSnapshot)
+          : data.userChanges ?? null,
     },
     { merge: true }
   );

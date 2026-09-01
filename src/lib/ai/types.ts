@@ -3,6 +3,7 @@
  */
 
 import type { InquiryOfferPricing, InquiryVatRate } from "@/lib/inquiry-offer-pricing";
+import type { ConfidenceFactors } from "@/lib/ai/confidence-calculator";
 
 export type AiGenerationStatus = "completed" | "failed";
 
@@ -52,6 +53,7 @@ export type AiValidatedQuoteResult = {
   internalNotes: string;
   customerReply: string;
   confidence: number;
+  confidenceFactors?: ConfidenceFactors;
   vatRate: InquiryVatRate;
   pricing: InquiryOfferPricing;
   warnings: string[];
@@ -86,5 +88,12 @@ export type AiGenerationRecord = {
   errorMessage?: string | null;
   usedByUser?: boolean;
   usedAt?: unknown;
+  usedByUid?: string | null;
+  aiSnapshotAtUse?: Record<string, unknown> | null;
   finalOfferSnapshot?: Record<string, unknown> | null;
+  userChanges?: Record<string, { from: unknown; to: unknown }> | null;
+  offerSent?: boolean;
+  offerSentAt?: unknown;
+  offerId?: string | null;
+  finalSentSnapshot?: Record<string, unknown> | null;
 };

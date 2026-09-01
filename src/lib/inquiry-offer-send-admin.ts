@@ -53,6 +53,7 @@ import {
   buildInquiryOfferFooterData,
   type InquiryOfferFooterData,
 } from "@/lib/inquiry-offer-footer";
+import { markAiGenerationOfferSent } from "@/lib/ai/generation-store";
 
 export type SendInquiryOfferEmailParams = {
   companyId: string;
@@ -75,6 +76,8 @@ export type SendInquiryOfferEmailParams = {
   sentByEmail?: string | null;
   sentByName?: string | null;
   draftOfferId?: string | null;
+  inquiryType?: string | null;
+  aiGenerationId?: string | null;
 };
 
 export type SendInquiryOfferEmailResult =
@@ -249,6 +252,26 @@ async function deliverViaResend(
   };
 }
 
+async function resolveInquiryTypeForOffer(
+  db: Firestore,
+  companyId: string,
+  leadKey: string,
+  provided?: string | null
+): Promise<string | null> {
+  const fromParam = String(provided ?? "").trim();
+  if (fromParam) return fromParam;
+  if (!leadKey || leadKey === INQUIRY_OFFER_STANDALONE_LEAD_KEY) return null;
+  const snap = await db
+    .collection(COMPANIES_COLLECTION)
+    .doc(companyId)
+    .collection("import_lead_overlays")
+    .doc(leadKey)
+    .get();
+  if (!snap.exists) return null;
+  const data = snap.data() as Record<string, unknown>;
+  return String(data.typ ?? data.typ_poptavky ?? "").trim() || null;
+}
+
 export async function sendInquiryOfferEmail(
   db: Firestore,
   params: SendInquiryOfferEmailParams
@@ -417,10 +440,18 @@ export async function sendInquiryOfferEmail(
     .doc(params.companyId)
     .collection("inquiry_offers");
 
+  const inquiryType = await resolveInquiryTypeForOffer(
+    db,
+    params.companyId,
+    params.leadKey,
+    params.inquiryType
+  );
+
   const offerPayload = {
     companyId: params.companyId,
     leadKey: params.leadKey,
     importLeadId: params.importLeadId,
+    inquiryType,
     status: "sent" as const,
     isStandalone,
     customerName: params.customerName?.trim() || null,
@@ -470,6 +501,28 @@ export async function sendInquiryOfferEmail(
       type: "offer",
       workflowStatus: "nabidka_odeslana",
     });
+  }
+
+  const generationId = String(params.aiGenerationId ?? "").trim();
+  if (generationId) {
+    try {
+      await markAiGenerationOfferSent(db, {
+        companyId: params.companyId,
+        generationId,
+        offerId,
+        finalSentSnapshot: {
+          subject,
+          bodyText: userBodyPlain,
+          priceNet: pricing.priceNet,
+          priceGross: pricing.priceGross,
+          internalNote: params.internalNote?.trim() || null,
+          to: toNorm,
+          inquiryType,
+        },
+      });
+    } catch (err) {
+      console.error("[sendInquiryOfferEmail] markAiGenerationOfferSent", err);
+    }
   }
 
   return {
@@ -536,10 +589,18 @@ export async function saveInquiryOfferDraft(
   const isStandalone =
     params.isStandalone === true || params.leadKey === INQUIRY_OFFER_STANDALONE_LEAD_KEY;
 
+  const inquiryType = await resolveInquiryTypeForOffer(
+    db,
+    params.companyId,
+    params.leadKey,
+    params.inquiryType
+  );
+
   const payload = {
     companyId: params.companyId,
     leadKey: params.leadKey,
     importLeadId: params.importLeadId,
+    inquiryType,
     status: "draft" as const,
     isStandalone,
     customerName: params.customerName?.trim() || null,

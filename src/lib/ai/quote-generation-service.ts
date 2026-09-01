@@ -68,6 +68,13 @@ export async function generateInquiryAiQuote(
       params.companyId,
       params.leadKey
     );
+    if (!context.aiSettings.enabled) {
+      return {
+        ok: false,
+        status: 503,
+        error: "AI asistent je vypnutý v nastavení organizace.",
+      };
+    }
   } catch (err) {
     return {
       ok: false,
@@ -126,8 +133,11 @@ export async function generateInquiryAiQuote(
       applyInitial,
       contextSummary: {
         leadKey: context.leadKey,
+        inquiryType: context.inquiry.type || context.typeRule.name,
+        typeRuleName: context.typeRule.name,
         customerMatched: !!context.customer,
         productCount: context.products.length,
+        similarQuotesCount: context.similarQuotes.length,
       },
     };
   } catch (err) {

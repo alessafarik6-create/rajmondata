@@ -10,6 +10,8 @@ import {
 import { getAiMaxDiscountPercent } from "@/lib/ai/config";
 import type { AiInquiryCrmContext } from "@/lib/ai/crm-context-builder";
 import { parseAiQuoteModelOutput } from "@/lib/ai/inquiry-quote-schema";
+import { filterIgnoredMissingInformation } from "@/lib/ai/inquiry-type-rules";
+import { computeAdjustedConfidence } from "@/lib/ai/confidence-calculator";
 import type {
   AiQuoteModelOutput,
   AiValidatedQuoteItem,
@@ -40,18 +42,23 @@ export function validateAiQuoteResponse(
   const maxDiscount = getAiMaxDiscountPercent();
   const vatRate = normalizeInquiryVatRate(meta.vatRate ?? 21);
 
-  const productMap = new Map<string, (typeof ctx.products)[number]>();
-  for (const p of ctx.products) {
+  const catalogProducts =
+    ctx.relevantProducts.length > 0 ? ctx.relevantProducts : ctx.products;
+
+  const productMap = new Map<string, (typeof catalogProducts)[number]>();
+  for (const p of catalogProducts) {
     productMap.set(productKey(p.catalogId, p.productId), p);
   }
 
   const warnings: string[] = [];
   const recommendedItems: AiValidatedQuoteItem[] = [];
+  let invalidProductCount = 0;
 
   for (const item of parsed.recommended_items) {
     const key = productKey(item.catalog_id, item.product_id);
     const product = productMap.get(key);
     if (!product) {
+      invalidProductCount += 1;
       warnings.push(
         `Položka „${item.name}“ (${item.product_id}) nebyla nalezena v katalogu a byla vynechána.`
       );
@@ -92,6 +99,20 @@ export function validateAiQuoteResponse(
     });
   }
 
+  const missingInformation = filterIgnoredMissingInformation(
+    parsed.missing_information.map((s) => s.trim()).filter(Boolean),
+    ctx.typeRule.ignoredInformation
+  );
+
+  if (
+    missingInformation.length <
+    parsed.missing_information.filter((s) => s.trim()).length
+  ) {
+    warnings.push(
+      "Některé navržené chybějící údaje byly vynechány — nejsou relevantní pro tento typ poptávky."
+    );
+  }
+
   const totalNet =
     recommendedItems.length > 0
       ? roundMoney(recommendedItems.reduce((s, i) => s + i.lineNet, 0))
@@ -99,21 +120,72 @@ export function validateAiQuoteResponse(
 
   const pricing = calculateInquiryOfferPricing(totalNet, vatRate);
 
-  if (recommendedItems.length === 0 && parsed.missing_information.length === 0) {
+  if (recommendedItems.length === 0 && missingInformation.length === 0) {
     warnings.push(
       "AI nenavrhla žádné platné položky z katalogu. Zkontrolujte chybějící informace nebo doplňte katalog produktů."
     );
+  }
+
+  const confidenceFactors = computeAdjustedConfidence({
+    modelConfidence: parsed.confidence,
+    typeRule: ctx.typeRule,
+    similarQuotes: ctx.similarQuotes,
+    products: ctx.products,
+    relevantProducts: ctx.relevantProducts,
+    missingInformation,
+    invalidProductCount,
+    hasEstimatedPrice: ctx.inquiry.estimatedPriceKc != null,
+  });
+
+  const internalNotesParts = [parsed.internal_notes.trim()];
+  if (confidenceFactors.reasons.length > 0) {
+    internalNotesParts.push("");
+    internalNotesParts.push("Hodnocení jistoty:");
+    for (const r of confidenceFactors.reasons) {
+      internalNotesParts.push(`- ${r}`);
+    }
+  }
+
+  if (
+    ctx.inquiry.estimatedPriceKc != null &&
+    pricing.priceNet != null &&
+    ctx.inquiry.estimatedPriceKc > 0
+  ) {
+    const ratio =
+      Math.abs(pricing.priceNet - ctx.inquiry.estimatedPriceKc) /
+      ctx.inquiry.estimatedPriceKc;
+    if (ratio <= 0.15) {
+      internalNotesParts.push(
+        "Vypočtená cena z katalogu je v souladu s orientační cenou poptávky v CRM."
+      );
+    }
+  }
+
+  if (ctx.similarQuotes.length > 0 && pricing.priceNet != null) {
+    const historical = ctx.similarQuotes
+      .map((q) => q.priceNetKc ?? q.priceGrossKc)
+      .filter((p): p is number => p != null && p > 0);
+    if (historical.length > 0) {
+      const avg = historical.reduce((a, b) => a + b, 0) / historical.length;
+      const ratio = Math.abs(pricing.priceNet - avg) / avg;
+      if (ratio <= 0.2) {
+        internalNotesParts.push(
+          "Vypočtená cena odpovídá podobným historickým nabídkám stejného typu (historické ceny nejsou závazné)."
+        );
+      }
+    }
   }
 
   return {
     generationId: meta.generationId,
     summary: parsed.summary.trim(),
     customerRequirements: parsed.customer_requirements.map((s) => s.trim()).filter(Boolean),
-    missingInformation: parsed.missing_information.map((s) => s.trim()).filter(Boolean),
+    missingInformation,
     recommendedItems,
-    internalNotes: parsed.internal_notes.trim(),
+    internalNotes: internalNotesParts.filter(Boolean).join("\n").trim(),
     customerReply: parsed.customer_reply.trim(),
-    confidence: Math.min(1, Math.max(0, parsed.confidence)),
+    confidence: confidenceFactors.adjustedConfidence,
+    confidenceFactors,
     vatRate,
     pricing,
     warnings,
@@ -145,4 +217,20 @@ export function buildInternalNoteFromAiQuote(result: AiValidatedQuoteResult): st
     }
   }
   return lines.join("\n").trim();
+}
+
+export function computeAiUserChangesDiff(
+  aiSnapshot: Record<string, unknown>,
+  finalSnapshot: Record<string, unknown>
+): Record<string, { from: unknown; to: unknown }> {
+  const diff: Record<string, { from: unknown; to: unknown }> = {};
+  const keys = ["bodyText", "priceNet", "internalNote", "subject", "to"] as const;
+  for (const key of keys) {
+    const from = aiSnapshot[key];
+    const to = finalSnapshot[key];
+    if (JSON.stringify(from) !== JSON.stringify(to)) {
+      diff[key] = { from, to };
+    }
+  }
+  return diff;
 }

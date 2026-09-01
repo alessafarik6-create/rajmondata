@@ -164,6 +164,9 @@ export function InquiryAiQuotePreviewDialog({
             aiSnapshot: {
               customerReply: applyInitial.bodyText,
               priceNet: applyInitial.priceNet,
+              recommendedItems: result.recommendedItems,
+              summary: result.summary,
+              missingInformation: result.missingInformation,
             },
           }),
         });

@@ -367,6 +367,7 @@ export default function PortalLeadsPage() {
   const [aiPreviewLead, setAiPreviewLead] = useState<LeadImportRow | null>(null);
   const [aiQuoteResult, setAiQuoteResult] = useState<AiValidatedQuoteResult | null>(null);
   const [aiApplyInitial, setAiApplyInitial] = useState<AiQuoteApplyInitial | null>(null);
+  const [aiGenerationId, setAiGenerationId] = useState<string | null>(null);
   const [optimisticOffers, setOptimisticOffers] = useState<InquiryOfferRecord[]>([]);
 
   const offerTemplates = useMemo(() => {
@@ -1692,6 +1693,7 @@ export default function PortalLeadsPage() {
             if (!o) {
               setOfferLead(null);
               setOfferInitial(undefined);
+              setAiGenerationId(null);
             }
           }}
           companyId={companyId}
@@ -1700,6 +1702,7 @@ export default function PortalLeadsPage() {
           leadKey={stableImportLeadDocumentId(offerLead)}
           templates={offerTemplates}
           initial={offerInitial}
+          aiGenerationId={aiGenerationId}
           onSent={(info) => {
             const key = stableImportLeadDocumentId(offerLead);
             setOptimisticContactKeys((p) => ({ ...p, [key]: true }));
@@ -1726,6 +1729,7 @@ export default function PortalLeadsPage() {
             }
             setOfferLead(null);
             setOfferInitial(undefined);
+            setAiGenerationId(null);
           }}
         />
       ) : null}
@@ -1745,9 +1749,10 @@ export default function PortalLeadsPage() {
           leadKey={stableImportLeadDocumentId(aiPreviewLead)}
           result={aiQuoteResult}
           applyInitial={aiApplyInitial}
-          onApply={(initial) => {
+          onApply={(initial, generationId) => {
             setOfferInitial(initial);
             setOfferLead(aiPreviewLead);
+            setAiGenerationId(generationId);
             setAiPreviewLead(null);
             setAiQuoteResult(null);
             setAiApplyInitial(null);

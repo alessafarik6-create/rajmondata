@@ -96,6 +96,7 @@ export type InquiryOfferRecord = {
   customerPhone?: string | null;
   customerAddress?: string | null;
   internalNote?: string | null;
+  inquiryType?: string | null;
   templateId?: string | null;
   templateName?: string | null;
   sentAt?: unknown;

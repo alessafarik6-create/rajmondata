@@ -18,6 +18,7 @@ export function LeadInquiryOfferDialog(props: {
   templates: InquiryOfferTemplate[];
   draftOfferId?: string | null;
   initial?: InquiryOfferReuseInitial;
+  aiGenerationId?: string | null;
   onSent?: (info: {
     offerId?: string;
     subject: string;
@@ -41,6 +42,7 @@ export function LeadInquiryOfferDialog(props: {
       leadKey={props.leadKey}
       draftOfferId={props.draftOfferId}
       initial={props.initial}
+      aiGenerationId={props.aiGenerationId}
       onSent={(info: InquiryOfferSentInfo) => {
         props.onSent?.({
           offerId: info.offerId,

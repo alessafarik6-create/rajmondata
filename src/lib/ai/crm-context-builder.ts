@@ -5,6 +5,17 @@
 import type { Firestore } from "firebase-admin/firestore";
 import type { ProductCatalogProduct } from "@/lib/product-catalogs";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
+import type { AiAssistantSettingsDoc, AiInquiryTypeRuleDoc } from "@/lib/ai/ai-settings-types";
+import {
+  filterProductsByTypeRule,
+  loadAiAssistantSettings,
+  loadAiInquiryTypeRules,
+  resolveInquiryTypeRule,
+} from "@/lib/ai/inquiry-type-rules";
+import {
+  findSimilarHistoricalQuotes,
+  type SimilarQuoteExample,
+} from "@/lib/ai/similar-quotes-retriever";
 
 export type AiCrmProductRef = {
   catalogId: string;
@@ -56,6 +67,10 @@ export type AiInquiryCrmContext = {
   customer: AiCrmCustomerHistory | null;
   offerHistory: AiCrmOfferHistoryItem[];
   products: AiCrmProductRef[];
+  aiSettings: AiAssistantSettingsDoc;
+  typeRule: AiInquiryTypeRuleDoc;
+  relevantProducts: AiCrmProductRef[];
+  similarQuotes: SimilarQuoteExample[];
 };
 
 function normalizeEmail(raw: unknown): string {
@@ -91,17 +106,21 @@ export async function buildInquiryAiCrmContext(
   companyId: string,
   leadKey: string
 ): Promise<AiInquiryCrmContext> {
-  const companySnap = await db.collection(COMPANIES_COLLECTION).doc(companyId).get();
+  const [companySnap, overlaySnap, aiSettings, typeRules] = await Promise.all([
+    db.collection(COMPANIES_COLLECTION).doc(companyId).get(),
+    db
+      .collection(COMPANIES_COLLECTION)
+      .doc(companyId)
+      .collection("import_lead_overlays")
+      .doc(leadKey)
+      .get(),
+    loadAiAssistantSettings(db, companyId),
+    loadAiInquiryTypeRules(db, companyId),
+  ]);
+
   const company = (companySnap.data() ?? {}) as Record<string, unknown>;
   const companyName =
     String(company.companyName ?? company.name ?? "").trim() || "Organizace";
-
-  const overlaySnap = await db
-    .collection(COMPANIES_COLLECTION)
-    .doc(companyId)
-    .collection("import_lead_overlays")
-    .doc(leadKey)
-    .get();
 
   if (!overlaySnap.exists) {
     throw new Error("Poptávka nebyla nalezena v CRM.");
@@ -128,6 +147,8 @@ export async function buildInquiryAiCrmContext(
   if (!inquiry.name && !inquiry.email && !inquiry.message) {
     throw new Error("Poptávka nemá dostatek dat pro AI analýzu.");
   }
+
+  const typeRule = resolveInquiryTypeRule(inquiry.type || "Obecná poptávka", typeRules);
 
   let customer: AiCrmCustomerHistory | null = null;
   if (inquiryEmail) {
@@ -226,6 +247,18 @@ export async function buildInquiryAiCrmContext(
     }
   }
 
+  const relevantProducts = filterProductsByTypeRule(products, typeRule);
+
+  const similarQuotes = await findSimilarHistoricalQuotes(db, {
+    companyId,
+    leadKey,
+    inquiryType: inquiry.type || typeRule.name,
+    inquiryMessage: inquiry.message,
+    estimatedPriceKc: inquiry.estimatedPriceKc,
+    typeRule,
+    knowledge: aiSettings.knowledge,
+  });
+
   return {
     companyId,
     companyName,
@@ -235,15 +268,22 @@ export async function buildInquiryAiCrmContext(
     customer,
     offerHistory,
     products,
+    aiSettings,
+    typeRule,
+    relevantProducts,
+    similarQuotes,
   };
 }
 
 export function summarizeAiCrmContext(ctx: AiInquiryCrmContext): Record<string, unknown> {
   return {
     leadKey: ctx.leadKey,
-    inquiryType: ctx.inquiry.type,
+    inquiryType: ctx.inquiry.type || ctx.typeRule.name,
+    typeRuleName: ctx.typeRule.name,
     hasCustomerMatch: !!ctx.customer,
     productCount: ctx.products.length,
+    relevantProductCount: ctx.relevantProducts.length,
+    similarQuotesCount: ctx.similarQuotes.length,
     offerHistoryCount: ctx.offerHistory.length,
   };
 }

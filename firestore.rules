@@ -2506,6 +2506,34 @@ service cloud.firestore {
       }
 
       /**
+       * Nastavení AI asistenta (obecné + zdroje znalostí).
+       */
+      match /ai_settings/{docId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant'];
+        allow create, update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId;
+        allow delete: if false;
+      }
+
+      /**
+       * Pravidla typů poptávek pro AI návrhy nabídek.
+       */
+      match /ai_inquiry_type_rules/{ruleId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant'];
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0;
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId;
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.companyId == companyId;
+      }
+
+      /**
        * Knihovna příloh k e-mailovým nabídkám
        */
       match /inquiry_offer_library/{itemId} {

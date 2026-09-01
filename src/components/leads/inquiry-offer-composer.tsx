@@ -79,6 +79,7 @@ export type InquiryOfferComposerProps = {
     attachments?: InquiryOfferAttachmentRef[];
   };
   onSent?: (info: InquiryOfferSentInfo) => void;
+  aiGenerationId?: string | null;
 };
 
 function newUploadSessionId(): string {
@@ -333,6 +334,8 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
           customerName: customerName.trim() || null,
           customerPhone: customerPhone.trim() || null,
           customerAddress: customerAddress.trim() || null,
+          inquiryType: props.lead?.typ?.trim() || null,
+          aiGenerationId: props.aiGenerationId ?? null,
         }),
       });
       const data = (await res.json()) as {

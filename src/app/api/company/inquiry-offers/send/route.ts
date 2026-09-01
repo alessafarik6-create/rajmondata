@@ -38,6 +38,8 @@ type Body = {
   customerName?: string | null;
   customerPhone?: string | null;
   customerAddress?: string | null;
+  aiGenerationId?: string | null;
+  inquiryType?: string | null;
 };
 
 function canSendInquiryOffers(role: string): boolean {
@@ -137,6 +139,8 @@ export async function POST(request: NextRequest) {
       sentByEmail,
       sentByName,
       draftOfferId: body.draftOfferId,
+      inquiryType: body.inquiryType,
+      aiGenerationId: body.aiGenerationId,
     };
 
     if (action === "draft") {

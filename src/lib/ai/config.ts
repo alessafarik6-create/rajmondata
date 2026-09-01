@@ -20,9 +20,14 @@ export function getAiMaxDiscountPercent(): number {
   return Math.min(100, Math.max(0, raw));
 }
 
-export function isAiFeatureEnabled(): boolean {
+export function isAiFeatureEnabledEnv(): boolean {
   const flag = String(process.env.AI_INQUIRY_QUOTES_ENABLED ?? "true").trim().toLowerCase();
   return flag !== "false" && flag !== "0";
+}
+
+/** Globální env přepínač; Firestore ai_settings.enabled se kontroluje v quote-generation-service. */
+export function isAiFeatureEnabled(): boolean {
+  return isAiFeatureEnabledEnv();
 }
 
 export const OPENAI_REQUEST_TIMEOUT_MS = 90_000;
