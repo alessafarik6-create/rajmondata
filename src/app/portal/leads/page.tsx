@@ -101,6 +101,14 @@ import {
   inquiryOfferToReuseInitial,
   type InquiryOfferReuseInitial,
 } from "@/lib/inquiry-offer-history";
+import {
+  InquiryAiQuoteButton,
+  InquiryAiQuotePreviewDialog,
+} from "@/components/leads/inquiry-ai-quote-dialog";
+import type {
+  AiQuoteApplyInitial,
+  AiValidatedQuoteResult,
+} from "@/lib/ai/types";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -356,6 +364,9 @@ export default function PortalLeadsPage() {
   const [offerInitial, setOfferInitial] = useState<InquiryOfferReuseInitial | undefined>(
     undefined
   );
+  const [aiPreviewLead, setAiPreviewLead] = useState<LeadImportRow | null>(null);
+  const [aiQuoteResult, setAiQuoteResult] = useState<AiValidatedQuoteResult | null>(null);
+  const [aiApplyInitial, setAiApplyInitial] = useState<AiQuoteApplyInitial | null>(null);
   const [optimisticOffers, setOptimisticOffers] = useState<InquiryOfferRecord[]>([]);
 
   const offerTemplates = useMemo(() => {
@@ -1554,6 +1565,17 @@ export default function PortalLeadsPage() {
                                     <Mail className="h-4 w-4" />
                                     Odpovědět nabídkou
                                   </Button>
+                                  <InquiryAiQuoteButton
+                                    companyId={companyId}
+                                    lead={r}
+                                    leadKey={key}
+                                    className="mt-2 min-h-11 w-full border-violet-300 text-violet-900 hover:bg-violet-50 sm:min-h-9 sm:w-auto"
+                                    onResult={(result, applyInitial) => {
+                                      setAiPreviewLead(r);
+                                      setAiQuoteResult(result);
+                                      setAiApplyInitial(applyInitial);
+                                    }}
+                                  />
                                   {!contact.contacted ? (
                                     <Button
                                       type="button"
@@ -1704,6 +1726,31 @@ export default function PortalLeadsPage() {
             }
             setOfferLead(null);
             setOfferInitial(undefined);
+          }}
+        />
+      ) : null}
+
+      {aiPreviewLead && companyId && aiQuoteResult && aiApplyInitial ? (
+        <InquiryAiQuotePreviewDialog
+          open={!!aiPreviewLead}
+          onOpenChange={(o) => {
+            if (!o) {
+              setAiPreviewLead(null);
+              setAiQuoteResult(null);
+              setAiApplyInitial(null);
+            }
+          }}
+          companyId={companyId}
+          lead={aiPreviewLead}
+          leadKey={stableImportLeadDocumentId(aiPreviewLead)}
+          result={aiQuoteResult}
+          applyInitial={aiApplyInitial}
+          onApply={(initial) => {
+            setOfferInitial(initial);
+            setOfferLead(aiPreviewLead);
+            setAiPreviewLead(null);
+            setAiQuoteResult(null);
+            setAiApplyInitial(null);
           }}
         />
       ) : null}

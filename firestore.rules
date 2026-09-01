@@ -2497,6 +2497,15 @@ service cloud.firestore {
       }
 
       /**
+       * Historie AI návrhů nabídek — zápis pouze přes Admin SDK (API).
+       */
+      match /ai_generations/{generationId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant'];
+        allow write: if false;
+      }
+
+      /**
        * Knihovna příloh k e-mailovým nabídkám
        */
       match /inquiry_offer_library/{itemId} {
