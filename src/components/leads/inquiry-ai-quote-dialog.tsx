@@ -35,6 +35,7 @@ import {
   formatPricingSummary,
 } from "@/lib/inquiry-offer-pricing";
 import type { InquiryOfferReuseInitial } from "@/lib/inquiry-offer-history";
+import { mapInquiryAiUserErrorMessage } from "@/lib/ai/client-error-messages";
 
 type InquiryAiQuoteDialogProps = {
   open: boolean;
@@ -81,12 +82,15 @@ export function InquiryAiQuoteButton(props: {
         applyInitial?: AiQuoteApplyInitial;
       };
       if (!res.ok || !data.ok || !data.result || !data.applyInitial) {
-        throw new Error(data.error || "Generování AI návrhu se nezdařilo.");
+        const userMsg = mapInquiryAiUserErrorMessage(res.status, data.error);
+        throw new Error(userMsg);
       }
       props.onResult(data.result, data.applyInitial);
     } catch (e) {
       const msg =
-        e instanceof Error ? e.message : "Generování AI návrhu se nezdařilo.";
+        e instanceof Error
+          ? e.message
+          : mapInquiryAiUserErrorMessage(500);
       props.onError?.(msg);
       toast({ variant: "destructive", title: "AI asistent", description: msg });
     } finally {

@@ -82,15 +82,52 @@ function parseUsage(data: Record<string, unknown>): AiTokenUsage {
   return { inputTokens, outputTokens, totalTokens };
 }
 
+function logOpenAiError(
+  res: Response,
+  data: Record<string, unknown>,
+  rawText: string
+): void {
+  const errObj = (data.error ?? {}) as Record<string, unknown>;
+  console.error("[OpenAI] request failed", {
+    httpStatus: res.status,
+    errorType: errObj.type ?? null,
+    errorCode: errObj.code ?? null,
+    errorMessage:
+      typeof errObj.message === "string"
+        ? errObj.message.slice(0, 500)
+        : rawText.slice(0, 500),
+    requestId:
+      (typeof data.id === "string" ? data.id : null) ??
+      res.headers.get("x-request-id"),
+  });
+}
+
+function userMessageForOpenAiStatus(status: number, detail: string): string {
+  if (status === 429) {
+    return "Byl překročen limit požadavků na AI. Zkuste to prosím později.";
+  }
+  if (status === 401 || status === 403) {
+    return "OpenAI API není správně nakonfigurováno.";
+  }
+  if (status === 400) {
+    if (/invalid.*schema|json_schema|required/i.test(detail)) {
+      return "AI služba odmítla požadavek (neplatné schéma odpovědi).";
+    }
+    return "AI služba odmítla požadavek.";
+  }
+  return "Generování AI návrhu se nezdařilo. Zkuste to znovu.";
+}
+
 export async function generateInquiryQuoteWithOpenAi(
   userPrompt: string,
   opts?: { model?: string; instructions?: string }
 ): Promise<OpenAiQuoteGenerationResult> {
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
+    console.error("[OpenAI] OpenAI API key is not configured");
     throw new OpenAiClientError(
       503,
-      "AI asistent není nakonfigurován (chybí OPENAI_API_KEY)."
+      "OpenAI API není nakonfigurováno."
     );
   }
 
@@ -134,25 +171,12 @@ export async function generateInquiryQuoteWithOpenAi(
     }
 
     if (!res.ok) {
+      logOpenAiError(res, data, rawText);
       const errObj = data.error as Record<string, unknown> | undefined;
       const detail = String(errObj?.message ?? rawText).slice(0, 400);
-      if (res.status === 429) {
-        throw new OpenAiClientError(
-          429,
-          "Byl překročen limit požadavků na AI. Zkuste to prosím později.",
-          detail
-        );
-      }
-      if (res.status === 401 || res.status === 403) {
-        throw new OpenAiClientError(
-          503,
-          "AI služba není správně nakonfigurována.",
-          detail
-        );
-      }
       throw new OpenAiClientError(
         res.status,
-        "Generování AI návrhu se nezdařilo. Zkuste to znovu.",
+        userMessageForOpenAiStatus(res.status, detail),
         detail
       );
     }

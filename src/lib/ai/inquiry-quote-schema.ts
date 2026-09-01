@@ -40,7 +40,11 @@ export function parseAiQuoteModelOutput(raw: unknown): AiQuoteModelOutput {
   return AiQuoteResponseSchema.parse(parsed) as AiQuoteModelOutput;
 }
 
-/** JSON schema pro OpenAI structured output. */
+/**
+ * JSON schema pro OpenAI Structured Outputs (strict: true).
+ * Každý klíč v `properties` MUSÍ být uveden v `required` — jinak OpenAI vrátí HTTP 400.
+ * @see https://platform.openai.com/docs/guides/structured-outputs
+ */
 export const AI_QUOTE_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -62,7 +66,15 @@ export const AI_QUOTE_JSON_SCHEMA = {
           discount: { type: "number" },
           reason: { type: "string" },
         },
-        required: ["catalog_id", "product_id", "name", "quantity", "reason"],
+        required: [
+          "catalog_id",
+          "product_id",
+          "name",
+          "quantity",
+          "unit",
+          "discount",
+          "reason",
+        ],
       },
     },
     internal_notes: { type: "string" },
@@ -79,3 +91,19 @@ export const AI_QUOTE_JSON_SCHEMA = {
     "confidence",
   ],
 } as const;
+
+/** Ověří, že schema splňuje pravidla OpenAI strict mode (volá se z test scriptu). */
+export function assertOpenAiStrictSchemaValid(schema: {
+  properties?: Record<string, unknown>;
+  required?: readonly string[];
+}): void {
+  const props = Object.keys(schema.properties ?? {});
+  const req = new Set(schema.required ?? []);
+  for (const key of props) {
+    if (!req.has(key)) {
+      throw new Error(
+        `OpenAI strict schema: property "${key}" chybí v required`
+      );
+    }
+  }
+}
