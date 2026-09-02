@@ -10289,7 +10289,38 @@ export function JobDetailPageContent({
               canEdit={canManageFolders}
             />
           ) : null}
+      </div>
 
+      {user && companyId && jobFirestoreId ? (
+        <section
+          id="job-media-section"
+          className={JD.sectionBand}
+          aria-labelledby="job-media-heading"
+        >
+          <div className={JD.sectionBandInner}>
+            <JobMediaSection
+              companyId={companyId}
+              jobId={jobFirestoreId!}
+              jobDisplayName={job?.name ?? null}
+              jobRecord={job ? (job as Record<string, unknown>) : null}
+              folderCustomerNotificationCandidates={folderCustomerNotificationCandidates}
+              user={user}
+              canManageFolders={canManageFolders}
+              photos={(photos ?? []).filter(isUsablePhotoRow) as PhotoDoc[]}
+              uploadLegacyPhoto={async (file, opts) => {
+                await handlePhotoUpload(file, opts);
+              }}
+              legacyUploading={isUploading}
+              layout="jobDetailWide"
+              onAnnotatePhoto={openPhotoAnnotationEditor}
+              mediaActivityFocus={mediaActivityFocus}
+              onMediaActivityFocusConsumed={consumeMediaActivityDeepLink}
+            />
+          </div>
+        </section>
+      ) : null}
+
+      <div className={JD.stackCol}>
           <Card className={cn(JD.card)}>
             <CardHeader>
               <CardTitle className={JD.cardTitle}>
@@ -11382,35 +11413,6 @@ export function JobDetailPageContent({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {user && companyId && jobFirestoreId ? (
-        <section
-          id="job-media-section"
-          className={JD.sectionBand}
-          aria-labelledby="job-media-heading"
-        >
-          <div className={JD.sectionBandInner}>
-            <JobMediaSection
-              companyId={companyId}
-              jobId={jobFirestoreId!}
-              jobDisplayName={job?.name ?? null}
-              jobRecord={job ? (job as Record<string, unknown>) : null}
-              folderCustomerNotificationCandidates={folderCustomerNotificationCandidates}
-              user={user}
-              canManageFolders={canManageFolders}
-              photos={(photos ?? []).filter(isUsablePhotoRow) as PhotoDoc[]}
-              uploadLegacyPhoto={async (file, opts) => {
-                await handlePhotoUpload(file, opts);
-              }}
-              legacyUploading={isUploading}
-              layout="jobDetailWide"
-              onAnnotatePhoto={openPhotoAnnotationEditor}
-              mediaActivityFocus={mediaActivityFocus}
-              onMediaActivityFocusConsumed={consumeMediaActivityDeepLink}
-            />
-          </div>
-        </section>
-      ) : null}
 
       {user && companyId && jobFirestoreId && (isAdmin || canManageFolders) ? (
         <section
