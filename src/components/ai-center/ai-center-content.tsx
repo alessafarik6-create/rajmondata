@@ -49,7 +49,6 @@ import {
 import {
   AI_KNOWLEDGE_DOCUMENTS_COLLECTION,
   AI_PRICE_RULES_COLLECTION,
-  AI_QUOTE_EXAMPLES_COLLECTION,
   AI_KNOWLEDGE_CATEGORY_LABELS,
   AI_PRICE_CALCULATION_LABELS,
   defaultAiInstructionCategories,
@@ -57,10 +56,18 @@ import {
   type AiKnowledgeDocumentDoc,
   type AiPriceCalculationType,
   type AiPriceRuleDoc,
-  type AiQuoteExampleDoc,
 } from "@/lib/ai/ai-center-types";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import type { AiValidatedQuoteResult } from "@/lib/ai/types";
+import { getFirebaseStorage } from "@/firebase/storage";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { parseFetchJsonResponse, extractApiError } from "@/lib/api/parse-fetch-response";
+import {
+  AI_KNOWLEDGE_MAX_FILE_BYTES,
+  AI_KNOWLEDGE_STATUS_LABELS,
+  formatKnowledgeFileSize,
+} from "@/lib/ai/knowledge-upload-config";
+import { AiCenterExamplesTab } from "@/components/ai-center/ai-center-examples-tab";
 
 const DEFAULT_AI_MODEL_LABEL = "gpt-4.1-mini";
 
@@ -121,7 +128,7 @@ export function AiCenterContent({ companyId }: Props) {
           <KnowledgeTab companyId={companyId} firestore={firestore} user={user} toast={toast} />
         </TabsContent>
         <TabsContent value="examples">
-          <ExamplesTab companyId={companyId} firestore={firestore} user={user} toast={toast} />
+          <AiCenterExamplesTab companyId={companyId} />
         </TabsContent>
         <TabsContent value="instructions">
           <InstructionsTab companyId={companyId} firestore={firestore} user={user} toast={toast} />
@@ -684,33 +691,89 @@ function KnowledgeTab({
   const docs = useMemo(() => [...(docsRaw ?? [])] as AiKnowledgeDocumentDoc[], [docsRaw]);
 
   const [uploading, setUploading] = useState(false);
+  const [reprocessingId, setReprocessingId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<AiKnowledgeCategory>("general");
   const [file, setFile] = useState<File | null>(null);
+  const [fileSizeError, setFileSizeError] = useState<string | null>(null);
+
+  const onFileSelected = (f: File | null) => {
+    setFile(f);
+    if (!f) {
+      setFileSizeError(null);
+      return;
+    }
+    if (f.size > AI_KNOWLEDGE_MAX_FILE_BYTES) {
+      setFileSizeError(
+        `Soubor je příliš velký (${formatKnowledgeFileSize(f.size)}). Maximum je ${formatKnowledgeFileSize(AI_KNOWLEDGE_MAX_FILE_BYTES)}.`
+      );
+    } else {
+      setFileSizeError(null);
+    }
+  };
 
   const upload = async () => {
-    if (!user || !file) {
+    if (!user || !file || !firestore) {
       toast({ title: "Vyberte soubor.", variant: "destructive" });
       return;
     }
+    if (file.size > AI_KNOWLEDGE_MAX_FILE_BYTES) {
+      toast({ title: "Soubor je příliš velký.", variant: "destructive" });
+      return;
+    }
+
     setUploading(true);
+    const documentId = crypto.randomUUID();
+    const safeName = file.name.replace(/[^\w.\-()+ ]/g, "_").slice(0, 120);
+    const storagePath = `companies/${companyId}/ai-knowledge/${documentId}/${safeName}`;
+
     try {
+      const storage = getFirebaseStorage();
+      if (!storage) throw new Error("Storage není dostupné.");
+
+      const sref = ref(storage, storagePath);
+      await uploadBytes(sref, file, { contentType: file.type || undefined });
+      const downloadUrl = await getDownloadURL(sref);
+
       const token = await user.getIdToken();
-      const fd = new FormData();
-      fd.append("companyId", companyId);
-      fd.append("title", title || file.name);
-      fd.append("category", category);
-      fd.append("file", file);
-      const res = await fetch("/api/company/ai/knowledge/upload", {
+      const res = await fetch("/api/company/ai/knowledge/process", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          companyId,
+          documentId,
+          title: title || file.name,
+          category,
+          fileName: safeName,
+          mimeType: file.type || "application/octet-stream",
+          fileSizeBytes: file.size,
+          storagePath,
+          downloadUrl,
+        }),
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string; chunkCount?: number };
-      if (!data.ok) throw new Error(data.error ?? "Upload selhal");
-      toast({ title: `Dokument zpracován (${data.chunkCount ?? 0} segmentů).` });
+
+      const parsed = await parseFetchJsonResponse<{
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        chunkCount?: number;
+      }>(res);
+
+      if (!parsed.ok) {
+        throw new Error(parsed.error);
+      }
+      const apiErr = extractApiError(parsed.data as Record<string, unknown>);
+      if (!parsed.data?.ok) {
+        throw new Error(apiErr ?? "Zpracování selhalo.");
+      }
+
+      toast({ title: `Dokument zpracován (${parsed.data.chunkCount ?? 0} segmentů).` });
       setFile(null);
       setTitle("");
+      setFileSizeError(null);
     } catch (e) {
       toast({
         title: "Nahrání se nezdařilo.",
@@ -719,6 +782,32 @@ function KnowledgeTab({
       });
     } finally {
       setUploading(false);
+    }
+  };
+
+  const reprocess = async (docItem: AiKnowledgeDocumentDoc) => {
+    if (!user || !docItem.id) return;
+    setReprocessingId(docItem.id);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/ai/knowledge/reprocess", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId, documentId: docItem.id }),
+      });
+      const parsed = await parseFetchJsonResponse<{ ok?: boolean; message?: string; error?: string; chunkCount?: number }>(res);
+      if (!parsed.ok) throw new Error(parsed.error);
+      const apiErr = extractApiError(parsed.data as Record<string, unknown>);
+      if (!parsed.data?.ok) throw new Error(apiErr ?? "Zpracování selhalo.");
+      toast({ title: `Dokument znovu zpracován (${parsed.data.chunkCount ?? 0} segmentů).` });
+    } catch (e) {
+      toast({
+        title: "Zpracování se nezdařilo.",
+        description: e instanceof Error ? e.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setReprocessingId(null);
     }
   };
 
@@ -752,9 +841,20 @@ function KnowledgeTab({
           </div>
           <div className="md:col-span-2">
             <Label>Soubor</Label>
-            <Input type="file" accept=".pdf,.txt,.docx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <Input
+              type="file"
+              accept=".pdf,.txt,.docx"
+              onChange={(e) => onFileSelected(e.target.files?.[0] ?? null)}
+            />
+            {fileSizeError ? (
+              <p className="text-xs text-destructive mt-1">{fileSizeError}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-1">
+                Max. {formatKnowledgeFileSize(AI_KNOWLEDGE_MAX_FILE_BYTES)} · PDF, TXT, DOCX
+              </p>
+            )}
           </div>
-          <Button onClick={() => void upload()} disabled={uploading || !file}>
+          <Button onClick={() => void upload()} disabled={uploading || !file || !!fileSizeError}>
             {uploading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Upload className="h-4 w-4 mr-1" />}
             Nahrát a zpracovat
           </Button>
@@ -766,14 +866,33 @@ function KnowledgeTab({
           <p className="text-sm text-muted-foreground">Zatím žádné dokumenty.</p>
         ) : (
           docs.map((d) => (
-            <div key={d.id} className="flex justify-between items-center border rounded-lg p-3 text-sm">
-              <div>
+            <div key={d.id} className="flex justify-between items-start gap-3 border rounded-lg p-3 text-sm">
+              <div className="min-w-0">
                 <p className="font-medium">{d.title}</p>
                 <p className="text-xs text-muted-foreground">
-                  {AI_KNOWLEDGE_CATEGORY_LABELS[d.category]} · {d.status} · {d.chunkCount ?? 0} segmentů
+                  {AI_KNOWLEDGE_CATEGORY_LABELS[d.category]} ·{" "}
+                  {AI_KNOWLEDGE_STATUS_LABELS[d.status] ?? d.status} · {d.chunkCount ?? 0} segmentů ·{" "}
+                  {formatKnowledgeFileSize(d.fileSizeBytes)}
                 </p>
+                {d.status === "failed" && d.errorMessage ? (
+                  <p className="text-xs text-destructive mt-1">{d.errorMessage}</p>
+                ) : null}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
+                {d.status === "failed" ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={reprocessingId === d.id}
+                    onClick={() => void reprocess(d)}
+                  >
+                    {reprocessingId === d.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      "Zkusit znovu"
+                    )}
+                  </Button>
+                ) : null}
                 <Switch checked={d.active !== false} onCheckedChange={() => void toggleActive(d)} />
                 {d.downloadUrl ? (
                   <a href={d.downloadUrl} target="_blank" rel="noreferrer">
@@ -786,144 +905,6 @@ function KnowledgeTab({
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function ExamplesTab({
-  companyId,
-  firestore,
-  user,
-  toast,
-}: {
-  companyId: string;
-  firestore: ReturnType<typeof useFirestore>;
-  user: ReturnType<typeof useUser>["user"];
-  toast: ReturnType<typeof useToast>["toast"];
-}) {
-  const examplesQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    return collection(firestore, COMPANIES_COLLECTION, companyId, AI_QUOTE_EXAMPLES_COLLECTION);
-  }, [firestore, companyId]);
-  const { data: examplesRaw } = useCollection(examplesQuery);
-
-  const offersQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    return query(collection(firestore, COMPANIES_COLLECTION, companyId, "inquiry_offers"), limit(80));
-  }, [firestore, companyId]);
-  const { data: offersRaw } = useCollection(offersQuery);
-
-  const [manualOpen, setManualOpen] = useState(false);
-  const [manual, setManual] = useState<Partial<AiQuoteExampleDoc>>({
-    inquiryType: "",
-    title: "",
-    dimensionsText: "",
-    bodyText: "",
-    itemsSummary: "",
-    referencePriceNet: null,
-    active: true,
-    source: "manual",
-  });
-
-  const saveManual = async () => {
-    if (!firestore || !user || !manual.title?.trim()) return;
-    await addDoc(collection(firestore, COMPANIES_COLLECTION, companyId, AI_QUOTE_EXAMPLES_COLLECTION), {
-      companyId,
-      source: "manual",
-      inquiryType: manual.inquiryType?.trim() || "Obecná poptávka",
-      title: manual.title.trim(),
-      dimensionsText: manual.dimensionsText?.trim() || null,
-      bodyText: manual.bodyText?.trim() || null,
-      itemsSummary: manual.itemsSummary?.trim() || null,
-      referencePriceNet: manual.referencePriceNet ?? null,
-      active: true,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      updatedByUid: user.uid,
-    });
-    toast({ title: "Příklad uložen." });
-    setManualOpen(false);
-  };
-
-  const toggleOfferExample = async (offerId: string, current: boolean) => {
-    if (!user) return;
-    try {
-      const token = await user.getIdToken();
-      const res = await fetch("/api/company/ai/offers/set-example", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ companyId, offerId, useForAiExample: !current }),
-      });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!data.ok) throw new Error(data.error ?? "Uložení selhalo");
-      toast({ title: !current ? "Nabídka označena jako AI vzor." : "AI vzor odebrán." });
-    } catch (e) {
-      toast({
-        title: "Nepodařilo se uložit.",
-        description: e instanceof Error ? e.message : undefined,
-        variant: "destructive",
-      });
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader className="flex flex-row justify-between">
-          <div>
-            <CardTitle>Příklady nabídek</CardTitle>
-            <CardDescription>Historické ceny nejsou autoritativní — slouží jako vzor struktury a textu.</CardDescription>
-          </div>
-          <Button size="sm" onClick={() => setManualOpen(true)}><Plus className="h-4 w-4 mr-1" /> Ruční příklad</Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <h3 className="text-sm font-medium mb-2">Existující nabídky v CRM</h3>
-            {(offersRaw ?? []).slice(0, 30).map((o) => {
-              const offer = o as Record<string, unknown> & { id: string };
-              const subject = String(offer.subject ?? offer.id);
-              const useForAi = offer.useForAiExample === true;
-              return (
-                <div key={offer.id} className="flex justify-between items-center border rounded p-2 mb-1 text-sm">
-                  <span>{subject}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">Používat pro AI</span>
-                    <Switch checked={useForAi} onCheckedChange={() => void toggleOfferExample(offer.id, useForAi)} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {(examplesRaw ?? []).length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium mb-2">Ruční příklady</h3>
-              {(examplesRaw ?? []).map((ex) => {
-                const e = ex as AiQuoteExampleDoc;
-                return (
-                  <div key={e.id} className="border rounded p-2 mb-1 text-sm">
-                    <p className="font-medium">{e.title}</p>
-                    <p className="text-xs text-muted-foreground">{e.inquiryType}</p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Dialog open={manualOpen} onOpenChange={setManualOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Ruční příklad nabídky</DialogTitle></DialogHeader>
-          <div className="space-y-2">
-            <div><Label>Typ poptávky</Label><Input value={manual.inquiryType ?? ""} onChange={(e) => setManual({ ...manual, inquiryType: e.target.value })} /></div>
-            <div><Label>Název</Label><Input value={manual.title ?? ""} onChange={(e) => setManual({ ...manual, title: e.target.value })} /></div>
-            <div><Label>Rozměr</Label><Input value={manual.dimensionsText ?? ""} onChange={(e) => setManual({ ...manual, dimensionsText: e.target.value })} placeholder="5000 × 3000 mm" /></div>
-            <div><Label>Text nabídky</Label><Textarea rows={4} value={manual.bodyText ?? ""} onChange={(e) => setManual({ ...manual, bodyText: e.target.value })} /></div>
-            <div><Label>Položky</Label><Textarea rows={2} value={manual.itemsSummary ?? ""} onChange={(e) => setManual({ ...manual, itemsSummary: e.target.value })} /></div>
-          </div>
-          <DialogFooter><Button onClick={() => void saveManual()}>Uložit</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
   );
 }
 
@@ -1038,15 +1019,18 @@ function TestAiTab({
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ companyId, inquiryType, inquiryText }),
       });
-      const data = (await res.json()) as {
+      const parsed = await parseFetchJsonResponse<{
         ok?: boolean;
         error?: string;
+        message?: string;
         result?: AiValidatedQuoteResult;
         contextSummary?: Record<string, unknown>;
-      };
-      if (!data.ok) throw new Error(data.error ?? "Test selhal");
-      setResult(data.result ?? null);
-      setContextSummary(data.contextSummary ?? null);
+      }>(res);
+      if (!parsed.ok) throw new Error(parsed.error);
+      const apiErr = extractApiError(parsed.data as Record<string, unknown>);
+      if (!parsed.data?.ok) throw new Error(apiErr ?? "Test selhal");
+      setResult(parsed.data.result ?? null);
+      setContextSummary(parsed.data.contextSummary ?? null);
     } catch (e) {
       toast({
         title: "Test AI selhal",
@@ -1102,6 +1086,11 @@ function TestAiTab({
                   <p>Typ poptávky: {String(contextSummary.typeRuleName ?? contextSummary.inquiryType ?? "—")}</p>
                   <p>Použité znalosti: {(contextSummary.knowledgeDocuments as string[] | undefined)?.join(", ") || "—"}</p>
                   <p>Použité vzory: {(contextSummary.similarQuoteSubjects as string[] | undefined)?.join(", ") || "—"}</p>
+                  {(contextSummary.similarQuoteIds as string[] | undefined)?.length ? (
+                    <p className="text-xs text-muted-foreground">
+                      ID vzorů: {(contextSummary.similarQuoteIds as string[]).join(", ")}
+                    </p>
+                  ) : null}
                 </div>
               )}
               {result.priceExplainability && (

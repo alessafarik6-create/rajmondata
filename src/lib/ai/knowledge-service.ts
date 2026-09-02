@@ -10,9 +10,11 @@ import {
   AI_KNOWLEDGE_DOCUMENTS_COLLECTION,
   type AiKnowledgeChunkDoc,
   type AiKnowledgeDocumentDoc,
+  type AiKnowledgeCategory,
 } from "@/lib/ai/ai-center-types";
 import { computeEmbeddingForText, cosineSimilarity } from "@/lib/search/embeddings";
-import { extractPdfTextContent } from "@/lib/ai/document-pdf-text";
+import { extractKnowledgeDocumentText } from "@/lib/ai/knowledge-text-extract";
+import { errorMessageFromUnknown } from "@/lib/server-error-serialize";
 
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 150;
@@ -39,45 +41,91 @@ function splitIntoChunks(text: string): string[] {
   return chunks.filter(Boolean);
 }
 
+function logStage(
+  stage: string,
+  meta: Record<string, unknown>,
+  err?: unknown
+): void {
+  if (err) {
+    console.error(`[knowledge] ${stage}`, {
+      ...meta,
+      errorType: err instanceof Error ? err.name : typeof err,
+      errorMessage: err instanceof Error ? err.message : errorMessageFromUnknown(err),
+      stack: err instanceof Error ? err.stack?.split("\n").slice(0, 4) : undefined,
+    });
+    return;
+  }
+  console.info(`[knowledge] ${stage}`, meta);
+}
+
 export async function processKnowledgeDocument(
   db: Firestore,
   companyId: string,
   documentId: string,
   fileBuffer: Buffer,
-  mimeType: string
-): Promise<{ ok: true; chunkCount: number } | { ok: false; error: string }> {
+  mimeType: string,
+  fileName: string
+): Promise<{ ok: true; chunkCount: number } | { ok: false; error: string; code?: string }> {
   const docRef = db
     .collection(COMPANIES_COLLECTION)
     .doc(companyId)
     .collection(AI_KNOWLEDGE_DOCUMENTS_COLLECTION)
     .doc(documentId);
 
-  await docRef.update({
-    status: "processing",
-    errorMessage: null,
-    updatedAt: FieldValue.serverTimestamp(),
-  });
+  await docRef.set(
+    {
+      status: "processing",
+      errorMessage: null,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
 
   try {
-    let text = "";
-    if (mimeType.includes("pdf")) {
-      text = await extractPdfTextContent(fileBuffer);
-    } else if (mimeType.includes("text") || mimeType.includes("plain")) {
-      text = fileBuffer.toString("utf8");
-    } else {
-      text = fileBuffer.toString("utf8");
+    logStage("PDF_TEXT_EXTRACTION_START", { companyId, documentId, mimeType, fileName });
+
+    const extracted = await extractKnowledgeDocumentText(
+      db,
+      companyId,
+      fileBuffer,
+      mimeType,
+      fileName
+    );
+    if (!extracted.ok) {
+      await docRef.set(
+        {
+          status: "failed",
+          errorMessage: extracted.error,
+          chunkCount: 0,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      return { ok: false, error: extracted.error, code: "PDF_PROCESSING_FAILED" };
     }
 
-    const chunks = splitIntoChunks(text);
+    logStage("PDF_TEXT_EXTRACTION_OK", {
+      companyId,
+      documentId,
+      source: extracted.source,
+      textLength: extracted.text.length,
+    });
+
+    const chunks = splitIntoChunks(extracted.text);
     if (chunks.length === 0) {
-      await docRef.update({
-        status: "failed",
-        errorMessage: "Dokument neobsahuje extrahovatelný text.",
-        chunkCount: 0,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-      return { ok: false, error: "Dokument neobsahuje extrahovatelný text." };
+      await docRef.set(
+        {
+          status: "failed",
+          errorMessage: "Dokument neobsahuje extrahovatelný text.",
+          chunkCount: 0,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      return { ok: false, error: "Dokument neobsahuje extrahovatelný text.", code: "PDF_PROCESSING_FAILED" };
     }
+
+    logStage("CHUNKING_OK", { companyId, documentId, chunkCount: chunks.length });
 
     const chunksCol = docRef.collection(AI_KNOWLEDGE_CHUNKS_COLLECTION);
     const existing = await chunksCol.limit(500).get();
@@ -86,6 +134,8 @@ export async function processKnowledgeDocument(
       for (const d of existing.docs) batch.delete(d.ref);
       await batch.commit();
     }
+
+    logStage("EMBEDDING_START", { companyId, documentId, chunkCount: chunks.length });
 
     for (let i = 0; i < chunks.length; i += 1) {
       const chunkText = chunks[i];
@@ -103,22 +153,114 @@ export async function processKnowledgeDocument(
       await chunksCol.doc(String(i)).set(payload);
     }
 
-    await docRef.update({
-      status: "ready",
-      chunkCount: chunks.length,
-      errorMessage: null,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    logStage("EMBEDDING_OK", { companyId, documentId, chunkCount: chunks.length });
+
+    await docRef.set(
+      {
+        status: "ready",
+        chunkCount: chunks.length,
+        errorMessage: null,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    logStage("DATABASE_SAVE_OK", { companyId, documentId, chunkCount: chunks.length });
 
     return { ok: true, chunkCount: chunks.length };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Zpracování selhalo.";
-    await docRef.update({
-      status: "failed",
-      errorMessage: msg,
+    logStage("PROCESSING_FAILED", { companyId, documentId, stage: "processKnowledgeDocument" }, err);
+    await docRef.set(
+      {
+        status: "failed",
+        errorMessage: msg,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { ok: false, error: msg, code: "PDF_PROCESSING_FAILED" };
+  }
+}
+
+export async function processKnowledgeDocumentFromStorage(
+  db: Firestore,
+  bucket: { file: (path: string) => { download: () => Promise<[Buffer]> } },
+  params: {
+    companyId: string;
+    documentId: string;
+    title: string;
+    category: AiKnowledgeCategory;
+    fileName: string;
+    mimeType: string;
+    fileSizeBytes: number;
+    storagePath: string;
+    downloadUrl: string;
+    uploadedByUid: string;
+  }
+): Promise<{ ok: true; chunkCount: number } | { ok: false; error: string; code?: string }> {
+  logStage("KNOWLEDGE_UPLOAD_START", {
+    companyId: params.companyId,
+    userId: params.uploadedByUid,
+    documentId: params.documentId,
+    filename: params.fileName,
+    mimeType: params.mimeType,
+    size: params.fileSizeBytes,
+  });
+
+  const docRef = db
+    .collection(COMPANIES_COLLECTION)
+    .doc(params.companyId)
+    .collection(AI_KNOWLEDGE_DOCUMENTS_COLLECTION)
+    .doc(params.documentId);
+
+  await docRef.set(
+    {
+      companyId: params.companyId,
+      title: params.title,
+      fileName: params.fileName,
+      mimeType: params.mimeType,
+      storagePath: params.storagePath,
+      downloadUrl: params.downloadUrl,
+      fileSizeBytes: params.fileSizeBytes,
+      category: params.category,
+      active: true,
+      status: "processing",
+      chunkCount: 0,
+      errorMessage: null,
+      uploadedByUid: params.uploadedByUid,
       updatedAt: FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  try {
+    const [buffer] = await bucket.file(params.storagePath).download();
+    logStage("FILE_UPLOAD_OK", {
+      companyId: params.companyId,
+      documentId: params.documentId,
+      bytes: buffer.length,
     });
-    return { ok: false, error: msg };
+    return processKnowledgeDocument(
+      db,
+      params.companyId,
+      params.documentId,
+      buffer,
+      params.mimeType,
+      params.fileName
+    );
+  } catch (err) {
+    logStage("FILE_DOWNLOAD_FAILED", { companyId: params.companyId, documentId: params.documentId }, err);
+    await docRef.set(
+      {
+        status: "failed",
+        errorMessage: "Soubor se nepodařilo načíst ze storage.",
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return { ok: false, error: "Soubor se nepodařilo načíst ze storage.", code: "STORAGE_READ_FAILED" };
   }
 }
 

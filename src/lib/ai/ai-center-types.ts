@@ -73,6 +73,7 @@ export const AI_KNOWLEDGE_CATEGORY_LABELS: Record<AiKnowledgeCategory, string> =
 };
 
 export type AiKnowledgeDocumentStatus =
+  | "uploading"
   | "pending"
   | "processing"
   | "ready"
@@ -86,6 +87,7 @@ export type AiKnowledgeDocumentDoc = {
   mimeType: string;
   storagePath: string;
   downloadUrl?: string | null;
+  fileSizeBytes?: number | null;
   category: AiKnowledgeCategory;
   active: boolean;
   status: AiKnowledgeDocumentStatus;

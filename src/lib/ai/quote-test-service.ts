@@ -201,6 +201,7 @@ export async function runTestAiQuote(
         relevantProductCount: context.relevantProducts.length,
         knowledgeDocuments: context.knowledgeHits.map((k) => k.documentTitle),
         similarQuoteSubjects: context.similarQuotes.map((q) => q.subject || q.id),
+        similarQuoteIds: context.similarQuotes.map((q) => q.id),
         appliedPriceRules: validated.priceExplainability?.appliedLines ?? [],
       },
       explainability: validated.priceExplainability,

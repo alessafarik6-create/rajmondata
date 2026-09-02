@@ -147,9 +147,9 @@ export async function findSimilarHistoricalQuotes(
     const lk = String(o.leadKey ?? "");
     if (!lk || lk === "__standalone__") return false;
     if (lk === params.leadKey) return false;
-    const status = String(o.status ?? "");
-    if (params.knowledge.preferSentQuotes && status !== "sent") return false;
-    return status === "sent" || status === "draft" || o.useForAiExample === true;
+    // Pouze nabídky explicitně označené jako AI vzor.
+    if (o.useForAiExample !== true) return false;
+    return true;
   });
 
   const overlayTypes = await loadOverlayTypes(
@@ -195,7 +195,7 @@ export async function findSimilarHistoricalQuotes(
       source: "sent_offer",
       inquiryType,
       status,
-      subject,
+      subject: subject || doc.id,
       bodyExcerpt,
       priceNetKc: priceNet,
       priceGrossKc: priceGross,

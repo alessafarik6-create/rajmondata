@@ -68,6 +68,8 @@ export function LeadInquiryOfferDetailDialog(props: {
   canResend?: boolean;
   onReuse?: (offer: InquiryOfferRecord) => void;
   onResend?: (offer: InquiryOfferRecord) => void;
+  /** Volitelný blok pod náhledem (např. AI metadata v AI centru). */
+  extraContent?: React.ReactNode;
 }) {
   const { toast } = useToast();
   const [resendConfirmOpen, setResendConfirmOpen] = React.useState(false);
@@ -211,6 +213,7 @@ export function LeadInquiryOfferDetailDialog(props: {
                   </p>
                 )}
               </div>
+              {props.extraContent ? props.extraContent : null}
             </div>
           </div>
           <DialogFooter className="shrink-0 flex-col gap-2 border-t px-4 py-3 sm:flex-col sm:px-6">
