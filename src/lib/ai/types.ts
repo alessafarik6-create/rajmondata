@@ -45,6 +45,18 @@ export type AiValidatedQuoteItem = {
   reason: string;
 };
 
+export type AiQuoteFieldDebug = {
+  widthMm: number | null;
+  depthMm: number | null;
+  areaM2: number | null;
+  roofMaterial: string | null;
+  quantity: number;
+  requiredFields: Array<{ key: string; label: string; satisfied: boolean }>;
+  optionalFields: Array<{ key: string; label: string; present: boolean }>;
+  ignoredFields: string[];
+  missingRequired: string[];
+};
+
 export type AiValidatedQuoteResult = {
   generationId: string;
   summary: string;
@@ -55,6 +67,7 @@ export type AiValidatedQuoteResult = {
   customerReply: string;
   confidence: number;
   confidenceFactors?: ConfidenceFactors;
+  fieldDebug?: AiQuoteFieldDebug;
   vatRate: InquiryVatRate;
   pricing: InquiryOfferPricing;
   warnings: string[];

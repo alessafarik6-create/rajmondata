@@ -200,9 +200,13 @@ export async function runTestAiQuote(
         similarQuotesCount: context.similarQuotes.length,
         relevantProductCount: context.relevantProducts.length,
         knowledgeDocuments: context.knowledgeHits.map((k) => k.documentTitle),
-        similarQuoteSubjects: context.similarQuotes.map((q) => q.subject || q.id),
-        similarQuoteIds: context.similarQuotes.map((q) => q.id),
+        similarQuoteLabels: context.similarQuotes.map((q) => q.displayLabel),
         appliedPriceRules: validated.priceExplainability?.appliedLines ?? [],
+        fieldDebug: validated.fieldDebug ?? null,
+        missingInformation: validated.missingInformation,
+        pricingMatch: validated.priceExplainability?.appliedLines.find(
+          (l) => l.source === "price_rule"
+        ) ?? null,
       },
       explainability: validated.priceExplainability,
     };

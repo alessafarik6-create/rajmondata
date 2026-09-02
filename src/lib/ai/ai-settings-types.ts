@@ -42,6 +42,12 @@ export type AiInquiryTypeRuleDoc = {
   ignoredInformation: string[];
   /** Nápovědy pro filtrování katalogu (kategorie / název katalogu / produktu). */
   productCategoryHints: string[];
+  /** Strukturované klíče polí (mají prioritu před textovými seznamy). */
+  requiredFields?: string[];
+  optionalFields?: string[];
+  ignoredFields?: string[];
+  /** Výchozí množství, pokud zákazník neuvede počet kusů (typicky 1). */
+  defaultQuantity?: number;
   quoteRules: string;
   active: boolean;
   sortOrder: number;
@@ -70,7 +76,7 @@ export function defaultBuiltInInquiryTypeRules(companyId: string): AiInquiryType
       name: "Pergoly svépomocí",
       matchPatterns: ["pergol", "svépomoc", "svepomoc"],
       systemInstructions:
-        "Jde o pergolu pro montáž svépomocí. Zaměř se na rozměry, typ zastřešení/střechy, barvu nebo konstrukční variantu a množství. Boční zasklení není součástí tohoto typu nabídky.",
+        "Jde o pergolu pro montáž svépomocí. Povinné jsou pouze rozměry (šířka × hloubka) a typ střechy/zastřešení. Barva, konstrukční varianta a počet kusů jsou volitelné — neblokují návrh nabídky. Boční zasklení není součástí tohoto typu nabídky.",
       requiredInformation: [
         "rozměry pergoly (šířka × délka nebo rozměry v mm)",
         "typ zastřešení / střechy",
@@ -87,6 +93,10 @@ export function defaultBuiltInInquiryTypeRules(companyId: string): AiInquiryType
         "počet otvorů pro zasklení",
         "dveře do zimní zahrady",
       ],
+      requiredFields: ["width", "depth", "roofType"],
+      optionalFields: ["color", "constructionVariant", "quantity"],
+      ignoredFields: ["sideGlazing", "winterGardenDoors", "slidingGlass"],
+      defaultQuantity: 1,
       productCategoryHints: ["pergol", "zastřešení", "střecha", "polykarbonát"],
       quoteRules:
         "Nenavrhuj boční zasklení. Položky vycházej z katalogu pergol / zastřešení. Cenu určí CRM z ceníku.",

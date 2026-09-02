@@ -18,6 +18,8 @@ export type SimilarQuoteExample = {
   inquiryType: string;
   status: string;
   subject: string;
+  /** Uživatelsky čitelný popisek (bez interního ID). */
+  displayLabel: string;
   bodyExcerpt: string;
   priceNetKc: number | null;
   priceGrossKc: number | null;
@@ -118,6 +120,36 @@ async function loadOverlayTypes(
   return map;
 }
 
+function normalizeSubjectKey(subject: string): string {
+  return normalizeInquiryTypeLabel(subject).slice(0, 80);
+}
+
+function buildDisplayLabel(subject: string, inquiryType: string, index: number): string {
+  const sub = subject.trim();
+  if (sub && !sub.match(/^[a-zA-Z0-9]{16,}$/)) {
+    return sub;
+  }
+  const type = inquiryType.trim() || "Nabídka";
+  return `${type} — vzor ${index + 1}`;
+}
+
+function dedupeAndLimitCandidates(
+  candidates: ScoredCandidate[],
+  maxCount: number
+): ScoredCandidate[] {
+  const byKey = new Map<string, ScoredCandidate>();
+  for (const c of candidates) {
+    const key = normalizeSubjectKey(c.subject || c.inquiryType || c.id);
+    const prev = byKey.get(key);
+    if (!prev || c._score > prev._score) {
+      byKey.set(key, c);
+    }
+  }
+  return [...byKey.values()]
+    .sort((a, b) => b._score - a._score)
+    .slice(0, maxCount);
+}
+
 export async function findSimilarHistoricalQuotes(
   db: Firestore,
   params: {
@@ -132,7 +164,7 @@ export async function findSimilarHistoricalQuotes(
 ): Promise<SimilarQuoteExample[]> {
   if (!params.knowledge.useHistoricalQuotes) return [];
 
-  const limit = params.knowledge.historicalQuotesLimit;
+  const limit = Math.min(params.knowledge.historicalQuotesLimit, 5);
   const candidates: ScoredCandidate[] = [];
 
   const offersSnap = await db
@@ -190,12 +222,14 @@ export async function findSimilarHistoricalQuotes(
     if (score < 25) continue;
 
     const bodyExcerpt = excerpt(bodyPlain || subject);
+    const displayLabel = buildDisplayLabel(subject || doc.id, inquiryType, candidates.length);
     candidates.push({
       id: doc.id,
       source: "sent_offer",
       inquiryType,
       status,
       subject: subject || doc.id,
+      displayLabel,
       bodyExcerpt,
       priceNetKc: priceNet,
       priceGrossKc: priceGross,
@@ -254,12 +288,15 @@ export async function findSimilarHistoricalQuotes(
 
       if (score < 30) continue;
 
+      const subj = String(snapshot?.subject ?? "Schválený AI návrh").trim();
+      const displayLabel = buildDisplayLabel(subj, inquiryType, candidates.length);
       candidates.push({
         id: doc.id,
         source: "approved_ai",
         inquiryType,
         status: g.offerSent === true ? "sent" : "approved",
-        subject: String(snapshot?.subject ?? "Schválený AI návrh").trim(),
+        subject: subj,
+        displayLabel,
         bodyExcerpt: excerpt(bodyText),
         priceNetKc: priceNet,
         priceGrossKc: null,
@@ -272,10 +309,9 @@ export async function findSimilarHistoricalQuotes(
     }
   }
 
-  candidates.sort((a, b) => b._score - a._score);
-  const top = candidates.slice(0, limit).map(({ _score, ...rest }) => ({
+  const deduped = dedupeAndLimitCandidates(candidates, limit);
+  return deduped.map(({ _score, ...rest }) => ({
     ...rest,
     relevanceScore: _score,
   }));
-  return top;
 }

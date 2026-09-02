@@ -10,8 +10,12 @@ import {
 import { getAiMaxDiscountPercent } from "@/lib/ai/config";
 import type { AiInquiryCrmContext } from "@/lib/ai/crm-context-builder";
 import { parseAiQuoteModelOutput } from "@/lib/ai/inquiry-quote-schema";
-import { filterIgnoredMissingInformation } from "@/lib/ai/inquiry-type-rules";
 import { computeAdjustedConfidence } from "@/lib/ai/confidence-calculator";
+import {
+  resolveAiMissingInformation,
+  sanitizeCustomerReply,
+} from "@/lib/ai/inquiry-missing-resolver";
+import { fieldKeyLabel } from "@/lib/ai/inquiry-field-parser";
 import { runPriceEngine } from "@/lib/ai/price-engine";
 import type {
   AiQuoteModelOutput,
@@ -106,7 +110,7 @@ export function validateAiQuoteResponse(
     typeRuleName: ctx.typeRule.name,
     inquiryText,
     knowledgeSources: ctx.knowledgeHits.map((k) => k.documentTitle),
-    exampleSources: ctx.similarQuotes.map((q) => q.subject || q.id),
+    exampleSources: ctx.similarQuotes.map((q) => q.displayLabel || q.subject || q.id),
   });
 
   warnings.push(...priceEngine.warnings);
@@ -123,17 +127,21 @@ export function validateAiQuoteResponse(
     reason: line.reason?.trim() || "Cena z CRM pravidel",
   }));
 
-  const missingInformation = filterIgnoredMissingInformation(
-    parsed.missing_information.map((s) => s.trim()).filter(Boolean),
-    ctx.typeRule.ignoredInformation
-  );
+  const missingResolved = resolveAiMissingInformation({
+    rawMissing: parsed.missing_information,
+    typeRule: ctx.typeRule,
+    inquiryText,
+  });
+  const missingInformation = missingResolved.missingInformation;
+  const parsedFields = missingResolved.parsedFields;
 
   if (
-    missingInformation.length <
-    parsed.missing_information.filter((s) => s.trim()).length
+    missingResolved.strippedIgnored > 0 ||
+    missingResolved.strippedOptional > 0 ||
+    missingResolved.strippedSatisfied > 0
   ) {
     warnings.push(
-      "Některé navržené chybějící údaje byly vynechány — nejsou relevantní pro tento typ poptávky."
+      "Některé navržené chybějící údaje byly vynechány — nejsou povinné pro tento typ poptávky nebo už jsou v textu."
     );
   }
 
@@ -157,9 +165,43 @@ export function validateAiQuoteResponse(
     products: ctx.products,
     relevantProducts: ctx.relevantProducts,
     missingInformation,
+    parsedFields,
     invalidProductCount,
     hasEstimatedPrice: ctx.inquiry.estimatedPriceKc != null,
+    pricingRuleMatched: priceEngine.explainability.appliedLines.some(
+      (l) => l.source === "price_rule"
+    ),
+    hasPrice: pricing.priceNet != null && pricing.priceNet > 0,
+    knowledgeHitsCount: ctx.knowledgeHits.length,
   });
+
+  const customerReply = sanitizeCustomerReply({
+    customerReply: parsed.customer_reply,
+    missingInformation,
+    inquiryType: ctx.inquiry.type || ctx.typeRule.name,
+    parsedFields,
+    summary: parsed.summary,
+  });
+
+  const fieldDebug = {
+    widthMm: parsedFields.dimensions.widthMm,
+    depthMm: parsedFields.dimensions.depthMm,
+    areaM2: parsedFields.dimensions.areaM2,
+    roofMaterial: parsedFields.roofMaterial,
+    quantity: parsedFields.quantity,
+    requiredFields: parsedFields.requiredFields.map((k) => ({
+      key: k,
+      label: fieldKeyLabel(k),
+      satisfied: parsedFields.satisfiedRequired.includes(k),
+    })),
+    optionalFields: parsedFields.optionalFields.map((k) => ({
+      key: k,
+      label: fieldKeyLabel(k),
+      present: parsedFields.fieldChecks[k] === true,
+    })),
+    ignoredFields: parsedFields.ignoredFields.map((k) => fieldKeyLabel(k)),
+    missingRequired: parsedFields.missingRequired.map((k) => fieldKeyLabel(k)),
+  };
 
   const internalNotesParts = [parsed.internal_notes.trim()];
   if (confidenceFactors.reasons.length > 0) {
@@ -215,9 +257,10 @@ export function validateAiQuoteResponse(
     missingInformation,
     recommendedItems,
     internalNotes: internalNotesParts.filter(Boolean).join("\n").trim(),
-    customerReply: parsed.customer_reply.trim(),
+    customerReply,
     confidence: confidenceFactors.adjustedConfidence,
     confidenceFactors,
+    fieldDebug,
     vatRate,
     pricing,
     warnings,

@@ -3,6 +3,7 @@
  */
 
 import type { AiInquiryCrmContext } from "@/lib/ai/crm-context-builder";
+import { parseInquiryFields, fieldKeyLabel } from "@/lib/ai/inquiry-field-parser";
 
 function sanitizeUntrustedText(raw: string, maxLen = 8000): string {
   return raw
@@ -34,6 +35,11 @@ export function buildInquiryQuoteUserPrompt(ctx: AiInquiryCrmContext): string {
       ? formatProductList(ctx.relevantProducts, "relevant")
       : formatProductList(ctx.products, "all");
 
+  const inquiryText = [ctx.inquiry.message, ctx.inquiry.type, ctx.inquiry.internalNote ?? ""]
+    .filter(Boolean)
+    .join("\n");
+  const parsedFields = parseInquiryFields(inquiryText, ctx.typeRule);
+
   const sections: string[] = [];
 
   sections.push("=== CURRENT INQUIRY ===");
@@ -60,17 +66,46 @@ export function buildInquiryQuoteUserPrompt(ctx: AiInquiryCrmContext): string {
   sections.push(`=== INQUIRY TYPE: ${ctx.typeRule.name} ===`);
 
   sections.push("");
+  sections.push("=== PARSED INQUIRY FIELDS (deterministic — authoritative) ===");
+  sections.push(
+    JSON.stringify(
+      {
+        width_mm: parsedFields.dimensions.widthMm,
+        depth_mm: parsedFields.dimensions.depthMm,
+        area_m2: parsedFields.dimensions.areaM2,
+        roof_material: parsedFields.roofMaterial,
+        quantity: parsedFields.quantity,
+        satisfied_required: parsedFields.satisfiedRequired.map(fieldKeyLabel),
+        missing_required: parsedFields.missingRequired.map(fieldKeyLabel),
+        note:
+          "Pokud jsou všechna povinná pole splněna, missing_information musí být prázdné pole [].",
+      },
+      null,
+      2
+    )
+  );
+
+  sections.push("");
   sections.push("=== PRODUCT RULES ===");
   sections.push(
     JSON.stringify(
       {
         system_instructions: ctx.typeRule.systemInstructions,
+        required_fields: parsedFields.requiredFields.map(fieldKeyLabel),
+        optional_fields: parsedFields.optionalFields.map(fieldKeyLabel),
+        ignored_fields: parsedFields.ignoredFields.map(fieldKeyLabel),
+        default_quantity: parsedFields.quantity,
         required_information: ctx.typeRule.requiredInformation,
         optional_information: ctx.typeRule.optionalInformation,
         ignored_information: ctx.typeRule.ignoredInformation,
         quote_rules: ctx.typeRule.quoteRules,
-        note:
-          "Do missing_information NIKDY neuváděj položky z ignored_information. U tohoto typu poptávky je nevyžaduj.",
+        strict_rules: [
+          "Only fields listed in required_fields may appear in missing_information.",
+          "Optional fields must never be treated as required.",
+          "Ignored fields must never be requested.",
+          "If all required fields are present, generate the quote draft instead of asking for more information.",
+          "Do missing_information NIKDY neuváděj položky z ignored_information.",
+        ],
       },
       null,
       2
@@ -163,6 +198,7 @@ export function buildInquiryQuoteUserPrompt(ctx: AiInquiryCrmContext): string {
       JSON.stringify(
         ctx.similarQuotes.map((q, i) => ({
           example_index: i + 1,
+          label: q.displayLabel,
           source: q.source,
           inquiry_type: q.inquiryType,
           status: q.status,
@@ -224,7 +260,11 @@ export function buildInquiryQuoteUserPrompt(ctx: AiInquiryCrmContext): string {
       "Používej pouze catalog_id a product_id z RELEVANT PRODUCTS.",
       "Historické nabídky jsou pouze inspirace struktury a textu — nikdy nekopíruj jejich ceny.",
       "Autoritativní je vždy aktuální ceník CRM (backend spočítá cenu).",
-      "Nežádej pole uvedená v ignored_information.",
+      "Do missing_information patří POUZE položky z required_fields, které nejsou splněny v PARSED INQUIRY FIELDS.",
+      "Volitelná pole (optional_fields) nikdy nepatří do missing_information.",
+      "Ignorovaná pole (ignored_fields) nikdy nežádej.",
+      "Pokud missing_required v PARSED INQUIRY FIELDS je prázdné, customer_reply musí nabídnout návrh nabídky — ne žádat o doplnění.",
+      "Počet kusů = 1 je platný default, ne chybějící informace.",
     ].join("\n")
   );
 

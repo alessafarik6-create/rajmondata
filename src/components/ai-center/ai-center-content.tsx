@@ -1063,6 +1063,11 @@ function TestAiTab({
             <CardContent className="text-sm space-y-2">
               <p><strong>Cena bez DPH:</strong> {result.pricing.priceNet ?? "—"} Kč</p>
               <p><strong>Confidence:</strong> {Math.round(result.confidence * 100)} %</p>
+              <p><strong>Chybějící povinné údaje:</strong>{" "}
+                {result.missingInformation.length > 0
+                  ? result.missingInformation.join(", ")
+                  : "žádné"}
+              </p>
               <p><strong>Odpověď zákazníkovi:</strong></p>
               <p className="whitespace-pre-wrap border rounded p-2 bg-muted/30">{result.customerReply}</p>
               {result.recommendedItems.length > 0 && (
@@ -1078,6 +1083,45 @@ function TestAiTab({
             </CardContent>
           </Card>
 
+          {result.fieldDebug && (
+            <Card>
+              <CardHeader><CardTitle>Parsovaná data</CardTitle></CardHeader>
+              <CardContent className="text-sm space-y-3 font-mono">
+                <div className="grid gap-1 sm:grid-cols-2">
+                  <p>width: {result.fieldDebug.widthMm != null ? `${result.fieldDebug.widthMm} mm` : "—"}</p>
+                  <p>depth: {result.fieldDebug.depthMm != null ? `${result.fieldDebug.depthMm} mm` : "—"}</p>
+                  <p>area: {result.fieldDebug.areaM2 != null ? `${result.fieldDebug.areaM2} m²` : "—"}</p>
+                  <p>roof: {result.fieldDebug.roofMaterial ?? "—"}</p>
+                  <p>quantity: {result.fieldDebug.quantity}</p>
+                </div>
+                <div>
+                  <p className="font-sans font-medium mb-1">Povinná pole</p>
+                  <ul className="list-none space-y-0.5">
+                    {result.fieldDebug.requiredFields.map((f) => (
+                      <li key={f.key}>{f.label} {f.satisfied ? "✓" : "✗"}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <p className="font-sans font-medium mb-1">Volitelná pole</p>
+                  <ul className="list-none space-y-0.5">
+                    {result.fieldDebug.optionalFields.map((f) => (
+                      <li key={f.key}>{f.label}: {f.present ? "uvedeno" : "—"}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <p className="font-sans font-medium mb-1">Ignorovaná pole</p>
+                  <p>{result.fieldDebug.ignoredFields.join(", ") || "—"}</p>
+                </div>
+                <div>
+                  <p className="font-sans font-medium mb-1">Chybějící povinné</p>
+                  <p>{result.fieldDebug.missingRequired.length > 0 ? result.fieldDebug.missingRequired.join(", ") : "žádné"}</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader><CardTitle>Jak AI došla k výsledku</CardTitle></CardHeader>
             <CardContent className="text-sm space-y-3">
@@ -1085,13 +1129,25 @@ function TestAiTab({
                 <div className="space-y-1">
                   <p>Typ poptávky: {String(contextSummary.typeRuleName ?? contextSummary.inquiryType ?? "—")}</p>
                   <p>Použité znalosti: {(contextSummary.knowledgeDocuments as string[] | undefined)?.join(", ") || "—"}</p>
-                  <p>Použité vzory: {(contextSummary.similarQuoteSubjects as string[] | undefined)?.join(", ") || "—"}</p>
-                  {(contextSummary.similarQuoteIds as string[] | undefined)?.length ? (
-                    <p className="text-xs text-muted-foreground">
-                      ID vzorů: {(contextSummary.similarQuoteIds as string[]).join(", ")}
-                    </p>
-                  ) : null}
+                  <p>
+                    Použité vzory:{" "}
+                    {(contextSummary.similarQuoteLabels as string[] | undefined)?.length
+                      ? (contextSummary.similarQuoteLabels as string[]).map((label) => (
+                          <span key={label} className="block pl-2">• {label}</span>
+                        ))
+                      : "—"}
+                  </p>
+                  <p>Počet vzorů: {String(contextSummary.similarQuotesCount ?? 0)}</p>
                 </div>
+              )}
+              {contextSummary?.pricingMatch ? (
+                <div className="border rounded p-2 bg-muted/20 space-y-1">
+                  <p className="font-medium">Pricing match</p>
+                  <p>Pravidlo: {(contextSummary.pricingMatch as { ruleName?: string }).ruleName ?? "—"}</p>
+                  <p>Výpočet: {(contextSummary.pricingMatch as { expression?: string }).expression ?? "—"}</p>
+                </div>
+              ) : (
+                <p className="text-muted-foreground">Cenové pravidlo: nenalezeno nebo neaplikováno</p>
               )}
               {result.priceExplainability && (
                 <>
@@ -1101,14 +1157,28 @@ function TestAiTab({
                       ? `${result.priceExplainability.dimensions.areaM2} m²`
                       : "—"}
                   </p>
-                  <p className="font-medium">Výpočet (CRM pravidla)</p>
-                  <ul className="list-disc pl-5">
-                    {result.priceExplainability.appliedLines.map((l, i) => (
-                      <li key={i}>{l.expression}</li>
-                    ))}
-                  </ul>
+                  {result.priceExplainability.appliedLines.length > 0 && (
+                    <>
+                      <p className="font-medium">Výpočet (CRM pravidla)</p>
+                      <ul className="list-disc pl-5">
+                        {result.priceExplainability.appliedLines.map((l, i) => (
+                          <li key={i}>{l.expression}</li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
                 </>
               )}
+              {result.confidenceFactors?.reasons?.length ? (
+                <div>
+                  <p className="font-medium">Confidence faktory</p>
+                  <ul className="list-disc pl-5">
+                    {result.confidenceFactors.reasons.map((r, i) => (
+                      <li key={i}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </>

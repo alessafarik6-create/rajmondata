@@ -81,6 +81,13 @@ export function parseAiInquiryTypeRuleDoc(
     optionalInformation: stringArray(data.optionalInformation),
     ignoredInformation: stringArray(data.ignoredInformation),
     productCategoryHints: stringArray(data.productCategoryHints),
+    requiredFields: stringArray(data.requiredFields),
+    optionalFields: stringArray(data.optionalFields),
+    ignoredFields: stringArray(data.ignoredFields),
+    defaultQuantity:
+      data.defaultQuantity != null && Number.isFinite(Number(data.defaultQuantity))
+        ? Math.max(1, Math.round(Number(data.defaultQuantity)))
+        : undefined,
     quoteRules: String(data.quoteRules ?? "").trim(),
     active: data.active !== false,
     sortOrder: Number.isFinite(Number(data.sortOrder)) ? Number(data.sortOrder) : 100,

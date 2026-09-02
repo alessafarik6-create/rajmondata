@@ -195,6 +195,25 @@ function findStandaloneAddonRules(
   return out;
 }
 
+function findBaseInquiryPriceRules(
+  rules: AiPriceRuleDoc[],
+  inquiryType: string,
+  typeRuleName: string,
+  usedRuleIds: Set<string>
+): AiPriceRuleDoc[] {
+  const out: AiPriceRuleDoc[] = [];
+  for (const rule of rules) {
+    if (usedRuleIds.has(rule.id ?? rule.name)) continue;
+    if (rule.catalogId || rule.productId) continue;
+    if (String(rule.productNamePattern ?? "").trim()) continue;
+    if (!inquiryTypeMatches(rule, inquiryType, typeRuleName)) continue;
+    if (rule.calculationType === "per_m2" || rule.calculationType === "fixed") {
+      out.push(rule);
+    }
+  }
+  return out;
+}
+
 export function runPriceEngine(params: {
   items: PriceEngineItemInput[];
   products: AiCrmProductRef[];
@@ -322,6 +341,7 @@ export function runPriceEngine(params: {
     const unitPrice = roundMoney(rule.value);
     const lineNet = computeLineNet(rule.calculationType, rule.value, qtyInfo.quantity, runningBaseNet);
     runningBaseNet += lineNet;
+    usedRuleIds.add(rule.id ?? rule.name);
     resolved.push({
       ...syntheticItem,
       quantity: qtyInfo.quantity,
@@ -342,6 +362,56 @@ export function runPriceEngine(params: {
       lineNet,
       source: "price_rule",
     });
+  }
+
+  const hasBasePerM2 = appliedLines.some(
+    (l) => l.source === "price_rule" && l.calculationType === "per_m2"
+  );
+  if (!hasBasePerM2 && dims.areaM2 != null && dims.areaM2 > 0) {
+    const baseRules = findBaseInquiryPriceRules(
+      activeRules,
+      params.inquiryType,
+      params.typeRuleName,
+      usedRuleIds
+    );
+    for (const rule of baseRules) {
+      if (rule.calculationType !== "per_m2") continue;
+      const syntheticItem: PriceEngineItemInput = {
+        catalogId: "",
+        productId: `base-rule:${rule.id ?? rule.name}`,
+        name: rule.name,
+        quantity: dims.areaM2,
+        unit: "m²",
+        discountPercent: 0,
+      };
+      const qtyInfo = resolveQuantityForRule(rule, syntheticItem, dims);
+      if (!qtyInfo) continue;
+      const unitPrice = roundMoney(rule.value);
+      const lineNet = computeLineNet(rule.calculationType, rule.value, qtyInfo.quantity, runningBaseNet);
+      runningBaseNet += lineNet;
+      usedRuleIds.add(rule.id ?? rule.name);
+      resolved.push({
+        ...syntheticItem,
+        quantity: qtyInfo.quantity,
+        unit: qtyInfo.unit,
+        unitPrice,
+        lineNet,
+        priceSource: "price_rule",
+        ruleId: rule.id,
+      });
+      appliedLines.push({
+        ruleId: rule.id ?? rule.name,
+        ruleName: rule.name,
+        calculationType: rule.calculationType,
+        expression: formatExpression(rule, qtyInfo.quantity, qtyInfo.unit, unitPrice, lineNet),
+        quantity: qtyInfo.quantity,
+        unit: qtyInfo.unit,
+        unitPrice,
+        lineNet,
+        source: "price_rule",
+      });
+      break;
+    }
   }
 
   return {

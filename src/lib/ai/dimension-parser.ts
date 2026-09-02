@@ -9,12 +9,17 @@ export type ParsedInquiryDimensions = {
   distanceKm: number | null;
 };
 
+function parseNumber(raw: string): number | null {
+  const n = Number(String(raw).replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function toMm(value: number, unit: string): number {
   const u = unit.toLowerCase();
   if (u === "mm") return value;
   if (u === "cm") return value * 10;
-  if (u === "m") return value * 1000;
-  return value;
+  if (u === "m" || u === "") return value * 1000;
+  return value * 1000;
 }
 
 function toM2FromMm(wMm: number, dMm: number): number {
@@ -32,6 +37,21 @@ function parsePairNumbers(a: number, b: number, unitA: string, unitB: string): P
   };
 }
 
+function inferUnit(a: number, b: number, unitA: string, unitB: string): { unitA: string; unitB: string } {
+  let ua = unitA || "m";
+  let ub = unitB || unitA || "m";
+  if (!unitA && !unitB) {
+    if (a > 100 || b > 100) {
+      ua = "mm";
+      ub = "mm";
+    } else {
+      ua = "m";
+      ub = "m";
+    }
+  }
+  return { unitA: ua, unitB: ub };
+}
+
 export function parseInquiryDimensions(text: string): ParsedInquiryDimensions {
   const t = String(text ?? "").replace(/\s+/g, " ").trim();
   if (!t) {
@@ -42,32 +62,31 @@ export function parseInquiryDimensions(text: string): ParsedInquiryDimensions {
     /(\d[\d\s.,]*)\s*(mm|cm|m)?\s*[x×]\s*(\d[\d\s.,]*)\s*(mm|cm|m)?/i,
     /(\d[\d\s.,]*)\s*(mm|cm|m)\s*na\s*(\d[\d\s.,]*)\s*(mm|cm|m)/i,
     /rozm[eě]r[^0-9]*(\d[\d\s.,]*)\s*(mm|cm|m)?\s*[x×]\s*(\d[\d\s.,]*)\s*(mm|cm|m)?/i,
+    /(?:sirka|šířka)\s*[:\s]?\s*(\d[\d\s.,]*)\s*(mm|cm|m)?[^,;]*?(?:hloubka|delka|d[eé]lka)\s*[:\s]?\s*(\d[\d\s.,]*)\s*(mm|cm|m)?/i,
+    /(?:hloubka|delka|d[eé]lka)\s*[:\s]?\s*(\d[\d\s.,]*)\s*(mm|cm|m)?[^,;]*?(?:sirka|šířka)\s*[:\s]?\s*(\d[\d\s.,]*)\s*(mm|cm|m)?/i,
+    /(\d[\d\s.,]*)\s*(mm|cm|m)?\s*[x×]\s*(\d[\d\s.,]*)\s*(mm|cm|m)?\s*m\b/i,
   ];
 
   for (const re of patterns) {
     const m = t.match(re);
     if (!m) continue;
-    const a = Number(String(m[1]).replace(/\s/g, "").replace(",", "."));
-    const b = Number(String(m[3]).replace(/\s/g, "").replace(",", "."));
-    if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) continue;
-    const unitA = String(m[2] ?? "m").trim() || "m";
-    const unitB = String(m[4] ?? unitA).trim() || unitA;
-    return parsePairNumbers(a, b, unitA, unitB);
+    const a = parseNumber(m[1]);
+    const b = parseNumber(m[3]);
+    if (a == null || b == null) continue;
+    const units = inferUnit(a, b, String(m[2] ?? "").trim(), String(m[4] ?? "").trim());
+    return parsePairNumbers(a, b, units.unitA, units.unitB);
   }
 
   const areaMatch = t.match(/(\d[\d\s.,]*)\s*m\s*[²2]/i);
   if (areaMatch) {
-    const area = Number(String(areaMatch[1]).replace(/\s/g, "").replace(",", "."));
-    if (Number.isFinite(area) && area > 0) {
+    const area = parseNumber(areaMatch[1]);
+    if (area != null) {
       return { widthMm: null, depthMm: null, areaM2: area, distanceKm: null };
     }
   }
 
   const kmMatch = t.match(/(\d[\d\s.,]*)\s*km/i);
-  const distanceKm =
-    kmMatch && Number.isFinite(Number(String(kmMatch[1]).replace(",", ".")))
-      ? Number(String(kmMatch[1]).replace(",", "."))
-      : null;
+  const distanceKm = kmMatch ? parseNumber(kmMatch[1]) : null;
 
   return { widthMm: null, depthMm: null, areaM2: null, distanceKm };
 }
