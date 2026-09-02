@@ -755,6 +755,14 @@ service cloud.firestore {
       allow create: if isNewCompanyOwnedByRequester();
       allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
 
+      /**
+       * Centrální search index — zápis/čtení pouze Admin SDK (API / backfill).
+       * companies/{companyId}/search_index/{entryId}
+       */
+      match /search_index/{entryId} {
+        allow read, write: if false;
+      }
+
       match /employees/{empId} {
         allow read: if (signedIn() && sameCompany(companyId)) || terminalCompanyMatches(companyId);
         allow write: if signedIn() && sameCompany(companyId) && isPrivileged();

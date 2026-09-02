@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
+import { triggerSearchReindex } from "@/lib/search/client";
 import {
   clearDocumentsAddDialogDraft,
   defaultDocumentsAddFormData,
@@ -1209,6 +1210,7 @@ function DocumentsPageContent() {
       ico: null,
     });
   const [docAiMeta, setDocAiMeta] = useState<Record<string, unknown> | null>(null);
+  const [docAiSearchText, setDocAiSearchText] = useState<string>("");
 
   const resetDocAiState = useCallback(() => {
     setDocAiAnalyzed(false);
@@ -1219,6 +1221,7 @@ function DocumentsPageContent() {
     setDocAiDuplicateCandidates([]);
     setDocAiSupplierMatch({ found: false, name: null, ico: null });
     setDocAiMeta(null);
+    setDocAiSearchText("");
   }, []);
 
   const applyDocAiAnalysis = useCallback((result: DocumentAiAnalysisResult) => {
@@ -1247,6 +1250,7 @@ function DocumentsPageContent() {
     setDocAiDuplicateCandidates(result.duplicateCandidates);
     setDocAiSupplierMatch(result.supplierMatch);
     setDocAiMeta(result.aiMeta as unknown as Record<string, unknown>);
+    setDocAiSearchText(String(result.searchableText ?? "").trim());
   }, []);
 
   const resetAddDocForm = useCallback(() => {
@@ -1807,8 +1811,20 @@ function DocumentsPageContent() {
             isDeleted: false,
             costCategory: formData.costCategory,
             ...(docAiMeta ?? {}),
+            ...(docAiSearchText ? { aiSearchText: docAiSearchText, ocrText: docAiSearchText } : {}),
           }
         );
+        if (user && companyId) {
+          void user.getIdToken().then((token) =>
+            triggerSearchReindex({
+              token,
+              companyId,
+              entityType: "document",
+              entityId: newDocRef.id,
+              extraSearchText: docAiSearchText || undefined,
+            })
+          );
+        }
         if (invoiceId) {
           await syncDeliveryNoteInvoiceLink({
             documentId: newDocRef.id,
@@ -2130,7 +2146,20 @@ function DocumentsPageContent() {
         isDeleted: false,
         costCategory: formData.costCategory,
         ...(docAiMeta ?? {}),
+        ...(docAiSearchText ? { aiSearchText: docAiSearchText, ocrText: docAiSearchText } : {}),
       });
+
+      if (user && companyId) {
+        void user.getIdToken().then((token) =>
+          triggerSearchReindex({
+            token,
+            companyId,
+            entityType: "document",
+            entityId: newDocRef.id,
+            extraSearchText: docAiSearchText || undefined,
+          })
+        );
+      }
 
       logActivitySafe(firestore, companyId, user, profile, {
         actionType: "document.create",

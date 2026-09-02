@@ -86,6 +86,7 @@ export async function POST(request: NextRequest) {
       suggestedJobs: outcome.suggestedJobs,
       supplierMatch: outcome.supplierMatch,
       model: outcome.model,
+      searchableText: outcome.searchableText,
       aiMeta: {
         ...outcome.aiMeta,
         analysedAt: new Date().toISOString(),

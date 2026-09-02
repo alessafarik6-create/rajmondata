@@ -40,6 +40,7 @@ export type DocumentAiAnalysisResult = {
   }>;
   supplierMatch: { found: boolean; name: string | null; ico: string | null };
   model: string;
+  searchableText?: string;
   aiMeta: {
     analysedByAi: true;
     aiModel: string;

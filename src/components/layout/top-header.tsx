@@ -14,9 +14,9 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { Search, LogOut, User, Menu, MessageSquare, Bell } from 'lucide-react';
+import { LogOut, User, Menu, MessageSquare, Bell } from 'lucide-react';
+import { GlobalSearchBar } from '@/components/search/global-search-bar';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Logo } from '@/components/ui/logo';
 import Link from 'next/link';
 import { signOut } from 'firebase/auth';
@@ -177,10 +177,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
             <span className="truncate">{companyName}</span>
           </div>
         )}
-        <div className="relative hidden min-w-0 w-full max-w-md sm:block">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600 pointer-events-none" />
-          <Input placeholder="Hledat..." className="pl-10" />
-        </div>
+        <GlobalSearchBar dashboardDark={dashboardDark} />
       </div>
 
       <div className="flex items-center gap-1 sm:gap-4 shrink-0">

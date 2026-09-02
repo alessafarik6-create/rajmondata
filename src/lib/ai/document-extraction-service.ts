@@ -15,6 +15,7 @@ import { analyzeDocumentWithOpenAi } from "@/lib/ai/openai-document-client";
 import { OpenAiClientError } from "@/lib/ai/openai-client";
 import { DOCUMENT_AI_ACCEPTED_MIME } from "@/lib/ai/document-extraction-types";
 import { errorMessageFromUnknown } from "@/lib/server-error-serialize";
+import { buildDocumentSearchTextFromPatch } from "@/lib/search/document-search-text";
 
 export type AnalyzeCompanyDocumentParams = {
   db: Firestore;
@@ -54,6 +55,7 @@ export type AnalyzeCompanyDocumentSuccess = {
     aiConfidence: number;
     aiWarnings: string[];
   };
+  searchableText: string;
 };
 
 export type AnalyzeCompanyDocumentFailure = {
@@ -100,9 +102,11 @@ export async function analyzeCompanyDocument(
   try {
     const base64 = params.fileBuffer.toString("base64");
     let aiRes;
+    let extractedRawText = "";
 
     if (mime === "application/pdf") {
       const text = await extractPdfTextContent(params.fileBuffer);
+      extractedRawText = text;
       if (text.length >= 80) {
         aiRes = await analyzeDocumentWithOpenAi(
           { kind: "pdf_text", text, fileName },
@@ -128,6 +132,11 @@ export async function analyzeCompanyDocument(
       { model: aiRes.model, requestDurationMs: aiRes.requestDurationMs }
     );
 
+    const searchableText = buildDocumentSearchTextFromPatch(validated.formPatch, {
+      rawText: extractedRawText.slice(0, 12000),
+      fileName,
+    });
+
     return {
       ok: true,
       readable: validated.readable,
@@ -148,6 +157,7 @@ export async function analyzeCompanyDocument(
         aiConfidence: validated.confidence,
         aiWarnings: validated.warnings,
       },
+      searchableText,
     };
   } catch (err) {
     if (err instanceof OpenAiClientError) {
