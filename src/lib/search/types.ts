@@ -83,6 +83,24 @@ export type SearchIntent = {
   dateTo: string | null;
   semanticQuery: string | null;
   useAiParser: boolean;
+  /** Dotaz typu „ukaž faktury“ — vrátit seznam entit bez textové shody. */
+  entityListing?: boolean;
+};
+
+export type SearchDebugMeta = {
+  companyId: string;
+  indexTotal: number;
+  indexByType: Record<string, number>;
+  sourceCounts: Record<string, number>;
+  candidatesTotal: number;
+  usedLiveFallback: boolean;
+  exactCount: number;
+  fulltextCount: number;
+  semanticCount: number;
+  listingCount: number;
+  filteredOutCount: number;
+  permissionDeniedCount: number;
+  finalCount: number;
 };
 
 export type SearchResultItem = {
@@ -108,6 +126,8 @@ export type SearchResponse = {
   tookMs: number;
   usedSemantic: boolean;
   usedAiParser: boolean;
+  total: number;
+  meta?: SearchDebugMeta;
 };
 
 export function searchIndexDocId(entityType: SearchEntityType, entityId: string): string {

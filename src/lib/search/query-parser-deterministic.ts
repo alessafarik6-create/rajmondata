@@ -21,6 +21,7 @@ import {
   normalizeSearchText,
   parseCzechAmountToken,
 } from "@/lib/search/normalize";
+import { isEntityListingIntent, meaningfulQueryTokens } from "@/lib/search/entity-listing";
 
 const DOC_NUMBER_RE =
   /\b(FV|FA|NAB|DOD|DD|DL|OBJ|ZAK)[- ]?\d{4}[-/]?\d{2,6}\b/i;
@@ -202,9 +203,10 @@ export function parseSearchQueryDeterministic(rawQuery: string, now = new Date()
   const useAiParser =
     looksLikeNaturalLanguage(normalized) &&
     !isExactOnly &&
-    (!docNum || normalized.split(/\s+/).length > 2);
+    (!docNum || normalized.split(/\s+/).length > 2) &&
+    meaningfulQueryTokens(rawQueryTrimmed).length > 0;
 
-  return {
+  const intent: SearchIntent = {
     rawQuery: rawQueryTrimmed,
     entityTypes,
     supplier,
@@ -216,11 +218,25 @@ export function parseSearchQueryDeterministic(rawQuery: string, now = new Date()
     currency: amounts.currency,
     dateFrom: monthRange?.from ?? null,
     dateTo: monthRange?.to ?? null,
-    semanticQuery: useAiParser || (!isExactOnly && normalized.split(/\s+/).length >= 2)
-      ? rawQueryTrimmed
-      : null,
+    semanticQuery: null,
     useAiParser,
   };
+
+  intent.entityListing = isEntityListingIntent(intent);
+
+  if (!intent.entityListing && !isExactOnly) {
+    const tokens = meaningfulQueryTokens(rawQueryTrimmed);
+    if (tokens.length >= 2 || (tokens.length === 1 && !entityTypes?.length)) {
+      intent.semanticQuery = rawQueryTrimmed;
+    }
+  }
+
+  if (intent.entityListing) {
+    intent.useAiParser = false;
+    intent.semanticQuery = null;
+  }
+
+  return intent;
 }
 
 export function isLikelyExactSearch(intent: SearchIntent): boolean {

@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
       query,
       filters,
       limit: typeof body.limit === "number" ? Math.min(60, body.limit) : undefined,
+      debug: process.env.NODE_ENV !== "production" || process.env.SEARCH_DEBUG === "1",
     });
 
     return NextResponse.json({ ok: true, ...result });

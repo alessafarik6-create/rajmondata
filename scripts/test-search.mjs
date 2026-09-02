@@ -25,7 +25,9 @@ for (const rel of [
   "src/lib/search/embeddings.ts",
   "src/app/api/company/search/route.ts",
   "src/app/api/company/search/reindex/route.ts",
-  "src/app/api/company/search/backfill/route.ts",
+  "src/lib/search/live-search-candidates.ts",
+  "src/lib/search/entity-listing.ts",
+  "src/app/api/company/search/diagnostics/route.ts",
   "src/components/search/global-search-bar.tsx",
   "src/app/portal/search/page.tsx",
 ]) {

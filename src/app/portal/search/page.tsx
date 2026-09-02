@@ -175,11 +175,23 @@ export default function PortalSearchPage() {
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
           {response ? (
-            <p className="text-xs text-muted-foreground">
-              {response.results.length} výsledků · {response.tookMs} ms
-              {response.usedSemantic ? " · sémantické vyhledávání" : ""}
-              {response.usedAiParser ? " · AI parser" : ""}
-            </p>
+            <div className="space-y-1 text-xs text-muted-foreground">
+              <p>
+                {response.total ?? response.results.length} výsledků · {response.tookMs} ms
+                {response.usedSemantic ? " · sémantické vyhledávání" : ""}
+                {response.usedAiParser ? " · AI parser" : ""}
+                {response.intent?.entityListing ? " · listing entit" : ""}
+              </p>
+              {process.env.NODE_ENV === "development" && response.meta ? (
+                <p className="font-mono text-[11px]">
+                  Index: {response.meta.indexTotal} · Live fallback:{" "}
+                  {response.meta.usedLiveFallback ? "ano" : "ne"} · Kandidáti:{" "}
+                  {response.meta.candidatesTotal} · Exact: {response.meta.exactCount} · Fulltext:{" "}
+                  {response.meta.fulltextCount} · Semantic: {response.meta.semanticCount} · Listing:{" "}
+                  {response.meta.listingCount}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </CardContent>
       </Card>

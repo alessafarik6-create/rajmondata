@@ -8,6 +8,7 @@ import { searchEntityLabel } from "@/lib/search/types";
 import { normalizeExactKey, normalizeSearchText } from "@/lib/search/normalize";
 import { cosineSimilarity } from "@/lib/search/embeddings";
 import { SEARCH_MIN_SEMANTIC_SCORE } from "@/lib/search/config";
+import { isEntityListingIntent, meaningfulQueryTokens } from "@/lib/search/entity-listing";
 
 function parseIsoDate(s: string | null | undefined): number | null {
   if (!s) return null;
@@ -53,12 +54,16 @@ function passesFilters(entry: SearchIndexDoc, intent: SearchIntent): boolean {
 }
 
 function tokenOverlapScore(query: string, entry: SearchIndexDoc): number {
-  const qTokens = normalizeSearchText(query).split(/\s+/).filter((t) => t.length >= 2);
+  const qTokens = meaningfulQueryTokens(query);
   if (qTokens.length === 0) return 0;
-  const hay = ` ${entry.searchText} ${entry.keywords.join(" ")} `;
+  const hay = normalizeSearchText(`${entry.searchText} ${entry.title} ${entry.subtitle ?? ""} ${entry.keywords.join(" ")}`);
   let hits = 0;
   for (const t of qTokens) {
-    if (hay.includes(` ${t} `) || hay.includes(t)) hits++;
+    if (hay.includes(t)) hits++;
+    else if (t.length >= 4) {
+      const prefix = t.slice(0, 4);
+      if (hay.includes(prefix)) hits += 0.5;
+    }
   }
   return hits / qTokens.length;
 }
@@ -107,6 +112,25 @@ export function scoreSearchEntry(
   if (!passesFilters(entry, intent)) return null;
 
   const q = intent.rawQuery;
+  const listing = intent.entityListing || isEntityListingIntent(intent);
+
+  if (listing && intent.entityTypes?.includes(entry.entityType)) {
+    return {
+      entityType: entry.entityType,
+      entityId: entry.entityId,
+      title: entry.title,
+      subtitle: entry.subtitle,
+      detail: formatDetail(entry),
+      openUrl: entry.openUrl,
+      matchReason: "filter",
+      matchDetail: "Seznam entit dle typu",
+      score: 55,
+      metadata: entry.metadata,
+      mimeType: entry.mimeType,
+      fileUrl: entry.fileUrl,
+    };
+  }
+
   const exact = exactScore(q, entry);
   let score = 0;
   let reason: SearchMatchReason = "full_text";
@@ -118,10 +142,12 @@ export function scoreSearchEntry(
     detail = exact.detail;
   } else {
     const overlap = tokenOverlapScore(q, entry);
-    if (overlap >= 0.5) {
+    const qTokens = meaningfulQueryTokens(q);
+
+    if (overlap >= 0.35 || (qTokens.length === 1 && overlap > 0)) {
       score = 40 + overlap * 40;
       reason = "full_text";
-      detail = "Shoda v textu nebo metadatech";
+      detail = overlap >= 0.8 ? "Shoda v textu nebo metadatech" : "Částečná shoda v textu";
     } else if (queryEmbedding && Array.isArray(entry.embedding) && entry.embedding.length > 0) {
       const sim = cosineSimilarity(queryEmbedding, entry.embedding);
       if (sim >= SEARCH_MIN_SEMANTIC_SCORE) {
@@ -131,10 +157,6 @@ export function scoreSearchEntry(
       } else {
         return null;
       }
-    } else if (overlap > 0) {
-      score = 20 + overlap * 30;
-      reason = "full_text";
-      detail = "Částečná shoda v textu";
     } else if (intent.documentNumber) {
       const dn = normalizeExactKey(intent.documentNumber);
       if (entry.exactKeys.includes(dn)) {
