@@ -149,7 +149,7 @@ export async function findSimilarHistoricalQuotes(
     if (lk === params.leadKey) return false;
     const status = String(o.status ?? "");
     if (params.knowledge.preferSentQuotes && status !== "sent") return false;
-    return status === "sent" || status === "draft";
+    return status === "sent" || status === "draft" || o.useForAiExample === true;
   });
 
   const overlayTypes = await loadOverlayTypes(
@@ -177,6 +177,7 @@ export async function findSimilarHistoricalQuotes(
 
     let score = typeMatchScore(inquiryType, params.inquiryType, params.typeRule);
     if (status === "sent") score += params.knowledge.preferSentQuotes ? 30 : 10;
+    if (o.useForAiExample === true) score += 45;
     score += priceSimilarity(params.estimatedPriceKc, priceNet ?? priceGross);
     score += textOverlapScore(params.inquiryMessage, `${subject} ${bodyPlain}`);
 

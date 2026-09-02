@@ -1,5 +1,5 @@
 /**
- * Validace AI výstupu a doplnění autoritativních cen z CRM.
+ * Validace AI výstupu a doplnění autoritativních cen z CRM (katalog + cenový engine).
  */
 
 import {
@@ -12,6 +12,7 @@ import type { AiInquiryCrmContext } from "@/lib/ai/crm-context-builder";
 import { parseAiQuoteModelOutput } from "@/lib/ai/inquiry-quote-schema";
 import { filterIgnoredMissingInformation } from "@/lib/ai/inquiry-type-rules";
 import { computeAdjustedConfidence } from "@/lib/ai/confidence-calculator";
+import { runPriceEngine } from "@/lib/ai/price-engine";
 import type {
   AiQuoteModelOutput,
   AiValidatedQuoteItem,
@@ -51,9 +52,17 @@ export function validateAiQuoteResponse(
   }
 
   const warnings: string[] = [];
-  const recommendedItems: AiValidatedQuoteItem[] = [];
   let invalidProductCount = 0;
 
+  const engineInputs: Array<{
+    catalogId: string;
+    productId: string;
+    name: string;
+    quantity: number;
+    unit: string;
+    discountPercent: number;
+    reason: string;
+  }> = [];
   for (const item of parsed.recommended_items) {
     const key = productKey(item.catalog_id, item.product_id);
     const product = productMap.get(key);
@@ -61,12 +70,6 @@ export function validateAiQuoteResponse(
       invalidProductCount += 1;
       warnings.push(
         `Položka „${item.name}“ (${item.product_id}) nebyla nalezena v katalogu a byla vynechána.`
-      );
-      continue;
-    }
-    if (product.price == null || !Number.isFinite(product.price)) {
-      warnings.push(
-        `Produkt „${product.name}“ nemá cenu v CRM — položka byla vynechána.`
       );
       continue;
     }
@@ -80,24 +83,45 @@ export function validateAiQuoteResponse(
       discountPercent = maxDiscount;
     }
 
-    const quantity = Math.max(0.001, Number(item.quantity));
-    const unitPrice = roundMoney(product.price);
-    const lineNet = roundMoney(
-      unitPrice * quantity * (1 - discountPercent / 100)
-    );
-
-    recommendedItems.push({
+    engineInputs.push({
       catalogId: product.catalogId,
       productId: product.productId,
       name: product.name,
-      quantity: roundMoney(quantity),
+      quantity: Math.max(0.001, Number(item.quantity)),
       unit: String(item.unit ?? "ks").trim() || "ks",
-      unitPrice,
       discountPercent: roundMoney(discountPercent),
-      lineNet,
       reason: String(item.reason ?? "").trim(),
     });
   }
+
+  const inquiryText = [ctx.inquiry.message, ctx.inquiry.type, ctx.inquiry.internalNote ?? ""]
+    .filter(Boolean)
+    .join("\n");
+
+  const priceEngine = runPriceEngine({
+    items: engineInputs,
+    products: catalogProducts,
+    priceRules: ctx.priceRules,
+    inquiryType: ctx.inquiry.type || ctx.typeRule.name,
+    typeRuleName: ctx.typeRule.name,
+    inquiryText,
+    knowledgeSources: ctx.knowledgeHits.map((k) => k.documentTitle),
+    exampleSources: ctx.similarQuotes.map((q) => q.subject || q.id),
+  });
+
+  warnings.push(...priceEngine.warnings);
+
+  const recommendedItems: AiValidatedQuoteItem[] = priceEngine.items.map((line) => ({
+    catalogId: line.catalogId,
+    productId: line.productId,
+    name: line.name,
+    quantity: roundMoney(line.quantity),
+    unit: line.unit,
+    unitPrice: line.unitPrice,
+    discountPercent: line.discountPercent,
+    lineNet: line.lineNet,
+    reason: line.reason?.trim() || "Cena z CRM pravidel",
+  }));
 
   const missingInformation = filterIgnoredMissingInformation(
     parsed.missing_information.map((s) => s.trim()).filter(Boolean),
@@ -122,7 +146,7 @@ export function validateAiQuoteResponse(
 
   if (recommendedItems.length === 0 && missingInformation.length === 0) {
     warnings.push(
-      "AI nenavrhla žádné platné položky z katalogu. Zkontrolujte chybějící informace nebo doplňte katalog produktů."
+      "AI nenavrhla žádné platné položky. Zkontrolujte chybějící informace, katalog nebo cenová pravidla v AI centru."
     );
   }
 
@@ -146,6 +170,14 @@ export function validateAiQuoteResponse(
     }
   }
 
+  if (priceEngine.explainability.appliedLines.length > 0) {
+    internalNotesParts.push("");
+    internalNotesParts.push("Cena z CRM pravidel (deterministický výpočet):");
+    for (const line of priceEngine.explainability.appliedLines) {
+      internalNotesParts.push(`- ${line.expression}`);
+    }
+  }
+
   if (
     ctx.inquiry.estimatedPriceKc != null &&
     pricing.priceNet != null &&
@@ -156,7 +188,7 @@ export function validateAiQuoteResponse(
       ctx.inquiry.estimatedPriceKc;
     if (ratio <= 0.15) {
       internalNotesParts.push(
-        "Vypočtená cena z katalogu je v souladu s orientační cenou poptávky v CRM."
+        "Vypočtená cena z CRM je v souladu s orientační cenou poptávky."
       );
     }
   }
@@ -170,7 +202,7 @@ export function validateAiQuoteResponse(
       const ratio = Math.abs(pricing.priceNet - avg) / avg;
       if (ratio <= 0.2) {
         internalNotesParts.push(
-          "Vypočtená cena odpovídá podobným historickým nabídkám stejného typu (historické ceny nejsou závazné)."
+          "Vypočtená cena odpovídá podobným historickým nabídkám (historické ceny nejsou závazné)."
         );
       }
     }
@@ -189,6 +221,7 @@ export function validateAiQuoteResponse(
     vatRate,
     pricing,
     warnings,
+    priceExplainability: priceEngine.explainability,
     model: meta.model,
     requestDurationMs: meta.requestDurationMs,
     usage: meta.usage,

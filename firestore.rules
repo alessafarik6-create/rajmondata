@@ -2542,6 +2542,62 @@ service cloud.firestore {
       }
 
       /**
+       * Cenová pravidla pro AI (autoritativní ceny — backend price engine).
+       */
+      match /ai_price_rules/{ruleId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant'];
+        allow create: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin'] &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0;
+        allow update: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin'] &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId;
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin'] &&
+          resource.data.companyId == companyId;
+      }
+
+      /**
+       * Znalostní dokumenty pro AI (PDF, TXT — zpracování přes Admin API).
+       */
+      match /ai_knowledge_documents/{documentId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant'];
+        allow create: if false;
+        allow update: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin'] &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId;
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin'] &&
+          resource.data.companyId == companyId;
+
+        match /chunks/{chunkId} {
+          allow read: if signedIn() && sameCompany(companyId) &&
+            userRole() in ['owner', 'admin', 'manager', 'accountant'];
+          allow write: if false;
+        }
+      }
+
+      /**
+       * Ruční příklady nabídek pro AI.
+       */
+      match /ai_quote_examples/{exampleId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant'];
+        allow create, update: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin'] &&
+          request.resource.data.companyId == companyId;
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin'] &&
+          resource.data.companyId == companyId;
+      }
+
+      /**
        * Knihovna příloh k e-mailovým nabídkám
        */
       match /inquiry_offer_library/{itemId} {

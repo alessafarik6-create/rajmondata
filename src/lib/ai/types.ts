@@ -4,6 +4,7 @@
 
 import type { InquiryOfferPricing, InquiryVatRate } from "@/lib/inquiry-offer-pricing";
 import type { ConfidenceFactors } from "@/lib/ai/confidence-calculator";
+import type { AiPriceExplainability } from "@/lib/ai/ai-center-types";
 
 export type AiGenerationStatus = "completed" | "failed";
 
@@ -57,6 +58,7 @@ export type AiValidatedQuoteResult = {
   vatRate: InquiryVatRate;
   pricing: InquiryOfferPricing;
   warnings: string[];
+  priceExplainability?: AiPriceExplainability;
   model: string;
   requestDurationMs: number;
   usage: AiTokenUsage;

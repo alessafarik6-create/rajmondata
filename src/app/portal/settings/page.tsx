@@ -640,6 +640,17 @@ export default function SettingsPage() {
 
                   {isAdmin && companyId ? (
                     <div className="pt-4 space-y-6">
+                      <div className="rounded-lg border border-border p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold">AI centrum</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Cenová pravidla, znalostní báze, test AI a správa chování asistenta.
+                          </p>
+                        </div>
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href="/portal/ai-center">Otevřít AI centrum</Link>
+                        </Button>
+                      </div>
                       <InquiryEmailIdentitySettingsCard
                         companyId={companyId}
                         company={company as Record<string, unknown> | null | undefined}

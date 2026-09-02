@@ -13,10 +13,18 @@ export type AiKnowledgeSourceSettings = {
   preferWonJobs: boolean;
 };
 
+export type AiInstructionCategories = {
+  quotes: string;
+  documents: string;
+  communication: string;
+};
+
 export type AiAssistantSettingsDoc = {
   companyId: string;
   enabled: boolean;
   baseInstructions: string;
+  /** Kategorizované instrukce pro AI (spravuje admin v AI centru). */
+  instructionCategories?: AiInstructionCategories;
   knowledge: AiKnowledgeSourceSettings;
   updatedAt?: unknown;
   updatedByUid?: string | null;

@@ -83,6 +83,59 @@ export function buildInquiryQuoteUserPrompt(ctx: AiInquiryCrmContext): string {
     sections.push(ctx.aiSettings.baseInstructions.trim());
   }
 
+  const cats = ctx.aiSettings.instructionCategories;
+  if (cats && (cats.quotes || cats.documents || cats.communication)) {
+    sections.push("");
+    sections.push("=== INSTRUCTION CATEGORIES ===");
+    sections.push(
+      JSON.stringify(
+        {
+          quotes: cats.quotes ?? "",
+          documents: cats.documents ?? "",
+          communication: cats.communication ?? "",
+        },
+        null,
+        2
+      )
+    );
+  }
+
+  if (ctx.priceRules.length > 0) {
+    sections.push("");
+    sections.push("=== ACTIVE PRICE RULES (backend calculates — do not invent prices) ===");
+    sections.push(
+      JSON.stringify(
+        ctx.priceRules.slice(0, 40).map((r) => ({
+          name: r.name,
+          inquiry_type: r.inquiryType ?? null,
+          calculation_type: r.calculationType,
+          product_name_pattern: r.productNamePattern ?? null,
+          catalog_id: r.catalogId ?? null,
+          product_id: r.productId ?? null,
+          note: "Cenu vypočítá backend podle těchto pravidel.",
+        })),
+        null,
+        2
+      )
+    );
+  }
+
+  if (ctx.knowledgeHits.length > 0) {
+    sections.push("");
+    sections.push("=== COMPANY KNOWLEDGE (retrieved excerpts) ===");
+    sections.push(
+      JSON.stringify(
+        ctx.knowledgeHits.map((k) => ({
+          document: k.documentTitle,
+          excerpt: k.text.slice(0, 700),
+          relevance: k.score,
+        })),
+        null,
+        2
+      )
+    );
+  }
+
   sections.push("");
   sections.push("=== RELEVANT PRODUCTS (authoritative prices — do not output to customer) ===");
   sections.push(JSON.stringify(catalogForAi, null, 2));

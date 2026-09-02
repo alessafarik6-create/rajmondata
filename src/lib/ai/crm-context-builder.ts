@@ -16,6 +16,9 @@ import {
   findSimilarHistoricalQuotes,
   type SimilarQuoteExample,
 } from "@/lib/ai/similar-quotes-retriever";
+import { loadActiveAiPriceRules } from "@/lib/ai/price-rules-loader";
+import { retrieveKnowledgeForQuery, type AiKnowledgeHit } from "@/lib/ai/knowledge-service";
+import type { AiPriceRuleDoc } from "@/lib/ai/ai-center-types";
 
 export type AiCrmProductRef = {
   catalogId: string;
@@ -71,6 +74,8 @@ export type AiInquiryCrmContext = {
   typeRule: AiInquiryTypeRuleDoc;
   relevantProducts: AiCrmProductRef[];
   similarQuotes: SimilarQuoteExample[];
+  priceRules: AiPriceRuleDoc[];
+  knowledgeHits: AiKnowledgeHit[];
 };
 
 function normalizeEmail(raw: unknown): string {
@@ -249,15 +254,20 @@ export async function buildInquiryAiCrmContext(
 
   const relevantProducts = filterProductsByTypeRule(products, typeRule);
 
-  const similarQuotes = await findSimilarHistoricalQuotes(db, {
-    companyId,
-    leadKey,
-    inquiryType: inquiry.type || typeRule.name,
-    inquiryMessage: inquiry.message,
-    estimatedPriceKc: inquiry.estimatedPriceKc,
-    typeRule,
-    knowledge: aiSettings.knowledge,
-  });
+  const knowledgeQuery = [inquiry.type, inquiry.message, typeRule.name].filter(Boolean).join(" ");
+  const [similarQuotes, priceRules, knowledgeHits] = await Promise.all([
+    findSimilarHistoricalQuotes(db, {
+      companyId,
+      leadKey,
+      inquiryType: inquiry.type || typeRule.name,
+      inquiryMessage: inquiry.message,
+      estimatedPriceKc: inquiry.estimatedPriceKc,
+      typeRule,
+      knowledge: aiSettings.knowledge,
+    }),
+    loadActiveAiPriceRules(db, companyId),
+    retrieveKnowledgeForQuery(db, companyId, knowledgeQuery, 6),
+  ]);
 
   return {
     companyId,
@@ -272,6 +282,8 @@ export async function buildInquiryAiCrmContext(
     typeRule,
     relevantProducts,
     similarQuotes,
+    priceRules,
+    knowledgeHits,
   };
 }
 
@@ -285,5 +297,7 @@ export function summarizeAiCrmContext(ctx: AiInquiryCrmContext): Record<string, 
     relevantProductCount: ctx.relevantProducts.length,
     similarQuotesCount: ctx.similarQuotes.length,
     offerHistoryCount: ctx.offerHistory.length,
+    priceRulesCount: ctx.priceRules.length,
+    knowledgeHitsCount: ctx.knowledgeHits.length,
   };
 }

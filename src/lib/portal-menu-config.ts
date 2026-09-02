@@ -275,6 +275,14 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     roles: ["owner", "admin", "manager", "accountant", "employee"],
     platformModuleCode: null,
   },
+  {
+    id: "aiCenter",
+    type: "system",
+    label: "AI centrum",
+    href: "/portal/ai-center",
+    roles: ["owner", "admin"],
+    platformModuleCode: null,
+  },
 ];
 
 export function licenseKeysSatisfied(
