@@ -13,6 +13,15 @@ export function getOpenAiModel(): string {
   return String(process.env.OPENAI_MODEL ?? "gpt-4.1-mini").trim() || "gpt-4.1-mini";
 }
 
+/** Model pro analýzu dokladů z fotografie/PDF (vision). */
+export function getOpenAiDocumentModel(): string {
+  return (
+    String(process.env.OPENAI_DOCUMENT_MODEL ?? "gpt-4o-mini").trim() || "gpt-4o-mini"
+  );
+}
+
+export const OPENAI_DOCUMENT_MAX_BYTES = 12 * 1024 * 1024;
+
 /** Maximální sleva v %, kterou AI smí navrhnout (lze později spravovat v admin UI). */
 export function getAiMaxDiscountPercent(): number {
   const raw = Number(process.env.AI_MAX_DISCOUNT_PERCENT ?? 15);

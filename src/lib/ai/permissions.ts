@@ -8,3 +8,7 @@ export function callerCanUseInquiryAi(caller: VerifiedCompanyCaller): boolean {
   if (caller.isSuperAdmin) return true;
   return ["owner", "admin", "manager", "accountant"].includes(caller.role);
 }
+
+export function callerCanUseDocumentAi(caller: VerifiedCompanyCaller): boolean {
+  return callerCanUseInquiryAi(caller);
+}

@@ -61,6 +61,16 @@ import { DocumentEmailRecipientPicker } from "@/components/documents/document-em
 import { DocumentEmailOutboundHistory } from "@/components/documents/document-email-outbound-history";
 import { DocumentPreviewDialog } from "@/components/documents/document-preview-dialog";
 import {
+  DocumentAiScanSection,
+  DocumentAiWarningsPanel,
+  type DocumentAiAnalysisResult,
+} from "@/components/documents/document-ai-scan-section";
+import { DocumentAiFieldLabel } from "@/components/documents/document-ai-field-hint";
+import type {
+  DocumentAiFilledFields,
+  DocumentAiLowConfidenceFields,
+} from "@/lib/ai/document-extraction-types";
+import {
   useUser,
   useFirestore,
   useDoc,
@@ -1179,6 +1189,65 @@ function DocumentsPageContent() {
   const [formData, setFormData] = useState(() =>
     restoredAddDocDraft?.formData ?? defaultDocumentsAddFormData()
   );
+  const addDocSubmitIntentRef = useRef<"save" | "save_and_assign">("save");
+  const [docAiAnalyzed, setDocAiAnalyzed] = useState(false);
+  const [docAiPreviewUrl, setDocAiPreviewUrl] = useState<string | null>(null);
+  const [docAiFilledFields, setDocAiFilledFields] = useState<DocumentAiFilledFields>({});
+  const [docAiLowConfidenceFields, setDocAiLowConfidenceFields] =
+    useState<DocumentAiLowConfidenceFields>({});
+  const [docAiWarnings, setDocAiWarnings] = useState<string[]>([]);
+  const [docAiSuggestedJobs, setDocAiSuggestedJobs] = useState<
+    DocumentAiAnalysisResult["suggestedJobs"]
+  >([]);
+  const [docAiDuplicateCandidates, setDocAiDuplicateCandidates] = useState<
+    DocumentAiAnalysisResult["duplicateCandidates"]
+  >([]);
+  const [docAiSupplierMatch, setDocAiSupplierMatch] =
+    useState<DocumentAiAnalysisResult["supplierMatch"]>({
+      found: false,
+      name: null,
+      ico: null,
+    });
+  const [docAiMeta, setDocAiMeta] = useState<Record<string, unknown> | null>(null);
+
+  const resetDocAiState = useCallback(() => {
+    setDocAiAnalyzed(false);
+    setDocAiFilledFields({});
+    setDocAiLowConfidenceFields({});
+    setDocAiWarnings([]);
+    setDocAiSuggestedJobs([]);
+    setDocAiDuplicateCandidates([]);
+    setDocAiSupplierMatch({ found: false, name: null, ico: null });
+    setDocAiMeta(null);
+  }, []);
+
+  const applyDocAiAnalysis = useCallback((result: DocumentAiAnalysisResult) => {
+    const patch = result.formPatch;
+    setFormData((prev) => ({
+      ...prev,
+      number: patch.number || prev.number,
+      entityName: patch.entityName || prev.entityName,
+      amount: patch.amount || prev.amount,
+      currency: patch.currency || prev.currency,
+      vat: patch.vat || prev.vat,
+      date: patch.date || prev.date,
+      description: patch.description || prev.description,
+      costCategory: patch.costCategory || prev.costCategory,
+      dueDate: patch.dueDate || prev.dueDate,
+      requiresPayment: patch.requiresPayment || prev.requiresPayment,
+      paymentMethod: patch.paymentMethod || prev.paymentMethod,
+      paymentNote: patch.paymentNote || prev.paymentNote,
+    }));
+    setNewDocType(result.direction);
+    setDocAiAnalyzed(true);
+    setDocAiFilledFields(result.filledFields);
+    setDocAiLowConfidenceFields(result.lowConfidenceFields);
+    setDocAiWarnings(result.warnings);
+    setDocAiSuggestedJobs(result.suggestedJobs);
+    setDocAiDuplicateCandidates(result.duplicateCandidates);
+    setDocAiSupplierMatch(result.supplierMatch);
+    setDocAiMeta(result.aiMeta as unknown as Record<string, unknown>);
+  }, []);
 
   const resetAddDocForm = useCallback(() => {
     setNewDocKind("document");
@@ -1190,7 +1259,13 @@ function DocumentsPageContent() {
     setSelectedJobId("");
     setSelectedInvoiceId("");
     setSelectedWarehouseId("");
-  }, []);
+    if (docAiPreviewUrl?.startsWith("blob:")) {
+      URL.revokeObjectURL(docAiPreviewUrl);
+    }
+    setDocAiPreviewUrl(null);
+    resetDocAiState();
+    addDocSubmitIntentRef.current = "save";
+  }, [docAiPreviewUrl, resetDocAiState]);
 
   const closeAddDocDialog = useCallback(() => {
     clearDocumentsAddDialogDraft();
@@ -1642,6 +1717,24 @@ function DocumentsPageContent() {
   const handleAddDocument = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyId || !firestore || !user) return;
+
+    if (addDocSubmitIntentRef.current === "save_and_assign") {
+      if (!selectedJobId) {
+        toast({
+          variant: "destructive",
+          title: "Vyberte zakázku",
+          description: "Pro uložení s přiřazením k zakázku nejdříve vyberte zakázku.",
+        });
+        addDocSubmitIntentRef.current = "save";
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
+    const submitIntent = addDocSubmitIntentRef.current;
+    const assignmentForSave: AssignmentType =
+      submitIntent === "save_and_assign" ? "job_cost" : assignmentType;
+
     setIsSubmitting(true);
 
     try {
@@ -1670,11 +1763,11 @@ function DocumentsPageContent() {
         const uploadMeta = newDocFile ? await uploadDocumentFile(newDocFile) : null;
         const selectedJob = jobs.find((j) => j.id === selectedJobId);
         const assignmentFinal: AssignmentType =
-          assignmentType === "job_cost" ||
-          assignmentType === "warehouse" ||
-          assignmentType === "company" ||
-          assignmentType === "pending_assignment"
-            ? assignmentType
+          assignmentForSave === "job_cost" ||
+          assignmentForSave === "warehouse" ||
+          assignmentForSave === "company" ||
+          assignmentForSave === "pending_assignment"
+            ? assignmentForSave
             : "pending_assignment";
         const invoiceId = selectedInvoiceId.trim() || null;
         const newDocRef = await addDoc(
@@ -1713,6 +1806,7 @@ function DocumentsPageContent() {
             updatedAt: serverTimestamp(),
             isDeleted: false,
             costCategory: formData.costCategory,
+            ...(docAiMeta ?? {}),
           }
         );
         if (invoiceId) {
@@ -1966,7 +2060,7 @@ function DocumentsPageContent() {
         return;
       }
 
-      if (assignmentType === "job_cost" && !selectedJobId) {
+      if (assignmentForSave === "job_cost" && !selectedJobId) {
         throw new Error("Vyberte zakázku, ke které doklad patří.");
       }
       if (formData.requiresPayment && !formData.dueDate.trim()) {
@@ -2011,11 +2105,11 @@ function DocumentsPageContent() {
         createdBy: user?.uid,
         uploadedBy: user?.uid,
         uploadedByName: profileName,
-        assignmentType,
-        jobId: assignmentType === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
+        assignmentType: assignmentForSave,
+        jobId: assignmentForSave === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
         zakazkaId:
-          assignmentType === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
-        jobName: assignmentType === "job_cost" ? selectedJob?.name ?? null : null,
+          assignmentForSave === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
+        jobName: assignmentForSave === "job_cost" ? selectedJob?.name ?? null : null,
         fileUrl: uploadMeta?.fileUrl ?? null,
         fileName: uploadMeta?.fileName ?? null,
         fileType: uploadMeta?.fileType ?? null,
@@ -2035,6 +2129,7 @@ function DocumentsPageContent() {
           : {}),
         isDeleted: false,
         costCategory: formData.costCategory,
+        ...(docAiMeta ?? {}),
       });
 
       logActivitySafe(firestore, companyId, user, profile, {
@@ -2054,8 +2149,8 @@ function DocumentsPageContent() {
           amountGross,
           vatRate,
           date: formData.date,
-          assignmentType,
-          jobId: assignmentType === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
+          assignmentType: assignmentForSave,
+          jobId: assignmentForSave === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
         },
       });
 
@@ -2064,11 +2159,11 @@ function DocumentsPageContent() {
        * Dříve při výjimce z `addDoc(finance)` vůbec neproběhl reconcile → doklad bez nákladu v zakázce.
        */
       const jobIdForCost =
-        assignmentType === "job_cost"
+        assignmentForSave === "job_cost"
           ? selectedJob?.id ?? selectedJobId
           : null;
       const afterReconcile = {
-        assignmentType,
+        assignmentType: assignmentForSave,
         jobId: jobIdForCost,
         zakazkaId: jobIdForCost,
         number: formData.number.trim(),
@@ -2186,6 +2281,7 @@ function DocumentsPageContent() {
         description: msg,
       });
     } finally {
+      addDocSubmitIntentRef.current = "save";
       setIsSubmitting(false);
     }
   };
@@ -3046,7 +3142,7 @@ function DocumentsPageContent() {
                 <Plus className="h-4 w-4 shrink-0" /> Přidat doklad
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-h-[90vh] w-[min(100%,28rem)] max-w-[28rem] overflow-y-auto border border-gray-200 bg-white p-0 text-gray-950 shadow-lg sm:rounded-xl">
+            <DialogContent className="max-h-[90vh] w-[min(100%,42rem)] max-w-[42rem] overflow-y-auto border border-gray-200 bg-white p-0 text-gray-950 shadow-lg sm:rounded-xl">
               <DialogHeader className="space-y-1 border-b border-gray-100 px-4 pb-3 pt-4 sm:px-5">
                 <DialogTitle className="text-lg font-semibold text-gray-950">
                   Nový obchodní doklad
@@ -3055,7 +3151,16 @@ function DocumentsPageContent() {
                   Zadejte údaje z faktury, dokladu nebo dodacího listu.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleAddDocument} className="space-y-3 px-4 py-3 sm:px-5">
+              <form
+                id="add-document-form"
+                onSubmit={(e) => {
+                  if (addDocSubmitIntentRef.current !== "save_and_assign") {
+                    addDocSubmitIntentRef.current = "save";
+                  }
+                  void handleAddDocument(e);
+                }}
+                className="space-y-3 px-4 py-3 sm:px-5"
+              >
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {newDocKind === "document" ? (
                   <div className="space-y-2 sm:col-span-2">
@@ -3076,29 +3181,37 @@ function DocumentsPageContent() {
                     </Select>
                   </div>
                   ) : null}
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="attachment">Soubor / fotka / PDF</Label>
-                    <Input
-                      id="attachment"
-                      type="file"
-                      accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
-                      capture="environment"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0] ?? null;
+                  {companyId ? (
+                    <DocumentAiScanSection
+                      companyId={companyId}
+                      analyzed={docAiAnalyzed}
+                      previewUrl={docAiPreviewUrl}
+                      onPreviewUrlChange={setDocAiPreviewUrl}
+                      onFileSelected={(f) => {
                         setNewDocFile(f);
                         setPendingRestoredFileName(f?.name ?? null);
                       }}
-                      className="bg-background"
+                      onAnalysisReset={resetDocAiState}
+                      onAnalysisComplete={applyDocAiAnalysis}
                     />
-                    {pendingRestoredFileName && !newDocFile ? (
-                      <p className="text-xs text-amber-800">
-                        Po návratu na stránku znovu vyberte soubor: {pendingRestoredFileName}
-                      </p>
-                    ) : null}
-                    <p className="text-xs text-muted-foreground">
-                      Na mobilu lze využít fotoaparát a doklad nahrát přímo z terénu.
+                  ) : null}
+                  {docAiAnalyzed ? (
+                    <DocumentAiWarningsPanel
+                      warnings={docAiWarnings}
+                      duplicateCandidates={docAiDuplicateCandidates}
+                      suggestedJobs={docAiSuggestedJobs}
+                      supplierMatch={docAiSupplierMatch}
+                      onApplySuggestedJob={(jobId) => {
+                        setAssignmentType("job_cost");
+                        setSelectedJobId(jobId);
+                      }}
+                    />
+                  ) : null}
+                  {pendingRestoredFileName && !newDocFile ? (
+                    <p className="text-xs text-amber-800 sm:col-span-2">
+                      Po návratu na stránku znovu vyberte soubor: {pendingRestoredFileName}
                     </p>
-                  </div>
+                  ) : null}
                   <div className="space-y-2 sm:col-span-2">
                     <Label>Typ dokladu</Label>
                     <div className="flex gap-2 p-1 bg-background rounded-lg border border-border">
@@ -3121,7 +3234,12 @@ function DocumentsPageContent() {
                     </div>
                   </div>
                   <div className="space-y-2 sm:col-span-2">
-                    <Label>Kategorie dokladu</Label>
+                    <DocumentAiFieldLabel
+                      aiFilled={docAiFilledFields.costCategory}
+                      lowConfidence={docAiLowConfidenceFields.costCategory}
+                    >
+                      Kategorie dokladu
+                    </DocumentAiFieldLabel>
                     <Select
                       value={formData.costCategory}
                       onValueChange={(v) =>
@@ -3164,7 +3282,13 @@ function DocumentsPageContent() {
                     </div>
                   ) : null}
                   <div className="space-y-2">
-                    <Label htmlFor="number">Číslo dokladu</Label>
+                    <DocumentAiFieldLabel
+                      htmlFor="number"
+                      aiFilled={docAiFilledFields.number}
+                      lowConfidence={docAiLowConfidenceFields.number}
+                    >
+                      Číslo dokladu
+                    </DocumentAiFieldLabel>
                     <Input
                       id="number"
                       value={formData.number}
@@ -3175,7 +3299,13 @@ function DocumentsPageContent() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="date">Datum vystavení</Label>
+                    <DocumentAiFieldLabel
+                      htmlFor="date"
+                      aiFilled={docAiFilledFields.date}
+                      lowConfidence={docAiLowConfidenceFields.date}
+                    >
+                      Datum vystavení
+                    </DocumentAiFieldLabel>
                     <Input
                       id="date"
                       type="date"
@@ -3189,9 +3319,13 @@ function DocumentsPageContent() {
                   </div>
                   {newDocKind !== "delivery_note" ? (
                   <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor="entityName">
+                    <DocumentAiFieldLabel
+                      htmlFor="entityName"
+                      aiFilled={docAiFilledFields.entityName}
+                      lowConfidence={docAiLowConfidenceFields.entityName}
+                    >
                       {newDocType === "received" ? "Dodavatel" : "Odběratel"}
-                    </Label>
+                    </DocumentAiFieldLabel>
                     <Input
                       id="entityName"
                       value={formData.entityName}
@@ -3205,7 +3339,13 @@ function DocumentsPageContent() {
                   <div className="space-y-2 sm:col-span-2">
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px]">
                       <div className="space-y-2">
-                        <Label htmlFor="amount">Částka bez DPH</Label>
+                        <DocumentAiFieldLabel
+                          htmlFor="amount"
+                          aiFilled={docAiFilledFields.amount}
+                          lowConfidence={docAiLowConfidenceFields.amount}
+                        >
+                          Částka bez DPH
+                        </DocumentAiFieldLabel>
                         <Input
                           id="amount"
                           type="number"
@@ -3220,7 +3360,13 @@ function DocumentsPageContent() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="doc-currency">Měna</Label>
+                        <DocumentAiFieldLabel
+                          htmlFor="doc-currency"
+                          aiFilled={docAiFilledFields.currency}
+                          lowConfidence={docAiLowConfidenceFields.currency}
+                        >
+                          Měna
+                        </DocumentAiFieldLabel>
                         <Select
                           value={formData.currency}
                           onValueChange={(v) =>
@@ -3536,13 +3682,29 @@ function DocumentsPageContent() {
                     </div>
                   ) : null}
                 </div>
-                <DialogFooter>
-                  <Button type="submit" disabled={isSubmitting} className="w-full">
+                <DialogFooter className="flex-col gap-2 sm:flex-col">
+                  <Button type="submit" disabled={isSubmitting} className="w-full min-h-11">
                     {isSubmitting ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                       "Uložit doklad"
                     )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={isSubmitting}
+                    className="w-full min-h-11"
+                    onClick={() => {
+                      addDocSubmitIntentRef.current = "save_and_assign";
+                      setAssignmentType("job_cost");
+                      const form = document.getElementById(
+                        "add-document-form"
+                      ) as HTMLFormElement | null;
+                      form?.requestSubmit();
+                    }}
+                  >
+                    Uložit a přiřadit k zakázce
                   </Button>
                 </DialogFooter>
               </form>
