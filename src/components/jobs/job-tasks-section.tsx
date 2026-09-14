@@ -90,9 +90,11 @@ type Props = {
   jobId: string;
   user: User;
   canEdit: boolean;
+  /** Kompaktní dashboard — souhrn a rozbalitelný seznam. */
+  layout?: "default" | "dashboard";
 };
 
-export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
+export function JobTasksSection({ companyId, jobId, user, canEdit, layout = "default" }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
   const today = todayIso();
@@ -160,6 +162,7 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [listExpanded, setListExpanded] = useState(false);
 
   const resetForm = () => {
     setEditingId(null);
@@ -445,16 +448,76 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
   );
 
   const hasAny = active.length > 0 || done.length > 0;
+  const overdueCount = active.filter(
+    (r) => r.dueDate && r.dueDate < today && r.status !== "done"
+  ).length;
+  const nextTask = active[0] ?? null;
 
   return (
     <>
+      {layout === "dashboard" ? (
+        <div
+          className={cn(
+            "rounded-xl border border-gray-200 bg-white px-3.5 py-3 shadow-sm",
+            overdueCount > 0 && "border-destructive/40"
+          )}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-950">Úkoly</p>
+              <p className="text-[13px] text-gray-800">
+                {active.length} aktivních
+                {overdueCount > 0 ? (
+                  <span className="text-destructive font-semibold"> · {overdueCount} po termínu</span>
+                ) : null}
+              </p>
+              {nextTask ? (
+                <p className="mt-1 truncate text-[11px] text-gray-600" title={nextTask.title}>
+                  Nejbližší: {nextTask.title}
+                  {nextTask.dueDate ? ` (${nextTask.dueDate})` : ""}
+                </p>
+              ) : !hasAny ? (
+                <p className="mt-1 text-[11px] text-gray-600">Žádné úkoly</p>
+              ) : null}
+            </div>
+            {canEdit ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 shrink-0 px-2 text-xs"
+                onClick={openCreate}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                Přidat
+              </Button>
+            ) : null}
+          </div>
+          {hasAny ? (
+            <div className="mt-2 border-t border-gray-100 pt-2">
+              <button
+                type="button"
+                className="text-xs font-semibold text-primary hover:underline"
+                onClick={() => setListExpanded((v) => !v)}
+              >
+                {listExpanded ? "Sbalit úkoly" : "Zobrazit všechny"}
+              </button>
+              {listExpanded ? (
+                <ul className="mt-2 max-h-[280px] space-y-1.5 overflow-y-auto">
+                  {active.map((r) => renderTaskRow(r, false))}
+                  {done.length > 0
+                    ? done.slice(0, 5).map((r) => renderTaskRow(r, true))
+                    : null}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : (
       <section
         className={cn(
           "rounded-xl border-2 border-primary/30 bg-gradient-to-br from-primary/5 via-background to-background p-4 shadow-sm",
-          active.some(
-            (r) =>
-              r.dueDate && r.dueDate < today && r.status !== "done"
-          ) && "border-destructive/50 from-destructive/5"
+          overdueCount > 0 && "border-destructive/50 from-destructive/5"
         )}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -505,6 +568,7 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
           </div>
         )}
       </section>
+      )}
 
       <Dialog
         open={dialogOpen}

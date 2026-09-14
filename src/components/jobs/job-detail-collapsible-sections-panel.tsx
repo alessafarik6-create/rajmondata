@@ -28,8 +28,10 @@ export function JobDetailCollapsibleSectionsPanel(props: {
   userId?: string | null;
   sections: JobDetailCollapsibleSectionDef[];
   className?: string;
+  /** Jednorázové otevření sekce z dashboardu (bez zápisu do localStorage). */
+  forceOpenMap?: Partial<Record<JobDetailCollapsibleSectionId, boolean>>;
 }) {
-  const { jobId, userId, sections, className } = props;
+  const { jobId, userId, sections, className, forceOpenMap } = props;
   const safeSections = useMemo(
     () => (Array.isArray(sections) ? sections : []).filter((s) => s && s.id),
     [sections]
@@ -82,7 +84,7 @@ export function JobDetailCollapsibleSectionsPanel(props: {
     <div className={cn("grid w-full min-w-0 grid-cols-1 gap-3 min-[900px]:grid-cols-2 min-[1400px]:grid-cols-3 md:gap-4", props.className)}>
       {ordered.map((section, index) => {
         const title = section.title ?? JOB_DETAIL_COLLAPSIBLE_SECTION_LABELS[section.id];
-        const open = openMap[section.id] === true;
+        const open = openMap[section.id] === true || forceOpenMap?.[section.id] === true;
         return (
           <JobDetailCollapsibleSection
             key={section.id}

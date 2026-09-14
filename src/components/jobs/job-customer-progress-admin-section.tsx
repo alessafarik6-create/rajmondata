@@ -71,6 +71,8 @@ type Props = {
   jobRef: DocumentReference | null;
   job: Record<string, unknown> | null | undefined;
   canEdit: boolean;
+  /** Kompaktní karta pro dashboard sloupec portálu. */
+  compact?: boolean;
 };
 
 export function JobCustomerProgressAdminSection({
@@ -79,6 +81,7 @@ export function JobCustomerProgressAdminSection({
   jobRef,
   job,
   canEdit,
+  compact = false,
 }: Props) {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -224,15 +227,17 @@ export function JobCustomerProgressAdminSection({
   }
 
   return (
-    <Card className={cn(JD.card)}>
-      <CardHeader>
+    <Card className={cn(JD.card, compact && "shadow-sm")}>
+      <CardHeader className={compact ? JD.cardHeaderCompact : undefined}>
         <CardTitle className={JD.cardTitle}>Průběh pro zákaznický portál</CardTitle>
-        <CardDescription>
-          Nastavte procento dokončení a obrázky pro slider na přehledu / profilu zákazníka. Oddělené od
-          interní fotodokumentace.
-        </CardDescription>
+        {!compact ? (
+          <CardDescription>
+            Nastavte procento dokončení a obrázky pro slider na přehledu / profilu zákazníka. Oddělené od
+            interní fotodokumentace.
+          </CardDescription>
+        ) : null}
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className={cn(compact ? "space-y-3 pt-0" : "space-y-6")}>
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Label htmlFor={`completion-${jobId}`}>Dokončení zakázky ({completion} %)</Label>
@@ -255,9 +260,11 @@ export function JobCustomerProgressAdminSection({
             onValueChange={(v) => setCompletion(normalizeCompletionPercent(v[0] ?? 0))}
             className="w-full max-w-md"
           />
-          <p className="text-xs text-muted-foreground">
-            0 % = nová / nezahájeno, 100 % = dokončeno. Zákazník vidí stejnou hodnotu v portálu.
-          </p>
+          {!compact ? (
+            <p className="text-xs text-muted-foreground">
+              0 % = nová / nezahájeno, 100 % = dokončeno. Zákazník vidí stejnou hodnotu v portálu.
+            </p>
+          ) : null}
         </div>
 
         <div className="space-y-3">
@@ -314,23 +321,38 @@ export function JobCustomerProgressAdminSection({
           ) : (
             <div className="space-y-3">
               {!imagesExpanded ? (
-                <div className="rounded-lg border bg-muted/20 p-3">
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    {images.slice(0, 4).map((img) => (
-                      <div key={img.id} className="relative overflow-hidden rounded-md border bg-white">
+                <div className={cn("rounded-lg border bg-muted/20 p-2", compact && "p-1.5")}>
+                  <div
+                    className={cn(
+                      "flex flex-wrap gap-1.5",
+                      !compact && "grid grid-cols-2 gap-2 sm:grid-cols-4"
+                    )}
+                  >
+                    {images.slice(0, compact ? 3 : 4).map((img) => (
+                      <div
+                        key={img.id}
+                        className={cn(
+                          "relative overflow-hidden rounded-md border bg-white",
+                          compact ? "h-[88px] w-[88px] shrink-0" : ""
+                        )}
+                      >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={img.url}
                           alt=""
-                          className="h-auto w-full aspect-[4/3] object-cover"
+                          className={cn(
+                            "object-cover",
+                            compact ? "h-full w-full" : "h-auto w-full aspect-[4/3]"
+                          )}
                           loading="lazy"
                         />
                       </div>
                     ))}
                   </div>
-                  {images.length > 4 ? (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Zobrazeno 4 z {images.length}. Klikněte na „Zobrazit více“ pro celý seznam.
+                  {images.length > (compact ? 3 : 4) ? (
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      Zobrazeno {compact ? 3 : 4} z {images.length}.{" "}
+                      {compact ? "„Zobrazit více“" : "Klikněte na „Zobrazit více“"} pro celý seznam.
                     </p>
                   ) : null}
                 </div>
@@ -452,9 +474,11 @@ export function JobCustomerProgressAdminSection({
           )}
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          Po uložení se změny projeví v klientském portálu okamžitě (online synchronizace).
-        </p>
+        {!compact ? (
+          <p className="text-xs text-muted-foreground">
+            Po uložení se změny projeví v klientském portálu okamžitě (online synchronizace).
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );

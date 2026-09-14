@@ -29,6 +29,13 @@ import {
   formatMessageDateFromValue,
 } from "@/lib/format-message-date";
 import { JobMessageHeader } from "@/components/jobs/job-message-header";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { JD } from "@/lib/job-detail-page-styles";
 
 export type JobCommentsTarget =
   | { targetType: "job" }
@@ -99,6 +106,8 @@ export function JobCommentsThread(props: {
   dense?: boolean;
   /** Plná šířka detailu zakázky — bez úzkého scroll panelu */
   wide?: boolean;
+  /** Souhrn na dashboardu — plný chat v dialogu */
+  presentation?: "full" | "summary";
   className?: string;
   messagesMaxHeightClass?: string;
   /** zavolat po odeslání (např. notifikace) */
@@ -114,6 +123,8 @@ export function JobCommentsThread(props: {
   const { toast } = useToast();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+  const isSummary = props.presentation === "summary";
 
   const firestore = props.firestore as any;
 
@@ -295,6 +306,56 @@ export function JobCommentsThread(props: {
     : props.wide
       ? "space-y-3 min-h-[200px] max-h-[min(70vh,720px)] overflow-y-auto pr-1"
       : "flex-1 space-y-2 overflow-y-auto pr-1";
+
+  const lastMessage = comments.length > 0 ? comments[comments.length - 1] : null;
+  const lastPreview = lastMessage ? String(lastMessage.message ?? "").trim() : "";
+
+  if (isSummary) {
+    return (
+      <>
+        <div className={cn(JD.dashCard, props.className)}>
+          <p className={JD.dashCardTitle}>{props.title}</p>
+          <p className={cn(JD.dashCardMuted, "mt-1")}>
+            {comments.length} zpráv
+            {unreadCount > 0 ? (
+              <span className="text-destructive font-semibold"> · {unreadCount} nepřečteno</span>
+            ) : null}
+          </p>
+          {lastPreview ? (
+            <p className="mt-2 line-clamp-2 text-[13px] text-gray-800">
+              <span className="text-gray-500">Poslední: </span>
+              &quot;{lastPreview}&quot;
+            </p>
+          ) : (
+            <p className="mt-2 text-[13px] text-gray-600">Zatím žádné zprávy.</p>
+          )}
+          <button
+            type="button"
+            className="mt-2.5 text-xs font-semibold text-primary hover:underline"
+            onClick={() => setSummaryDialogOpen(true)}
+          >
+            Otevřít chat
+          </button>
+        </div>
+        <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
+          <DialogContent className="max-h-[92vh] w-[95vw] max-w-3xl overflow-hidden flex flex-col p-0 gap-0">
+            <DialogHeader className="px-4 pt-4 pb-2 shrink-0">
+              <DialogTitle>{props.title}</DialogTitle>
+            </DialogHeader>
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+              <JobCommentsThread
+                {...props}
+                presentation="full"
+                className="border-0 shadow-none"
+                wide
+                messagesMaxHeightClass="max-h-[min(60vh,520px)]"
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
 
   return (
     <Card className={cn("border border-border bg-background text-foreground shadow-sm", props.className)}>

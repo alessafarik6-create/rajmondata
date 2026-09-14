@@ -48,6 +48,7 @@ import {
 import { notifyJobActivity } from "@/lib/job-activity-notify-client";
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
 import { Loader2 } from "lucide-react";
+import { JD } from "@/lib/job-detail-page-styles";
 
 type MessageRow = Record<string, unknown> & { id: string };
 
@@ -62,6 +63,7 @@ type Props = {
   /** CRM zákazník z detailu zakázky (volitelné — urychlí rozlišení). */
   customer?: Record<string, unknown> | null;
   customerPortalUserDocId?: string | null;
+  presentation?: "full" | "summary";
 };
 
 export function JobCustomerChatThread({
@@ -74,6 +76,7 @@ export function JobCustomerChatThread({
   className,
   customer = null,
   customerPortalUserDocId = null,
+  presentation = "full",
 }: Props) {
   const { toast } = useToast();
   const fs = firestore as ReturnType<typeof import("firebase/firestore").getFirestore> | null;
@@ -88,6 +91,8 @@ export function JobCustomerChatThread({
   const [portalPassword2, setPortalPassword2] = useState("");
   const [portalSubmitting, setPortalSubmitting] = useState(false);
   const [portalActionLoading, setPortalActionLoading] = useState(false);
+  const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+  const isSummary = presentation === "summary";
 
   const localContext = useMemo(
     () =>
@@ -560,6 +565,64 @@ export function JobCustomerChatThread({
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+  const lastPreview = lastMsg
+    ? String(lastMsg.text ?? lastMsg.message ?? "").trim()
+    : "";
+  const unreadAdmin = (conversation as { unreadForAdminCount?: number } | null)?.unreadForAdminCount ?? 0;
+
+  if (isSummary) {
+    return (
+      <>
+        <div className={cn(JD.dashCard, className)}>
+          <p className={JD.dashCardTitle}>Chat se zákazníkem</p>
+          <p className={cn(JD.dashCardMuted, "mt-1")}>
+            {messages.length} zpráv
+            {unreadAdmin > 0 ? (
+              <span className="text-amber-700 font-semibold"> · {unreadAdmin} nepřečteno</span>
+            ) : null}
+          </p>
+          {lastPreview ? (
+            <p className="mt-2 line-clamp-2 text-[13px] text-gray-800">
+              <span className="text-gray-500">Poslední: </span>
+              &quot;{lastPreview}&quot;
+            </p>
+          ) : (
+            <p className="mt-2 text-[13px] text-gray-600">Zatím žádné zprávy.</p>
+          )}
+          <button
+            type="button"
+            className="mt-2.5 text-xs font-semibold text-primary hover:underline"
+            onClick={() => setSummaryDialogOpen(true)}
+          >
+            Otevřít chat
+          </button>
+        </div>
+        <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
+          <DialogContent className="max-h-[92vh] w-[95vw] max-w-3xl overflow-hidden flex flex-col p-0 gap-0">
+            <DialogHeader className="px-4 pt-4 pb-2 shrink-0">
+              <DialogTitle>Chat se zákazníkem</DialogTitle>
+            </DialogHeader>
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+              <JobCustomerChatThread
+                firestore={firestore}
+                companyId={companyId}
+                jobId={jobId}
+                job={job}
+                user={user}
+                authorName={authorName}
+                customer={customer}
+                customerPortalUserDocId={customerPortalUserDocId}
+                presentation="full"
+                className="border-0 shadow-none"
+              />
+            </div>
           </DialogContent>
         </Dialog>
       </>

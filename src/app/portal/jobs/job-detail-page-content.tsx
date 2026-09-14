@@ -73,6 +73,18 @@ import {
   JobDetailCollapsibleSectionsPanel,
   type JobDetailCollapsibleSectionDef,
 } from "@/components/jobs/job-detail-collapsible-sections-panel";
+import { JobDetailSummaryCard } from "@/components/jobs/job-detail-summary-card";
+import { JobDetailDeepSection } from "@/components/jobs/job-detail-deep-section";
+import { JobDetailFinanceColumn } from "@/components/jobs/job-detail-finance-column";
+import {
+  WORK_BUDGET_ITEMS_COLLECTION,
+  parseJobWorkBudgetItemFromFirestore,
+} from "@/lib/work-budget-types";
+import {
+  computeWorkBudgetSummary,
+  sortWorkBudgetItems,
+} from "@/lib/work-budget-calculations";
+import type { JobDetailCollapsibleSectionId } from "@/lib/job-detail-collapsible-sections";
 import { readJobQuestionnaireSnapshot } from "@/lib/customer-job-tasks";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { canAccessCompanyModule } from "@/lib/platform-access";
@@ -1322,6 +1334,45 @@ export function JobDetailPageContent({
       })
     );
   }, [vyrobaModuleOn, jobFirestoreId, profile, employeeSelf, globalRolesForVyroba]);
+
+  const jobFoldersColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobFirestoreId
+        ? collection(firestore, "companies", companyId, "jobs", jobFirestoreId, "folders")
+        : null,
+    [firestore, companyId, jobFirestoreId]
+  );
+  const { data: jobFoldersRaw } = useCollection(jobFoldersColRef);
+  const jobFolderCount = (Array.isArray(jobFoldersRaw) ? jobFoldersRaw : []).length;
+
+  const workBudgetItemsColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobFirestoreId
+        ? collection(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            jobFirestoreId,
+            WORK_BUDGET_ITEMS_COLLECTION
+          )
+        : null,
+    [firestore, companyId, jobFirestoreId]
+  );
+  const { data: workBudgetItemsRaw } = useCollection<Record<string, unknown>>(
+    workBudgetItemsColRef
+  );
+  const workBudgetSummary = useMemo(() => {
+    const items = sortWorkBudgetItems(
+      (workBudgetItemsRaw ?? []).map((row, idx) =>
+        parseJobWorkBudgetItemFromFirestore(
+          row,
+          String((row as { id?: string }).id ?? `row-${idx}`)
+        )
+      )
+    );
+    return { items, summary: computeWorkBudgetSummary(items) };
+  }, [workBudgetItemsRaw]);
 
   const photosColRef = useMemoFirebase(
     () =>
@@ -2846,6 +2897,13 @@ export function JobDetailPageContent({
     return map;
   }, [workContractsForJob]);
 
+  const contractDashboardStats = useMemo(() => {
+    const list = workContractsForJob ?? [];
+    const addenda = list.filter((c) => String(c.documentRole ?? "").trim() === "addendum").length;
+    const bases = workContractsBaseForJob.length;
+    return { total: list.length, bases, addenda };
+  }, [workContractsForJob, workContractsBaseForJob]);
+
   const selectedBankAccount = useMemo(() => {
     if (!contractForm.bankAccountId) return null;
     return (bankAccounts || []).find(
@@ -2855,6 +2913,22 @@ export function JobDetailPageContent({
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [handoverFormOpen, setHandoverFormOpen] = useState(false);
+  const [deepSectionOpen, setDeepSectionOpen] = useState<Record<string, boolean>>({});
+  const [collapsibleForceOpen, setCollapsibleForceOpen] = useState<
+    Partial<Record<JobDetailCollapsibleSectionId, boolean>>
+  >({});
+
+  const openDeepSection = useCallback((id: string) => {
+    setDeepSectionOpen((prev) => ({ ...prev, [id]: true }));
+    requestAnimationFrame(() => {
+      document.getElementById(`job-deep-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
+
+  const openCollapsibleSection = useCallback((id: JobDetailCollapsibleSectionId) => {
+    setCollapsibleForceOpen((prev) => ({ ...prev, [id]: true }));
+    openDeepSection("realizace-panel");
+  }, [openDeepSection]);
   const [handoverDefaultContractId, setHandoverDefaultContractId] = useState<string | null>(
     null
   );
@@ -10294,34 +10368,33 @@ export function JobDetailPageContent({
         </div>
       </div>
 
-      <p className={JD.areaHeading}>Přehled</p>
-      <div className={JD.dashboardGrid}>
-      {user && companyId && jobFirestoreId ? (
-        <div className="min-w-0">
-        <JobTasksSection
-          companyId={companyId}
-          jobId={jobFirestoreId!}
-          user={user}
-          canEdit={canManageFolders}
-        />
-        </div>
-      ) : null}
-
-          <Card className={cn(JD.card)}>
+      <div className={JD.dashboardColumns}>
+        <div className={JD.columnStack}>
+          <p className={JD.columnLabel}>Zakázka</p>
+          <Card className={cn(JD.card, "shadow-sm")}>
             <CardHeader className={JD.cardHeaderCompact}>
               <CardTitle className={JD.cardTitle}>
                 <MapPin aria-hidden /> Zákazník a adresa
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4 pt-0">
+            <CardContent className={JD.cardContentCompact}>
               {jobCustomerAddressBlock.displayName ? (
                 <div className="space-y-1">
                   <span className={JD.label}>
                     Zákazník
                   </span>
-                  <p className="text-base font-semibold text-foreground">
+                  <p className="text-sm font-semibold text-foreground">
                     {jobCustomerAddressBlock.displayName}
                   </p>
+                  {customerEmailForJob ? (
+                    <p className="text-[13px] text-gray-800">{customerEmailForJob}</p>
+                  ) : null}
+                  {customer && typeof (customer as { phone?: string }).phone === "string" &&
+                  (customer as { phone?: string }).phone?.trim() ? (
+                    <p className="text-[13px] text-gray-800">
+                      {(customer as { phone?: string }).phone}
+                    </p>
+                  ) : null}
                   {customerAccessEmailSent ? (
                     <p className="text-xs text-muted-foreground">
                       Přístup odeslán e-mailem
@@ -10398,15 +10471,46 @@ export function JobDetailPageContent({
             </CardContent>
           </Card>
 
-          <Card className={cn(JD.card)}>
+          <Card className={cn(JD.card, "shadow-sm")}>
+            <CardHeader className={JD.cardHeaderCompact}>
+              <CardTitle className={JD.cardTitle}>
+                <Users aria-hidden /> Přiřazení pracovníci
+              </CardTitle>
+            </CardHeader>
+            <CardContent className={JD.cardContentCompact}>
+              <div className="space-y-1.5">
+                {toArraySafe<string>(job.assignedEmployeeIds).map((empId: string) => (
+                  <div
+                    key={empId}
+                    className="flex items-center gap-2 rounded-md border border-gray-200 px-2 py-1.5"
+                  >
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+                      <User className="h-3.5 w-3.5" />
+                    </div>
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                      {empId === user?.uid ? "Já" : `Pracovník (${empId.substring(0, 5)})`}
+                    </span>
+                    <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                      Aktivní
+                    </Badge>
+                  </div>
+                ))}
+                {!toArraySafe(job.assignedEmployeeIds).length && (
+                  <p className="text-[13px] text-gray-700">Žádní pracovníci nejsou přiřazeni.</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className={cn(JD.card, "shadow-sm")}>
             <CardHeader className={JD.cardHeaderCompact}>
               <CardTitle className={JD.cardTitle}>
                 <Clock aria-hidden /> Termíny a pokrok
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4 pt-0">
-              <div className="space-y-2">
-                <div className="mb-1 flex justify-between text-sm text-gray-900">
+            <CardContent className={JD.cardContentCompact}>
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[13px] text-gray-900">
                   <span>Celkový pokrok</span>
                   <span className="font-bold">
                     {(job?.status ?? "") === "dokončená" || (job?.status ?? "") === "fakturována"
@@ -10420,102 +10524,232 @@ export function JobDetailPageContent({
                       ? 100
                       : 45
                   }
+                  className="h-2"
                 />
               </div>
-              <div className="grid grid-cols-1 gap-3 border-t border-gray-200 pt-3">
-                <div className="space-y-1">
-                  <span className={JD.label}>Zahájeno</span>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
-                    <Calendar className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                    {job.startDate || "neuvedeno"}
-                  </div>
+              <div className="mt-2 space-y-1.5 border-t border-gray-200 pt-2 text-[13px]">
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                  <span className="text-gray-600">Zahájeno:</span>
+                  <span className="font-semibold">{job.startDate || "—"}</span>
                 </div>
-                <div className="space-y-1">
-                  <span className={JD.label}>Předpokládané dokončení</span>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
-                    <Calendar className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                    {job.endDate || "neuvedeno"}
-                  </div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                  <span className="text-gray-600">Dokončení:</span>
+                  <span className="font-semibold">{job.endDate || "—"}</span>
                 </div>
               </div>
             </CardContent>
           </Card>
+        </div>
 
-          <Card className={cn(JD.card)}>
-            <CardHeader className={JD.cardHeaderCompact}>
-              <CardTitle className={JD.cardTitle}>
-                <Users aria-hidden /> Přiřazení pracovníci
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <div className="space-y-3">
-                {toArraySafe<string>(job.assignedEmployeeIds).map((empId: string) => (
-                  <div
-                    key={empId}
-                    className={cn(JD.innerBox, "flex items-center justify-between")}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
-                        <User className="w-4 h-4" />
-                      </div>
-                      <span className="font-medium text-sm">
-                        {empId === user?.uid ? "Já" : `Pracovník (${empId.substring(0, 5)})`}
-                      </span>
-                    </div>
-                    <Badge variant="outline">Aktivní</Badge>
-                  </div>
-                ))}
-                {!toArraySafe(job.assignedEmployeeIds).length && (
-                  <p className={JD.bodyMuted}>Žádní pracovníci nejsou přiřazeni.</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className={cn(JD.card)}>
-            <CardHeader className={JD.cardHeaderCompact}>
-              <CardTitle className={JD.cardTitle}>
-                <FileText aria-hidden /> Popis zakázky
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <p className={JD.body}>
-                {job.description || "K této zakázce nebyl přidán žádný popis."}
-              </p>
-            </CardContent>
-          </Card>
-
+        <div className={JD.columnStack}>
+          <p className={JD.columnLabel}>Portál</p>
           {companyId && jobFirestoreId ? (
-            <div className={JD.spanFull}>
             <JobCustomerProgressAdminSection
               companyId={companyId}
               jobId={jobFirestoreId!}
               jobRef={jobRef}
               job={job as Record<string, unknown>}
               canEdit={canManageFolders}
+              compact
             />
-            </div>
           ) : null}
+        </div>
 
-          <p className={cn(JD.areaHeading, JD.spanFull)}>Dokumentace</p>
-
-          <Card className={cn(JD.card)}>
-            <CardHeader className={JD.cardHeaderCompact}>
-              <CardTitle className={JD.cardTitle}>
-                <FileText aria-hidden /> Měření
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <p className={JD.body}>
-                {job.measuring || "Žádné poznámky k měření."}
+        <div className={JD.columnStack}>
+          <p className={JD.columnLabel}>Dokumentace</p>
+          <JobDetailSummaryCard
+            title="Smlouvy a dodatky"
+            icon={<FileText aria-hidden />}
+            lines={
+              <>
+                <p>{contractDashboardStats.bases} smluv · {contractDashboardStats.addenda} dodatků</p>
+              </>
+            }
+            actions={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => void openContractDialog("new_contract")}
+              >
+                + Nová smlouva
+              </Button>
+            }
+            onOpen={() => openDeepSection("contracts")}
+            openLabel="Zobrazit"
+          />
+          <JobDetailSummaryCard
+            title="Fotodokumentace a složky"
+            icon={<Camera aria-hidden />}
+            lines={
+              <>
+                <p>
+                  {jobFolderCount} složek · {(photos ?? []).filter(isUsablePhotoRow).length} fotek
+                </p>
+              </>
+            }
+            onOpen={() => openDeepSection("media")}
+            openLabel="Otevřít"
+          />
+          <JobDetailSummaryCard
+            title="Měření"
+            icon={<FileText aria-hidden />}
+            lines={
+              <p className="line-clamp-2">
+                {job.measuring?.trim() || job.measuringDetails?.trim() || "Bez poznámek k měření."}
               </p>
-              {job.measuringDetails && (
-                <p className="mt-2 text-sm text-gray-800">{job.measuringDetails}</p>
-              )}
-            </CardContent>
-          </Card>
+            }
+            onOpen={() => openDeepSection("measuring")}
+          />
+          <JobDetailSummaryCard
+            title="Nářezový plán / Excel"
+            onOpen={() => openCollapsibleSection("cutting_plan")}
+          />
+          <JobDetailSummaryCard
+            title="Záznamy ze schůzek"
+            onOpen={() => openCollapsibleSection("meeting_records")}
+          />
+        </div>
 
-          <Card className={cn(JD.card, JD.spanFull)}>
+        <div className={JD.columnStack}>
+          <p className={JD.columnLabel}>Realizace</p>
+          {user && companyId && jobFirestoreId ? (
+            <JobTasksSection
+              companyId={companyId}
+              jobId={jobFirestoreId!}
+              user={user}
+              canEdit={canManageFolders}
+              layout="dashboard"
+            />
+          ) : null}
+          <JobDetailSummaryCard
+            title="Materiál a objednávky"
+            onOpen={() => openCollapsibleSection("material_orders")}
+          />
+          {companyId && jobFirestoreId && user && vyrobaModuleOn ? (
+            <JobDetailSummaryCard
+              title="Výroba"
+              lines={<p>Přiřazení a dílna zakázky</p>}
+              onOpen={() => {
+                openCollapsibleSection("production_team");
+              }}
+            />
+          ) : null}
+          <JobDetailSummaryCard
+            title="Foto zaměření"
+            onOpen={() => openDeepSection("measurement-photos")}
+          />
+        </div>
+
+        {user && companyId && jobFirestoreId ? (
+          <JobDetailFinanceColumn
+            summary={
+              workBudgetSummary.items.length > 0 ? workBudgetSummary.summary : null
+            }
+            itemCount={workBudgetSummary.items.length}
+            onOpenBudget={() => openDeepSection("work-budget")}
+            onOpenInvoices={() => openDeepSection("invoices")}
+            onOpenExpenses={() => openCollapsibleSection("expenses")}
+            onOpenDeposits={() => openCollapsibleSection("contract_deposit")}
+            onOpenFinancial={() => openCollapsibleSection("financial")}
+          />
+        ) : null}
+
+        <div className={JD.columnStack}>
+          <p className={JD.columnLabel}>Komunikace</p>
+          {companyId && jobFirestoreId && user && firestore ? (
+            <>
+              <JobCustomerChatThread
+                firestore={firestore}
+                companyId={companyId}
+                jobId={String(jobFirestoreId)}
+                job={job as Record<string, unknown>}
+                customer={customer ?? null}
+                customerPortalUserDocId={customerPortalUserDocId}
+                user={user}
+                authorName={
+                  String(
+                    (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
+                      (profile as { name?: unknown })?.name ??
+                      (profile as { email?: unknown })?.email ??
+                      user.email ??
+                      ""
+                  ).trim() || "Admin"
+                }
+                presentation="summary"
+              />
+              <JobCommentsThread
+                firestore={firestore}
+                companyId={companyId}
+                jobId={String(jobId)}
+                userId={user.uid}
+                authorName={
+                  String(
+                    (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
+                      (profile as { name?: unknown })?.name ??
+                      (profile as { email?: unknown })?.email ??
+                      user.email ??
+                      ""
+                  ).trim() || "Admin"
+                }
+                authorRole="admin"
+                canPost={true}
+                chatChannel="internal"
+                channelBadgeLabel="Interní"
+                title="Interní chat k zakázce"
+                target={{ targetType: "job" }}
+                onAfterSend={async (sent) => {
+                  try {
+                    const token = await user.getIdToken();
+                    await fetch("/api/jobs/comments/notify", {
+                      method: "POST",
+                      headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({
+                        companyId,
+                        jobId: String(jobId),
+                        targetType: "job",
+                        messagePreview: sent.message,
+                      }),
+                    });
+                  } catch {
+                    // ignore
+                  }
+                }}
+                presentation="summary"
+              />
+              <JobDetailSummaryCard
+                title="Odesílání dokumentů e-mailem"
+                lines={
+                  customerEmailForJob ? (
+                    <p className="truncate">{customerEmailForJob}</p>
+                  ) : (
+                    <p>E-mail zákazníka neuveden</p>
+                  )
+                }
+                onOpen={() => openCollapsibleSection("document_email")}
+              />
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <section className="mt-4 space-y-3" aria-label="Detailní sekce zakázky">
+        <p className={JD.areaHeading}>Detail sekcí</p>
+
+        <JobDetailDeepSection
+          id="contracts"
+          title="Smlouvy a dodatky"
+          summary={`${contractDashboardStats.total} dokumentů`}
+          open={deepSectionOpen.contracts === true}
+          onOpenChange={(o) => setDeepSectionOpen((p) => ({ ...p, contracts: o }))}
+        >
+          <Card className={cn(JD.fullWidthCard, "border-0 shadow-none")}>
             <CardHeader className="space-y-3 pb-2">
               <CardTitle className={JD.cardTitle}>
                 <FileText aria-hidden /> Smlouvy a dodatky
@@ -10871,12 +11105,36 @@ export function JobDetailPageContent({
               ) : null}
             </CardContent>
           </Card>
+        </JobDetailDeepSection>
 
-          {job.templateId &&
+        <JobDetailDeepSection
+          id="measuring"
+          title="Měření"
+          summary={job.measuring?.trim() ? "Poznámky k měření" : "Bez poznámek"}
+          open={deepSectionOpen.measuring === true}
+          onOpenChange={(o) => setDeepSectionOpen((p) => ({ ...p, measuring: o }))}
+        >
+          <Card className={cn(JD.fullWidthCard, "border-0 shadow-none")}>
+            <CardContent className="pt-4 space-y-2">
+              <p className={JD.body}>{job.measuring || "Žádné poznámky k měření."}</p>
+              {job.measuringDetails ? (
+                <p className="text-sm text-gray-800">{job.measuringDetails}</p>
+              ) : null}
+            </CardContent>
+          </Card>
+        </JobDetailDeepSection>
+
+        {job.templateId &&
             template &&
             job.templateValues != null &&
-            Object.keys(job.templateValues).length > 0 && (
-              <Card className={cn(JD.card, JD.spanFull)}>
+            Object.keys(job.templateValues).length > 0 ? (
+          <JobDetailDeepSection
+            id="template-data"
+            title={`Data šablony: ${(template as JobTemplate).name}`}
+            open={deepSectionOpen["template-data"] === true}
+            onOpenChange={(o) => setDeepSectionOpen((p) => ({ ...p, "template-data": o }))}
+          >
+              <Card className={cn(JD.card, "border-0 shadow-none")}>
                 <CardHeader className={JD.cardHeaderCompact}>
                   <CardTitle className={JD.cardTitle}>
                     <FileStack aria-hidden /> Data šablony:{" "}
@@ -10925,62 +11183,65 @@ export function JobDetailPageContent({
                   </div>
                 </CardContent>
               </Card>
-            )}
+          </JobDetailDeepSection>
+            ) : null}
 
-      </div>
+        {user && companyId && jobFirestoreId ? (
+          <JobDetailDeepSection
+            id="media"
+            title="Fotodokumentace a složky"
+            summary={`${jobFolderCount} složek · ${(photos ?? []).filter(isUsablePhotoRow).length} fotek`}
+            open={deepSectionOpen.media === true}
+            onOpenChange={(o) => setDeepSectionOpen((p) => ({ ...p, media: o }))}
+          >
+            <div id="job-media-section">
+              <JobMediaSection
+                companyId={companyId}
+                jobId={jobFirestoreId!}
+                jobDisplayName={job?.name ?? null}
+                jobRecord={job ? (job as Record<string, unknown>) : null}
+                folderCustomerNotificationCandidates={folderCustomerNotificationCandidates}
+                user={user}
+                canManageFolders={canManageFolders}
+                photos={(photos ?? []).filter(isUsablePhotoRow) as PhotoDoc[]}
+                uploadLegacyPhoto={async (file, opts) => {
+                  await handlePhotoUpload(file, opts);
+                }}
+                legacyUploading={isUploading}
+                layout="jobDetailWide"
+                onAnnotatePhoto={openPhotoAnnotationEditor}
+                mediaActivityFocus={mediaActivityFocus}
+                onMediaActivityFocusConsumed={consumeMediaActivityDeepLink}
+              />
+            </div>
+          </JobDetailDeepSection>
+        ) : null}
 
-      {user && companyId && jobFirestoreId ? (
-        <section
-          id="job-media-section"
-          className={cn(JD.sectionBand, "mt-2")}
-          aria-labelledby="job-media-heading"
+        <JobDetailDeepSection
+          id="realizace-panel"
+          title="Realizace a finance (detail)"
+          summary="Materiál, výroba, náklady, schůzky…"
+          open={deepSectionOpen["realizace-panel"] === true}
+          onOpenChange={(o) => setDeepSectionOpen((p) => ({ ...p, "realizace-panel": o }))}
         >
-          <div className={JD.sectionBandInner}>
-            <p className={cn(JD.areaHeading, "mb-3")}>Fotodokumentace</p>
-            <JobMediaSection
-              companyId={companyId}
-              jobId={jobFirestoreId!}
-              jobDisplayName={job?.name ?? null}
-              jobRecord={job ? (job as Record<string, unknown>) : null}
-              folderCustomerNotificationCandidates={folderCustomerNotificationCandidates}
-              user={user}
-              canManageFolders={canManageFolders}
-              photos={(photos ?? []).filter(isUsablePhotoRow) as PhotoDoc[]}
-              uploadLegacyPhoto={async (file, opts) => {
-                await handlePhotoUpload(file, opts);
-              }}
-              legacyUploading={isUploading}
-              layout="jobDetailWide"
-              onAnnotatePhoto={openPhotoAnnotationEditor}
-              mediaActivityFocus={mediaActivityFocus}
-              onMediaActivityFocusConsumed={consumeMediaActivityDeepLink}
-            />
-          </div>
-        </section>
-      ) : null}
-
-      </div>
-
-      {user && companyId && jobFirestoreId && job ? (
-        <section className={JD.sectionBand} aria-label="Sekce zakázky">
-          <div className={JD.sectionBandInner}>
-            <p className={cn(JD.areaHeading, "mb-3")}>Realizace a finance</p>
+          {user && companyId && jobFirestoreId && job ? (
             <JobDetailCollapsibleSectionsPanel
               jobId={String(jobFirestoreId)}
               userId={user.uid}
               sections={jobDetailCollapsibleSections}
+              forceOpenMap={collapsibleForceOpen}
             />
-          </div>
-        </section>
-      ) : null}
+          ) : null}
+        </JobDetailDeepSection>
 
-      <section
-        className={JD.sectionBand}
-        aria-label="Finanční přehled, komunikace a výroba"
-      >
-        <div className={JD.sectionBandInner}>
-          <p className={cn(JD.areaHeading, "mb-3")}>Komunikace</p>
-          <div className={cn(JD.dashboardGrid, "grid-cols-1")}>
+        <JobDetailDeepSection
+          id="communication-detail"
+          title="Komunikace (plný chat)"
+          summary="Interní chat, zákaznický chat, e-mail"
+          open={deepSectionOpen["communication-detail"] === true}
+          onOpenChange={(o) => setDeepSectionOpen((p) => ({ ...p, "communication-detail": o }))}
+        >
+          <div className="space-y-3">
           {companyId && jobFirestoreId && user && firestore ? (
             <>
               <JobCommentsThread
@@ -11025,7 +11286,7 @@ export function JobDetailPageContent({
                 }}
                 wide
                 messagesMaxHeightClass="max-h-[min(480px,52vh)]"
-                className={cn(JD.fullWidthCard, "border-gray-200 col-span-full")}
+                className={cn(JD.fullWidthCard, "border-gray-200")}
               />
               {jobRef && chatNotificationPresets ? (
                 <JobChatEmailNotificationsBlock
@@ -11033,7 +11294,7 @@ export function JobDetailPageContent({
                   job={job as Record<string, unknown>}
                   jobRef={jobRef}
                   presets={chatNotificationPresets}
-                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4 -mt-2 col-span-full")}
+                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4")}
                 />
               ) : null}
               <JobCustomerChatThread
@@ -11053,7 +11314,7 @@ export function JobDetailPageContent({
                       ""
                   ).trim() || "Admin"
                 }
-                className={cn(JD.fullWidthCard, "border-gray-200 col-span-full")}
+                className={cn(JD.fullWidthCard, "border-gray-200")}
               />
               {jobRef && chatNotificationPresets ? (
                 <JobChatEmailNotificationsBlock
@@ -11061,68 +11322,21 @@ export function JobDetailPageContent({
                   job={job as Record<string, unknown>}
                   jobRef={jobRef}
                   presets={chatNotificationPresets}
-                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4 -mt-2 col-span-full")}
+                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4")}
                 />
               ) : null}
             </>
           ) : null}
+          </div>
+        </JobDetailDeepSection>
 
-          {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
-            <Card className={cn(JD.fullWidthCard, "border-primary/20 bg-gradient-to-br from-primary/5 to-white col-span-full")}>
-              <CardHeader className="pb-2">
-                <CardTitle className={cn(JD.cardTitlePlain, "flex items-center gap-2")}>
-                  <Factory className="h-5 w-5 text-primary" />
-                  Výrobní dílna (zakázka ve výrobě)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm text-gray-800">
-                <p>
-                  Otevře se bezpečný přehled bez cen a faktur: stav výroby, výdej materiálu včetně metráže a
-                  zbytků, spotřeba a velké náhledy podkladů.
-                </p>
-                <Button type="button" asChild>
-                  <Link href={`/portal/vyroba/zakazky/${String(jobFirestoreId)}`}>
-                    Otevřít výrobní dílnu této zakázky
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          <Card className={cn(JD.fullWidthCard, "col-span-full")}>
-            <CardHeader className={JD.cardHeaderCompact}>
-              <CardTitle className={JD.cardTitlePlain}>Poznámky a historie</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-4 text-sm">
-                <div className="flex gap-3">
-                  <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                  <div>
-                    <p className="font-semibold text-gray-950">Zakázka vytvořena</p>
-                    <p className="text-xs text-gray-800">
-                      {job.createdAt?.toDate
-                        ? job.createdAt.toDate().toLocaleString("cs-CZ")
-                        : "-"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                  <div>
-                    <p className="font-semibold text-gray-950">Stav změněn na &quot;{job?.status ?? ""}&quot;</p>
-                    <p className="text-xs text-gray-800">
-                      {job.updatedAt?.toDate
-                        ? job.updatedAt.toDate().toLocaleString("cs-CZ")
-                        : "-"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {companyId && jobFirestoreId ? (
+        {companyId && jobFirestoreId ? (
+          <JobDetailDeepSection
+            id="invoices"
+            title="Fakturace zakázky"
+            open={deepSectionOpen.invoices === true}
+            onOpenChange={(o) => setDeepSectionOpen((p) => ({ ...p, invoices: o }))}
+          >
             <JobBillingInvoicesSection
               companyId={companyId}
               jobId={String(jobId)}
@@ -11152,22 +11366,51 @@ export function JobDetailPageContent({
                   : ""
               }
             />
-          ) : null}
-
-          </div>
-        </div>
+          </JobDetailDeepSection>
+        ) : null}
       </section>
 
-      {user && companyId && jobFirestoreId ? (
-        <section
-          className={JD.sectionBand}
-          aria-labelledby="job-measurement-photos-heading"
-        >
+      </div>
+
+      {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
+        <section className={JD.sectionBand}>
           <div className={JD.sectionBandInner}>
+            <Card className={cn(JD.fullWidthCard, "border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
+              <CardHeader className="pb-2">
+                <CardTitle className={cn(JD.cardTitlePlain, "flex items-center gap-2")}>
+                  <Factory className="h-5 w-5 text-primary" />
+                  Výrobní dílna (zakázka ve výrobě)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-gray-800">
+                <p>
+                  Otevře se bezpečný přehled bez cen a faktur: stav výroby, výdej materiálu včetně metráže a
+                  zbytků, spotřeba a velké náhledy podkladů.
+                </p>
+                <Button type="button" asChild>
+                  <Link href={`/portal/vyroba/zakazky/${String(jobFirestoreId)}`}>
+                    Otevřít výrobní dílnu této zakázky
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      ) : null}
+
+      {user && companyId && jobFirestoreId ? (
+        <section className={JD.sectionBand} aria-labelledby="job-measurement-photos-heading">
+          <div className={JD.sectionBandInner}>
+            <JobDetailDeepSection
+              id="measurement-photos"
+              title="Foto zaměření"
+              open={deepSectionOpen["measurement-photos"] === true}
+              onOpenChange={(o) => setDeepSectionOpen((p) => ({ ...p, "measurement-photos": o }))}
+            >
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <h2
                 id="job-measurement-photos-heading"
-                className="text-lg font-semibold tracking-tight text-slate-900"
+                className="text-sm font-semibold tracking-tight text-slate-900"
               >
                 Foto zaměření
               </h2>
@@ -11385,6 +11628,7 @@ export function JobDetailPageContent({
                 })}
               </div>
             )}
+            </JobDetailDeepSection>
           </div>
         </section>
       ) : null}
@@ -11459,6 +11703,17 @@ export function JobDetailPageContent({
           aria-labelledby="job-work-budget-heading"
         >
           <div className={JD.sectionBandInner}>
+            <JobDetailDeepSection
+              id="work-budget"
+              title="Položkový rozpočet"
+              summary={
+                workBudgetSummary.items.length > 0
+                  ? `${workBudgetSummary.items.length} položek`
+                  : "Rozpočet prázdný"
+              }
+              open={deepSectionOpen["work-budget"] === true}
+              onOpenChange={(o) => setDeepSectionOpen((p) => ({ ...p, "work-budget": o }))}
+            >
             <JobWorkBudgetSection
               companyId={companyId}
               jobId={jobFirestoreId!}
@@ -11482,6 +11737,7 @@ export function JobDetailPageContent({
               }
               layout="jobDetailWide"
             />
+            </JobDetailDeepSection>
           </div>
         </section>
       ) : null}
