@@ -36,6 +36,9 @@ import {
   resolveListingEntityTypes,
   shouldSkipSemanticSearch,
 } from "@/lib/search/entity-listing";
+import { parseKnowledgeQueryIntent } from "@/lib/ai/knowledge-query-intent";
+import { answerKnowledgeQuestion } from "@/lib/ai/knowledge-answer-service";
+import type { KnowledgeSearchAnswer } from "@/lib/search/types";
 
 export type RunCompanySearchParams = {
   db: Firestore;
@@ -45,6 +48,8 @@ export type RunCompanySearchParams = {
   filters?: Partial<SearchIntent>;
   limit?: number;
   debug?: boolean;
+  /** Generovat AI odpověď ze znalostní báze (typicky po Enter). */
+  knowledgeAnswer?: boolean;
 };
 
 export async function runCompanySearch(
@@ -88,6 +93,10 @@ export async function runCompanySearch(
       usedAiParser = true;
     }
   }
+
+  const knowledgeIntent = parseKnowledgeQueryIntent(q, intent);
+  intent.knowledgeQuestion = knowledgeIntent.intent === "knowledge_question";
+  intent.needsVisualContext = knowledgeIntent.needsVisualContext;
 
   const access = await buildSearchAccessContext(params.db, params.caller);
   const limit = params.limit ?? SEARCH_MAX_RESULTS;
@@ -179,6 +188,55 @@ export async function runCompanySearch(
   scored.sort((a, b) => b.score - a.score);
   const results = scored.slice(0, limit);
 
+  let knowledgeAnswer: KnowledgeSearchAnswer | null = null;
+  if (
+    params.knowledgeAnswer &&
+    intent.knowledgeQuestion &&
+    !isLikelyExactSearch(intent)
+  ) {
+    const ka = await answerKnowledgeQuestion(
+      params.db,
+      params.companyId,
+      q,
+      knowledgeIntent,
+      { debug: params.debug, generateAnswer: true }
+    );
+    knowledgeAnswer = {
+      found: ka.found,
+      answerText: ka.answerText,
+      sources: ka.sources.map((s) => ({
+        documentTitle: s.documentTitle,
+        fileName: s.fileName,
+        pageNumber: s.pageNumber,
+        excerpt: s.excerpt,
+        hasVisualContent: s.hasVisualContent,
+        downloadUrl: s.downloadUrl,
+        openUrl: s.openUrl,
+      })),
+      relatedSources: ka.relatedSources.map((s) => ({
+        documentTitle: s.documentTitle,
+        fileName: s.fileName,
+        pageNumber: s.pageNumber,
+        excerpt: s.excerpt,
+        hasVisualContent: s.hasVisualContent,
+        downloadUrl: s.downloadUrl,
+        openUrl: s.openUrl,
+      })),
+      needsVisualContext: ka.needsVisualContext,
+      primarySource: ka.primarySource
+        ? {
+            documentTitle: ka.primarySource.documentTitle,
+            fileName: ka.primarySource.fileName,
+            pageNumber: ka.primarySource.pageNumber,
+            excerpt: ka.primarySource.excerpt,
+            hasVisualContent: ka.primarySource.hasVisualContent,
+            downloadUrl: ka.primarySource.downloadUrl,
+            openUrl: ka.primarySource.openUrl,
+          }
+        : null,
+    };
+  }
+
   const meta: SearchDebugMeta = {
     companyId: params.companyId,
     indexTotal: indexStats.total,
@@ -212,6 +270,8 @@ export async function runCompanySearch(
       dateTo: intent.dateTo,
       semanticQuery: intent.semanticQuery,
       entityListing: intent.entityListing,
+      knowledgeQuestion: intent.knowledgeQuestion,
+      needsVisualContext: intent.needsVisualContext,
     },
     results,
     grouped: groupSearchResults(results),
@@ -219,6 +279,8 @@ export async function runCompanySearch(
     usedSemantic,
     usedAiParser,
     total: results.length,
+    knowledgeAnswer,
+    isKnowledgeQuestion: intent.knowledgeQuestion === true,
     meta: params.debug ? meta : undefined,
   };
 }

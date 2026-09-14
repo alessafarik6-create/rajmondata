@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import { JobDetailCollapsibleSection } from "@/components/jobs/job-detail-collapsible-section";
 import {
   JOB_DETAIL_COLLAPSIBLE_SECTION_LABELS,
@@ -26,8 +27,9 @@ export function JobDetailCollapsibleSectionsPanel(props: {
   jobId: string;
   userId?: string | null;
   sections: JobDetailCollapsibleSectionDef[];
+  className?: string;
 }) {
-  const { jobId, userId, sections } = props;
+  const { jobId, userId, sections, className } = props;
   const safeSections = useMemo(
     () => (Array.isArray(sections) ? sections : []).filter((s) => s && s.id),
     [sections]
@@ -77,7 +79,7 @@ export function JobDetailCollapsibleSectionsPanel(props: {
   if (ordered.length === 0) return null;
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-3 sm:gap-3.5">
+    <div className={cn("grid w-full min-w-0 grid-cols-1 gap-3 min-[900px]:grid-cols-2 min-[1400px]:grid-cols-3 md:gap-4", props.className)}>
       {ordered.map((section, index) => {
         const title = section.title ?? JOB_DETAIL_COLLAPSIBLE_SECTION_LABELS[section.id];
         const open = openMap[section.id] === true;
@@ -97,6 +99,7 @@ export function JobDetailCollapsibleSectionsPanel(props: {
             }
             canMoveUp={index > 0}
             canMoveDown={index < ordered.length - 1}
+            className={open ? "col-span-1 min-[900px]:col-span-2 min-[1400px]:col-span-3" : undefined}
           >
             {section.children}
           </JobDetailCollapsibleSection>

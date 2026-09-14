@@ -100,6 +100,7 @@ export function JobCommentsThread(props: {
   /** Plná šířka detailu zakázky — bez úzkého scroll panelu */
   wide?: boolean;
   className?: string;
+  messagesMaxHeightClass?: string;
   /** zavolat po odeslání (např. notifikace) */
   onAfterSend?: (comment: {
     id: string;
@@ -289,9 +290,11 @@ export function JobCommentsThread(props: {
       ? "h-[56vh] max-h-[56vh]"
       : "h-[62vh] max-h-[62vh]";
 
-  const messagesScrollClassName = props.wide
-    ? "space-y-3 min-h-[200px] max-h-[min(70vh,720px)] overflow-y-auto pr-1"
-    : "flex-1 space-y-2 overflow-y-auto pr-1";
+  const messagesScrollClassName = props.messagesMaxHeightClass
+    ? cn("space-y-3 min-h-[160px] overflow-y-auto pr-1", props.messagesMaxHeightClass)
+    : props.wide
+      ? "space-y-3 min-h-[200px] max-h-[min(70vh,720px)] overflow-y-auto pr-1"
+      : "flex-1 space-y-2 overflow-y-auto pr-1";
 
   return (
     <Card className={cn("border border-border bg-background text-foreground shadow-sm", props.className)}>

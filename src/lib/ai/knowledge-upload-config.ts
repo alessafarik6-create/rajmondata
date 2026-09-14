@@ -8,7 +8,7 @@ export const AI_KNOWLEDGE_STATUS_LABELS: Record<string, string> = {
   uploading: "Nahrává se",
   pending: "Nahrává se",
   processing: "Zpracovává se",
-  ready: "Připraveno",
+  ready: "Připraveno pro AI",
   failed: "Chyba",
 };
 

@@ -92,6 +92,7 @@ export type AiKnowledgeDocumentDoc = {
   active: boolean;
   status: AiKnowledgeDocumentStatus;
   chunkCount: number;
+  pageCount?: number | null;
   errorMessage?: string | null;
   uploadedByUid?: string | null;
   createdAt?: unknown;
@@ -104,9 +105,27 @@ export type AiKnowledgeChunkDoc = {
   documentId: string;
   chunkIndex: number;
   text: string;
+  pageNumber?: number | null;
+  fileName?: string | null;
+  documentTitle?: string | null;
+  category?: AiKnowledgeCategory | null;
+  hasVisualContent?: boolean;
   embedding?: number[] | null;
   embeddingModel?: string | null;
   tokenEstimate?: number | null;
+  createdAt?: unknown;
+};
+
+export const AI_KNOWLEDGE_PAGE_PREVIEWS_COLLECTION = "page_previews";
+
+export type AiKnowledgePagePreviewDoc = {
+  companyId: string;
+  documentId: string;
+  pageNumber: number;
+  storagePath?: string | null;
+  previewUrl?: string | null;
+  width?: number | null;
+  height?: number | null;
   createdAt?: unknown;
 };
 

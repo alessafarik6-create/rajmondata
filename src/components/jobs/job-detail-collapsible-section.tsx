@@ -21,6 +21,7 @@ export function JobDetailCollapsibleSection(props: {
   canMoveUp: boolean;
   canMoveDown: boolean;
   children: React.ReactNode;
+  className?: string;
 }) {
   const {
     id,
@@ -33,13 +34,14 @@ export function JobDetailCollapsibleSection(props: {
     canMoveUp,
     canMoveDown,
     children,
+    className,
   } = props;
 
   return (
-    <Collapsible open={open} onOpenChange={onOpenChange} className="min-w-0">
+    <Collapsible open={open} onOpenChange={onOpenChange} className={cn("min-w-0", className)}>
       <div
         className={cn(
-          "overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm",
+          "overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm",
           open && "ring-1 ring-gray-200/80"
         )}
       >

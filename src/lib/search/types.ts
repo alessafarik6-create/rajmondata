@@ -22,7 +22,27 @@ export type SearchMatchReason =
   | "exact_id"
   | "full_text"
   | "semantic"
-  | "filter";
+  | "filter"
+  | "knowledge_qa";
+
+export type KnowledgeSearchSource = {
+  documentTitle: string;
+  fileName: string;
+  pageNumber: number | null;
+  excerpt: string;
+  hasVisualContent: boolean;
+  downloadUrl: string | null;
+  openUrl: string;
+};
+
+export type KnowledgeSearchAnswer = {
+  found: boolean;
+  answerText: string;
+  sources: KnowledgeSearchSource[];
+  relatedSources: KnowledgeSearchSource[];
+  needsVisualContext: boolean;
+  primarySource: KnowledgeSearchSource | null;
+};
 
 export type SearchIndexDoc = {
   companyId: string;
@@ -85,6 +105,9 @@ export type SearchIntent = {
   useAiParser: boolean;
   /** Dotaz typu „ukaž faktury“ — vrátit seznam entit bez textové shody. */
   entityListing?: boolean;
+  /** Dotaz do znalostní báze (manuály, návody). */
+  knowledgeQuestion?: boolean;
+  needsVisualContext?: boolean;
 };
 
 export type SearchDebugMeta = {
@@ -128,6 +151,8 @@ export type SearchResponse = {
   usedAiParser: boolean;
   total: number;
   meta?: SearchDebugMeta;
+  knowledgeAnswer?: KnowledgeSearchAnswer | null;
+  isKnowledgeQuestion?: boolean;
 };
 
 export function searchIndexDocId(entityType: SearchEntityType, entityId: string): string {

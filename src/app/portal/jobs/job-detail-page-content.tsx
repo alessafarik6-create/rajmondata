@@ -1912,11 +1912,46 @@ export function JobDetailPageContent({
           ? `Rozpočet ${jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč`
           : "Rozpočet neuveden",
         children: (
-          <Card className={cn(JD.fullWidthCard)}>
-            <CardHeader>
-              <CardTitle className={JD.cardTitlePlain}>Finanční údaje</CardTitle>
+          <Card className={cn(JD.fullWidthCard, "border-orange-200/60")}>
+            <CardHeader className={JD.cardHeaderCompact}>
+              <CardTitle className={JD.cardTitlePlain}>Finance zakázky</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 pt-0">
+              {jobBudgetBreakdown ? (
+                <div className={JD.financeSection}>
+                  <p className={cn(JD.label, "normal-case mb-3 text-orange-900/80")}>
+                    Přehled rozpočtu
+                  </p>
+                  <div className={JD.financeKpiGrid}>
+                    <div className={JD.financeKpiCard}>
+                      <p className="text-[11px] uppercase tracking-wide text-gray-600">Rozpočet bez DPH</p>
+                      <p className="mt-1 font-semibold tabular-nums">
+                        {jobBudgetBreakdown.budgetNet.toLocaleString("cs-CZ")} Kč
+                      </p>
+                    </div>
+                    <div className={JD.financeKpiCard}>
+                      <p className="text-[11px] uppercase tracking-wide text-gray-600">Rozpočet s DPH</p>
+                      <p className="mt-1 font-semibold tabular-nums">
+                        {jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč
+                      </p>
+                    </div>
+                    <div className={JD.financeKpiCard}>
+                      <p className="text-[11px] uppercase tracking-wide text-gray-600">Náklady s DPH</p>
+                      <p className="mt-1 font-semibold tabular-nums">
+                        {jobExpenseTotals.gross.toLocaleString("cs-CZ")} Kč
+                      </p>
+                    </div>
+                    <div className={JD.financeKpiCard}>
+                      <p className="text-[11px] uppercase tracking-wide text-gray-600">Zbývá s DPH</p>
+                      <p className="mt-1 font-semibold tabular-nums">
+                        {remainingBudgetAfterExpensesGrossKc != null
+                          ? `${remainingBudgetAfterExpensesGrossKc.toLocaleString("cs-CZ")} Kč`
+                          : "—"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               {jobBudgetBreakdown ? (
                 <div className={JD.financeHighlight}>
                   <p className={cn(JD.label, "normal-case")}>Přehled (s DPH)</p>
@@ -10182,34 +10217,36 @@ export function JobDetailPageContent({
   return (
     <div className={JD.page}>
       <div className={JD.contentMax}>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-        <div className="flex items-start gap-3 min-w-0">
-        <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" onClick={() => router.push("/portal/jobs")}>
-          <ChevronLeft className="w-6 h-6" />
+      <div className={JD.headerBar}>
+        <div className="flex items-start gap-2 min-w-0 sm:gap-3">
+        <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 sm:h-10 sm:w-10" onClick={() => router.push("/portal/jobs")}>
+          <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
         </Button>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap sm:gap-3">
             <h1 className={JD.headerTitle}>{job.name}</h1>
             {(job as { jobTag?: string }).jobTag?.trim() ? (
-              <Badge variant="secondary" className="font-normal max-w-[12rem] truncate">
+              <Badge variant="secondary" className="font-normal max-w-[12rem] truncate text-xs">
                 {jobTagLabel((job as { jobTag?: string }).jobTag)}
               </Badge>
             ) : null}
-            <Badge variant="outline" className="border-primary/30 text-primary">
+            <Badge variant="outline" className="border-primary/30 text-primary text-xs">
               ID: {jobId?.toString().substring(0, 8)}
             </Badge>
+            <Badge variant="secondary" className="text-xs font-normal capitalize">
+              {job?.status ?? "—"}
+            </Badge>
           </div>
-          <p className={JD.headerSubtitle}>Detailní přehled projektu</p>
           {(job as any)?.sourceMeasurementId ? (
-            <p className="text-sm text-slate-800 mt-1">
+            <p className="text-xs text-slate-800 mt-1">
               <Link
                 href="/portal/jobs/measurements"
                 className="text-primary font-medium hover:underline"
               >
                 Přehled zaměření
               </Link>
-              <span className="text-slate-800"> · zakázka vznikla ze zaměření</span>
+              <span className="text-slate-800"> · ze zaměření</span>
             </p>
           ) : null}
         </div>
@@ -10257,77 +10294,26 @@ export function JobDetailPageContent({
         </div>
       </div>
 
+      <p className={JD.areaHeading}>Přehled</p>
+      <div className={JD.dashboardGrid}>
       {user && companyId && jobFirestoreId ? (
+        <div className="min-w-0">
         <JobTasksSection
           companyId={companyId}
           jobId={jobFirestoreId!}
           user={user}
           canEdit={canManageFolders}
         />
+        </div>
       ) : null}
 
-      <div className={JD.stackCol}>
           <Card className={cn(JD.card)}>
-            <CardHeader>
-              <CardTitle className={JD.cardTitle}>
-                <FileText aria-hidden /> Popis zakázky
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className={JD.body}>
-                {job.description || "K této zakázce nebyl přidán žádný popis."}
-              </p>
-            </CardContent>
-          </Card>
-
-          {companyId && jobFirestoreId ? (
-            <JobCustomerProgressAdminSection
-              companyId={companyId}
-              jobId={jobFirestoreId!}
-              jobRef={jobRef}
-              job={job as Record<string, unknown>}
-              canEdit={canManageFolders}
-            />
-          ) : null}
-      </div>
-
-      {user && companyId && jobFirestoreId ? (
-        <section
-          id="job-media-section"
-          className={JD.sectionBand}
-          aria-labelledby="job-media-heading"
-        >
-          <div className={JD.sectionBandInner}>
-            <JobMediaSection
-              companyId={companyId}
-              jobId={jobFirestoreId!}
-              jobDisplayName={job?.name ?? null}
-              jobRecord={job ? (job as Record<string, unknown>) : null}
-              folderCustomerNotificationCandidates={folderCustomerNotificationCandidates}
-              user={user}
-              canManageFolders={canManageFolders}
-              photos={(photos ?? []).filter(isUsablePhotoRow) as PhotoDoc[]}
-              uploadLegacyPhoto={async (file, opts) => {
-                await handlePhotoUpload(file, opts);
-              }}
-              legacyUploading={isUploading}
-              layout="jobDetailWide"
-              onAnnotatePhoto={openPhotoAnnotationEditor}
-              mediaActivityFocus={mediaActivityFocus}
-              onMediaActivityFocusConsumed={consumeMediaActivityDeepLink}
-            />
-          </div>
-        </section>
-      ) : null}
-
-      <div className={JD.stackCol}>
-          <Card className={cn(JD.card)}>
-            <CardHeader>
+            <CardHeader className={JD.cardHeaderCompact}>
               <CardTitle className={JD.cardTitle}>
                 <MapPin aria-hidden /> Zákazník a adresa
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 pt-0">
               {jobCustomerAddressBlock.displayName ? (
                 <div className="space-y-1">
                   <span className={JD.label}>
@@ -10413,12 +10399,113 @@ export function JobDetailPageContent({
           </Card>
 
           <Card className={cn(JD.card)}>
-            <CardHeader>
+            <CardHeader className={JD.cardHeaderCompact}>
+              <CardTitle className={JD.cardTitle}>
+                <Clock aria-hidden /> Termíny a pokrok
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-0">
+              <div className="space-y-2">
+                <div className="mb-1 flex justify-between text-sm text-gray-900">
+                  <span>Celkový pokrok</span>
+                  <span className="font-bold">
+                    {(job?.status ?? "") === "dokončená" || (job?.status ?? "") === "fakturována"
+                      ? "100%"
+                      : "45%"}
+                  </span>
+                </div>
+                <Progress
+                  value={
+                    (job?.status ?? "") === "dokončená" || (job?.status ?? "") === "fakturována"
+                      ? 100
+                      : 45
+                  }
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-3 border-t border-gray-200 pt-3">
+                <div className="space-y-1">
+                  <span className={JD.label}>Zahájeno</span>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
+                    <Calendar className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                    {job.startDate || "neuvedeno"}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <span className={JD.label}>Předpokládané dokončení</span>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-gray-950">
+                    <Calendar className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                    {job.endDate || "neuvedeno"}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className={cn(JD.card)}>
+            <CardHeader className={JD.cardHeaderCompact}>
+              <CardTitle className={JD.cardTitle}>
+                <Users aria-hidden /> Přiřazení pracovníci
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="space-y-3">
+                {toArraySafe<string>(job.assignedEmployeeIds).map((empId: string) => (
+                  <div
+                    key={empId}
+                    className={cn(JD.innerBox, "flex items-center justify-between")}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+                        <User className="w-4 h-4" />
+                      </div>
+                      <span className="font-medium text-sm">
+                        {empId === user?.uid ? "Já" : `Pracovník (${empId.substring(0, 5)})`}
+                      </span>
+                    </div>
+                    <Badge variant="outline">Aktivní</Badge>
+                  </div>
+                ))}
+                {!toArraySafe(job.assignedEmployeeIds).length && (
+                  <p className={JD.bodyMuted}>Žádní pracovníci nejsou přiřazeni.</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className={cn(JD.card)}>
+            <CardHeader className={JD.cardHeaderCompact}>
+              <CardTitle className={JD.cardTitle}>
+                <FileText aria-hidden /> Popis zakázky
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className={JD.body}>
+                {job.description || "K této zakázce nebyl přidán žádný popis."}
+              </p>
+            </CardContent>
+          </Card>
+
+          {companyId && jobFirestoreId ? (
+            <div className={JD.spanFull}>
+            <JobCustomerProgressAdminSection
+              companyId={companyId}
+              jobId={jobFirestoreId!}
+              jobRef={jobRef}
+              job={job as Record<string, unknown>}
+              canEdit={canManageFolders}
+            />
+            </div>
+          ) : null}
+
+          <p className={cn(JD.areaHeading, JD.spanFull)}>Dokumentace</p>
+
+          <Card className={cn(JD.card)}>
+            <CardHeader className={JD.cardHeaderCompact}>
               <CardTitle className={JD.cardTitle}>
                 <FileText aria-hidden /> Měření
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0">
               <p className={JD.body}>
                 {job.measuring || "Žádné poznámky k měření."}
               </p>
@@ -10428,8 +10515,8 @@ export function JobDetailPageContent({
             </CardContent>
           </Card>
 
-          <Card className={cn(JD.card)}>
-            <CardHeader className="space-y-3">
+          <Card className={cn(JD.card, JD.spanFull)}>
+            <CardHeader className="space-y-3 pb-2">
               <CardTitle className={JD.cardTitle}>
                 <FileText aria-hidden /> Smlouvy a dodatky
               </CardTitle>
@@ -10789,8 +10876,8 @@ export function JobDetailPageContent({
             template &&
             job.templateValues != null &&
             Object.keys(job.templateValues).length > 0 && (
-              <Card className={cn(JD.card)}>
-                <CardHeader>
+              <Card className={cn(JD.card, JD.spanFull)}>
+                <CardHeader className={JD.cardHeaderCompact}>
                   <CardTitle className={JD.cardTitle}>
                     <FileStack aria-hidden /> Data šablony:{" "}
                     {(template as JobTemplate).name}
@@ -10840,94 +10927,44 @@ export function JobDetailPageContent({
               </Card>
             )}
 
-          <Card className={cn(JD.card)}>
-            <CardHeader>
-              <CardTitle className={JD.cardTitle}>
-                <Clock aria-hidden /> Časová osa a pokrok
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <div className="mb-2 flex justify-between text-sm text-gray-900">
-                  <span>Celkový pokrok</span>
-                  <span className="font-bold">
-                    {(job?.status ?? "") === "dokončená" || (job?.status ?? "") === "fakturována"
-                      ? "100%"
-                      : "45%"}
-                  </span>
-                </div>
-                <Progress
-                  value={
-                    (job?.status ?? "") === "dokončená" || (job?.status ?? "") === "fakturována"
-                      ? 100
-                      : 45
-                  }
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 border-t border-gray-200 pt-4 sm:grid-cols-2 sm:gap-8">
-                <div className="space-y-1">
-                  <span className={JD.label}>
-                    Zahájeno
-                  </span>
-                  <div className="flex items-center gap-2 font-semibold text-gray-950">
-                    <Calendar className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                    {job.startDate || "neuvedeno"}
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <span className={JD.label}>
-                    Předpokládané dokončení
-                  </span>
-                  <div className="flex items-center gap-2 font-semibold text-gray-950">
-                    <Calendar className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                    {job.endDate || "neuvedeno"}
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className={cn(JD.card)}>
-            <CardHeader>
-              <CardTitle className={JD.cardTitle}>
-                <Users aria-hidden /> Přiřazení pracovníci
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {toArraySafe<string>(job.assignedEmployeeIds).map((empId: string) => (
-                  <div
-                    key={empId}
-                    className={cn(JD.innerBox, "flex items-center justify-between")}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
-                        <User className="w-4 h-4" />
-                      </div>
-                      <span className="font-medium">
-                        {empId === user?.uid ? "Já" : `Pracovník (${empId.substring(0, 5)})`}
-                      </span>
-                    </div>
-                    <Badge variant="outline">Aktivní</Badge>
-                  </div>
-                ))}
-
-                {!toArraySafe(job.assignedEmployeeIds).length && (
-                  <p className={JD.bodyMuted}>
-                    Žádní pracovníci nejsou přiřazeni.
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
       </div>
+
+      {user && companyId && jobFirestoreId ? (
+        <section
+          id="job-media-section"
+          className={cn(JD.sectionBand, "mt-2")}
+          aria-labelledby="job-media-heading"
+        >
+          <div className={JD.sectionBandInner}>
+            <p className={cn(JD.areaHeading, "mb-3")}>Fotodokumentace</p>
+            <JobMediaSection
+              companyId={companyId}
+              jobId={jobFirestoreId!}
+              jobDisplayName={job?.name ?? null}
+              jobRecord={job ? (job as Record<string, unknown>) : null}
+              folderCustomerNotificationCandidates={folderCustomerNotificationCandidates}
+              user={user}
+              canManageFolders={canManageFolders}
+              photos={(photos ?? []).filter(isUsablePhotoRow) as PhotoDoc[]}
+              uploadLegacyPhoto={async (file, opts) => {
+                await handlePhotoUpload(file, opts);
+              }}
+              legacyUploading={isUploading}
+              layout="jobDetailWide"
+              onAnnotatePhoto={openPhotoAnnotationEditor}
+              mediaActivityFocus={mediaActivityFocus}
+              onMediaActivityFocusConsumed={consumeMediaActivityDeepLink}
+            />
+          </div>
+        </section>
+      ) : null}
+
       </div>
 
       {user && companyId && jobFirestoreId && job ? (
         <section className={JD.sectionBand} aria-label="Sekce zakázky">
           <div className={JD.sectionBandInner}>
+            <p className={cn(JD.areaHeading, "mb-3")}>Realizace a finance</p>
             <JobDetailCollapsibleSectionsPanel
               jobId={String(jobFirestoreId)}
               userId={user.uid}
@@ -10942,7 +10979,8 @@ export function JobDetailPageContent({
         aria-label="Finanční přehled, komunikace a výroba"
       >
         <div className={JD.sectionBandInner}>
-          <div className={JD.stackCol}>
+          <p className={cn(JD.areaHeading, "mb-3")}>Komunikace</p>
+          <div className={cn(JD.dashboardGrid, "grid-cols-1")}>
           {companyId && jobFirestoreId && user && firestore ? (
             <>
               <JobCommentsThread
@@ -10986,7 +11024,8 @@ export function JobDetailPageContent({
                   }
                 }}
                 wide
-                className={cn(JD.fullWidthCard, "border-gray-200")}
+                messagesMaxHeightClass="max-h-[min(480px,52vh)]"
+                className={cn(JD.fullWidthCard, "border-gray-200 col-span-full")}
               />
               {jobRef && chatNotificationPresets ? (
                 <JobChatEmailNotificationsBlock
@@ -10994,7 +11033,7 @@ export function JobDetailPageContent({
                   job={job as Record<string, unknown>}
                   jobRef={jobRef}
                   presets={chatNotificationPresets}
-                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4 -mt-2")}
+                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4 -mt-2 col-span-full")}
                 />
               ) : null}
               <JobCustomerChatThread
@@ -11014,7 +11053,7 @@ export function JobDetailPageContent({
                       ""
                   ).trim() || "Admin"
                 }
-                className={cn(JD.fullWidthCard, "border-gray-200")}
+                className={cn(JD.fullWidthCard, "border-gray-200 col-span-full")}
               />
               {jobRef && chatNotificationPresets ? (
                 <JobChatEmailNotificationsBlock
@@ -11022,14 +11061,14 @@ export function JobDetailPageContent({
                   job={job as Record<string, unknown>}
                   jobRef={jobRef}
                   presets={chatNotificationPresets}
-                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4 -mt-2")}
+                  className={cn(JD.fullWidthCard, "border-gray-200 px-4 pb-4 -mt-2 col-span-full")}
                 />
               ) : null}
             </>
           ) : null}
 
           {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
-            <Card className={cn(JD.fullWidthCard, "border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
+            <Card className={cn(JD.fullWidthCard, "border-primary/20 bg-gradient-to-br from-primary/5 to-white col-span-full")}>
               <CardHeader className="pb-2">
                 <CardTitle className={cn(JD.cardTitlePlain, "flex items-center gap-2")}>
                   <Factory className="h-5 w-5 text-primary" />
@@ -11050,8 +11089,8 @@ export function JobDetailPageContent({
             </Card>
           ) : null}
 
-          <Card className={cn(JD.fullWidthCard)}>
-            <CardHeader>
+          <Card className={cn(JD.fullWidthCard, "col-span-full")}>
+            <CardHeader className={JD.cardHeaderCompact}>
               <CardTitle className={JD.cardTitlePlain}>Poznámky a historie</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">

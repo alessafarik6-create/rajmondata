@@ -68,6 +68,8 @@ import {
   formatKnowledgeFileSize,
 } from "@/lib/ai/knowledge-upload-config";
 import { AiCenterExamplesTab } from "@/components/ai-center/ai-center-examples-tab";
+import { KnowledgeSearchAnswerCard } from "@/components/search/knowledge-search-answer-card";
+import type { KnowledgeSearchAnswer } from "@/lib/search/types";
 
 const DEFAULT_AI_MODEL_LABEL = "gpt-4.1-mini";
 
@@ -692,6 +694,7 @@ function KnowledgeTab({
 
   const [uploading, setUploading] = useState(false);
   const [reprocessingId, setReprocessingId] = useState<string | null>(null);
+  const [reindexingAll, setReindexingAll] = useState(false);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<AiKnowledgeCategory>("general");
   const [file, setFile] = useState<File | null>(null);
@@ -785,6 +788,43 @@ function KnowledgeTab({
     }
   };
 
+  const reindexAll = async () => {
+    if (!user) return;
+    setReindexingAll(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/ai/knowledge/reindex-all", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId }),
+      });
+      const parsed = await parseFetchJsonResponse<{
+        ok?: boolean;
+        processed?: number;
+        failed?: number;
+        errors?: string[];
+        error?: string;
+      }>(res);
+      if (!parsed.ok) throw new Error(parsed.error);
+      if (!parsed.data?.ok) throw new Error("Přeindexování selhalo.");
+      toast({
+        title: `Přeindexováno ${parsed.data.processed ?? 0} dokumentů`,
+        description:
+          (parsed.data.failed ?? 0) > 0
+            ? `${parsed.data.failed} selhalo`
+            : undefined,
+      });
+    } catch (e) {
+      toast({
+        title: "Přeindexování selhalo",
+        description: e instanceof Error ? e.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setReindexingAll(false);
+    }
+  };
+
   const reprocess = async (docItem: AiKnowledgeDocumentDoc) => {
     if (!user || !docItem.id) return;
     setReprocessingId(docItem.id);
@@ -823,9 +863,15 @@ function KnowledgeTab({
     <Card>
       <CardHeader>
         <CardTitle>Znalostní báze</CardTitle>
-        <CardDescription>PDF, TXT — text se rozdělí, vytvoří embeddings a použije při generování nabídek.</CardDescription>
+        <CardDescription>PDF, TXT — text po stránkách, embeddings a odpovědi v globálním vyhledávání.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" disabled={reindexingAll} onClick={() => void reindexAll()}>
+            {reindexingAll ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+            Přeindexovat znalostní bázi
+          </Button>
+        </div>
         <div className="grid gap-3 md:grid-cols-2 border rounded-lg p-4">
           <div><Label>Název</Label><Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ceník pergol 2026" /></div>
           <div>
@@ -871,7 +917,8 @@ function KnowledgeTab({
                 <p className="font-medium">{d.title}</p>
                 <p className="text-xs text-muted-foreground">
                   {AI_KNOWLEDGE_CATEGORY_LABELS[d.category]} ·{" "}
-                  {AI_KNOWLEDGE_STATUS_LABELS[d.status] ?? d.status} · {d.chunkCount ?? 0} segmentů ·{" "}
+                  {AI_KNOWLEDGE_STATUS_LABELS[d.status] ?? d.status} · {d.chunkCount ?? 0} segmentů
+                  {d.pageCount != null ? ` · ${d.pageCount} str.` : ""} ·{" "}
                   {formatKnowledgeFileSize(d.fileSizeBytes)}
                 </p>
                 {d.status === "failed" && d.errorMessage ? (
@@ -879,7 +926,7 @@ function KnowledgeTab({
                 ) : null}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {d.status === "failed" ? (
+                {d.status === "failed" || d.status === "ready" ? (
                   <Button
                     variant="outline"
                     size="sm"
@@ -888,8 +935,10 @@ function KnowledgeTab({
                   >
                     {reprocessingId === d.id ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
+                    ) : d.status === "failed" ? (
                       "Zkusit znovu"
+                    ) : (
+                      "Přeindexovat"
                     )}
                   </Button>
                 ) : null}
@@ -1002,18 +1051,44 @@ function TestAiTab({
   user: ReturnType<typeof useUser>["user"];
   toast: ReturnType<typeof useToast>["toast"];
 }) {
+  const [testMode, setTestMode] = useState<"quote" | "knowledge">("quote");
   const [inquiryType, setInquiryType] = useState("Pergoly svépomocí");
   const [inquiryText, setInquiryText] = useState("Pergola 5 x 3 m, polykarbonát 16 mm");
+  const [knowledgeQuestion, setKnowledgeQuestion] = useState("Jak je udělaný spoj pergoly BKS?");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AiValidatedQuoteResult | null>(null);
   const [contextSummary, setContextSummary] = useState<Record<string, unknown> | null>(null);
+  const [knowledgeResult, setKnowledgeResult] = useState<KnowledgeSearchAnswer | null>(null);
+  const [knowledgeDebug, setKnowledgeDebug] = useState<Record<string, unknown> | null>(null);
 
   const runTest = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     setResult(null);
+    setKnowledgeResult(null);
+    setKnowledgeDebug(null);
+    setContextSummary(null);
     try {
       const token = await user.getIdToken();
+      if (testMode === "knowledge") {
+        const res = await fetch("/api/company/ai/knowledge/ask", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId, question: knowledgeQuestion, debug: true }),
+        });
+        const parsed = await parseFetchJsonResponse<{
+          ok?: boolean;
+          error?: string;
+          result?: KnowledgeSearchAnswer;
+          debug?: Record<string, unknown>;
+        }>(res);
+        if (!parsed.ok) throw new Error(parsed.error);
+        if (!parsed.data?.ok) throw new Error(parsed.data?.error ?? "Test selhal");
+        setKnowledgeResult(parsed.data.result ?? null);
+        setKnowledgeDebug(parsed.data.debug ?? null);
+        return;
+      }
+
       const res = await fetch("/api/company/ai/test-quote", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -1040,21 +1115,63 @@ function TestAiTab({
     } finally {
       setLoading(false);
     }
-  }, [user, companyId, inquiryType, inquiryText, toast]);
+  }, [user, companyId, inquiryType, inquiryText, knowledgeQuestion, testMode, toast]);
 
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader><CardTitle>Test AI</CardTitle><CardDescription>Simulace poptávky bez uložení do CRM.</CardDescription></CardHeader>
+        <CardHeader>
+          <CardTitle>Test AI</CardTitle>
+          <CardDescription>Simulace poptávky nebo dotazu do znalostní báze.</CardDescription>
+        </CardHeader>
         <CardContent className="space-y-3">
-          <div><Label>Typ poptávky</Label><Input value={inquiryType} onChange={(e) => setInquiryType(e.target.value)} /></div>
-          <div><Label>Text poptávky</Label><Textarea rows={3} value={inquiryText} onChange={(e) => setInquiryText(e.target.value)} /></div>
+          <div>
+            <Label>Režim</Label>
+            <Select value={testMode} onValueChange={(v) => setTestMode(v as "quote" | "knowledge")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="quote">Test nabídky (poptávka)</SelectItem>
+                <SelectItem value="knowledge">Dotaz do znalostní báze</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {testMode === "quote" ? (
+            <>
+              <div><Label>Typ poptávky</Label><Input value={inquiryType} onChange={(e) => setInquiryType(e.target.value)} /></div>
+              <div><Label>Text poptávky</Label><Textarea rows={3} value={inquiryText} onChange={(e) => setInquiryText(e.target.value)} /></div>
+            </>
+          ) : (
+            <div><Label>Otázka</Label><Textarea rows={3} value={knowledgeQuestion} onChange={(e) => setKnowledgeQuestion(e.target.value)} placeholder="Jak je udělaný spoj pergoly BKS?" /></div>
+          )}
           <Button onClick={() => void runTest()} disabled={loading}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Sparkles className="h-4 w-4 mr-1" />}
-            Vygenerovat test
+            {testMode === "knowledge" ? "Zeptat se znalostní báze" : "Vygenerovat test"}
           </Button>
         </CardContent>
       </Card>
+
+      {knowledgeResult && (
+        <>
+          <KnowledgeSearchAnswerCard answer={knowledgeResult} />
+          {knowledgeDebug && (
+            <Card>
+              <CardHeader><CardTitle>Debug retrievalu</CardTitle></CardHeader>
+              <CardContent className="text-xs font-mono space-y-2">
+                <p>QUERY: {String(knowledgeDebug.query ?? knowledgeQuestion)}</p>
+                <p className="font-sans font-medium">TOP CHUNKS</p>
+                <ol className="list-decimal pl-5 space-y-1">
+                  {((knowledgeDebug.topChunks as Array<{ documentTitle?: string; pageNumber?: number | null; score?: number; excerpt?: string }>) ?? []).map((c, i) => (
+                    <li key={i}>
+                      document: {c.documentTitle ?? "—"} · page: {c.pageNumber ?? "—"} · score: {c.score ?? "—"}
+                      <p className="text-muted-foreground truncate">{c.excerpt}</p>
+                    </li>
+                  ))}
+                </ol>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
 
       {result && (
         <>

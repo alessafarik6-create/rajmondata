@@ -17,6 +17,7 @@ type SearchBody = {
   query?: string;
   filters?: Partial<SearchIntent>;
   limit?: number;
+  knowledgeAnswer?: boolean;
 };
 
 export async function POST(request: NextRequest) {
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
       filters,
       limit: typeof body.limit === "number" ? Math.min(60, body.limit) : undefined,
       debug: process.env.NODE_ENV !== "production" || process.env.SEARCH_DEBUG === "1",
+      knowledgeAnswer: body.knowledgeAnswer === true,
     });
 
     return NextResponse.json({ ok: true, ...result });

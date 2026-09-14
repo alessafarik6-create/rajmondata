@@ -10,6 +10,7 @@ export async function fetchCompanySearch(params: {
   query: string;
   filters?: CompanySearchFilters;
   limit?: number;
+  knowledgeAnswer?: boolean;
 }): Promise<SearchResponse> {
   const res = await fetch("/api/company/search", {
     method: "POST",
@@ -22,6 +23,7 @@ export async function fetchCompanySearch(params: {
       query: params.query,
       filters: params.filters,
       limit: params.limit,
+      knowledgeAnswer: params.knowledgeAnswer === true,
     }),
   });
 
