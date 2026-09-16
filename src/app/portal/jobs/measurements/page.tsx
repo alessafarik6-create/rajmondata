@@ -73,8 +73,8 @@ import {
   parseEstimatedPrice,
   canConvertMeasurement,
   canCreateAnotherJobFromMeasurement,
-  userCanManageMeasurements,
 } from "@/lib/measurements";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import type { JobTemplate, JobTemplateValues } from "@/lib/job-templates";
 import { JobTemplateFormFields } from "@/components/jobs/job-template-form-fields";
@@ -131,7 +131,8 @@ function JobMeasurementsPageContent() {
   const { data: profile, isLoading: profileLoading } = useDoc<any>(userRef);
 
   const companyId = profile?.companyId as string | undefined;
-  const allowed = userCanManageMeasurements(profile);
+  const { canRead: canReadJobs, canWrite: canWriteJobs } =
+    usePortalModuleAccess("jobs");
 
   const measurementsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -186,6 +187,7 @@ function JobMeasurementsPageContent() {
   });
 
   useEffect(() => {
+    if (!canWriteJobs) return;
     if (prefillFromLeadAppliedRef.current) return;
     const cn = searchParams.get("prefillCustomerName");
     const ph = searchParams.get("prefillPhone");
@@ -207,7 +209,7 @@ function JobMeasurementsPageContent() {
     setEditingId(null);
     setDialogOpen(true);
     router.replace("/portal/jobs/measurements", { scroll: false });
-  }, [searchParams, router]);
+  }, [searchParams, router, canWriteJobs]);
 
   const measurements = useMemo(() => {
     const list = Array.isArray(rawList) ? rawList : [];
@@ -245,12 +247,14 @@ function JobMeasurementsPageContent() {
   };
 
   const openCreate = () => {
+    if (!canWriteJobs) return;
     resetForm();
     setDialogMode("create");
     setDialogOpen(true);
   };
 
   const openEdit = (row: MeasurementDoc) => {
+    if (!canWriteJobs) return;
     setDialogMode("edit");
     setEditingId(row.id);
     setForm({
@@ -318,6 +322,7 @@ function JobMeasurementsPageContent() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canWriteJobs) return;
     if (!companyId || !user) return;
     if (!validateForm()) return;
 
@@ -395,6 +400,7 @@ function JobMeasurementsPageContent() {
   };
 
   const handleSoftDelete = async () => {
+    if (!canWriteJobs) return;
     if (!deleteTarget || !companyId || !user) return;
     setDeleting(true);
     try {
@@ -425,6 +431,7 @@ function JobMeasurementsPageContent() {
   };
 
   const openConvertDialog = (row: MeasurementDoc, reconvert: boolean) => {
+    if (!canWriteJobs) return;
     setConvertTarget(row);
     setConvertReconvert(reconvert);
     setConvertTemplateValues({});
@@ -437,6 +444,7 @@ function JobMeasurementsPageContent() {
   };
 
   const handleConvert = async () => {
+    if (!canWriteJobs) return;
     if (!convertTarget || !companyId || !user) return;
     if (templatesList.length > 0 && !convertTemplateId) {
       toast({
@@ -575,12 +583,12 @@ function JobMeasurementsPageContent() {
     );
   }
 
-  if (!allowed) {
+  if (!canReadJobs) {
     return (
       <Alert variant="destructive">
         <AlertTitle>Přístup odepřen</AlertTitle>
         <AlertDescription>
-          Zaměření mohou spravovat vlastník, administrátor, manažer nebo účetní.
+          K přehledu zaměření potřebujete alespoň oprávnění Náhled u modulu Zakázky.
         </AlertDescription>
         <Button asChild className="mt-4" variant="outline">
           <Link href="/portal/jobs">Zpět na zakázky</Link>
@@ -607,17 +615,21 @@ function JobMeasurementsPageContent() {
           </p>
         </div>
         <div className="flex flex-col items-stretch sm:items-end gap-2">
-          <Button
-            type="button"
-            onClick={openCreate}
-            className="gap-2 min-h-[48px] shrink-0 bg-emerald-600 text-white hover:bg-emerald-700 border-0 shadow-md shadow-emerald-600/25 w-full sm:w-auto"
-          >
-            <Ruler className="h-5 w-5" />
-            Nové zaměření
-          </Button>
+          {canWriteJobs ? (
+            <Button
+              type="button"
+              onClick={openCreate}
+              className="gap-2 min-h-[48px] shrink-0 bg-emerald-600 text-white hover:bg-emerald-700 border-0 shadow-md shadow-emerald-600/25 w-full sm:w-auto"
+            >
+              <Ruler className="h-5 w-5" />
+              Nové zaměření
+            </Button>
+          ) : null}
+          {canWriteJobs ? (
           <Dialog
             open={dialogOpen}
             onOpenChange={(o) => {
+              if (!canWriteJobs) return;
               setDialogOpen(o);
               if (!o) resetForm();
             }}
@@ -750,6 +762,7 @@ function JobMeasurementsPageContent() {
             </form>
           </DialogContent>
           </Dialog>
+          ) : null}
         </div>
       </div>
 
@@ -830,49 +843,53 @@ function JobMeasurementsPageContent() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex flex-col sm:flex-row gap-1 sm:justify-end sm:items-center flex-wrap">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="gap-1"
-                          onClick={() => openEdit(row)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                          Upravit
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="gap-1 text-destructive border-destructive/30"
-                          onClick={() => setDeleteTarget(row)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Smazat
-                        </Button>
-                        {canConvertMeasurement(row) ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="default"
-                            className="gap-1 bg-emerald-600 hover:bg-emerald-700"
-                            onClick={() => openConvertDialog(row, false)}
-                          >
-                            <Briefcase className="h-4 w-4" />
-                            Převést
-                          </Button>
-                        ) : null}
-                        {canCreateAnotherJobFromMeasurement(row) ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            className="gap-1"
-                            onClick={() => openConvertDialog(row, true)}
-                          >
-                            <Briefcase className="h-4 w-4" />
-                            Další zakázka
-                          </Button>
+                        {canWriteJobs ? (
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1"
+                              onClick={() => openEdit(row)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              Upravit
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1 text-destructive border-destructive/30"
+                              onClick={() => setDeleteTarget(row)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Smazat
+                            </Button>
+                            {canConvertMeasurement(row) ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="default"
+                                className="gap-1 bg-emerald-600 hover:bg-emerald-700"
+                                onClick={() => openConvertDialog(row, false)}
+                              >
+                                <Briefcase className="h-4 w-4" />
+                                Převést
+                              </Button>
+                            ) : null}
+                            {canCreateAnotherJobFromMeasurement(row) ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                className="gap-1"
+                                onClick={() => openConvertDialog(row, true)}
+                              >
+                                <Briefcase className="h-4 w-4" />
+                                Další zakázka
+                              </Button>
+                            ) : null}
+                          </>
                         ) : null}
                         {row.status === "converted" && row.convertedJobId ? (
                           <div className="flex flex-col items-end gap-1">
@@ -901,6 +918,7 @@ function JobMeasurementsPageContent() {
         </CardContent>
       </Card>
 
+      {canWriteJobs ? (
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(o) => !o && !deleting && setDeleteTarget(null)}
@@ -936,7 +954,9 @@ function JobMeasurementsPageContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      ) : null}
 
+      {canWriteJobs ? (
       <Dialog
         open={!!convertTarget}
         onOpenChange={(o) => {
@@ -1040,6 +1060,7 @@ function JobMeasurementsPageContent() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      ) : null}
     </div>
   );
 }

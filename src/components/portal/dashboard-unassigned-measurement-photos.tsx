@@ -60,7 +60,7 @@ import {
   repairOrphanAssignedMeasurementPhotos,
 } from "@/lib/measurement-photos";
 import { MEASUREMENT_PHOTO_ANNOTATE_PAGE_PATH } from "@/lib/measurement-photo-pending-route";
-import { userCanManageMeasurements } from "@/lib/measurements";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 
 const PAGE_LIMIT = 60;
@@ -133,9 +133,8 @@ export function DashboardUnassignedMeasurementPhotos({
   const [assignJobId, setAssignJobId] = useState("");
   const [assignMeasurementId, setAssignMeasurementId] = useState("");
 
-  const canManageMeasurements = userCanManageMeasurements(
-    profile as { role?: string; globalRoles?: unknown } | null
-  );
+  const { canWrite: canWriteJobs } = usePortalModuleAccess("jobs");
+  const canManageMeasurements = canWriteJobs;
   const role = String((profile as { role?: string })?.role ?? "");
   const canManagePhotos =
     ["owner", "admin", "manager", "accountant"].includes(role) ||

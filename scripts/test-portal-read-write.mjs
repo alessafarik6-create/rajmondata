@@ -1,5 +1,5 @@
 /**
- * READ vs WRITE — UI helpery a server kontrola modulů.
+ * READ vs WRITE — UI helpery, data scope a server kontrola modulů.
  * npx --yes tsx scripts/test-portal-read-write.mjs
  */
 import assert from "node:assert/strict";
@@ -9,6 +9,10 @@ import {
   portalPermissionsAllowMutation,
   resolveEffectivePortalPermissions,
 } from "../src/lib/portal-permissions.ts";
+import {
+  filterJobsListByDataScope,
+  seeAllOrganizationRecordsForModule,
+} from "../src/lib/portal-data-scope.ts";
 
 const readDocs = resolveEffectivePortalPermissions({
   role: "accountant",
@@ -20,6 +24,7 @@ const readDocs = resolveEffectivePortalPermissions({
 assert.equal(canAccessPortalModule(readDocs, "documents", "read"), true);
 assert.equal(portalPermissionsAllowMutation(readDocs, "documents", "accountant"), false);
 assert.equal(portalPermissionsAllowMutation(readDocs, "leads", "accountant"), false);
+assert.equal(portalPermissionsAllowMutation(readDocs, "jobs", "accountant"), false);
 
 const empReadJobs = resolveEffectivePortalPermissions({
   role: "employee",
@@ -45,5 +50,33 @@ const laborRead = resolveEffectivePortalPermissions({
   employeeDoc: { portalModulePermissions: { labor: "read" } },
 });
 assert.equal(portalPermissionsAllowMutation(laborRead, "labor", "employee"), false);
+
+// --- Data scope: zakázky ---
+assert.equal(
+  seeAllOrganizationRecordsForModule("jobs", {
+    role: "accountant",
+    moduleAccessAtLeastRead: true,
+  }),
+  true
+);
+
+assert.equal(
+  seeAllOrganizationRecordsForModule("jobs", {
+    role: "employee",
+    moduleAccessAtLeastRead: true,
+  }),
+  false
+);
+
+const jobA = { id: "a", assignedEmployeeIds: ["emp-x"] };
+const jobB = { id: "b", assignedEmployeeIds: ["emp-y"] };
+const all = [jobA, jobB];
+
+const accountantView = filterJobsListByDataScope(all, true, "accountant-uid", undefined);
+assert.equal(accountantView.length, 2);
+
+const employeeXView = filterJobsListByDataScope(all, false, "emp-x", "emp-x");
+assert.equal(employeeXView.length, 1);
+assert.equal(employeeXView[0].id, "a");
 
 console.log("test-portal-read-write: OK");

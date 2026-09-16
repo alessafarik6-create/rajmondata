@@ -65,7 +65,6 @@ import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
 import { buildMeasurementPrefillHref } from "@/lib/measurement-prefill-from-lead";
-import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { parseFirestoreScheduledAt } from "@/lib/lead-meeting-utils";
 import { cn } from "@/lib/utils";
@@ -605,8 +604,9 @@ export default function PortalLeadsPage() {
     return () => window.clearTimeout(t);
   }, [rows, rowsKey]);
 
-  const canMeasure = userCanManageMeasurements(profile);
   const { canRead: canReadLeads, canWrite: canWriteLeads } = usePortalModuleAccess("leads");
+  const { canWrite: canWriteJobs } = usePortalModuleAccess("jobs");
+  const canMeasure = canWriteJobs;
   const { canWrite: canWriteOffers } = usePortalModuleAccess("offers");
   const canManageTags = canWriteLeads;
   const canManageOffers = canWriteOffers;

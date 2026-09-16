@@ -44,6 +44,26 @@ service cloud.firestore {
       return userRole() in ['owner', 'admin', 'manager'];
     }
 
+    /** READ k modulu portálu (zaměstnanec s read/write v matici). */
+    function portalModuleReadOk(companyId, moduleId) {
+      if (isPrivileged()) {
+        return true;
+      }
+      if (userRole() == 'employee' && ownEmployeeId() != null) {
+        let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+        if (!exists(empRef)) {
+          return false;
+        }
+        let data = get(empRef).data;
+        return 'portalModulePermissions' in data &&
+          data.portalModulePermissions is map &&
+          moduleId in data.portalModulePermissions &&
+          (data.portalModulePermissions[moduleId] == 'read' ||
+            data.portalModulePermissions[moduleId] == 'write');
+      }
+      return false;
+    }
+
     /** WRITE k modulu portálu z employees.portalModulePermissions (zaměstnanec). */
     function portalModuleWriteOk(companyId, moduleId) {
       if (userRole() in ['owner', 'admin', 'manager']) {
@@ -2123,8 +2143,10 @@ service cloud.firestore {
 
       /** Plánovaná zaměření před zakázkou: companies/{companyId}/measurements/{measurementId} */
       match /measurements/{measurementId} {
-        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
-        allow write: if signedIn() && sameCompany(companyId) && canPrivilegedWrite();
+        allow read: if signedIn() && sameCompany(companyId) &&
+          portalModuleReadOk(companyId, 'jobs');
+        allow write: if signedIn() && sameCompany(companyId) &&
+          companyModuleWriteOk(companyId, 'jobs');
       }
 
       /**

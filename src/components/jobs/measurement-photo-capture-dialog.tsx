@@ -37,7 +37,7 @@ import {
   JOB_IMAGE_ACCEPT_ATTR,
 } from "@/lib/job-media-types";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
-import { userCanManageMeasurements } from "@/lib/measurements";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { useMemoFirebase, useCollection } from "@/firebase";
 
 type AssignmentMode = "job" | "customer" | "standalone";
@@ -81,21 +81,17 @@ export function MeasurementPhotoCaptureDialog({
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const { canWrite: canWriteJobs } = usePortalModuleAccess("jobs");
 
   const measurementsQuery = useMemoFirebase(() => {
-    if (
-      !open ||
-      !firestore ||
-      !companyId ||
-      !userCanManageMeasurements(profile ?? null)
-    ) {
+    if (!open || !firestore || !companyId || !canWriteJobs) {
       return null;
     }
     return query(
       collection(firestore, "companies", companyId, "measurements"),
       limit(80)
     );
-  }, [open, firestore, companyId, profile]);
+  }, [open, firestore, companyId, canWriteJobs]);
 
   const { data: measurementsRaw } = useCollection(measurementsQuery);
   const measurementsList = Array.isArray(measurementsRaw) ? measurementsRaw : [];
@@ -347,8 +343,7 @@ export function MeasurementPhotoCaptureDialog({
             </div>
           ) : null}
 
-          {userCanManageMeasurements(profile ?? null) &&
-          measurementsList.length > 0 ? (
+          {canWriteJobs && measurementsList.length > 0 ? (
             <div className="space-y-2">
               <Label htmlFor="mp-measurement">Napojit na plánované zaměření (volitelné)</Label>
               <select

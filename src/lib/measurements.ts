@@ -72,15 +72,17 @@ export function canCreateAnotherJobFromMeasurement(m: {
   return m.status === "converted";
 }
 
-/** Stejná logika jako oprávnění k zápisu zakázek (privilegované role). */
+/**
+ * Zápis zaměření — owner / admin / manager (ne účetní READ).
+ * V UI preferujte `usePortalModuleAccess("jobs").canWrite`.
+ */
 export function userCanManageMeasurements(profile: {
   role?: string;
   globalRoles?: unknown;
 } | null): boolean {
   if (!profile) return false;
   const r = profile.role;
-  if (["owner", "admin", "manager", "accountant"].includes(String(r)))
-    return true;
+  if (["owner", "admin", "manager"].includes(String(r))) return true;
   return (
     Array.isArray(profile.globalRoles) &&
     profile.globalRoles.includes("super_admin")

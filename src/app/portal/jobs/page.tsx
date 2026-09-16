@@ -66,7 +66,11 @@ import {
 import { syncAutoCustomerTasksForJob } from "@/lib/customer-job-tasks";
 import { JobTemplateFormFields } from "@/components/jobs/job-template-form-fields";
 import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-contract-templates-manager-dialog";
-import { userCanManageMeasurements } from "@/lib/measurements";
+import {
+  filterJobsListByDataScope,
+  seeAllOrganizationRecordsForModule,
+} from "@/lib/portal-data-scope";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
 import { MeasurementPhotoCaptureDialog } from "@/components/jobs/measurement-photo-capture-dialog";
@@ -182,35 +186,6 @@ type JobRow = {
   completedByName?: string;
 };
 
-function jobAssignsToUser(
-  j: JobRow,
-  userUid: string,
-  employeeDocId?: string | undefined
-): boolean {
-  const raw = j?.assignedEmployeeIds;
-  if (Array.isArray(raw)) {
-    if (raw.includes(userUid)) return true;
-    if (employeeDocId && raw.includes(employeeDocId)) return true;
-    return false;
-  }
-  if (typeof raw === "string") {
-    return raw === userUid || (!!employeeDocId && raw === employeeDocId);
-  }
-  return false;
-}
-
-function normalizeJobsList(
-  allJobs: JobRow[] | null | undefined,
-  isAdmin: boolean,
-  userUid: string | undefined,
-  employeeDocId?: string | undefined
-): JobRow[] {
-  const list = Array.isArray(allJobs) ? allJobs : [];
-  if (isAdmin) return list;
-  const uid = userUid ?? "";
-  return list.filter((j) => jobAssignsToUser(j, uid, employeeDocId));
-}
-
 function JobsPageContent() {
   const belowLg = useIsBelowLg();
   const router = useRouter();
@@ -223,6 +198,7 @@ function JobsPageContent() {
     [firestore, user]
   );
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+  const { canRead: canReadJobs } = usePortalModuleAccess("jobs");
 
   const companyId = profile?.companyId;
   const isAdmin =
@@ -274,9 +250,25 @@ function JobsPageContent() {
   const employeeDocId = profile?.employeeId as string | undefined;
   const isPortalEmployee = profile?.role === "employee";
 
+  const seeAllOrgJobs = useMemo(
+    () =>
+      seeAllOrganizationRecordsForModule("jobs", {
+        role: profile?.role,
+        globalRoles: profile?.globalRoles,
+        moduleAccessAtLeastRead: canReadJobs,
+      }),
+    [profile?.role, profile?.globalRoles, canReadJobs]
+  );
+
   const jobs = useMemo(
-    () => normalizeJobsList(allJobs, !!isAdmin, user?.uid, employeeDocId),
-    [allJobs, isAdmin, user?.uid, employeeDocId]
+    () =>
+      filterJobsListByDataScope(
+        allJobs as JobRow[] | null | undefined,
+        seeAllOrgJobs,
+        user?.uid,
+        employeeDocId
+      ),
+    [allJobs, seeAllOrgJobs, user?.uid, employeeDocId]
   );
 
   const jobNamesById = useMemo(() => {
@@ -1006,7 +998,7 @@ function JobsPageContent() {
             const labelClass =
               "line-clamp-2 text-center text-[10px] font-medium leading-tight text-slate-100";
             const row1: React.ReactNode[] = [];
-            if (userCanManageMeasurements(profile)) {
+            if (canReadJobs) {
               row1.push(
                 <Link key="zamereni" href="/portal/jobs/measurements" className="min-w-0">
                   <div className={tileClass}>
@@ -1160,7 +1152,7 @@ function JobsPageContent() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {userCanManageMeasurements(profile) && (
+          {canReadJobs && (
             <Link href="/portal/jobs/measurements">
               <Button
                 type="button"
