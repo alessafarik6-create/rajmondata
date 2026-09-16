@@ -983,7 +983,7 @@ function JobsPageContent() {
       className={cn(
         belowLg
           ? "flex w-full min-h-[100dvh] flex-col gap-3 overflow-x-hidden bg-slate-950 px-3 pb-[calc(96px+env(safe-area-inset-bottom))] pt-3 text-slate-50"
-          : "mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8"
+          : "mx-auto w-full max-w-[1920px] min-w-0 space-y-4 px-3 sm:space-y-5 sm:px-4 lg:px-5"
       )}
     >
       {belowLg ? (
