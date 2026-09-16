@@ -76,6 +76,7 @@ import {
 import { JobDetailSummaryCard } from "@/components/jobs/job-detail-summary-card";
 import { JobDetailDeepSection } from "@/components/jobs/job-detail-deep-section";
 import { JobDetailFinanceColumn } from "@/components/jobs/job-detail-finance-column";
+import { JobContractAddendumAiSection } from "@/components/jobs/job-contract-addendum-ai-section";
 import {
   WORK_BUDGET_ITEMS_COLLECTION,
   parseJobWorkBudgetItemFromFirestore,
@@ -2898,6 +2899,9 @@ export function JobDetailPageContent({
     contractNumber: "",
     contractDateLabel: "",
   });
+  const [addendumAiBrief, setAddendumAiBrief] = useState("");
+  const [addendumAiLoading, setAddendumAiLoading] = useState(false);
+  const [addendumAiError, setAddendumAiError] = useState<string | null>(null);
 
   const parentContractChoices = useMemo(
     () =>
@@ -4550,6 +4554,86 @@ export function JobDetailPageContent({
     companyBankAccountNumber,
   ]);
 
+  const runAddendumAiGeneration = useCallback(
+    async (mode: "generate" | "regenerate" | "improve") => {
+      if (!user?.uid || !companyId || !jobFirestoreId) return;
+      const brief = addendumAiBrief.trim();
+      if (brief.length < 8) {
+        toast({
+          variant: "destructive",
+          title: "Upřesněte požadavek",
+          description: "Napište, co má dodatek změnit nebo doplnit.",
+        });
+        return;
+      }
+
+      let parentId = String(contractForm.parentContractId ?? "").trim();
+      if (!parentId && parentContractChoices.length === 1) {
+        const p = parentContractChoices[0]!;
+        parentId = p.id;
+        setContractForm((prev) => ({
+          ...prev,
+          parentContractId: p.id,
+          parentContractNumber: String(p.contractNumber ?? "").trim(),
+          parentContractTitle: workContractDisplayTitle(p),
+        }));
+      } else if (!parentId && parentContractChoices.length > 1) {
+        setAddendumAiError("Vyberte smlouvu, ke které má být dodatek vytvořen.");
+        return;
+      }
+
+      setAddendumAiLoading(true);
+      setAddendumAiError(null);
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/jobs/${encodeURIComponent(String(jobFirestoreId))}/contract-addendum-ai`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              companyId,
+              userBrief: brief,
+              parentContractId: parentId || null,
+              existingDraft:
+                mode === "generate" ? "" : contractForm.mainContractContent || "",
+              mode,
+            }),
+          }
+        );
+        const data = (await res.json()) as { ok?: boolean; text?: string; error?: string };
+        if (!res.ok || !data.ok || !data.text) {
+          setAddendumAiError(
+            data.error || "Text se nepodařilo vygenerovat. Zkuste to znovu."
+          );
+          return;
+        }
+        setContractForm((prev) => ({
+          ...prev,
+          mainContractContent: data.text!,
+        }));
+        setIsContractDirty(true);
+      } catch {
+        setAddendumAiError("Text se nepodařilo vygenerovat. Zkuste to znovu.");
+      } finally {
+        setAddendumAiLoading(false);
+      }
+    },
+    [
+      user,
+      companyId,
+      jobFirestoreId,
+      addendumAiBrief,
+      contractForm.parentContractId,
+      contractForm.mainContractContent,
+      parentContractChoices,
+      toast,
+    ]
+  );
+
   const upsertWorkContractBase = useCallback(async () => {
     if (!firestore || !companyId || !jobId || !user) {
       throw new Error("Chybí data pro uložení smlouvy.");
@@ -4812,6 +4896,9 @@ export function JobDetailPageContent({
       bankAccountId: contractForm.bankAccountId ?? null,
       contractNumber,
       updatedAt: serverTimestamp(),
+      ...(contractForm.documentRole === "addendum" && addendumAiBrief.trim()
+        ? { aiAddendumSourceBrief: addendumAiBrief.trim() }
+        : {}),
     };
 
     if (allocatedNew) {
@@ -4846,6 +4933,7 @@ export function JobDetailPageContent({
     contractForm,
     jobBudgetKc,
     workContractsForJob,
+    addendumAiBrief,
   ]);
 
   const saveContract = useCallback(async () => {
@@ -12440,7 +12528,12 @@ export function JobDetailPageContent({
         open={contractDialogOpen}
         onOpenChange={(open) => {
           setContractDialogOpen(open);
-          if (!open) setIsContractDirty(false);
+          if (!open) {
+            setIsContractDirty(false);
+            setAddendumAiBrief("");
+            setAddendumAiError(null);
+            setAddendumAiLoading(false);
+          }
         }}
       >
         <DialogContent className="max-w-[95vw] w-[95vw] md:w-[760px] max-h-[90vh] flex flex-col">
@@ -12635,15 +12728,19 @@ export function JobDetailPageContent({
 
             {contractForm.documentRole === "addendum" ? (
               <div className="space-y-2">
-                <Label>Nadřazená smlouva (volitelné)</Label>
+                <Label>Nadřazená smlouva</Label>
                 <Select
                   value={contractForm.parentContractId || "__none__"}
                   disabled={isContractReadOnly}
                   onValueChange={(v) => {
                     setIsContractDirty(true);
+                    const id = v === "__none__" ? "" : v;
+                    const p = parentContractChoices.find((x) => x.id === id);
                     setContractForm((prev) => ({
                       ...prev,
-                      parentContractId: v === "__none__" ? "" : v,
+                      parentContractId: id,
+                      parentContractNumber: p ? String(p.contractNumber ?? "").trim() : "",
+                      parentContractTitle: p ? workContractDisplayTitle(p) : "",
                     }));
                   }}
                 >
@@ -12838,30 +12935,58 @@ export function JobDetailPageContent({
               />
             </div>
 
-            <div className="space-y-2">
-              <Label>
-                {contractForm.documentRole === "attachment"
-                  ? "Obsah plnění zakázky"
-                  : "Text smlouvy"}
-              </Label>
-              <Textarea
-                value={contractForm.mainContractContent}
-                onChange={(e) => {
+            {contractForm.documentRole === "addendum" && !isContractReadOnly ? (
+              <JobContractAddendumAiSection
+                brief={addendumAiBrief}
+                onBriefChange={(v) => {
+                  setAddendumAiBrief(v);
+                  setAddendumAiError(null);
+                }}
+                draftText={contractForm.mainContractContent}
+                onDraftChange={(v) => {
                   setIsContractDirty(true);
                   setContractForm((prev) => ({
                     ...prev,
-                    mainContractContent: e.target.value,
+                    mainContractContent: v,
                   }));
                 }}
-                placeholder={
-                  contractForm.documentRole === "attachment"
-                    ? "Popište obsah plnění zakázky (lze použít proměnné jako u smlouvy)…"
-                    : "Vložte text smlouvy..."
-                }
-                className="min-h-[260px] resize-y"
+                loading={addendumAiLoading}
+                error={addendumAiError}
                 disabled={isContractReadOnly}
+                onGenerate={() => void runAddendumAiGeneration("generate")}
+                onRegenerate={() => void runAddendumAiGeneration("regenerate")}
+                onImprove={() => void runAddendumAiGeneration("improve")}
               />
-            </div>
+            ) : (
+              <div className="space-y-2">
+                <Label>
+                  {contractForm.documentRole === "attachment"
+                    ? "Obsah plnění zakázky"
+                    : contractForm.documentRole === "addendum"
+                      ? "Text dodatku"
+                      : "Text smlouvy"}
+                </Label>
+                <Textarea
+                  value={contractForm.mainContractContent}
+                  onChange={(e) => {
+                    setIsContractDirty(true);
+                    setContractForm((prev) => ({
+                      ...prev,
+                      mainContractContent: e.target.value,
+                    }));
+                  }}
+                  placeholder={
+                    contractForm.documentRole === "attachment"
+                      ? "Popište obsah plnění zakázky (lze použít proměnné jako u smlouvy)…"
+                      : contractForm.documentRole === "addendum"
+                        ? "Text dodatku ke smlouvě…"
+                        : "Vložte text smlouvy..."
+                  }
+                  className="min-h-[260px] w-full min-w-0 resize-y"
+                  disabled={isContractReadOnly}
+                />
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>Objednatel</Label>

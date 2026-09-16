@@ -118,6 +118,79 @@ function userMessageForOpenAiStatus(status: number, detail: string): string {
   return "Generování AI návrhu se nezdařilo. Zkuste to znovu.";
 }
 
+/** Volný text (bez JSON schématu) — dodatky, shrnutí apod. */
+export async function generatePlainTextWithOpenAi(
+  userPrompt: string,
+  opts?: { model?: string; instructions?: string }
+): Promise<OpenAiQuoteGenerationResult> {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    throw new OpenAiClientError(503, "OpenAI API není nakonfigurováno.");
+  }
+
+  const model = opts?.model ?? getOpenAiModel();
+  const instructions = opts?.instructions ?? "Jsi profesionální asistent pro české obchodní texty.";
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPENAI_REQUEST_TIMEOUT_MS);
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        instructions,
+        input: userPrompt,
+      }),
+      signal: controller.signal,
+    });
+
+    const requestDurationMs = Date.now() - started;
+    const rawText = await res.text();
+    let data: Record<string, unknown> = {};
+    try {
+      data = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : {};
+    } catch {
+      data = { error: { message: rawText.slice(0, 500) } };
+    }
+
+    if (!res.ok) {
+      logOpenAiError(res, data, rawText);
+      const errObj = data.error as Record<string, unknown> | undefined;
+      const detail = String(errObj?.message ?? rawText).slice(0, 400);
+      throw new OpenAiClientError(
+        res.status,
+        userMessageForOpenAiStatus(res.status, detail),
+        detail
+      );
+    }
+
+    const outputText = extractOutputText(data);
+    return {
+      outputText,
+      model: String(data.model ?? model),
+      usage: parseUsage(data),
+      requestDurationMs,
+    };
+  } catch (err) {
+    if (err instanceof OpenAiClientError) throw err;
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new OpenAiClientError(504, "AI odpověď trvala příliš dlouho. Zkuste to znovu.");
+    }
+    throw new OpenAiClientError(
+      502,
+      "Nepodařilo se spojit s AI službou.",
+      err instanceof Error ? err.message : String(err)
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function generateInquiryQuoteWithOpenAi(
   userPrompt: string,
   opts?: { model?: string; instructions?: string }
