@@ -815,6 +815,12 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      /** Zálohy organizace — metadata jen pro owner/admin, zápis pouze Admin SDK. */
+      match /organization_backups/{backupId} {
+        allow read: if signedIn() && sameCompany(companyId) && userRole() in ['owner', 'admin'];
+        allow write: if false;
+      }
+
       match /employees/{empId} {
         allow read: if (signedIn() && sameCompany(companyId)) || terminalCompanyMatches(companyId);
         allow write: if signedIn() && sameCompany(companyId) && canPrivilegedWrite();

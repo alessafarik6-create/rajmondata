@@ -20,7 +20,8 @@ import {
   collection,
 } from 'firebase/firestore';
 import Link from 'next/link';
-import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail, FileText } from 'lucide-react';
+import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail, FileText, DatabaseBackup } from 'lucide-react';
+import { OrganizationBackupsSettingsCard } from '@/components/settings/organization-backups-settings-card';
 import { EmailNotificationsSettings } from '@/components/settings/email-notifications-settings';
 import { OrganizationSignatureSettingsCard } from "@/components/settings/organization-signature-settings";
 import { DocumentEmailOutboundSettingsCard } from "@/components/settings/document-email-outbound-settings-card";
@@ -58,6 +59,9 @@ export default function SettingsPage() {
     profile?.role === 'owner' ||
     profile?.role === 'admin' ||
     profile?.globalRoles?.includes('super_admin');
+
+  const isOwner =
+    profile?.role === 'owner' || profile?.globalRoles?.includes('super_admin');
 
   const { company, companyName, companyId } = useCompany();
   const [companyNameInput, setCompanyNameInput] = useState('');
@@ -473,6 +477,11 @@ export default function SettingsPage() {
           {isAdmin && (
             <TabsTrigger value="employee-doc-templates" className="gap-2 min-h-[44px] sm:min-h-0">
               <FileText className="w-4 h-4 shrink-0" /> Šablony zaměstnanců
+            </TabsTrigger>
+          )}
+          {isAdmin && (
+            <TabsTrigger value="backups" className="gap-2 min-h-[44px] sm:min-h-0">
+              <DatabaseBackup className="w-4 h-4 shrink-0" /> Zálohy
             </TabsTrigger>
           )}
           <TabsTrigger value="notifications" className="gap-2 min-h-[44px] sm:min-h-0"><Bell className="w-4 h-4 shrink-0" /> Oznámení</TabsTrigger>
@@ -1225,6 +1234,17 @@ export default function SettingsPage() {
             {companyId ? (
               <EmployeeDocumentTemplatesSettingsCard companyId={companyId} canManage={isAdmin} />
             ) : null}
+          </TabsContent>
+        )}
+
+        {isAdmin && companyId && (
+          <TabsContent value="backups" className="mt-6">
+            <OrganizationBackupsSettingsCard
+              companyId={companyId}
+              organizationName={companyNameInput || companyName || companyId}
+              isOwner={isOwner}
+              isAdmin={isAdmin}
+            />
           </TabsContent>
         )}
 

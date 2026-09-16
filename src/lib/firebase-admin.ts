@@ -5,6 +5,7 @@ import { getFirestore } from "firebase-admin/firestore";
 let adminFirestore: Firestore | null = null;
 let adminAuth: Auth | null = null;
 let adminBucket: any | null = null;
+let adminBackupBucket: any | null = null;
 
 const LOG_PREFIX = "[firebase-admin]";
 
@@ -88,6 +89,36 @@ export function getAdminStorageBucket(): any | null {
     console.error(`${LOG_PREFIX} getAdminStorageBucket:`, (e as Error)?.message ?? e);
     return null;
   }
+}
+
+/**
+ * Oddělený bucket pro zálohy organizací (env BACKUP_STORAGE_BUCKET).
+ * Pokud není nastaven, použije se produkční bucket s prefixem `_organization_backups/`.
+ */
+export function getAdminBackupStorageBucket(): any | null {
+  if (adminBackupBucket) return adminBackupBucket;
+  if (!getAdminFirestore()) return null;
+  try {
+    const admin = require("firebase-admin") as typeof import("firebase-admin");
+    const dedicated = String(process.env.BACKUP_STORAGE_BUCKET ?? "").trim();
+    if (dedicated) {
+      adminBackupBucket = admin.storage().bucket(dedicated);
+      return adminBackupBucket;
+    }
+    adminBackupBucket = getAdminStorageBucket();
+    return adminBackupBucket;
+  } catch (e) {
+    console.error(`${LOG_PREFIX} getAdminBackupStorageBucket:`, (e as Error)?.message ?? e);
+    return null;
+  }
+}
+
+export function organizationBackupStoragePrefix(organizationId: string, backupId: string): string {
+  const dedicated = String(process.env.BACKUP_STORAGE_BUCKET ?? "").trim();
+  if (dedicated) {
+    return `${organizationId}/${backupId}`;
+  }
+  return `_organization_backups/${organizationId}/${backupId}`;
 }
 
 /** Pro diagnostiku (env vs Admin app) — žádné tajné klíče. */

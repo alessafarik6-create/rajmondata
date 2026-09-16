@@ -8,6 +8,18 @@
     "src/app/api/company/document-email/route.ts": {
       "memory": 3008,
       "maxDuration": 120
+    },
+    "src/app/api/company/backups/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/company/backups/[backupId]/restore/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/company/backups/[backupId]/run/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/organization-backups/route.ts": {
+      "maxDuration": 300
     }
   }
 }
