@@ -9,6 +9,7 @@ import {
   buildWorkBudgetInvoicePreview,
   billableWorkBudgetItems,
   formatWorkBudgetItemInvoiceDescription,
+  buildInvoiceLinesFromWorkBudgetItems,
   workBudgetItemsEligibleForInvoice,
   assessWorkBudgetInvoiceRegeneration,
   isWorkBudgetInvoiceStale,
@@ -291,6 +292,73 @@ const jobBudget = {
     extraWorkStatus: EXTRA_WORK_STATUSES.APPROVED,
   });
   assert.equal(formatWorkBudgetItemInvoiceDescription(extra), "VÍCEPRÁCE – Pouzdra na dveře");
+}
+
+// REGENERATE: vícepráce zůstane v názvu řádku; bez dvojitého prefixu
+{
+  const invId = "inv-1";
+  const a = item({
+    id: "a",
+    title: "Položka A",
+    done: true,
+    itemType: WORK_BUDGET_ITEM_TYPES.NORMAL,
+    amountNet: 100,
+    vatAmount: 21,
+    amountGross: 121,
+  });
+  const b = item({
+    id: "b",
+    title: "Položka B",
+    done: true,
+    invoiced: true,
+    linkedInvoiceId: invId,
+    itemType: WORK_BUDGET_ITEM_TYPES.EXTRA_WORK,
+    extraWorkStatus: EXTRA_WORK_STATUSES.APPROVED,
+    amountNet: 200,
+    vatAmount: 42,
+    amountGross: 242,
+  });
+  const c = item({
+    id: "c",
+    title: "Položka C",
+    done: true,
+    invoiced: true,
+    linkedInvoiceId: invId,
+    itemType: WORK_BUDGET_ITEM_TYPES.EXTRA_WORK,
+    extraWorkStatus: EXTRA_WORK_STATUSES.APPROVED,
+    amountNet: 300,
+    vatAmount: 63,
+    amountGross: 363,
+  });
+  let catalog = [a, b, c];
+  let billable = workBudgetItemsEligibleForInvoice(catalog, invId);
+  let lines = buildInvoiceLinesFromWorkBudgetItems(billable, catalog);
+  assert.equal(lines.length, 3);
+  assert.equal(lines[0].description, "Položka A");
+  assert.equal(lines[1].description, "VÍCEPRÁCE – Položka B");
+  assert.equal(lines[2].description, "VÍCEPRÁCE – Položka C");
+
+  catalog = [
+    a,
+    { ...b, unitPriceNet: 999, amountNet: 999, vatAmount: 210, amountGross: 1209 },
+    c,
+  ];
+  billable = workBudgetItemsEligibleForInvoice(catalog, invId);
+  lines = buildInvoiceLinesFromWorkBudgetItems(billable, catalog);
+  assert.equal(lines[1].description, "VÍCEPRÁCE – Položka B");
+  assert.equal(lines[1].unitPrice, 999);
+
+  catalog = [
+    a,
+    { ...b, title: "VÍCEPRÁCE – Položka B" },
+    c,
+  ];
+  lines = buildInvoiceLinesFromWorkBudgetItems(
+    workBudgetItemsEligibleForInvoice(catalog, invId),
+    catalog
+  );
+  assert.equal(lines[1].description, "VÍCEPRÁCE – Položka B");
+  assert.doesNotMatch(lines[1].description, /VÍCEPRÁCE – VÍCEPRÁCE/);
 }
 
 // 9) DPH — gross = net + vat v agregaci

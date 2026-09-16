@@ -3,6 +3,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   serverTimestamp,
   updateDoc,
   writeBatch,
@@ -27,6 +28,8 @@ import type { JobWorkBudgetItemDoc } from "@/lib/work-budget-types";
 import {
   isApprovedExtraWorkItem,
   isExtraWorkItem,
+  parseJobWorkBudgetItemFromFirestore,
+  WORK_BUDGET_ITEMS_COLLECTION,
 } from "@/lib/work-budget-types";
 import type { JobWorkBudgetAdvanceDoc } from "@/lib/work-budget-advances";
 import {
@@ -46,10 +49,25 @@ function defaultDueDateIso(): string {
   return d.toISOString().split("T")[0];
 }
 
+/** Odstraní prefix vícepráce z textu (zabrání dvojitému prefixu při opakovaném přegenerování). */
+const INVOICE_EXTRA_WORK_PREFIX = /^VÍCEPRÁCE\s*[–—-]\s*/iu;
+
+function stripInvoiceExtraWorkPrefix(text: string): string {
+  let s = text.trim();
+  while (INVOICE_EXTRA_WORK_PREFIX.test(s)) {
+    s = s.replace(INVOICE_EXTRA_WORK_PREFIX, "").trim();
+  }
+  return s;
+}
+
+function workBudgetItemDescriptionBase(item: JobWorkBudgetItemDoc): string {
+  const title = stripInvoiceExtraWorkPrefix(trim(item.title));
+  const desc = stripInvoiceExtraWorkPrefix(trim(item.description));
+  return desc && desc !== title ? `${title} – ${desc}` : title || desc;
+}
+
 export function formatWorkBudgetItemInvoiceDescription(item: JobWorkBudgetItemDoc): string {
-  const title = trim(item.title);
-  const desc = trim(item.description);
-  const base = desc && desc !== title ? `${title} – ${desc}` : title || desc;
+  const base = workBudgetItemDescriptionBase(item);
   if (isExtraWorkItem(item)) {
     return base ? `VÍCEPRÁCE – ${base}` : "VÍCEPRÁCE";
   }
@@ -69,6 +87,38 @@ function workBudgetItemToInvoiceLine(item: JobWorkBudgetItemDoc): PortalManualFo
     inventoryItemId: null,
     imageUrl: null,
   };
+}
+
+/** Zdroj pravdy pro typ položky je vždy aktuální záznam z položkového rozpočtu (podle id). */
+export function resolveWorkBudgetItemFromCatalog(
+  row: JobWorkBudgetItemDoc,
+  budgetCatalog: JobWorkBudgetItemDoc[]
+): JobWorkBudgetItemDoc {
+  const found = budgetCatalog.find((r) => r.id === row.id);
+  return found ?? row;
+}
+
+/** Společné mapování rozpočtových položek na řádky faktury (CREATE i REGENERATE). */
+export function buildInvoiceLinesFromWorkBudgetItems(
+  billable: JobWorkBudgetItemDoc[],
+  budgetCatalog: JobWorkBudgetItemDoc[]
+): PortalManualFormItem[] {
+  return billable.map((row) =>
+    workBudgetItemToInvoiceLine(resolveWorkBudgetItemFromCatalog(row, budgetCatalog))
+  );
+}
+
+async function fetchJobWorkBudgetItemsFromFirestore(
+  firestore: Firestore,
+  companyId: string,
+  jobId: string
+): Promise<JobWorkBudgetItemDoc[]> {
+  const snap = await getDocs(
+    collection(firestore, "companies", companyId, "jobs", jobId, WORK_BUDGET_ITEMS_COLLECTION)
+  );
+  return snap.docs.map((d) =>
+    parseJobWorkBudgetItemFromFirestore(d.data() as Record<string, unknown>, d.id)
+  );
 }
 
 /** Položky pro novou fakturu nebo přegenerování existující (včetně již vázaných na tuto fakturu). */
@@ -248,6 +298,8 @@ type WorkBudgetInvoiceBuildInput = {
   companyDoc: Record<string, unknown> | null | undefined;
   orgBankAccounts: OrgBankAccountRow[];
   preview: WorkBudgetInvoicePreview;
+  /** Aktuální položky rozpočtu — zdroj typu (vícepráce) a názvů pro řádky faktury. */
+  budgetCatalog: JobWorkBudgetItemDoc[];
   invoiceNumber: string;
   issueDate: string;
   dueDate: string;
@@ -269,7 +321,7 @@ function buildWorkBudgetInvoiceNotes(preview: WorkBudgetInvoicePreview): string 
 
 function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
   const billable = input.preview.billableItems;
-  const invoiceLines = billable.map(workBudgetItemToInvoiceLine);
+  const invoiceLines = buildInvoiceLinesFromWorkBudgetItems(billable, input.budgetCatalog);
   const recipient = invoiceRecipientFromCustomerDoc(input.customerId, input.customer);
   const companyMeta = handoverCompanyPdfMeta(input.companyDoc);
   const c = input.companyDoc ?? {};
@@ -460,8 +512,9 @@ export async function createInvoiceFromWorkBudgetItems(params: {
   userId: string;
   profileDisplayName?: string;
 }): Promise<{ invoiceId: string; invoiceNumber: string; amountGross: number }> {
+  const budgetCatalog = params.items;
   const preview = buildWorkBudgetInvoicePreview({
-    items: params.items,
+    items: budgetCatalog,
     advances: params.advances ?? [],
     selectedAdvanceIds: params.selectedAdvanceIds ?? [],
   });
@@ -484,6 +537,7 @@ export async function createInvoiceFromWorkBudgetItems(params: {
     companyDoc: params.companyDoc,
     orgBankAccounts: params.orgBankAccounts,
     preview,
+    budgetCatalog,
     invoiceNumber,
     issueDate,
     dueDate,
@@ -586,7 +640,7 @@ export async function createInvoiceFromWorkBudgetItems(params: {
     companyId: params.companyId,
     jobId: params.jobId,
     invoiceId: invRef.id,
-    allItems: params.items,
+    allItems: budgetCatalog,
     previousItemIds: [],
     billable: bundle.billable,
     previousAdvanceIds: [],
@@ -632,8 +686,16 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     throw new Error(assessment.blockedReason ?? "Fakturu nelze přegenerovat.");
   }
 
+  const serverBudgetItems = await fetchJobWorkBudgetItemsFromFirestore(
+    params.firestore,
+    params.companyId,
+    params.jobId
+  );
+  const budgetCatalog =
+    serverBudgetItems.length > 0 ? serverBudgetItems : params.items;
+
   const preview = buildWorkBudgetInvoicePreview({
-    items: params.items,
+    items: budgetCatalog,
     advances: params.advances ?? [],
     selectedAdvanceIds: params.selectedAdvanceIds ?? [],
     regenerateInvoiceId: params.invoiceId,
@@ -657,6 +719,7 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     companyDoc: params.companyDoc,
     orgBankAccounts: params.orgBankAccounts,
     preview,
+    budgetCatalog,
     invoiceNumber,
     issueDate,
     dueDate,
@@ -696,7 +759,7 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     companyId: params.companyId,
     jobId: params.jobId,
     invoiceId: params.invoiceId,
-    allItems: params.items,
+    allItems: budgetCatalog,
     previousItemIds,
     billable: bundle.billable,
     previousAdvanceIds,

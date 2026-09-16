@@ -101,9 +101,19 @@ export type WorkBudgetSummary = {
   billableGross: number;
 };
 
-export function parseWorkBudgetItemType(raw: unknown): WorkBudgetItemType {
-  const v = String(raw ?? "").trim();
-  if (v === WORK_BUDGET_ITEM_TYPES.EXTRA_WORK) return WORK_BUDGET_ITEM_TYPES.EXTRA_WORK;
+export function parseWorkBudgetItemType(
+  raw: unknown,
+  row?: Record<string, unknown>
+): WorkBudgetItemType {
+  if (row?.isExtraWork === true) return WORK_BUDGET_ITEM_TYPES.EXTRA_WORK;
+  const v = String(raw ?? row?.type ?? "").trim().toLowerCase();
+  if (
+    v === WORK_BUDGET_ITEM_TYPES.EXTRA_WORK ||
+    v === "extra work" ||
+    v === "extrawork"
+  ) {
+    return WORK_BUDGET_ITEM_TYPES.EXTRA_WORK;
+  }
   return WORK_BUDGET_ITEM_TYPES.NORMAL;
 }
 
@@ -173,7 +183,7 @@ export function parseJobWorkBudgetItemFromFirestore(
     amountNet: Number(raw.amountNet) || amounts.amountNet,
     vatAmount: Number(raw.vatAmount) || amounts.vatAmount,
     amountGross: Number(raw.amountGross) || amounts.amountGross,
-    itemType: parseWorkBudgetItemType(raw.itemType),
+    itemType: parseWorkBudgetItemType(raw.itemType, raw),
     extraWorkStatus: parseExtraWorkStatus(raw.extraWorkStatus),
     done: raw.done === true,
     doneAt: raw.doneAt != null ? String(raw.doneAt) : null,
