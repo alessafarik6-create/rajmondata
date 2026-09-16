@@ -107,6 +107,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { JOB_EXPENSE_DOCUMENT_SOURCE } from "@/lib/job-expense-document-sync";
 import {
@@ -1097,6 +1098,8 @@ function DocumentsPageContent() {
   const { toast } = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { canWrite: canWriteDocuments } = usePortalModuleAccess("documents");
+  const documentsReadOnly = !canWriteDocuments;
   const viewParam = searchParams.get("view");
   const documentsMainTab =
     viewParam === "issued" ||
@@ -1280,13 +1283,28 @@ function DocumentsPageContent() {
   const handleAddDocOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
+        if (documentsReadOnly) {
+          toast({
+            variant: "destructive",
+            title: "Pouze náhled",
+            description: "K dokladům nemáte oprávnění zápisu.",
+          });
+          return;
+        }
         setIsAddDocOpen(true);
         return;
       }
       closeAddDocDialog();
     },
-    [closeAddDocDialog]
+    [closeAddDocDialog, documentsReadOnly, toast]
   );
+
+  useEffect(() => {
+    if (documentsReadOnly && isAddDocOpen) {
+      setIsAddDocOpen(false);
+      clearDocumentsAddDialogDraft();
+    }
+  }, [documentsReadOnly, isAddDocOpen]);
 
   useEffect(() => {
     if (!isAddDocOpen) return;
@@ -1720,6 +1738,14 @@ function DocumentsPageContent() {
 
   const handleAddDocument = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (documentsReadOnly) {
+      toast({
+        variant: "destructive",
+        title: "Pouze náhled",
+        description: "Vytváření dokladů vyžaduje oprávnění Zápis.",
+      });
+      return;
+    }
     if (!companyId || !firestore || !user) return;
 
     if (addDocSubmitIntentRef.current === "save_and_assign") {
@@ -3160,17 +3186,21 @@ function DocumentsPageContent() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outlineLight" className="h-10 gap-2" asChild>
-            <Link href="/portal/invoices/new">
-              <ReceiptText className="h-4 w-4 shrink-0" /> Nová faktura
-            </Link>
-          </Button>
+          {!documentsReadOnly ? (
+            <Button variant="outlineLight" className="h-10 gap-2" asChild>
+              <Link href="/portal/invoices/new">
+                <ReceiptText className="h-4 w-4 shrink-0" /> Nová faktura
+              </Link>
+            </Button>
+          ) : null}
           <Dialog open={isAddDocOpen} onOpenChange={handleAddDocOpenChange}>
+            {!documentsReadOnly ? (
             <DialogTrigger asChild>
               <Button className="h-10 gap-2 px-4 text-sm sm:min-h-0">
                 <Plus className="h-4 w-4 shrink-0" /> Přidat doklad
               </Button>
             </DialogTrigger>
+            ) : null}
             <DialogContent className="max-h-[90vh] w-[min(100%,42rem)] max-w-[42rem] overflow-y-auto border border-gray-200 bg-white p-0 text-gray-950 shadow-lg sm:rounded-xl">
               <DialogHeader className="space-y-1 border-b border-gray-100 px-4 pb-3 pt-4 sm:px-5">
                 <DialogTitle className="text-lg font-semibold text-gray-950">
@@ -3950,7 +3980,7 @@ function DocumentsPageContent() {
                 todayIso={todayIso}
                 onMarkPaid={markDocumentPaid}
                 onMarkUnpaid={markDocumentUnpaid}
-                readOnlyTrash={false}
+                readOnlyTrash={documentsReadOnly}
                 showDeleteButton={canSoftDelete}
                 paymentFilter={documentsPaymentFilter}
                 onPaymentFilterChange={setDocumentsPaymentFilter}
@@ -3983,7 +4013,7 @@ function DocumentsPageContent() {
                 onSearchChange={setIssuedSearch}
                 onMarkPaid={markDocumentPaid}
                 onMarkUnpaid={markDocumentUnpaid}
-                readOnlyTrash={false}
+                readOnlyTrash={documentsReadOnly}
                 showDeleteButton={canSoftDelete}
                 todayIso={todayIso}
                 paymentFilter={documentsPaymentFilter}
@@ -4012,7 +4042,7 @@ function DocumentsPageContent() {
             todayIso={todayIso}
             onMarkPaid={markDocumentPaid}
             onMarkUnpaid={markDocumentUnpaid}
-            readOnlyTrash={false}
+            readOnlyTrash={documentsReadOnly}
             showDeleteButton={canSoftDelete}
             paymentFilter={documentsPaymentFilter}
             onPaymentFilterChange={setDocumentsPaymentFilter}
@@ -4040,7 +4070,7 @@ function DocumentsPageContent() {
             onSearchChange={setIssuedSearch}
             onMarkPaid={markDocumentPaid}
             onMarkUnpaid={markDocumentUnpaid}
-            readOnlyTrash={false}
+            readOnlyTrash={documentsReadOnly}
             showDeleteButton={canSoftDelete}
             todayIso={todayIso}
             paymentFilter={documentsPaymentFilter}

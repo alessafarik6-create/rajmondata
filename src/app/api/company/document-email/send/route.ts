@@ -129,11 +129,21 @@ export async function POST(request: NextRequest) {
     }
 
     const authHeader = request.headers.get("authorization") || "";
-    const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-    const caller = await verifyBearerAndLoadCaller(auth, db, idToken);
-    if (!caller) {
-      return jsonFail(401, "Neplatné přihlášení.", null, { step: "auth" });
+    const { verifyCompanyBearerWithPortalAccess } = await import("@/lib/api-company-auth");
+    const portalAuth = await verifyCompanyBearerWithPortalAccess(authHeader, {
+      moduleId: "documents",
+      method: "POST",
+    });
+    if (!portalAuth.ok) {
+      return jsonFail(portalAuth.status, portalAuth.error, null, { step: "portal_write" });
     }
+    const caller = {
+      uid: portalAuth.caller.uid,
+      companyId: portalAuth.caller.companyId,
+      role: portalAuth.caller.role,
+      globalRoles: portalAuth.caller.globalRoles,
+      isSuperAdmin: portalAuth.caller.globalRoles.includes("super_admin"),
+    };
     if (!callerCanTriggerOrgNotifications(caller)) {
       return jsonFail(403, "Nemáte oprávnění.", null, { step: "permission", uid: caller.uid });
     }

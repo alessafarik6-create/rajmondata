@@ -8,6 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { PortalManualInvoiceForm } from "@/components/invoices/portal-manual-invoice-form";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 
 export default function NewInvoicePage() {
   const router = useRouter();
@@ -20,6 +21,7 @@ export default function NewInvoicePage() {
   );
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
   const companyId = profile?.companyId as string | undefined;
+  const { canWrite: canWriteInvoices } = usePortalModuleAccess("invoices");
 
   if (isProfileLoading) {
     return (
@@ -37,6 +39,23 @@ export default function NewInvoicePage() {
           Novou fakturu můžete vystavit až po přiřazení k organizaci.
         </AlertDescription>
       </Alert>
+    );
+  }
+
+  if (!canWriteInvoices) {
+    return (
+      <div className="mx-auto max-w-xl space-y-4">
+        <Alert className="border-amber-200 bg-amber-50">
+          <AlertTitle>Pouze náhled</AlertTitle>
+          <AlertDescription>
+            Vystavení nebo úprava faktur vyžaduje oprávnění Zápis k modulu Faktury.
+          </AlertDescription>
+        </Alert>
+        <Button type="button" variant="outline" onClick={() => router.push("/portal/documents?view=issued")}>
+          <ChevronLeft className="mr-2 h-4 w-4" />
+          Zpět na doklady
+        </Button>
+      </div>
     );
   }
 

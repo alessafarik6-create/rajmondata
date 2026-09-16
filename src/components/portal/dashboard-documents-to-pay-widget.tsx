@@ -21,6 +21,7 @@ import {
 } from "@/lib/company-document-payment";
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import { DASHBOARD_WIDGET_LIST_SCROLL_CLASS } from "@/lib/dashboard-widget-list-styles";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 
 type Props = {
   companyId: string;
@@ -30,6 +31,7 @@ type Props = {
 export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
   const firestore = useFirestore();
   const { user } = useUser();
+  const { canWrite: canWriteDocuments } = usePortalModuleAccess("documents");
 
   const qRef = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -60,6 +62,7 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
   }, [rawDocs, todayIso]);
 
   const markPaid = async (id: string) => {
+    if (!canWriteDocuments) return;
     if (!firestore || !user?.uid || !String(id ?? "").trim()) return;
     const todayIso = new Date().toISOString().split("T")[0];
     await updateDoc(doc(firestore, "companies", companyId, "documents", id), {
@@ -192,14 +195,16 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
                           Otevřít
                         </Link>
                       </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="h-8 bg-emerald-700 text-xs text-white hover:bg-emerald-800"
-                        onClick={() => void markPaid(row.id ?? "")}
-                      >
-                        Zaplaceno
-                      </Button>
+                      {canWriteDocuments ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8 bg-emerald-700 text-xs text-white hover:bg-emerald-800"
+                          onClick={() => void markPaid(row.id ?? "")}
+                        >
+                          Zaplaceno
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 </li>

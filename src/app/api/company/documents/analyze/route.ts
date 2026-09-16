@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
-import {
-  callerCanAccessCompany,
-  verifyBearerAndLoadCaller,
-} from "@/lib/api-verify-company-user";
+import { getAdminFirestore } from "@/lib/firebase-admin";
+import { callerCanAccessCompany } from "@/lib/api-verify-company-user";
+import { verifyCompanyBearerWithPortalAccess } from "@/lib/api-company-auth";
 import { callerCanUseDocumentAi } from "@/lib/ai/permissions";
 import { analyzeCompanyDocument } from "@/lib/ai/document-extraction-service";
 import { errorMessageFromUnknown } from "@/lib/server-error-serialize";
@@ -14,22 +12,23 @@ export const maxDuration = 120;
 
 export async function POST(request: NextRequest) {
   try {
-    const db = getAdminFirestore();
-    const auth = getAdminAuth();
-    if (!db || !auth) {
-      return NextResponse.json(
-        { ok: false, error: "Server není nakonfigurován." },
-        { status: 503 }
-      );
+    const v = await verifyCompanyBearerWithPortalAccess(
+      request.headers.get("authorization"),
+      { moduleId: "documents", method: "POST" }
+    );
+    if (!v.ok) {
+      return NextResponse.json({ ok: false, error: v.error }, { status: v.status });
     }
+    const { caller, db } = v;
 
-    const authHeader = request.headers.get("authorization") || "";
-    const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-    const caller = await verifyBearerAndLoadCaller(auth, db, idToken);
-    if (!caller) {
-      return NextResponse.json({ ok: false, error: "Neautorizováno." }, { status: 401 });
-    }
-    if (!callerCanUseDocumentAi(caller)) {
+    const callerForAi = {
+      uid: caller.uid,
+      companyId: caller.companyId,
+      role: caller.role,
+      globalRoles: caller.globalRoles,
+      isSuperAdmin: caller.globalRoles.includes("super_admin"),
+    };
+    if (!callerCanUseDocumentAi(callerForAi)) {
       return NextResponse.json(
         { ok: false, error: "Nemáte oprávnění používat AI analýzu dokladů." },
         { status: 403 }
@@ -46,7 +45,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    if (!callerCanAccessCompany(caller, companyId)) {
+    if (!callerCanAccessCompany(callerForAi, companyId)) {
       return NextResponse.json({ ok: false, error: "Přístup odepřen." }, { status: 403 });
     }
     if (!(file instanceof File)) {

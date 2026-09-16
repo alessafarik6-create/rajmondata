@@ -44,6 +44,33 @@ service cloud.firestore {
       return userRole() in ['owner', 'admin', 'manager'];
     }
 
+    /** WRITE k modulu portálu z employees.portalModulePermissions (zaměstnanec). */
+    function portalModuleWriteOk(companyId, moduleId) {
+      if (userRole() in ['owner', 'admin', 'manager']) {
+        return canPrivilegedWrite();
+      }
+      if (userRole() == 'accountant') {
+        return false;
+      }
+      if (userRole() == 'employee' && ownEmployeeId() != null) {
+        let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+        if (!exists(empRef)) {
+          return false;
+        }
+        let data = get(empRef).data;
+        return 'portalModulePermissions' in data &&
+          data.portalModulePermissions is map &&
+          moduleId in data.portalModulePermissions &&
+          data.portalModulePermissions[moduleId] == 'write';
+      }
+      return false;
+    }
+
+    /** Jakýkoli zápis firemních dat v modulu (NONE / READ / WRITE z UI). */
+    function companyModuleWriteOk(companyId, moduleId) {
+      return portalModuleWriteOk(companyId, moduleId);
+    }
+
     /**
      * Zaměstnanec smí na dokumentu změnit pouze podpisová pole + status.
      * (Nesmí měnit title/type/fileUrl/storagePath/employeeId/companyId ani mazat.)
@@ -1814,7 +1841,8 @@ service cloud.firestore {
         match /tasks/{taskId} {
           allow read: if terminalCompanyMatches(companyId) ||
             jobFinancialReadAccess(companyId, jobId);
-          allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          allow create: if signedIn() && sameCompany(companyId) &&
+            companyModuleWriteOk(companyId, 'jobs') &&
             jobDetailReadAccess(companyId, jobId) &&
             request.resource.data.companyId == companyId &&
             request.resource.data.jobId == jobId &&
@@ -1832,7 +1860,8 @@ service cloud.firestore {
               request.resource.data.note == null ||
               (request.resource.data.note is string &&
                 request.resource.data.note.size() <= 8000));
-          allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          allow update: if signedIn() && sameCompany(companyId) &&
+            companyModuleWriteOk(companyId, 'jobs') &&
             jobDetailReadAccess(companyId, jobId) &&
             resource.data.companyId == companyId &&
             resource.data.jobId == jobId &&
@@ -1853,7 +1882,8 @@ service cloud.firestore {
               request.resource.data.note == null ||
               (request.resource.data.note is string &&
                 request.resource.data.note.size() <= 8000));
-          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          allow delete: if signedIn() && sameCompany(companyId) &&
+            companyModuleWriteOk(companyId, 'jobs') &&
             jobDetailReadAccess(companyId, jobId) &&
             resource.data.companyId == companyId &&
             resource.data.jobId == jobId &&
@@ -2091,7 +2121,8 @@ service cloud.firestore {
 
       /** Plánovaná zaměření před zakázkou: companies/{companyId}/measurements/{measurementId} */
       match /measurements/{measurementId} {
-        allow read, write: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow write: if signedIn() && sameCompany(companyId) && canPrivilegedWrite();
       }
 
       /**
@@ -2285,7 +2316,8 @@ service cloud.firestore {
 
       /** Nastavení terminálu (token pro /terminal-access/…) — jen privilegované role. */
       match /settings/{docId} {
-        allow read, write: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow write: if signedIn() && sameCompany(companyId) && canPrivilegedWrite();
       }
 
       /** Chat zaměstnanec ↔ administrace: companies/{companyId}/chat/{messageId} */
@@ -2748,22 +2780,27 @@ service cloud.firestore {
        */
       match /documents/{docId} {
         allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
-        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+        allow create: if signedIn() && sameCompany(companyId) &&
+          companyModuleWriteOk(companyId, 'documents') &&
           (companyDocumentIsSyncedMirror(request.resource.data) ||
             companyDocumentIsDeliveryNote(request.resource.data) ||
             companyDocumentHasFinancialAmount(request.resource.data));
-        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+        allow update: if signedIn() && sameCompany(companyId) &&
+          companyModuleWriteOk(companyId, 'documents') &&
           (companyDocumentIsSyncedMirror(request.resource.data) ||
             companyDocumentIsDeliveryNote(request.resource.data) ||
             companyDocumentHasFinancialAmount(request.resource.data));
-        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          companyModuleWriteOk(companyId, 'documents');
       }
 
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.
       // Zaměstnanec se sem nedostane (frontend redirect + tyto pravidla).
       // Výjimka: employees/{id}/private/** je výše explicitně zakázáno; rekurzivní pravidlo by jinak PIN povolilo (OR pravidel).
       match /{document=**} {
-        allow read, write: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          !request.path.matches('.*/employees/[^/]+/private/.*');
+        allow write: if signedIn() && sameCompany(companyId) && canPrivilegedWrite() &&
           !request.path.matches('.*/employees/[^/]+/private/.*');
       }
     }

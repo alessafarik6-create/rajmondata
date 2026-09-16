@@ -95,6 +95,7 @@ import { readJobQuestionnaireSnapshot } from "@/lib/customer-job-tasks";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { canAccessCompanyModule } from "@/lib/platform-access";
 import { isCompanyPrivileged } from "@/lib/company-privilege";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
@@ -1270,12 +1271,15 @@ export function JobDetailPageContent({
     profile?.role === "admin" ||
     profile?.globalRoles?.includes("super_admin");
 
+  const { canWrite: canWriteJobsModule } = usePortalModuleAccess("jobs");
+
   const canManageFolders =
-    profile?.role === "owner" ||
-    profile?.role === "admin" ||
-    profile?.role === "manager" ||
-    profile?.role === "accountant" ||
-    profile?.globalRoles?.includes("super_admin");
+    canWriteJobsModule &&
+    (profile?.role === "owner" ||
+      profile?.role === "admin" ||
+      profile?.role === "manager" ||
+      profile?.role === "accountant" ||
+      profile?.globalRoles?.includes("super_admin"));
 
   const employeeSelfRef = useMemoFirebase(
     () =>

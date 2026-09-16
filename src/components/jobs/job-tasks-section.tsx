@@ -230,6 +230,7 @@ export function JobTasksSection({ companyId, jobId, user, canEdit, layout = "def
       return;
     }
 
+    if (!canEdit) return;
     setSubmitting(true);
     try {
       const col = collection(
@@ -292,6 +293,7 @@ export function JobTasksSection({ companyId, jobId, user, canEdit, layout = "def
   };
 
   const markDone = async (row: JobTaskRow) => {
+    if (!canEdit) return;
     if (!firestore || !companyId || !jobId) return;
     try {
       await updateDoc(
@@ -329,6 +331,7 @@ export function JobTasksSection({ companyId, jobId, user, canEdit, layout = "def
   };
 
   const confirmDelete = async () => {
+    if (!canEdit) return;
     if (!deleteId || !firestore || !companyId || !jobId) return;
     setDeleting(true);
     try {

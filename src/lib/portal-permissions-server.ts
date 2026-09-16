@@ -101,3 +101,6 @@ export async function requirePortalAccessForRequest(
   const required = httpMethodRequiresWrite(opts.method) ? "write" : "read";
   return requirePortalModuleAccess(db, caller, moduleId, required);
 }
+
+/** Alias: `requirePermission("documents", "WRITE")` v API routes. */
+export { requirePortalModuleAccess as requirePermission };
