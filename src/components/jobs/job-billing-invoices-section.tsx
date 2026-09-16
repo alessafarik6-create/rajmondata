@@ -754,11 +754,11 @@ export function JobBillingInvoicesSection({
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
           {canCreateSettlement ? (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-col gap-2 max-md:[&>button]:w-full sm:flex-row sm:flex-wrap sm:items-center">
               <Button
                 type="button"
                 variant="secondary"
-                className="gap-2 border-neutral-950"
+                className="min-h-10 gap-2 border-neutral-950 max-md:w-full"
                 disabled={creatingSettlement}
                 onClick={() => void handleCreateSettlement()}
               >
@@ -778,11 +778,11 @@ export function JobBillingInvoicesSection({
           ) : null}
           {canCreateAdvance || canCreateManualAdvance ? (
             <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="grid grid-cols-1 gap-2 max-md:[&>button]:min-h-10 sm:flex sm:flex-wrap sm:items-center">
                 {canCreateAdvance ? (
                   <Button
                     type="button"
-                    className="gap-2"
+                    className="min-h-10 gap-2 max-md:w-full"
                     disabled={creatingAdvance}
                     onClick={() => openAdvanceDialog()}
                   >

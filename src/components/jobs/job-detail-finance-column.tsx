@@ -18,10 +18,12 @@ function KpiBlock(props: {
   const { label, net, gross, compact } = props;
   const showGross = gross != null && gross !== net;
   return (
-    <div className={cn(JD.financeDashBlock, compact && "py-1.5")}>
+    <div className={cn(JD.financeDashBlock, "min-w-0", compact && "py-1.5 max-md:px-2 max-md:py-1.5")}>
       <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">{label}</p>
       {net != null ? (
-        <p className="mt-0.5 text-sm font-bold tabular-nums text-gray-950">{formatKc(net)}</p>
+        <p className="mt-0.5 break-words text-sm font-bold tabular-nums text-gray-950 max-md:text-[13px]">
+          {formatKc(net)}
+        </p>
       ) : (
         <p className="mt-0.5 text-sm font-bold text-gray-400">—</p>
       )}
@@ -75,7 +77,7 @@ export function JobDetailFinanceColumn(props: {
       <p className={JD.columnLabel}>Finance</p>
       <div className={cn(JD.financeSection, "space-y-2 p-3 sm:p-3.5")}>
         {hasSummary ? (
-          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-1">
+          <div className="grid min-w-0 grid-cols-2 gap-1.5 max-[380px]:grid-cols-1 md:grid-cols-1">
             <KpiBlock
               label="Původní rozpočet"
               net={summary!.contractBaseNet}

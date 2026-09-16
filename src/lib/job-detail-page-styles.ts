@@ -2,11 +2,22 @@
  * Jednotný vzhled stránky detailu zakázky — karty, typografie, sekce, dashboard grid.
  */
 export const JD = {
-  page: "w-full min-w-0 space-y-4 sm:space-y-5",
-  contentMax: "mx-auto w-full max-w-[1800px] px-4 sm:px-6 lg:px-8",
+  page: "w-full min-w-0 max-w-[100vw] overflow-x-hidden space-y-4 sm:space-y-5",
+  contentMax: "mx-auto w-full max-w-[1800px] min-w-0 px-4 sm:px-6 lg:px-8",
   /** Hlavní dashboard — až 6 vertikálních sloupců na ultra-wide. */
   dashboardColumns:
-    "grid min-w-0 w-full grid-cols-1 gap-3 sm:gap-3.5 min-[640px]:grid-cols-2 min-[960px]:grid-cols-3 min-[1200px]:grid-cols-4 min-[1500px]:grid-cols-5 min-[1720px]:grid-cols-6",
+    "grid min-w-0 w-full grid-cols-1 gap-3 max-md:gap-2.5 sm:gap-3.5 min-[640px]:grid-cols-2 min-[960px]:grid-cols-3 min-[1200px]:grid-cols-4 min-[1500px]:grid-cols-5 min-[1720px]:grid-cols-6",
+  /** Pořadí sloupců dashboardu pouze na mobilu (max-width 768px). */
+  dashColOrderCustomer: "max-md:order-1 md:order-none",
+  dashColOrderPortal: "max-md:order-2 md:order-none",
+  dashColOrderDocs: "max-md:order-6 md:order-none",
+  dashColOrderRealizace: "max-md:order-4 md:order-none",
+  dashColOrderFinance: "max-md:order-5 md:order-none",
+  dashColOrderComms: "max-md:order-8 md:order-none",
+  dashColOrderMobileDeep: "max-md:order-9 md:order-none max-md:col-span-1",
+  mobileCardCompact: "max-md:px-3 max-md:py-3 max-md:shadow-sm",
+  mobileCardTitle: "max-md:text-[14px]",
+  mobileCardBody: "max-md:text-[13px] max-md:leading-snug",
   columnStack: "flex min-w-0 flex-col gap-3",
   columnLabel:
     "text-[11px] font-semibold uppercase tracking-wider text-gray-500 pb-0.5",
@@ -59,6 +70,11 @@ export const JD = {
   sectionBandInner: "mx-auto w-full max-w-[1720px] px-4 sm:px-6 lg:px-8",
   headerTitle: "text-xl font-semibold tracking-tight text-gray-950 sm:text-2xl",
   headerSubtitle: "text-xs sm:text-sm text-gray-700",
-  headerBar: "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4",
+  headerBar:
+    "flex min-w-0 flex-col gap-2.5 max-md:gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4",
+  headerTitleRow: "flex min-w-0 items-start gap-2",
+  headerMetaRow: "flex min-w-0 flex-wrap items-center gap-1.5 max-md:pl-11",
+  headerActionsRow:
+    "flex min-w-0 flex-wrap items-center gap-2 max-md:w-full max-md:[&_button]:min-h-10 sm:justify-end",
   actionButton: "h-9 gap-2 px-3 text-sm sm:h-10 sm:px-4",
 } as const;

@@ -630,7 +630,7 @@ export function JobWorkBudgetSection(props: {
             Plánované práce, označení provedení a fakturace hotových položek.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 max-md:grid max-md:w-full max-md:grid-cols-1 max-md:gap-2 max-md:[&>button]:w-full max-md:[&>button]:min-h-10 sm:flex sm:flex-wrap">
           {canManage ? (
             <>
               <Button type="button" size="sm" variant="outline" onClick={openNewItem}>
@@ -717,7 +717,89 @@ export function JobWorkBudgetSection(props: {
           Zatím žádné položky. {canManage ? "Přidejte položku nebo použijte šablonu." : ""}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+        <>
+        <div className="md:hidden space-y-2.5">
+          {filteredItems.map((row) => (
+            <div
+              key={row.id}
+              className={cn(
+                "min-w-0 rounded-lg border border-slate-200 bg-white p-3 text-[13px] shadow-sm",
+                row.done && "border-emerald-200 bg-emerald-50/50",
+                row.invoiced && "opacity-85"
+              )}
+            >
+              <div className="flex flex-wrap items-start gap-2">
+                <button
+                  type="button"
+                  className={cn(
+                    "min-w-0 flex-1 text-left text-[14px] font-semibold text-gray-950 break-words",
+                    canManage && !row.invoiced && "hover:underline"
+                  )}
+                  onClick={() => openEditItem(row)}
+                  disabled={!canManage || row.invoiced}
+                >
+                  {row.title || "—"}
+                </button>
+                <div className="flex flex-wrap gap-1">
+                  {isExtraWorkItem(row) ? (
+                    <Badge variant="outline" className="border-orange-400 bg-orange-50 font-semibold text-orange-950">
+                      VÍCEPRÁCE
+                    </Badge>
+                  ) : null}
+                  {row.done ? <Badge variant="secondary">Provedeno</Badge> : null}
+                  {row.invoiced ? <Badge>Vyfakturováno</Badge> : null}
+                </div>
+              </div>
+              {row.description ? (
+                <p className="mt-1 text-xs text-gray-600 break-words">{row.description}</p>
+              ) : null}
+              <dl className="mt-2 grid grid-cols-1 gap-1 text-xs text-gray-800">
+                <div className="flex justify-between gap-2">
+                  <dt>Množství</dt>
+                  <dd className="tabular-nums font-medium">
+                    {row.quantity} {row.unit}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>Cena bez DPH</dt>
+                  <dd className="break-all text-right tabular-nums font-medium">{formatKc(row.amountNet)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt>DPH</dt>
+                  <dd className="tabular-nums">{row.vatRate} %</dd>
+                </div>
+                <div className="flex justify-between gap-2 border-t border-slate-100 pt-1">
+                  <dt className="font-semibold text-gray-900">Celkem s DPH</dt>
+                  <dd className="break-all text-right tabular-nums font-bold text-gray-950">
+                    {formatKc(row.amountGross)}
+                  </dd>
+                </div>
+              </dl>
+              <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+                <Label className="text-xs text-gray-700">Provedeno</Label>
+                <Checkbox
+                  checked={row.done}
+                  disabled={!canMarkDone || row.invoiced}
+                  onCheckedChange={(v) => void toggleDone(row, v === true)}
+                  aria-label={`Provedeno: ${row.title}`}
+                />
+              </div>
+              {canManage && !row.invoiced ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="mt-1 h-9 w-full text-red-600"
+                  onClick={() => void deleteItem(row)}
+                >
+                  <Trash2 className="mr-1.5 h-4 w-4" />
+                  Smazat položku
+                </Button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white md:block">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-gray-600">
               <tr>
@@ -820,6 +902,7 @@ export function JobWorkBudgetSection(props: {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {canManage && items.length > 0 ? (

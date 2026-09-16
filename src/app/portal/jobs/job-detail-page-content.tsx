@@ -143,6 +143,8 @@ import {
   ZoomIn,
   ZoomOut,
   ChevronDown,
+  MoreHorizontal,
+  Receipt,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10340,31 +10342,49 @@ export function JobDetailPageContent({
     <div className={JD.page}>
       <div className={JD.contentMax}>
       <div className={JD.headerBar}>
-        <div className="flex items-start gap-2 min-w-0 sm:gap-3">
-        <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 sm:h-10 sm:w-10" onClick={() => router.push("/portal/jobs")}>
-          <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
-        </Button>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap sm:gap-3">
-            <h1 className={JD.headerTitle}>{job.name}</h1>
-            {(job as { jobTag?: string }).jobTag?.trim() ? (
-              <Badge variant="secondary" className="font-normal max-w-[12rem] truncate text-xs">
-                {jobTagLabel((job as { jobTag?: string }).jobTag)}
+        <div className="min-w-0 flex-1 space-y-2 max-md:space-y-1.5">
+          <div className={JD.headerTitleRow}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 shrink-0 sm:h-10 sm:w-10"
+              onClick={() => router.push("/portal/jobs")}
+            >
+              <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+            </Button>
+            <h1 className={cn(JD.headerTitle, "min-w-0 flex-1 break-words")}>{job.name}</h1>
+            <div className="hidden sm:flex sm:flex-wrap sm:items-center sm:gap-2">
+              {(job as { jobTag?: string }).jobTag?.trim() ? (
+                <Badge variant="secondary" className="max-w-[12rem] truncate text-xs font-normal">
+                  {jobTagLabel((job as { jobTag?: string }).jobTag)}
+                </Badge>
+              ) : null}
+              <Badge variant="outline" className="border-primary/30 text-xs text-primary">
+                ID: {jobId?.toString().substring(0, 8)}
               </Badge>
-            ) : null}
-            <Badge variant="outline" className="border-primary/30 text-primary text-xs">
-              ID: {jobId?.toString().substring(0, 8)}
-            </Badge>
+              <Badge variant="secondary" className="text-xs font-normal capitalize">
+                {job?.status ?? "—"}
+              </Badge>
+            </div>
+          </div>
+          <div className={cn(JD.headerMetaRow, "sm:hidden")}>
             <Badge variant="secondary" className="text-xs font-normal capitalize">
               {job?.status ?? "—"}
             </Badge>
+            <Badge variant="outline" className="border-primary/30 text-xs text-primary">
+              ID: {jobId?.toString().substring(0, 8)}
+            </Badge>
+            {(job as { jobTag?: string }).jobTag?.trim() ? (
+              <Badge variant="secondary" className="max-w-[10rem] truncate text-xs font-normal">
+                {jobTagLabel((job as { jobTag?: string }).jobTag)}
+              </Badge>
+            ) : null}
           </div>
           {(job as any)?.sourceMeasurementId ? (
-            <p className="text-xs text-slate-800 mt-1">
+            <p className="text-xs text-slate-800 max-md:pl-11 sm:mt-1">
               <Link
                 href="/portal/jobs/measurements"
-                className="text-primary font-medium hover:underline"
+                className="font-medium text-primary hover:underline"
               >
                 Přehled zaměření
               </Link>
@@ -10372,13 +10392,15 @@ export function JobDetailPageContent({
             </p>
           ) : null}
         </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+        <div className={JD.headerActionsRow}>
           {isAdmin && (
             <Select value={job?.status ?? "nová"} onValueChange={handleStatusChange}>
               <SelectTrigger
-                className={cn(LIGHT_SELECT_TRIGGER_CLASS, "h-10 w-[min(100%,180px)] min-w-[140px]")}
+                className={cn(
+                  LIGHT_SELECT_TRIGGER_CLASS,
+                  "h-10 w-full min-w-0 max-md:order-last sm:w-[min(100%,180px)] sm:min-w-[140px]"
+                )}
               >
                 <SelectValue placeholder="Změnit stav" />
               </SelectTrigger>
@@ -10394,32 +10416,60 @@ export function JobDetailPageContent({
 
           <Button
             variant="outline"
-            className={JD.actionButton}
+            className={cn(JD.actionButton, "max-md:flex-1 max-md:min-w-[calc(50%-0.25rem)]")}
             onClick={openEditJobDialog}
           >
-            <Edit2 className="w-4 h-4" /> Upravit zakázku
+            <Edit2 className="h-4 w-4" /> Upravit
           </Button>
 
           <Button
             variant="outline"
-            className={JD.actionButton}
+            className={cn(JD.actionButton, "max-md:flex-1 max-md:min-w-[calc(50%-0.25rem)]")}
             onClick={() => void openContractDialog("sod_work")}
           >
-            <FileText className="w-4 h-4" /> Vytvořit smlouvu
+            <FileText className="h-4 w-4" /> Smlouva
           </Button>
 
-          {isAdmin && (
-            <Button variant="destructive" className={JD.actionButton} onClick={handleDeleteJob}>
-              <Trash2 className="w-4 h-4" /> Smazat
-            </Button>
-          )}
+          {isAdmin ? (
+            <>
+              <Button
+                variant="destructive"
+                className={cn(JD.actionButton, "hidden sm:inline-flex")}
+                onClick={handleDeleteJob}
+              >
+                <Trash2 className="h-4 w-4" /> Smazat
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-10 w-10 shrink-0 sm:hidden"
+                    aria-label="Další akce"
+                  >
+                    <MoreHorizontal className="h-5 w-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={handleDeleteJob}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Smazat zakázku
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
+          ) : null}
         </div>
       </div>
 
       <div className={JD.dashboardColumns}>
-        <div className={JD.columnStack}>
+        <div className={cn(JD.columnStack, JD.dashColOrderCustomer)}>
           <p className={JD.columnLabel}>Zakázka</p>
-          <Card className={cn(JD.card, "shadow-sm")}>
+          <Card className={cn(JD.card, JD.mobileCardCompact, "shadow-sm max-md:order-1")}>
             <CardHeader className={JD.cardHeaderCompact}>
               <CardTitle className={JD.cardTitle}>
                 <MapPin aria-hidden /> Zákazník a adresa
@@ -10519,13 +10569,13 @@ export function JobDetailPageContent({
             </CardContent>
           </Card>
 
-          <Card className={cn(JD.card, "shadow-sm")}>
+          <Card className={cn(JD.card, JD.mobileCardCompact, "shadow-sm max-md:order-3")}>
             <CardHeader className={JD.cardHeaderCompact}>
-              <CardTitle className={JD.cardTitle}>
+              <CardTitle className={cn(JD.cardTitle, JD.mobileCardTitle)}>
                 <Users aria-hidden /> Přiřazení pracovníci
               </CardTitle>
             </CardHeader>
-            <CardContent className={JD.cardContentCompact}>
+            <CardContent className={cn(JD.cardContentCompact, JD.mobileCardBody)}>
               <div className="space-y-1.5">
                 {toArraySafe<string>(job.assignedEmployeeIds).map((empId: string) => (
                   <div
@@ -10550,13 +10600,13 @@ export function JobDetailPageContent({
             </CardContent>
           </Card>
 
-          <Card className={cn(JD.card, "shadow-sm")}>
+          <Card className={cn(JD.card, JD.mobileCardCompact, "shadow-sm max-md:order-2")}>
             <CardHeader className={JD.cardHeaderCompact}>
-              <CardTitle className={JD.cardTitle}>
+              <CardTitle className={cn(JD.cardTitle, JD.mobileCardTitle)}>
                 <Clock aria-hidden /> Termíny a pokrok
               </CardTitle>
             </CardHeader>
-            <CardContent className={JD.cardContentCompact}>
+            <CardContent className={cn(JD.cardContentCompact, JD.mobileCardBody)}>
               <div className="space-y-1.5">
                 <div className="flex justify-between text-[13px] text-gray-900">
                   <span>Celkový pokrok</span>
@@ -10591,7 +10641,7 @@ export function JobDetailPageContent({
           </Card>
         </div>
 
-        <div className={JD.columnStack}>
+        <div className={cn(JD.columnStack, JD.dashColOrderPortal, "max-md:flex max-md:flex-col")}>
           <p className={JD.columnLabel}>Portál</p>
           {companyId && jobFirestoreId ? (
             <JobCustomerProgressAdminSection
@@ -10605,7 +10655,7 @@ export function JobDetailPageContent({
           ) : null}
         </div>
 
-        <div className={JD.columnStack}>
+        <div className={cn(JD.columnStack, JD.dashColOrderDocs)}>
           <p className={JD.columnLabel}>Dokumentace</p>
           <JobDetailSummaryCard
             title="Smlouvy a dodatky"
@@ -10662,7 +10712,7 @@ export function JobDetailPageContent({
           />
         </div>
 
-        <div className={JD.columnStack}>
+        <div className={cn(JD.columnStack, JD.dashColOrderRealizace)}>
           <p className={JD.columnLabel}>Realizace</p>
           {user && companyId && jobFirestoreId ? (
             <JobTasksSection
@@ -10693,6 +10743,7 @@ export function JobDetailPageContent({
         </div>
 
         {user && companyId && jobFirestoreId ? (
+          <div className={cn("min-w-0", JD.dashColOrderFinance)}>
           <JobDetailFinanceColumn
             summary={
               workBudgetSummary.items.length > 0 || jobBudgetBreakdown
@@ -10713,9 +10764,10 @@ export function JobDetailPageContent({
             onOpenDeposits={() => openCollapsibleSection("contract_deposit")}
             onOpenFinancial={() => openCollapsibleSection("financial")}
           />
+          </div>
         ) : null}
 
-        <div className={JD.columnStack}>
+        <div className={cn(JD.columnStack, JD.dashColOrderComms)}>
           <p className={JD.columnLabel}>Komunikace</p>
           {companyId && jobFirestoreId && user && firestore ? (
             <>
@@ -10792,6 +10844,51 @@ export function JobDetailPageContent({
                 onOpen={() => openCollapsibleSection("document_email")}
               />
             </>
+          ) : null}
+        </div>
+
+        <div className={cn(JD.columnStack, JD.dashColOrderMobileDeep, "md:hidden")}>
+          <p className={JD.columnLabel}>Detail zakázky</p>
+          {companyId && jobFirestoreId ? (
+            <JobDetailSummaryCard
+              title="Fakturace zakázky"
+              icon={<Receipt aria-hidden />}
+              onOpen={() => openDeepSection("invoices")}
+              openLabel="Otevřít"
+            />
+          ) : null}
+          <JobDetailSummaryCard
+            title="Foto zaměření"
+            icon={<Camera aria-hidden />}
+            onOpen={() => openDeepSection("measurement-photos")}
+            openLabel="Otevřít"
+          />
+          {(isAdmin || canManageFolders) && companyId && jobFirestoreId ? (
+            <JobDetailSummaryCard
+              title="Položkový rozpočet"
+              icon={<FileText aria-hidden />}
+              lines={
+                workBudgetSummary.items.length > 0 ? (
+                  <p>{workBudgetSummary.items.length} položek</p>
+                ) : (
+                  <p>Rozpočet prázdný</p>
+                )
+              }
+              onOpen={() => openDeepSection("work-budget")}
+              openLabel="Otevřít"
+            />
+          ) : null}
+          {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
+            <JobDetailSummaryCard
+              title="Výrobní dílna"
+              icon={<Factory aria-hidden />}
+              lines={<p>Zakázka ve výrobě</p>}
+              onOpen={() => {
+                const el = document.getElementById("job-vyroba-workshop");
+                el?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              openLabel="Přejít"
+            />
           ) : null}
         </div>
       </div>
@@ -11429,32 +11526,6 @@ export function JobDetailPageContent({
 
       </div>
 
-      {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
-        <section className={JD.sectionBand}>
-          <div className={JD.sectionBandInner}>
-            <Card className={cn(JD.fullWidthCard, "border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
-              <CardHeader className="pb-2">
-                <CardTitle className={cn(JD.cardTitlePlain, "flex items-center gap-2")}>
-                  <Factory className="h-5 w-5 text-primary" />
-                  Výrobní dílna (zakázka ve výrobě)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm text-gray-800">
-                <p>
-                  Otevře se bezpečný přehled bez cen a faktur: stav výroby, výdej materiálu včetně metráže a
-                  zbytků, spotřeba a velké náhledy podkladů.
-                </p>
-                <Button type="button" asChild>
-                  <Link href={`/portal/vyroba/zakazky/${String(jobFirestoreId)}`}>
-                    Otevřít výrobní dílnu této zakázky
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-      ) : null}
-
       {user && companyId && jobFirestoreId ? (
         <section className={JD.sectionBand} aria-labelledby="job-measurement-photos-heading">
           <div className={JD.sectionBandInner}>
@@ -11554,7 +11625,7 @@ export function JobDetailPageContent({
                 ) : null}
               </p>
             ) : (
-              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4 md:gap-3 max-md:[&_img]:aspect-[4/3] max-md:[&_img]:object-cover">
                 {(measurementPhotosRaw ?? []).map((raw) => {
                   const row = raw as Record<string, unknown> & {
                     id: string;
@@ -11796,6 +11867,32 @@ export function JobDetailPageContent({
               layout="jobDetailWide"
             />
             </JobDetailDeepSection>
+          </div>
+        </section>
+      ) : null}
+
+      {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
+        <section className={JD.sectionBand} id="job-vyroba-workshop">
+          <div className={JD.sectionBandInner}>
+            <Card className={cn(JD.fullWidthCard, "border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
+              <CardHeader className="pb-2">
+                <CardTitle className={cn(JD.cardTitlePlain, "flex items-center gap-2")}>
+                  <Factory className="h-5 w-5 text-primary" />
+                  Výrobní dílna (zakázka ve výrobě)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-gray-800">
+                <p>
+                  Otevře se bezpečný přehled bez cen a faktur: stav výroby, výdej materiálu včetně metráže a
+                  zbytků, spotřeba a velké náhledy podkladů.
+                </p>
+                <Button type="button" asChild className="max-md:w-full">
+                  <Link href={`/portal/vyroba/zakazky/${String(jobFirestoreId)}`}>
+                    Otevřít výrobní dílnu této zakázky
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
           </div>
         </section>
       ) : null}

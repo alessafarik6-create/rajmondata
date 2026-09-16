@@ -5,7 +5,11 @@
 import assert from "node:assert/strict";
 
 import { computeWorkBudgetFinancialOverview, applyAdvanceDeductionsToGross } from "../src/lib/work-budget-financial-overview.ts";
-import { buildWorkBudgetInvoicePreview, billableWorkBudgetItems } from "../src/lib/work-budget-invoice.ts";
+import {
+  buildWorkBudgetInvoicePreview,
+  billableWorkBudgetItems,
+  formatWorkBudgetItemInvoiceDescription,
+} from "../src/lib/work-budget-invoice.ts";
 import {
   EXTRA_WORK_STATUSES,
   WORK_BUDGET_ITEM_TYPES,
@@ -166,6 +170,18 @@ const jobBudget = {
     item({ id: "2", done: true, invoiced: false, amountNet: 200, vatAmount: 42, amountGross: 242 }),
   ];
   assert.equal(billableWorkBudgetItems(rows).length, 1);
+}
+
+// VÍCEPRÁCE prefix on invoice line description only
+{
+  const normal = item({ title: "Běžná práce", itemType: WORK_BUDGET_ITEM_TYPES.NORMAL });
+  assert.equal(formatWorkBudgetItemInvoiceDescription(normal), "Běžná práce");
+  const extra = item({
+    title: "Pouzdra na dveře",
+    itemType: WORK_BUDGET_ITEM_TYPES.EXTRA_WORK,
+    extraWorkStatus: EXTRA_WORK_STATUSES.APPROVED,
+  });
+  assert.equal(formatWorkBudgetItemInvoiceDescription(extra), "VÍCEPRÁCE – Pouzdra na dveře");
 }
 
 // 9) DPH — gross = net + vat v agregaci

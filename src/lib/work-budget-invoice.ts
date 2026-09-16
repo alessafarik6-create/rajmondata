@@ -44,10 +44,18 @@ function defaultDueDateIso(): string {
   return d.toISOString().split("T")[0];
 }
 
-function workBudgetItemToInvoiceLine(item: JobWorkBudgetItemDoc): PortalManualFormItem {
+export function formatWorkBudgetItemInvoiceDescription(item: JobWorkBudgetItemDoc): string {
   const title = trim(item.title);
   const desc = trim(item.description);
-  const description = desc && desc !== title ? `${title} – ${desc}` : title || desc;
+  const base = desc && desc !== title ? `${title} – ${desc}` : title || desc;
+  if (isExtraWorkItem(item)) {
+    return base ? `VÍCEPRÁCE – ${base}` : "VÍCEPRÁCE";
+  }
+  return base;
+}
+
+function workBudgetItemToInvoiceLine(item: JobWorkBudgetItemDoc): PortalManualFormItem {
+  const description = formatWorkBudgetItemInvoiceDescription(item);
   return {
     id: item.id,
     description,
