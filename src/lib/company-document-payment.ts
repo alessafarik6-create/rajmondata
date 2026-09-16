@@ -18,10 +18,22 @@ export type PaymentUrgency =
   | "due_soon"
   | "ok";
 
+/** Typ dokladu ve Firestore (`companies/.../documents`). */
+export type CompanyDocumentFirestoreType =
+  | "invoice"
+  | "document"
+  | "delivery_note";
+
 export type CompanyDocumentPaymentRow = CompanyDocumentLike & {
   castkaCZK?: number;
   amountGrossCZK?: number;
   id?: string;
+  /** received | issued | prijate | vydane | delivery_note … */
+  type?: string;
+  documentKind?: string;
+  documentType?: CompanyDocumentFirestoreType | string;
+  sourceInvoiceId?: string | null;
+  invoiceId?: string | null;
   nazev?: string;
   entityName?: string;
   number?: string;
@@ -43,6 +55,28 @@ export type CompanyDocumentPaymentRow = CompanyDocumentLike & {
   amountGross?: number;
   amount?: number;
 };
+
+/** Sjednocené čtení typu/kind dokladu (stejná logika jako v UI Doklady). */
+export function documentClassificationValues(
+  row: CompanyDocumentPaymentRow
+): { type: string; documentKind: string; documentType: string } {
+  return {
+    type: String(row.type ?? "").trim().toLowerCase(),
+    documentKind: String(row.documentKind ?? "").trim().toLowerCase(),
+    documentType: String(row.documentType ?? "").trim().toLowerCase(),
+  };
+}
+
+export function isCompanyDocumentDeliveryNote(
+  row: CompanyDocumentPaymentRow
+): boolean {
+  const { type, documentKind, documentType } = documentClassificationValues(row);
+  return (
+    documentType === "delivery_note" ||
+    type === "delivery_note" ||
+    documentKind === "delivery_note"
+  );
+}
 
 export type CompanyDocumentPaymentStatus = "unpaid" | "partial" | "paid";
 

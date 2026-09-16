@@ -4,9 +4,11 @@
 
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import {
+  documentClassificationValues,
   documentGrossForPayment,
   getDocumentPaymentUrgency,
   getPortalInvoicePaymentUrgency,
+  isCompanyDocumentDeliveryNote,
   isDocumentEligibleForPaymentBox,
   type CompanyDocumentPaymentRow,
 } from "@/lib/company-document-payment";
@@ -28,25 +30,13 @@ export type PortalPaymentOverviewStats = {
   overdueTargets: PortalPaymentOverdueTarget[];
 };
 
-function isDeliveryNoteRow(row: CompanyDocumentPaymentRow): boolean {
-  return (
-    row.documentType === "delivery_note" ||
-    row.type === "delivery_note" ||
-    (row as { documentKind?: string }).documentKind === "delivery_note"
-  );
-}
-
 function isFinancialOrDeliveryDoc(row: CompanyDocumentPaymentRow): boolean {
-  return isFinancialCompanyDocument(row) || isDeliveryNoteRow(row);
+  return isFinancialCompanyDocument(row) || isCompanyDocumentDeliveryNote(row);
 }
 
 /** Zrcadlo vystavené faktury v documents — počítá se jen v kolekci invoices. */
 export function isPortalInvoiceMirrorDocument(row: CompanyDocumentPaymentRow): boolean {
-  const src = String(
-    (row as { sourceInvoiceId?: unknown }).sourceInvoiceId ??
-      (row as { invoiceId?: unknown }).invoiceId ??
-      ""
-  ).trim();
+  const src = String(row.sourceInvoiceId ?? row.invoiceId ?? "").trim();
   if (src) return true;
   return String(row.source ?? "").trim() === "portalInvoice";
 }
@@ -75,8 +65,7 @@ export function collectOverduePaymentFlashTargets(
   const out: PortalPaymentOverdueTarget[] = [];
   for (const d of financialActive) {
     if (isPortalInvoiceMirrorDocument(d)) continue;
-    const pr = d as CompanyDocumentPaymentRow;
-    if (getDocumentPaymentUrgency(pr, todayIso) !== "overdue") continue;
+    if (getDocumentPaymentUrgency(d, todayIso) !== "overdue") continue;
     const sec = overdueSectionForDoc(d);
     if (!sec) continue;
     out.push({
@@ -104,18 +93,11 @@ export function collectOverduePaymentFlashTargets(
 function overdueSectionForDoc(
   d: CompanyDocumentPaymentRow
 ): "received" | "issued" | null {
-  if (
-    d.type === "received" ||
-    d.type === "prijate" ||
-    d.documentKind === "prijate"
-  ) {
+  const { type, documentKind } = documentClassificationValues(d);
+  if (type === "received" || type === "prijate" || documentKind === "prijate") {
     return "received";
   }
-  if (
-    d.type === "issued" ||
-    d.type === "vydane" ||
-    d.documentKind === "vydane"
-  ) {
+  if (type === "issued" || type === "vydane" || documentKind === "vydane") {
     return "issued";
   }
   return null;
