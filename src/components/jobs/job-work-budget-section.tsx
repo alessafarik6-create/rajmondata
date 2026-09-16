@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -70,7 +71,27 @@ import {
   workBudgetTemplateContentFromItems,
   type JobWorkBudgetItemDoc,
 } from "@/lib/work-budget-types";
-import { normalizeVatRate, VAT_RATE_OPTIONS, type VatRatePercent } from "@/lib/vat-calculations";
+import {
+  normalizeVatRate,
+  VAT_RATE_OPTIONS,
+  type JobBudgetBreakdown,
+  type VatRatePercent,
+} from "@/lib/vat-calculations";
+import { computeWorkBudgetFinancialOverview } from "@/lib/work-budget-financial-overview";
+import {
+  EXTRA_WORK_STATUSES,
+  isApprovedExtraWorkItem,
+  isExtraWorkItem,
+  WORK_BUDGET_ITEM_TYPES,
+  type ExtraWorkStatus,
+  type WorkBudgetItemType,
+} from "@/lib/work-budget-types";
+import { JobWorkBudgetAdvancesPanel } from "@/components/jobs/job-work-budget-advances-panel";
+import { JobWorkBudgetInvoiceDialog } from "@/components/jobs/job-work-budget-invoice-dialog";
+import {
+  parseWorkBudgetAdvanceFromFirestore,
+  WORK_BUDGET_ADVANCES_COLLECTION,
+} from "@/lib/work-budget-advances";
 import type { OrgBankAccountRow } from "@/lib/invoice-billing-meta";
 import { logActivitySafe } from "@/lib/activity-log";
 import { useRouter } from "next/navigation";
@@ -96,6 +117,8 @@ type ItemDraft = {
   unitPriceNet: string;
   vatRate: VatRatePercent;
   note: string;
+  isExtraWork: boolean;
+  extraWorkStatus: ExtraWorkStatus;
 };
 
 function emptyDraft(): ItemDraft {
@@ -107,6 +130,8 @@ function emptyDraft(): ItemDraft {
     unitPriceNet: "",
     vatRate: 21,
     note: "",
+    isExtraWork: false,
+    extraWorkStatus: EXTRA_WORK_STATUSES.DRAFT,
   };
 }
 
@@ -119,6 +144,8 @@ function draftFromItem(row: JobWorkBudgetItemDoc): ItemDraft {
     unitPriceNet: row.unitPriceNet > 0 ? String(row.unitPriceNet) : "",
     vatRate: row.vatRate,
     note: row.note ?? "",
+    isExtraWork: isExtraWorkItem(row),
+    extraWorkStatus: row.extraWorkStatus,
   };
 }
 
@@ -126,8 +153,14 @@ function parseDraft(draft: ItemDraft) {
   const title = draft.title.trim();
   const quantity = Math.max(0, Number(draft.quantity.replace(",", ".")) || 0);
   const unitPriceNet = Math.max(0, Number(draft.unitPriceNet.replace(",", ".")) || 0);
-  const vatRate = normalizeVatRate(draft.vatRate);
+    const vatRate = normalizeVatRate(draft.vatRate);
   const amounts = computeWorkBudgetLineAmounts({ quantity, unitPriceNet, vatRate });
+  const itemType: WorkBudgetItemType = draft.isExtraWork
+    ? WORK_BUDGET_ITEM_TYPES.EXTRA_WORK
+    : WORK_BUDGET_ITEM_TYPES.NORMAL;
+  const extraWorkStatus: ExtraWorkStatus = draft.isExtraWork
+    ? draft.extraWorkStatus
+    : EXTRA_WORK_STATUSES.DRAFT;
   return {
     title,
     description: draft.description.trim(),
@@ -136,6 +169,8 @@ function parseDraft(draft: ItemDraft) {
     unitPriceNet,
     vatRate,
     note: draft.note.trim() || null,
+    itemType,
+    extraWorkStatus,
     ...amounts,
   };
 }
@@ -155,6 +190,7 @@ export function JobWorkBudgetSection(props: {
   customer?: unknown;
   orgBankAccounts?: OrgBankAccountRow[];
   profileDisplayName?: string;
+  jobBudgetBreakdown?: JobBudgetBreakdown | null;
   layout?: "jobDetailWide";
 }) {
   const {
@@ -172,6 +208,7 @@ export function JobWorkBudgetSection(props: {
     customer,
     orgBankAccounts = [],
     profileDisplayName,
+    jobBudgetBreakdown = null,
   } = props;
 
   const firestore = useFirestore();
@@ -197,8 +234,40 @@ export function JobWorkBudgetSection(props: {
     [rawItems]
   );
 
-  const summary = useMemo(() => computeWorkBudgetSummary(items), [items]);
+  const advancesColRef = useMemoFirebase(
+    () =>
+      collection(firestore, "companies", companyId, "jobs", jobId, WORK_BUDGET_ADVANCES_COLLECTION),
+    [firestore, companyId, jobId]
+  );
+  const { data: rawAdvances = [] } = useCollection<Record<string, unknown>>(advancesColRef);
+  const advances = useMemo(
+    () =>
+      (rawAdvances ?? []).map((row, idx) =>
+        parseWorkBudgetAdvanceFromFirestore(
+          row as Record<string, unknown>,
+          String((row as { id?: string }).id ?? `adv-${idx}`)
+        )
+      ),
+    [rawAdvances]
+  );
+
+  const financialOverview = useMemo(
+    () => computeWorkBudgetFinancialOverview({ items, jobBudget: jobBudgetBreakdown }),
+    [items, jobBudgetBreakdown]
+  );
+  const summary = useMemo(
+    () => computeWorkBudgetSummary(items, jobBudgetBreakdown),
+    [items, jobBudgetBreakdown]
+  );
   const billable = useMemo(() => billableWorkBudgetItems(items), [items]);
+
+  type RowFilter = "all" | "normal" | "extra_work";
+  const [rowFilter, setRowFilter] = useState<RowFilter>("all");
+  const filteredItems = useMemo(() => {
+    if (rowFilter === "normal") return items.filter((r) => !isExtraWorkItem(r));
+    if (rowFilter === "extra_work") return items.filter(isExtraWorkItem);
+    return items;
+  }, [items, rowFilter]);
 
   const [itemDialogOpen, setItemDialogOpen] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -215,6 +284,7 @@ export function JobWorkBudgetSection(props: {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
   const [invoiceBusy, setInvoiceBusy] = useState(false);
+  const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
 
   const pdfHtml = useMemo(
     () =>
@@ -485,7 +555,7 @@ export function JobWorkBudgetSection(props: {
     toast({ title: "Náhled PDF", description: "V náhledu použijte tlačítko Stáhnout PDF." });
   };
 
-  const generateInvoice = async () => {
+  const openInvoiceDialog = () => {
     if (!canManage) return;
     if (!customerId?.trim()) {
       toast({ variant: "destructive", title: "Zakázka nemá přiřazeného zákazníka." });
@@ -495,11 +565,15 @@ export function JobWorkBudgetSection(props: {
       toast({
         variant: "destructive",
         title: "Žádné položky k fakturaci",
-        description: "Označte provedené nevyfakturované položky.",
+        description: "Označte provedené nevyfakturované položky (schválené vícepráce).",
       });
       return;
     }
-    if (!window.confirm(`Vytvořit fakturu z ${billable.length} provedených položek?`)) return;
+    setInvoiceDialogOpen(true);
+  };
+
+  const generateInvoice = async (selectedAdvanceIds: string[]) => {
+    if (!canManage) return;
     setInvoiceBusy(true);
     try {
       const result = await createInvoiceFromWorkBudgetItems({
@@ -507,11 +581,13 @@ export function JobWorkBudgetSection(props: {
         companyId,
         jobId,
         jobDisplayName: jobDisplayName ?? "Zakázka",
-        customerId: customerId.trim(),
+        customerId: customerId!.trim(),
         customer,
         companyDoc,
         orgBankAccounts,
         items,
+        advances,
+        selectedAdvanceIds,
         userId: user.uid,
         profileDisplayName,
       });
@@ -528,6 +604,7 @@ export function JobWorkBudgetSection(props: {
         details: result.invoiceNumber,
         sourceModule: "invoices",
       });
+      setInvoiceDialogOpen(false);
       router.push(`/portal/invoices/${result.invoiceId}`);
     } catch (e) {
       toast({
@@ -582,7 +659,7 @@ export function JobWorkBudgetSection(props: {
             <Button
               type="button"
               size="sm"
-              onClick={generateInvoice}
+              onClick={openInvoiceDialog}
               disabled={invoiceBusy || billable.length === 0}
             >
               <Receipt className="mr-1.5 h-4 w-4" />
@@ -592,10 +669,14 @@ export function JobWorkBudgetSection(props: {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <JobWorkBudgetAdvancesPanel companyId={companyId} jobId={jobId} user={user} canManage={canManage} />
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {[
-          { label: "Rozpočet bez DPH", value: summary.totalNet },
-          { label: "Rozpočet s DPH", value: summary.totalGross },
+          { label: "Původní rozpočet bez DPH", value: financialOverview.contractBase.net },
+          { label: "Vícepráce (schváleno) bez DPH", value: financialOverview.extraWorkApproved.net },
+          { label: "Aktuální cena bez DPH", value: financialOverview.currentPrice.net },
+          { label: "Aktuální cena s DPH", value: financialOverview.currentPrice.gross },
           { label: "Provedeno bez DPH", value: summary.doneNet },
           { label: "Provedeno s DPH", value: summary.doneGross },
           { label: "Zbývá bez DPH", value: summary.remainingNet },
@@ -608,6 +689,26 @@ export function JobWorkBudgetSection(props: {
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">{box.label}</p>
             <p className="text-lg font-bold tabular-nums text-gray-950">{formatKc(box.value)}</p>
           </div>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ["all", "Vše"],
+            ["normal", "Základní rozpočet"],
+            ["extra_work", "Vícepráce"],
+          ] as const
+        ).map(([key, label]) => (
+          <Button
+            key={key}
+            type="button"
+            size="sm"
+            variant={rowFilter === key ? "default" : "outline"}
+            onClick={() => setRowFilter(key)}
+          >
+            {label}
+          </Button>
         ))}
       </div>
 
@@ -634,7 +735,7 @@ export function JobWorkBudgetSection(props: {
               </tr>
             </thead>
             <tbody>
-              {items.map((row) => (
+              {filteredItems.map((row) => (
                 <tr
                   key={row.id}
                   className={cn(
@@ -662,6 +763,18 @@ export function JobWorkBudgetSection(props: {
                       <p className="mt-0.5 text-xs italic text-gray-500">Pozn.: {row.note}</p>
                     ) : null}
                     <div className="mt-1 flex flex-wrap gap-1">
+                      {isExtraWorkItem(row) ? (
+                        <Badge variant="outline" className="border-orange-300 text-orange-900">
+                          Vícepráce
+                        </Badge>
+                      ) : null}
+                      {isExtraWorkItem(row) && !isApprovedExtraWorkItem(row) ? (
+                        <Badge variant="secondary" className="text-[10px]">
+                          {row.extraWorkStatus === EXTRA_WORK_STATUSES.REJECTED
+                            ? "Zamítnuto"
+                            : "Návrh"}
+                        </Badge>
+                      ) : null}
                       {row.done ? <Badge variant="secondary">Provedeno</Badge> : null}
                       {row.invoiced ? <Badge>Vyfakturováno</Badge> : null}
                     </div>
@@ -796,6 +909,42 @@ export function JobWorkBudgetSection(props: {
                 onChange={(e) => setDraft((p) => ({ ...p, note: e.target.value }))}
               />
             </div>
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <Label htmlFor="wb-extra-work" className="cursor-pointer">
+                Vícepráce
+              </Label>
+              <Switch
+                id="wb-extra-work"
+                checked={draft.isExtraWork}
+                onCheckedChange={(v) =>
+                  setDraft((p) => ({
+                    ...p,
+                    isExtraWork: v,
+                    extraWorkStatus: v ? EXTRA_WORK_STATUSES.DRAFT : EXTRA_WORK_STATUSES.DRAFT,
+                  }))
+                }
+              />
+            </div>
+            {draft.isExtraWork ? (
+              <div>
+                <Label>Stav vícepráce</Label>
+                <Select
+                  value={draft.extraWorkStatus}
+                  onValueChange={(v) =>
+                    setDraft((p) => ({ ...p, extraWorkStatus: v as ExtraWorkStatus }))
+                  }
+                >
+                  <SelectTrigger className={LIGHT_SELECT_TRIGGER_CLASS}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className={LIGHT_SELECT_CONTENT_CLASS}>
+                    <SelectItem value={EXTRA_WORK_STATUSES.DRAFT}>Návrh</SelectItem>
+                    <SelectItem value={EXTRA_WORK_STATUSES.APPROVED}>Schváleno</SelectItem>
+                    <SelectItem value={EXTRA_WORK_STATUSES.REJECTED}>Zamítnuto</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
               <p>
                 Celkem bez DPH: <strong>{formatKc(draftPreview.amountNet)}</strong>
@@ -873,6 +1022,15 @@ export function JobWorkBudgetSection(props: {
           )}
         </DialogContent>
       </Dialog>
+
+      <JobWorkBudgetInvoiceDialog
+        open={invoiceDialogOpen}
+        onOpenChange={setInvoiceDialogOpen}
+        items={items}
+        advances={advances}
+        busy={invoiceBusy}
+        onConfirm={(ids) => void generateInvoice(ids)}
+      />
 
       <JobWorkBudgetPdfPreviewDialog
         open={previewOpen}

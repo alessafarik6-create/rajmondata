@@ -1741,6 +1741,31 @@ service cloud.firestore {
             resource.data.invoiced != true;
         }
 
+        /** Zálohy pro položkový rozpočet / fakturaci zakázky. */
+        match /workBudgetAdvances/{advanceId} {
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobWorkBudgetReadAccess(companyId, jobId);
+          allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.sourceType in ['invoice', 'manual'] &&
+            request.resource.data.amountGross is number &&
+            request.resource.data.amountGross >= 0;
+          allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            resource.data.appliedToInvoiceId == null;
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            resource.data.appliedToInvoiceId == null;
+        }
+
         /**
          * Smlouvy o dílo u zakázky — companies/{companyId}/jobs/{jobId}/workContracts/{contractId}
          */

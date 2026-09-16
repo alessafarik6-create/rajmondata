@@ -29,6 +29,7 @@ import { isJobIdAssigned } from "@/lib/assigned-jobs";
 import { parsePhotoCommentQueryParam } from "@/lib/job-photo-comment-email-settings";
 import { buildEmployeeJobMediaAnnotateHref } from "@/lib/job-media-annotate-route";
 import type { JobPhotoAnnotationTarget } from "@/lib/job-media-types";
+import { resolveJobBudgetFromFirestore } from "@/lib/vat-calculations";
 
 /** Bezpečná pole z dokumentu zakázky — žádné rozpočty / interní finance v UI. */
 function safeJobOverviewFields(job: Record<string, unknown> | null | undefined) {
@@ -131,6 +132,11 @@ export default function EmployeeJobDetailPage() {
     [firestore, companyId, jobId]
   );
   const { data: jobDoc } = useDoc(jobRef);
+
+  const jobBudgetBreakdown = useMemo(
+    () => resolveJobBudgetFromFirestore(jobDoc as Record<string, unknown> | null | undefined),
+    [jobDoc]
+  );
 
   const showLegacyPhotos =
     !!summary &&
@@ -463,6 +469,7 @@ export default function EmployeeJobDetailPage() {
                   user={user}
                   canManage={false}
                   canMarkDone={effectivePermissions.canViewBudgets}
+                  jobBudgetBreakdown={jobBudgetBreakdown}
                 />
               ) : null}
 

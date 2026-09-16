@@ -84,6 +84,11 @@ import {
   computeWorkBudgetSummary,
   sortWorkBudgetItems,
 } from "@/lib/work-budget-calculations";
+import {
+  WORK_BUDGET_ADVANCES_COLLECTION,
+  computeWorkBudgetAdvanceTotals,
+  parseWorkBudgetAdvanceFromFirestore,
+} from "@/lib/work-budget-advances";
 import type { JobDetailCollapsibleSectionId } from "@/lib/job-detail-collapsible-sections";
 import { readJobQuestionnaireSnapshot } from "@/lib/customer-job-tasks";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
@@ -1371,8 +1376,51 @@ export function JobDetailPageContent({
         )
       )
     );
-    return { items, summary: computeWorkBudgetSummary(items) };
-  }, [workBudgetItemsRaw]);
+    return {
+      items,
+      summary: computeWorkBudgetSummary(items, jobBudgetBreakdown),
+    };
+  }, [workBudgetItemsRaw, jobBudgetBreakdown]);
+
+  const workBudgetAdvancesColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobFirestoreId
+        ? collection(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            jobFirestoreId,
+            WORK_BUDGET_ADVANCES_COLLECTION
+          )
+        : null,
+    [firestore, companyId, jobFirestoreId]
+  );
+  const { data: workBudgetAdvancesRaw } = useCollection<Record<string, unknown>>(
+    workBudgetAdvancesColRef
+  );
+  const workBudgetAdvanceTotals = useMemo(() => {
+    const rows = (workBudgetAdvancesRaw ?? []).map((row, idx) =>
+      parseWorkBudgetAdvanceFromFirestore(
+        row,
+        String((row as { id?: string }).id ?? `adv-${idx}`)
+      )
+    );
+    return computeWorkBudgetAdvanceTotals(rows);
+  }, [workBudgetAdvancesRaw]);
+
+  const workBudgetFinanceDashboard = useMemo(() => {
+    const summary = workBudgetSummary.summary;
+    const deduction = workBudgetAdvanceTotals.forDeductionGross;
+    const remainingToInvoiceGross = roundMoney2(
+      Math.max(0, summary.totalGross - deduction)
+    );
+    return {
+      advancesTotalGross: workBudgetAdvanceTotals.totalGross,
+      advancesForDeductionGross: deduction,
+      remainingToInvoiceGross,
+    };
+  }, [workBudgetSummary.summary, workBudgetAdvanceTotals]);
 
   const photosColRef = useMemoFirebase(
     () =>
@@ -10647,7 +10695,16 @@ export function JobDetailPageContent({
         {user && companyId && jobFirestoreId ? (
           <JobDetailFinanceColumn
             summary={
-              workBudgetSummary.items.length > 0 ? workBudgetSummary.summary : null
+              workBudgetSummary.items.length > 0 || jobBudgetBreakdown
+                ? workBudgetSummary.summary
+                : null
+            }
+            advancesTotalGross={workBudgetFinanceDashboard.advancesTotalGross}
+            advancesForDeductionGross={
+              workBudgetFinanceDashboard.advancesForDeductionGross
+            }
+            remainingToInvoiceGross={
+              workBudgetFinanceDashboard.remainingToInvoiceGross
             }
             itemCount={workBudgetSummary.items.length}
             onOpenBudget={() => openDeepSection("work-budget")}
@@ -11722,6 +11779,7 @@ export function JobDetailPageContent({
                   ? String(job.name).trim()
                   : null
               }
+              jobBudgetBreakdown={jobBudgetBreakdown}
               user={user}
               canManage={canManageFolders}
               canMarkDone={canManageFolders}

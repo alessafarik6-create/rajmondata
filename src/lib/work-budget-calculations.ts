@@ -1,45 +1,29 @@
-import { roundMoney2 } from "@/lib/vat-calculations";
+import { roundMoney2, type JobBudgetBreakdown } from "@/lib/vat-calculations";
 import type { JobWorkBudgetItemDoc, WorkBudgetSummary } from "@/lib/work-budget-types";
+import { computeWorkBudgetFinancialOverview } from "@/lib/work-budget-financial-overview";
 
 export function computeWorkBudgetSummary(
-  items: JobWorkBudgetItemDoc[]
+  items: JobWorkBudgetItemDoc[],
+  jobBudget?: JobBudgetBreakdown | null
 ): WorkBudgetSummary {
-  let totalNet = 0;
-  let totalGross = 0;
-  let doneNet = 0;
-  let doneGross = 0;
-  let billableNet = 0;
-  let billableGross = 0;
-
-  for (const row of items) {
-    totalNet += row.amountNet;
-    totalGross += row.amountGross;
-    if (row.done) {
-      doneNet += row.amountNet;
-      doneGross += row.amountGross;
-      if (!row.invoiced) {
-        billableNet += row.amountNet;
-        billableGross += row.amountGross;
-      }
-    }
-  }
-
-  totalNet = roundMoney2(totalNet);
-  totalGross = roundMoney2(totalGross);
-  doneNet = roundMoney2(doneNet);
-  doneGross = roundMoney2(doneGross);
-  billableNet = roundMoney2(billableNet);
-  billableGross = roundMoney2(billableGross);
+  const overview = computeWorkBudgetFinancialOverview({
+    items,
+    jobBudget: jobBudget ?? null,
+  });
 
   return {
-    totalNet,
-    totalGross,
-    doneNet,
-    doneGross,
-    remainingNet: roundMoney2(totalNet - doneNet),
-    remainingGross: roundMoney2(totalGross - doneGross),
-    billableNet,
-    billableGross,
+    totalNet: overview.currentPrice.net,
+    totalGross: overview.currentPrice.gross,
+    contractBaseNet: overview.contractBase.net,
+    contractBaseGross: overview.contractBase.gross,
+    extraWorkApprovedNet: overview.extraWorkApproved.net,
+    extraWorkApprovedGross: overview.extraWorkApproved.gross,
+    doneNet: overview.done.net,
+    doneGross: overview.done.gross,
+    remainingNet: overview.remaining.net,
+    remainingGross: overview.remaining.gross,
+    billableNet: overview.billable.net,
+    billableGross: overview.billable.gross,
   };
 }
 

@@ -11,6 +11,24 @@ import {
 
 export const WORK_BUDGET_ITEMS_COLLECTION = "workBudgetItems";
 export const WORK_BUDGET_TEMPLATES_COLLECTION = "workBudgetTemplates";
+export const WORK_BUDGET_ADVANCES_COLLECTION = "workBudgetAdvances";
+
+export const WORK_BUDGET_ITEM_TYPES = {
+  NORMAL: "normal",
+  EXTRA_WORK: "extra_work",
+} as const;
+
+export type WorkBudgetItemType =
+  (typeof WORK_BUDGET_ITEM_TYPES)[keyof typeof WORK_BUDGET_ITEM_TYPES];
+
+export const EXTRA_WORK_STATUSES = {
+  DRAFT: "draft",
+  APPROVED: "approved",
+  REJECTED: "rejected",
+} as const;
+
+export type ExtraWorkStatus =
+  (typeof EXTRA_WORK_STATUSES)[keyof typeof EXTRA_WORK_STATUSES];
 
 export type JobWorkBudgetItemDoc = {
   id: string;
@@ -28,6 +46,10 @@ export type JobWorkBudgetItemDoc = {
   amountNet: number;
   vatAmount: number;
   amountGross: number;
+  /** Běžná položka vs. vícepráce */
+  itemType: WorkBudgetItemType;
+  /** Stav vícepráce — do ceny zakázky se počítá jen approved */
+  extraWorkStatus: ExtraWorkStatus;
   done: boolean;
   doneAt: string | null;
   note: string | null;
@@ -64,8 +86,13 @@ export type WorkBudgetTemplateDoc = {
 };
 
 export type WorkBudgetSummary = {
+  /** Aktuální cena zakázky (smluvní + schválené vícepráce). */
   totalNet: number;
   totalGross: number;
+  contractBaseNet: number;
+  contractBaseGross: number;
+  extraWorkApprovedNet: number;
+  extraWorkApprovedGross: number;
   doneNet: number;
   doneGross: number;
   remainingNet: number;
@@ -73,6 +100,33 @@ export type WorkBudgetSummary = {
   billableNet: number;
   billableGross: number;
 };
+
+export function parseWorkBudgetItemType(raw: unknown): WorkBudgetItemType {
+  const v = String(raw ?? "").trim();
+  if (v === WORK_BUDGET_ITEM_TYPES.EXTRA_WORK) return WORK_BUDGET_ITEM_TYPES.EXTRA_WORK;
+  return WORK_BUDGET_ITEM_TYPES.NORMAL;
+}
+
+export function parseExtraWorkStatus(raw: unknown): ExtraWorkStatus {
+  const v = String(raw ?? "").trim();
+  if (v === EXTRA_WORK_STATUSES.APPROVED) return EXTRA_WORK_STATUSES.APPROVED;
+  if (v === EXTRA_WORK_STATUSES.REJECTED) return EXTRA_WORK_STATUSES.REJECTED;
+  return EXTRA_WORK_STATUSES.DRAFT;
+}
+
+export function isExtraWorkItem(row: JobWorkBudgetItemDoc): boolean {
+  return row.itemType === WORK_BUDGET_ITEM_TYPES.EXTRA_WORK;
+}
+
+export function isNormalBudgetItem(row: JobWorkBudgetItemDoc): boolean {
+  return row.itemType === WORK_BUDGET_ITEM_TYPES.NORMAL;
+}
+
+export function isApprovedExtraWorkItem(row: JobWorkBudgetItemDoc): boolean {
+  return (
+    isExtraWorkItem(row) && row.extraWorkStatus === EXTRA_WORK_STATUSES.APPROVED
+  );
+}
 
 export function computeWorkBudgetLineAmounts(params: {
   quantity: number;
@@ -119,6 +173,8 @@ export function parseJobWorkBudgetItemFromFirestore(
     amountNet: Number(raw.amountNet) || amounts.amountNet,
     vatAmount: Number(raw.vatAmount) || amounts.vatAmount,
     amountGross: Number(raw.amountGross) || amounts.amountGross,
+    itemType: parseWorkBudgetItemType(raw.itemType),
+    extraWorkStatus: parseExtraWorkStatus(raw.extraWorkStatus),
     done: raw.done === true,
     doneAt: raw.doneAt != null ? String(raw.doneAt) : null,
     note: raw.note != null ? String(raw.note) : null,
@@ -167,6 +223,8 @@ export function newEmptyWorkBudgetItemFields(): Omit<
     amountNet: amounts.amountNet,
     vatAmount: amounts.vatAmount,
     amountGross: amounts.amountGross,
+    itemType: WORK_BUDGET_ITEM_TYPES.NORMAL,
+    extraWorkStatus: EXTRA_WORK_STATUSES.DRAFT,
     done: false,
     doneAt: null,
     note: null,

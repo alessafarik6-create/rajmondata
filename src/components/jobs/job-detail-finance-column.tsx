@@ -9,18 +9,24 @@ function formatKc(n: number): string {
   return `${n.toLocaleString("cs-CZ")} Kč`;
 }
 
-function KpiBlock(props: { label: string; net: number | null; gross: number | null }) {
-  const { label, net, gross } = props;
+function KpiBlock(props: {
+  label: string;
+  net: number | null;
+  gross?: number | null;
+  compact?: boolean;
+}) {
+  const { label, net, gross, compact } = props;
+  const showGross = gross != null && gross !== net;
   return (
-    <div className={JD.financeDashBlock}>
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-600">{label}</p>
+    <div className={cn(JD.financeDashBlock, compact && "py-1.5")}>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">{label}</p>
       {net != null ? (
-        <p className="mt-1 text-base font-bold tabular-nums text-gray-950">{formatKc(net)}</p>
+        <p className="mt-0.5 text-sm font-bold tabular-nums text-gray-950">{formatKc(net)}</p>
       ) : (
-        <p className="mt-1 text-base font-bold text-gray-400">—</p>
+        <p className="mt-0.5 text-sm font-bold text-gray-400">—</p>
       )}
-      {gross != null ? (
-        <p className="text-xs tabular-nums text-gray-700">{formatKc(gross)} s DPH</p>
+      {showGross ? (
+        <p className="text-[11px] tabular-nums text-gray-700">{formatKc(gross!)} s DPH</p>
       ) : null}
     </div>
   );
@@ -29,6 +35,9 @@ function KpiBlock(props: { label: string; net: number | null; gross: number | nu
 export function JobDetailFinanceColumn(props: {
   summary: WorkBudgetSummary | null;
   itemCount: number;
+  advancesTotalGross?: number;
+  advancesForDeductionGross?: number;
+  remainingToInvoiceGross?: number;
   onOpenBudget?: () => void;
   onOpenInvoices?: () => void;
   onOpenExpenses?: () => void;
@@ -38,6 +47,9 @@ export function JobDetailFinanceColumn(props: {
   const {
     summary,
     itemCount,
+    advancesTotalGross = 0,
+    advancesForDeductionGross = 0,
+    remainingToInvoiceGross,
     onOpenBudget,
     onOpenInvoices,
     onOpenExpenses,
@@ -45,17 +57,64 @@ export function JobDetailFinanceColumn(props: {
     onOpenFinancial,
   } = props;
 
-  const hasSummary = summary && (summary.totalGross > 0 || summary.doneGross > 0 || itemCount > 0);
+  const hasSummary =
+    summary &&
+    (summary.totalGross > 0 ||
+      summary.contractBaseGross > 0 ||
+      summary.doneGross > 0 ||
+      itemCount > 0);
+
+  const remainingInv =
+    remainingToInvoiceGross ??
+    (summary
+      ? Math.max(0, summary.totalGross - advancesForDeductionGross)
+      : null);
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
       <p className={JD.columnLabel}>Finance</p>
-      <div className={cn(JD.financeSection, "space-y-2.5 p-3.5 sm:p-4")}>
+      <div className={cn(JD.financeSection, "space-y-2 p-3 sm:p-3.5")}>
         {hasSummary ? (
-          <div className="space-y-2">
-            <KpiBlock label="Rozpočet" net={summary!.totalNet} gross={summary!.totalGross} />
-            <KpiBlock label="Provedeno" net={summary!.doneNet} gross={summary!.doneGross} />
-            <KpiBlock label="Zbývá" net={summary!.remainingNet} gross={summary!.remainingGross} />
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-1">
+            <KpiBlock
+              label="Původní rozpočet"
+              net={summary!.contractBaseNet}
+              gross={summary!.contractBaseGross}
+              compact
+            />
+            {summary!.extraWorkApprovedNet > 0 || summary!.extraWorkApprovedGross > 0 ? (
+              <KpiBlock
+                label="Vícepráce"
+                net={summary!.extraWorkApprovedNet}
+                gross={summary!.extraWorkApprovedGross}
+                compact
+              />
+            ) : null}
+            <KpiBlock
+              label="Aktuální cena"
+              net={summary!.totalNet}
+              gross={summary!.totalGross}
+              compact
+            />
+            <KpiBlock
+              label="Provedeno"
+              net={summary!.doneNet}
+              gross={summary!.doneGross}
+              compact
+            />
+            {advancesTotalGross > 0 ? (
+              <KpiBlock label="Zálohy" net={advancesTotalGross} compact />
+            ) : null}
+            {remainingInv != null ? (
+              <KpiBlock label="Zbývá k fakturaci" net={remainingInv} compact />
+            ) : (
+              <KpiBlock
+                label="Zbývá"
+                net={summary!.remainingNet}
+                gross={summary!.remainingGross}
+                compact
+              />
+            )}
           </div>
         ) : (
           <p className="text-[13px] text-gray-700">Položkový rozpočet zatím není vyplněn.</p>
