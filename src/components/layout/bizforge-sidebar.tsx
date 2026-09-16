@@ -54,6 +54,11 @@ import {
   PORTAL_SIDEBAR_MENU_DEFS,
   type PortalSidebarMenuDef,
 } from '@/lib/portal-menu-config';
+import {
+  canAccessPortalModule,
+  resolveEffectivePortalPermissions,
+  type PortalModuleId,
+} from '@/lib/portal-permissions';
 import type { LucideIcon } from 'lucide-react';
 
 type PortalNavLink = { label: string; href: string; icon: LucideIcon; navId?: string };
@@ -116,6 +121,7 @@ function isPortalMenuItemVisible(
     const elevated =
       role === 'owner' ||
       role === 'admin' ||
+      role === 'accountant' ||
       (Array.isArray(globalRoles) && globalRoles.includes('super_admin'));
     if (!elevated) return false;
   }
@@ -203,10 +209,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
 
   const employeeRowRef = useMemoFirebase(
     () =>
-      firestore &&
-      companyId &&
-      userProfile?.employeeId &&
-      role === 'employee'
+      firestore && companyId && userProfile?.employeeId
         ? doc(
             firestore,
             'companies',
@@ -215,7 +218,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
             String(userProfile.employeeId)
           )
         : null,
-    [firestore, companyId, userProfile?.employeeId, role]
+    [firestore, companyId, userProfile?.employeeId]
   );
   const { data: employeeRow } = useDoc(employeeRowRef);
   const platformCatalog = useMergedPlatformModuleCatalog();
@@ -233,14 +236,22 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
       employeeRow: (employeeRow as Record<string, unknown> | null) ?? null,
     };
 
-    return PORTAL_SIDEBAR_MENU_DEFS.filter((def) => isPortalMenuItemVisible(def, ctx)).map(
-      (def) => ({
-        label: def.label,
-        href: def.href,
-        icon: PORTAL_MENU_ICONS[def.id] ?? LayoutDashboard,
-        navId: def.id,
-      })
-    );
+    const portalPermissions = resolveEffectivePortalPermissions({
+      role,
+      globalRoles: userProfile?.globalRoles,
+      employeeDoc: (employeeRow as Record<string, unknown> | null) ?? null,
+    });
+
+    return PORTAL_SIDEBAR_MENU_DEFS.filter((def) => {
+      if (!isPortalMenuItemVisible(def, ctx)) return false;
+      const modId = def.id as PortalModuleId;
+      return canAccessPortalModule(portalPermissions, modId, "read");
+    }).map((def) => ({
+      label: def.label,
+      href: def.href,
+      icon: PORTAL_MENU_ICONS[def.id] ?? LayoutDashboard,
+      navId: def.id,
+    }));
   }, [
     isAdminArea,
     company,

@@ -113,6 +113,7 @@ import {
   type AttendanceEventLite,
 } from "@/lib/attendance-shift-state";
 import { parseEmployeePortalModules } from "@/lib/employee-portal-modules";
+import { EmployeePortalPermissionsDialog } from "@/components/employees/employee-portal-permissions-dialog";
 import {
   EMPTY_EMPLOYEE_BANK_ACCOUNT,
   maskBankAccountForListDisplay,
@@ -370,6 +371,10 @@ export default function EmployeesPage() {
   const [orgSettingsCanProduction, setOrgSettingsCanProduction] = useState(false);
   const [orgSettingsCanMeetingNotes, setOrgSettingsCanMeetingNotes] = useState(false);
   const [orgSettingsSaving, setOrgSettingsSaving] = useState(false);
+  const [permissionsEmp, setPermissionsEmp] = useState<
+    (Record<string, unknown> & { id: string }) | null
+  >(null);
+  const [permissionsSaving, setPermissionsSaving] = useState(false);
   const [portalModZakazky, setPortalModZakazky] = useState(true);
   const [portalModPenize, setPortalModPenize] = useState(true);
   const [portalModZpravy, setPortalModZpravy] = useState(true);
@@ -1066,6 +1071,37 @@ export default function EmployeesPage() {
     dismissWithModalLockRelease(() => setOrgSettingsEmp(null));
   };
 
+  const savePortalPermissions = async (permissions: Record<string, string>) => {
+    if (!canManage || !user || !permissionsEmp?.id) return;
+    setPermissionsSaving(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/employees/portal-permissions", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          employeeId: permissionsEmp.id,
+          permissions,
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Uložení se nezdařilo.");
+      toast({ title: "Oprávnění uložena" });
+      setPermissionsEmp(null);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Nelze uložit oprávnění",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setPermissionsSaving(false);
+    }
+  };
+
   const closeHourlyRateDialog = () => {
     dismissWithModalLockRelease(() => {
       setHourlyRateEmp(null);
@@ -1647,6 +1683,22 @@ export default function EmployeesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <EmployeePortalPermissionsDialog
+        open={!!permissionsEmp}
+        onOpenChange={(open) => {
+          if (!open) setPermissionsEmp(null);
+        }}
+        employeeName={
+          permissionsEmp
+            ? `${String(permissionsEmp.firstName ?? "").trim()} ${String(permissionsEmp.lastName ?? "").trim()}`.trim() ||
+              String(permissionsEmp.email ?? "Zaměstnanec")
+            : ""
+        }
+        employeeDoc={permissionsEmp}
+        busy={permissionsSaving}
+        onSave={savePortalPermissions}
+      />
 
       <div className="md:hidden">
         <div className="flex items-center gap-3 px-4 pb-3 pt-2">
@@ -2252,6 +2304,17 @@ export default function EmployeesPage() {
                                   }}
                                 >
                                   <Edit2 className="w-4 h-4 mr-2" /> Role, terminál a portál
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    runAfterDropdownMenuCloses(() =>
+                                      setPermissionsEmp(
+                                        emp as Record<string, unknown> & { id: string }
+                                      )
+                                    );
+                                  }}
+                                >
+                                  <Shield className="w-4 h-4 mr-2" /> Oprávnění
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem

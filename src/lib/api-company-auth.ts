@@ -63,3 +63,38 @@ export function jobSnapData(snap: DocumentSnapshot): Record<string, unknown> | n
   if (!snap.exists) return null;
   return snap.data() as Record<string, unknown>;
 }
+
+export type VerifyCompanyBearerWithPortalOptions = {
+  moduleId?: import("@/lib/portal-permissions").PortalModuleId | null;
+  method?: string;
+  pathname?: string;
+};
+
+/** Bearer token + volitelná kontrola NONE/READ/WRITE modulu portálu. */
+export async function verifyCompanyBearerWithPortalAccess(
+  authHeader: string | null,
+  opts?: VerifyCompanyBearerWithPortalOptions
+): Promise<
+  | {
+      ok: true;
+      caller: VerifiedCompanyCaller;
+      db: NonNullable<ReturnType<typeof getAdminFirestore>>;
+    }
+  | { ok: false; status: number; error: string }
+> {
+  const base = await verifyCompanyBearer(authHeader);
+  if (!base.ok) return base;
+  if (!opts?.moduleId && !opts?.pathname) {
+    return base;
+  }
+  const { requirePortalAccessForRequest } = await import("@/lib/portal-permissions-server");
+  const check = await requirePortalAccessForRequest(base.db, base.caller, {
+    moduleId: opts.moduleId ?? null,
+    method: opts.method ?? "GET",
+    pathname: opts.pathname,
+  });
+  if (!check.ok) {
+    return { ok: false, status: check.status, error: check.error };
+  }
+  return base;
+}

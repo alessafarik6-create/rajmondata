@@ -234,7 +234,6 @@ function JobsPageContent() {
     profile?.role === "owner" ||
     profile?.role === "admin" ||
     profile?.role === "manager" ||
-    profile?.role === "accountant" ||
     profile?.globalRoles?.includes("super_admin");
 
   const showTasksButton =

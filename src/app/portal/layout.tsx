@@ -43,6 +43,13 @@ import { ChatAssistant } from "@/components/portal/ChatAssistant";
 import { OnboardingOverlay } from "@/components/portal/OnboardingOverlay";
 import { useIsBelowLg } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
+import { PortalPermissionsProvider } from "@/contexts/portal-permissions-context";
+import { PortalModuleAccessGate } from "@/components/portal/portal-module-access-gate";
+import {
+  canAccessPortalModule,
+  portalModuleIdFromPathname,
+  resolveEffectivePortalPermissions,
+} from "@/lib/portal-permissions";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -98,8 +105,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     if (
       !isBindableFirestoreInstance(areServicesAvailable, firestore) ||
       !companyId ||
-      !profile?.employeeId ||
-      profile?.role !== "employee"
+      !profile?.employeeId
     ) {
       return null;
     }
@@ -110,7 +116,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       "employees",
       String(profile.employeeId)
     );
-  }, [areServicesAvailable, firestore, companyId, profile?.employeeId, profile?.role]);
+  }, [areServicesAvailable, firestore, companyId, profile?.employeeId]);
   const { data: profileEmployeeRow } = useDoc<Record<string, unknown>>(profileEmployeeRef);
 
   const orgPortalModules = useMemo(
@@ -131,6 +137,15 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       ),
     [orgPortalModules, employeePortalModulesParsed]
   );
+
+  const portalPermissionsResolved = useMemo(() => {
+    if (!profile?.role) return null;
+    return resolveEffectivePortalPermissions({
+      role: String(profile.role),
+      globalRoles: profile.globalRoles as string[] | undefined,
+      employeeDoc: profileEmployeeRow ?? null,
+    });
+  }, [profile?.role, profile?.globalRoles, profileEmployeeRow]);
 
   const isPortalEmployeeOnly =
     profile?.role === "employee" &&
@@ -197,14 +212,24 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!profile || isProfileLoading) return;
-    if (isPortalEmployeeOnly && !isEmployeeAllowedBranchPath) {
-      router.replace("/portal/employee");
+    if (!isPortalEmployeeOnly) return;
+    if (isEmployeeAllowedBranchPath) return;
+    const mod = portalModuleIdFromPathname(pathname);
+    if (
+      mod &&
+      portalPermissionsResolved &&
+      canAccessPortalModule(portalPermissionsResolved, mod, "read")
+    ) {
+      return;
     }
+    router.replace("/portal/employee");
   }, [
     profile,
     isProfileLoading,
     isPortalEmployeeOnly,
     isEmployeeAllowedBranchPath,
+    pathname,
+    portalPermissionsResolved,
     router,
   ]);
 
@@ -740,7 +765,24 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
           )}
         >
           {licenseNotice}
-          {children}
+          {profile?.role ? (
+            <PortalPermissionsProvider
+              role={String(profile.role)}
+              globalRoles={profile.globalRoles as string[] | undefined}
+              employeeDoc={profileEmployeeRow ?? null}
+            >
+              <PortalModuleAccessGate
+                pathname={pathname}
+                role={String(profile.role)}
+                globalRoles={profile.globalRoles as string[] | undefined}
+                employeeDoc={profileEmployeeRow ?? null}
+              >
+                {children}
+              </PortalModuleAccessGate>
+            </PortalPermissionsProvider>
+          ) : (
+            children
+          )}
         </main>
       </div>
       <ChatAssistant />

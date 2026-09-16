@@ -43,7 +43,7 @@ type Body = {
 };
 
 function canSendInquiryOffers(role: string): boolean {
-  return ["owner", "admin", "manager", "accountant"].includes(role);
+  return ["owner", "admin", "manager"].includes(role);
 }
 
 export async function POST(request: NextRequest) {
@@ -98,6 +98,26 @@ export async function POST(request: NextRequest) {
     }
     if (!callerCanAccessCompany(caller, companyId)) {
       return NextResponse.json({ ok: false, error: "Přístup odepřen." }, { status: 403 });
+    }
+
+    const { requirePortalModuleAccess } = await import("@/lib/portal-permissions-server");
+    const perm = await requirePortalModuleAccess(
+      db,
+      {
+        uid: caller.uid,
+        companyId: caller.companyId,
+        role: caller.role,
+        employeeId:
+          userData.employeeId != null && String(userData.employeeId).trim()
+            ? String(userData.employeeId).trim()
+            : null,
+        globalRoles: caller.globalRoles,
+      },
+      "leads",
+      "write"
+    );
+    if (!perm.ok) {
+      return NextResponse.json({ ok: false, error: perm.error }, { status: perm.status });
     }
 
     const to = String(body.to ?? "").trim();

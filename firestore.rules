@@ -39,6 +39,11 @@ service cloud.firestore {
       return userRole() in ['owner', 'admin', 'manager', 'accountant'];
     }
 
+    /** Zápis dat firmy — účetní má pouze náhled (READ), ne CREATE/UPDATE/DELETE. */
+    function canPrivilegedWrite() {
+      return userRole() in ['owner', 'admin', 'manager'];
+    }
+
     /**
      * Zaměstnanec smí na dokumentu změnit pouze podpisová pole + status.
      * (Nesmí měnit title/type/fileUrl/storagePath/employeeId/companyId ani mazat.)
@@ -753,7 +758,7 @@ service cloud.firestore {
     match /companies/{companyId} {
       allow read: if (signedIn() && sameCompany(companyId)) || terminalCompanyMatches(companyId);
       allow create: if isNewCompanyOwnedByRequester();
-      allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      allow update, delete: if signedIn() && sameCompany(companyId) && canPrivilegedWrite();
 
       /**
        * Centrální search index — zápis/čtení pouze Admin SDK (API / backfill).
@@ -765,7 +770,7 @@ service cloud.firestore {
 
       match /employees/{empId} {
         allow read: if (signedIn() && sameCompany(companyId)) || terminalCompanyMatches(companyId);
-        allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow write: if signedIn() && sameCompany(companyId) && canPrivilegedWrite();
 
         /** Hash PINu terminálu — pouze Admin SDK / API (klient nesmí číst ani zapisovat). */
         match /private/{docId} {
@@ -1307,7 +1312,7 @@ service cloud.firestore {
           allow read: if signedIn() && sameCompany(companyId) && (
             isPrivileged() || jobPortalEmployeeEligible(companyId, jobId)
           );
-          allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
+          allow write: if signedIn() && sameCompany(companyId) && canPrivilegedWrite();
         }
 
         /** Přiřazení a režim přístupu k zakázce (klíč = employees/{id}). */
