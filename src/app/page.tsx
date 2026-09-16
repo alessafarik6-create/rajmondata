@@ -1,14 +1,17 @@
 import type { Metadata } from "next";
-import HomePageClient from "@/app/home-page-client";
+import HomeAuthGate from "@/components/marketing/home-auth-gate";
+import { PublicLandingPage } from "@/components/marketing/public-landing-page";
 import { SITE_URL } from "@/lib/site-url";
 import {
-  PLATFORM_DESCRIPTION,
-  PLATFORM_METADATA_TITLE,
-} from "@/lib/platform-brand";
+  HOME_SEO_DESCRIPTION,
+  HOME_SEO_TITLE,
+} from "@/lib/marketing/homepage-seo";
+
+const OG_IMAGE = `${SITE_URL}/pwa-512.png`;
 
 export const metadata: Metadata = {
-  title: PLATFORM_METADATA_TITLE,
-  description: PLATFORM_DESCRIPTION,
+  title: HOME_SEO_TITLE,
+  description: HOME_SEO_DESCRIPTION,
   alternates: {
     canonical: `${SITE_URL}/`,
   },
@@ -16,8 +19,34 @@ export const metadata: Metadata = {
     index: true,
     follow: true,
   },
+  openGraph: {
+    type: "website",
+    locale: "cs_CZ",
+    url: `${SITE_URL}/`,
+    siteName: "RAJMONDATA",
+    title: HOME_SEO_TITLE,
+    description: HOME_SEO_DESCRIPTION,
+    images: [
+      {
+        url: OG_IMAGE,
+        width: 512,
+        height: 512,
+        alt: "RAJMONDATA — firemní portál pro zakázky a řízení firmy",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: HOME_SEO_TITLE,
+    description: HOME_SEO_DESCRIPTION,
+    images: [OG_IMAGE],
+  },
 };
 
 export default function Home() {
-  return <HomePageClient />;
+  return (
+    <HomeAuthGate>
+      <PublicLandingPage />
+    </HomeAuthGate>
+  );
 }
