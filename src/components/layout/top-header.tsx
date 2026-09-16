@@ -24,6 +24,7 @@ import { doc } from 'firebase/firestore';
 import { useUnreadEmployeeChatCount } from '@/hooks/use-unread-employee-chat';
 import { usePortalNotificationsSafe } from '@/components/portal/portal-notifications-context';
 import { cn } from "@/lib/utils";
+import { AdminNotificationsBell } from "@/components/admin/admin-notifications-bell";
 
 interface TopHeaderProps {
   onOpenMobileMenu?: () => void;
@@ -181,6 +182,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
       </div>
 
       <div className="flex items-center gap-1 sm:gap-4 shrink-0">
+        {isAdminArea ? <AdminNotificationsBell /> : null}
         {!isAdminArea ? (
           <Button
             asChild

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -90,6 +91,8 @@ function daysUntilIsoDate(iso: string | null | undefined): number | null {
 
 export default function AdminCompaniesPage() {
   const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const deepLinkOrgHandled = useRef(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [listRefreshing, setListRefreshing] = useState(false);
@@ -427,6 +430,17 @@ export default function AdminCompaniesPage() {
       enabledModules: [...enabledKeys],
     });
   };
+
+  useEffect(() => {
+    if (deepLinkOrgHandled.current || loading || companies.length === 0) return;
+    const orgId = searchParams.get("orgId")?.trim();
+    if (!orgId) return;
+    const row = companies.find((c) => c.id === orgId);
+    if (row) {
+      deepLinkOrgHandled.current = true;
+      openEdit(row);
+    }
+  }, [companies, loading, searchParams]);
 
   const saveLicense = async () => {
     if (!editing || !editForm || !editModuleMap) return;

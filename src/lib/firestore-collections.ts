@@ -20,3 +20,6 @@ export const HELP_CONTENT_COLLECTION = "helpContent";
 
 /** Dotazy organizací na provozovatele platformy (zápis přes API / Admin SDK). */
 export const SUPPORT_TICKETS_COLLECTION = "supportTickets";
+
+/** Globální notifikace pro superadministrátora platformy (zápis jen Admin SDK). */
+export const PLATFORM_ADMIN_NOTIFICATIONS_COLLECTION = "platform_admin_notifications";

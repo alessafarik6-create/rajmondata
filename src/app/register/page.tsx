@@ -313,6 +313,23 @@ export default function RegisterPage() {
 
       console.info("[Platform]", "Company registered with inactive license", { companyId });
 
+      try {
+        const idToken = await user.getIdToken();
+        void fetch("/api/platform/new-organization-notify", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            organizationId: companyId,
+            source: "public_register",
+          }),
+        });
+      } catch (notifyErr) {
+        console.warn("[register] superadmin notify failed", notifyErr);
+      }
+
       createdUser = null;
 
       toast({
