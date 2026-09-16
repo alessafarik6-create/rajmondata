@@ -1088,11 +1088,12 @@ service cloud.firestore {
             (request.resource.data.attendanceSegmentId is string &&
               request.resource.data.attendanceSegmentId.size() > 0));
         allow update: if signedIn() && sameCompany(companyId) && (
-          isPrivileged() ||
+          (isPrivileged() && canPrivilegedWrite() && companyModuleWriteOk(companyId, 'labor')) ||
           (canLogOwnWorkTime() && workBlockOwnPending() && employeeWorkBlockUpdateValid(companyId))
         );
         allow delete: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || workBlockEmployeeCanSelfDelete());
+          ((isPrivileged() && canPrivilegedWrite() && companyModuleWriteOk(companyId, 'labor')) ||
+            workBlockEmployeeCanSelfDelete());
       }
 
       /**
@@ -1112,7 +1113,8 @@ service cloud.firestore {
       match /employee_day_payouts/{payoutId} {
         allow read: if signedIn() && sameCompany(companyId) &&
           (isPrivileged() || resource.data.employeeId == ownEmployeeId());
-        allow create, update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+        allow create, update: if signedIn() && sameCompany(companyId) &&
+          companyModuleWriteOk(companyId, 'labor') &&
           request.resource.data.companyId == companyId &&
           request.resource.data.employeeId is string &&
           request.resource.data.employeeId.size() > 0 &&
@@ -2341,9 +2343,12 @@ service cloud.firestore {
              request.resource.data.employeeId.size() <= 200)) &&
           (
             (request.resource.data.senderRole == 'employee' && canLogOwnWorkTime()) ||
-            (request.resource.data.senderRole == 'admin' && isPrivileged())
+            (request.resource.data.senderRole == 'admin' &&
+              isPrivileged() &&
+              companyModuleWriteOk(companyId, 'chat'))
           );
         allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          companyModuleWriteOk(companyId, 'chat') &&
           request.resource.data.senderId == resource.data.senderId &&
           request.resource.data.companyId == resource.data.companyId &&
           request.resource.data.text == resource.data.text &&

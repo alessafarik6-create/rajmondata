@@ -40,6 +40,7 @@ import {
 } from "@/lib/inquiry-offer-history";
 import { contactTimestampToDate } from "@/lib/lead-contact-status";
 import type { InquiryOfferSentInfo } from "@/components/leads/inquiry-offer-composer";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 
 function formatOfferDate(offer: InquiryOfferRecord): string {
   const d =
@@ -62,8 +63,7 @@ export default function StandaloneOffersPage() {
   const companyId = profile?.companyId as string | undefined;
   const role = (profile?.role as string | undefined) ?? "employee";
   const isCustomer = role === "customer";
-  const canManageOffers =
-    role === "owner" || role === "admin" || role === "manager" || role === "accountant";
+  const { canRead: canReadOffers, canWrite: canWriteOffers } = usePortalModuleAccess("offers");
 
   const offerTemplatesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -191,11 +191,11 @@ export default function StandaloneOffersPage() {
     );
   }
 
-  if (!canManageOffers) {
+  if (!canReadOffers) {
     return (
       <Alert className="max-w-lg border-slate-200">
         <AlertTitle>Přístup omezen</AlertTitle>
-        <AlertDescription>Nemáte oprávnění spravovat nabídky.</AlertDescription>
+        <AlertDescription>Nemáte oprávnění zobrazit sekci Nabídky.</AlertDescription>
       </Alert>
     );
   }
@@ -212,17 +212,19 @@ export default function StandaloneOffersPage() {
             E-mailové nabídky odeslané bez vazby na poptávku. Historie včetně cen, DPH a příloh.
           </p>
         </div>
-        <Button
-          type="button"
-          className="min-h-11 gap-2 bg-orange-600 hover:bg-orange-700 shrink-0"
-          onClick={() => {
-            setReuseInitial(undefined);
-            setComposerOpen(true);
-          }}
-        >
-          <Plus className="h-4 w-4" />
-          Nová nabídka
-        </Button>
+        {canWriteOffers ? (
+          <Button
+            type="button"
+            className="min-h-11 gap-2 bg-orange-600 hover:bg-orange-700 shrink-0"
+            onClick={() => {
+              setReuseInitial(undefined);
+              setComposerOpen(true);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            Nová nabídka
+          </Button>
+        ) : null}
       </div>
 
       <Card className="border-slate-200 shadow-sm">
@@ -301,18 +303,21 @@ export default function StandaloneOffersPage() {
         </CardContent>
       </Card>
 
-      <StandaloneInquiryOfferDialog
-        open={composerOpen}
-        onOpenChange={(o) => {
-          setComposerOpen(o);
-          if (!o) setReuseInitial(undefined);
-        }}
-        companyId={companyId}
-        companyName={companyName || "Organizace"}
-        templates={offerTemplates}
-        initial={reuseInitial}
-        onSent={handleSent}
-      />
+      {canWriteOffers ? (
+        <StandaloneInquiryOfferDialog
+          open={composerOpen}
+          onOpenChange={(o) => {
+            setComposerOpen(o);
+            if (!o) setReuseInitial(undefined);
+          }}
+          companyId={companyId}
+          companyName={companyName || "Organizace"}
+          templates={offerTemplates}
+          initial={reuseInitial}
+          onSent={handleSent}
+          canWrite
+        />
+      ) : null}
 
       <LeadInquiryOfferDetailDialog
         offer={detailOffer}
@@ -320,15 +325,23 @@ export default function StandaloneOffersPage() {
         onOpenChange={(o) => {
           if (!o) setDetailOffer(null);
         }}
-        canResend={canManageOffers}
-        onReuse={(offer) => {
-          setReuseInitial(inquiryOfferToReuseInitial(offer));
-          setComposerOpen(true);
-        }}
-        onResend={(offer) => {
-          setReuseInitial(inquiryOfferToReuseInitial(offer));
-          setComposerOpen(true);
-        }}
+        canResend={canWriteOffers}
+        onReuse={
+          canWriteOffers
+            ? (offer) => {
+                setReuseInitial(inquiryOfferToReuseInitial(offer));
+                setComposerOpen(true);
+              }
+            : undefined
+        }
+        onResend={
+          canWriteOffers
+            ? (offer) => {
+                setReuseInitial(inquiryOfferToReuseInitial(offer));
+                setComposerOpen(true);
+              }
+            : undefined
+        }
       />
     </div>
   );

@@ -34,4 +34,16 @@ assert.equal(portalPermissionsAllowMutation(empReadJobs, "leads", "employee"), t
 const owner = resolveEffectivePortalPermissions({ role: "owner" });
 assert.equal(portalPermissionsAllowMutation(owner, "documents", "owner"), true);
 
+const offersRead = resolveEffectivePortalPermissions({
+  role: "accountant",
+  employeeDoc: { portalModulePermissions: { offers: "read" } },
+});
+assert.equal(portalPermissionsAllowMutation(offersRead, "offers", "accountant"), false);
+
+const laborRead = resolveEffectivePortalPermissions({
+  role: "employee",
+  employeeDoc: { portalModulePermissions: { labor: "read" } },
+});
+assert.equal(portalPermissionsAllowMutation(laborRead, "labor", "employee"), false);
+
 console.log("test-portal-read-write: OK");

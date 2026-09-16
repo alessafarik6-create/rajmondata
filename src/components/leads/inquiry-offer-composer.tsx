@@ -80,6 +80,8 @@ export type InquiryOfferComposerProps = {
   };
   onSent?: (info: InquiryOfferSentInfo) => void;
   aiGenerationId?: string | null;
+  /** false = pouze náhled (READ modulu Nabídky/Poptávky). */
+  canWrite?: boolean;
 };
 
 function newUploadSessionId(): string {
@@ -90,6 +92,8 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
   const { user } = useUser();
   const { toast } = useToast();
   const isStandalone = props.mode === "standalone";
+  const canWrite = props.canWrite !== false;
+  const fieldsDisabled = !canWrite;
 
   const [to, setTo] = useState("");
   const [customerName, setCustomerName] = useState("");
@@ -274,6 +278,14 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
     : String(props.leadKey ?? "").trim();
 
   const postOffer = async (action: "send" | "draft") => {
+    if (!canWrite) {
+      toast({
+        variant: "destructive",
+        title: "Pouze náhled",
+        description: "Ukládání a odesílání nabídek vyžaduje oprávnění Zápis.",
+      });
+      return;
+    }
     if (!user || !props.companyId) return;
     const toTrim = to.trim();
     if (action === "send" && (!toTrim || !isValidEmailAddress(toTrim))) {
@@ -422,7 +434,10 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-slate-100/90">
-          <div className="mx-auto w-full max-w-4xl space-y-0 divide-y divide-slate-200 border-x border-slate-200/80 bg-white shadow-sm sm:my-2 sm:rounded-lg sm:border">
+          <fieldset
+            disabled={fieldsDisabled}
+            className="mx-auto w-full max-w-4xl space-y-0 divide-y divide-slate-200 border-x border-slate-200/80 bg-white shadow-sm sm:my-2 sm:rounded-lg sm:border disabled:opacity-90"
+          >
             {isStandalone ? (
               <>
                 <ComposerRow label="Jméno zákazníka" required>
@@ -601,7 +616,7 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
                 </ul>
               ) : null}
             </div>
-          </div>
+          </fieldset>
         </div>
 
         <div className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] sm:flex-row sm:flex-wrap sm:justify-end sm:px-6">
@@ -623,25 +638,33 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
             <Eye className="h-4 w-4" />
             Náhled nabídky
           </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            className="min-h-11 w-full gap-2 sm:w-auto"
-            disabled={sending || savingDraft}
-            onClick={() => void postOffer("draft")}
-          >
-            {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Uložit koncept
-          </Button>
-          <Button
-            type="button"
-            className="min-h-11 w-full gap-2 bg-orange-600 hover:bg-orange-700 sm:w-auto"
-            disabled={sending || savingDraft || previewLoading || Boolean(previewError)}
-            onClick={() => setEmailPreviewOpen(true)}
-          >
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-            Odeslat e-mailem
-          </Button>
+          {canWrite ? (
+            <>
+              <Button
+                type="button"
+                variant="secondary"
+                className="min-h-11 w-full gap-2 sm:w-auto"
+                disabled={sending || savingDraft}
+                onClick={() => void postOffer("draft")}
+              >
+                {savingDraft ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                Uložit koncept
+              </Button>
+              <Button
+                type="button"
+                className="min-h-11 w-full gap-2 bg-orange-600 hover:bg-orange-700 sm:w-auto"
+                disabled={sending || savingDraft || previewLoading || Boolean(previewError)}
+                onClick={() => setEmailPreviewOpen(true)}
+              >
+                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                Odeslat e-mailem
+              </Button>
+            </>
+          ) : null}
         </div>
 
         <InquiryOfferEmailPreviewDialog

@@ -48,6 +48,8 @@ type Props = {
   mode: CompanyChatSenderMode;
   title?: string;
   placeholder?: string;
+  /** READ modulu chat — bez odesílání zpráv. */
+  readOnly?: boolean;
 };
 
 function formatMessageTime(createdAt: unknown): string {
@@ -71,6 +73,7 @@ export function CompanyChat({
   mode,
   title = "Zprávy",
   placeholder = "Napište zprávu…",
+  readOnly = false,
 }: Props) {
   const firestore = useFirestore();
   const { user } = useUser();
@@ -199,6 +202,7 @@ export function CompanyChat({
   }, [mode, firestore, companyId, messages, unreadKey]);
 
   const handleSend = async () => {
+    if (readOnly) return;
     const text = draft.trim();
     if (!text || !user || !firestore || !companyId || sending) return;
     setSending(true);
@@ -371,36 +375,42 @@ export function CompanyChat({
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t bg-background/40 p-3">
-        <div className="flex items-end gap-2">
-          <Input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={placeholder}
-            className="min-h-[44px]"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void handleSend();
-              }
-            }}
-            disabled={sending}
-          />
-          <Button
-            type="button"
-            size="icon"
-            className="h-11 w-11 shrink-0"
-            onClick={() => void handleSend()}
-            disabled={sending || !draft.trim()}
-          >
-            {sending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </Button>
+      {!readOnly ? (
+        <div className="border-t bg-background/40 p-3">
+          <div className="flex items-end gap-2">
+            <Input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={placeholder}
+              className="min-h-[44px]"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void handleSend();
+                }
+              }}
+              disabled={sending}
+            />
+            <Button
+              type="button"
+              size="icon"
+              className="h-11 w-11 shrink-0"
+              onClick={() => void handleSend()}
+              disabled={sending || !draft.trim()}
+            >
+              {sending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="border-t bg-muted/30 px-3 py-2 text-center text-xs text-muted-foreground">
+          {placeholder}
+        </div>
+      )}
     </Card>
   );
 }

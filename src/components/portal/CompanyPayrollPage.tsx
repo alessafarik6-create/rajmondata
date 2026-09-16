@@ -67,6 +67,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import {
   formatKc,
   getLoggedHours,
@@ -353,7 +354,9 @@ function PayrollAdminPageInner() {
 
   const companyId = profile?.companyId as string | undefined;
   const role = profile?.role || "employee";
-  const canAccess = PRIV_ROLES.includes(role);
+  const { canRead: canReadLabor, canWrite: canWriteLabor } = usePortalModuleAccess("labor");
+  const canAccess = canReadLabor || PRIV_ROLES.includes(role);
+  const payrollMutationsDisabled = !canWriteLabor;
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -952,6 +955,7 @@ function PayrollAdminPageInner() {
   );
 
   const bulkPayrollActionsDisabled =
+    payrollMutationsDisabled ||
     bulkPayrollBusy ||
     !selectedEmployeeId ||
     selectedEmployeeId === "all" ||
@@ -1147,6 +1151,7 @@ function PayrollAdminPageInner() {
 
   const runBulkDayPayoutUpdates = useCallback(
     async (mode: "approve" | "paid") => {
+      if (payrollMutationsDisabled) return;
       if (!firestore || !companyId || !user?.uid || !payrollTargetEmployee) {
         toast({
           variant: "destructive",
@@ -1290,6 +1295,7 @@ function PayrollAdminPageInner() {
   };
 
   const saveReview = async (quickLoggedOnly: boolean) => {
+    if (payrollMutationsDisabled) return;
     if (!firestore || !companyId || !reviewBlock?.id || !user) return;
     const logged = Number(reviewBlock.hours) || 0;
     let appr = logged;
@@ -2155,6 +2161,7 @@ function PayrollAdminPageInner() {
                 Hromadné schválení a výplata za aktuální filtr (zaměstnanec + období).
               </p>
             </div>
+            {!payrollMutationsDisabled ? (
             <div
               className="shrink-0 rounded-xl border-2 border-amber-600 bg-amber-50 p-3 shadow-sm sm:min-w-[280px]"
               data-testid="payroll-bulk-actions"
@@ -2203,6 +2210,7 @@ function PayrollAdminPageInner() {
                 )}
               </p>
             </div>
+            ) : null}
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">

@@ -61,6 +61,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
 import { buildMeasurementPrefillHref } from "@/lib/measurement-prefill-from-lead";
@@ -605,9 +606,10 @@ export default function PortalLeadsPage() {
   }, [rows, rowsKey]);
 
   const canMeasure = userCanManageMeasurements(profile);
-  const canManageTags =
-    role === "owner" || role === "admin" || role === "manager" || role === "accountant";
-  const canManageOffers = canManageTags;
+  const { canRead: canReadLeads, canWrite: canWriteLeads } = usePortalModuleAccess("leads");
+  const { canWrite: canWriteOffers } = usePortalModuleAccess("offers");
+  const canManageTags = canWriteLeads;
+  const canManageOffers = canWriteOffers;
 
   const handleMarkEmailContact = async (lead: LeadImportRow) => {
     if (!firestore || !companyId || !user) return;
@@ -883,6 +885,15 @@ export default function PortalLeadsPage() {
       <Alert className="max-w-xl border-slate-200 bg-slate-50">
         <AlertTitle>Není vybraná firma</AlertTitle>
         <AlertDescription>Poptávky nelze načíst bez přiřazení k organizaci.</AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (!canReadLeads) {
+    return (
+      <Alert className="max-w-lg border-slate-200">
+        <AlertTitle>Přístup omezen</AlertTitle>
+        <AlertDescription>Nemáte oprávnění zobrazit sekci Poptávky.</AlertDescription>
       </Alert>
     );
   }
@@ -1676,19 +1687,21 @@ export default function PortalLeadsPage() {
         </CardContent>
       </Card>
 
-      {companyId && canManageOffers ? (
+      {companyId && canWriteOffers ? (
         <StandaloneInquiryOfferDialog
           open={standaloneOfferOpen}
           onOpenChange={setStandaloneOfferOpen}
           companyId={companyId}
           companyName={companyName || String(company?.companyName ?? "Organizace")}
           templates={offerTemplates}
+          canWrite
         />
       ) : null}
 
-      {offerLead && companyId ? (
+      {offerLead && companyId && canWriteLeads ? (
         <LeadInquiryOfferDialog
           open={!!offerLead}
+          canWrite={canWriteLeads}
           onOpenChange={(o) => {
             if (!o) {
               setOfferLead(null);

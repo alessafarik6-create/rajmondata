@@ -48,21 +48,31 @@ function canSendInquiryOffers(role: string): boolean {
 
 export async function POST(request: NextRequest) {
   try {
-    const db = getAdminFirestore();
+    const authHeader = request.headers.get("authorization") || "";
+    const { verifyCompanyBearerWithPortalAccess } = await import("@/lib/api-company-auth");
+    const portalAuth = await verifyCompanyBearerWithPortalAccess(authHeader, {
+      moduleId: "offers",
+      method: "POST",
+    });
+    if (!portalAuth.ok) {
+      return NextResponse.json({ ok: false, error: portalAuth.error }, { status: portalAuth.status });
+    }
+    const db = portalAuth.db;
     const auth = getAdminAuth();
-    if (!db || !auth) {
+    if (!auth) {
       return NextResponse.json(
         { ok: false, error: "Server není nakonfigurován." },
         { status: 503 }
       );
     }
 
-    const authHeader = request.headers.get("authorization") || "";
-    const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-    const caller = await verifyBearerAndLoadCaller(auth, db, idToken);
-    if (!caller) {
-      return NextResponse.json({ ok: false, error: "Neautorizováno." }, { status: 401 });
-    }
+    const caller = {
+      uid: portalAuth.caller.uid,
+      companyId: portalAuth.caller.companyId,
+      role: portalAuth.caller.role,
+      globalRoles: portalAuth.caller.globalRoles,
+      isSuperAdmin: portalAuth.caller.globalRoles.includes("super_admin"),
+    };
     const userSnap = await db.collection("users").doc(caller.uid).get();
     const userData = (userSnap.data() ?? {}) as Record<string, unknown>;
     const sentByEmail = String(userData.email ?? "").trim() || null;

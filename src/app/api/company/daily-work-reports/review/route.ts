@@ -27,25 +27,22 @@ function reportDocId(employeeId: string, date: string) {
  * Při schválení se uloží payableAmountCzk (podklad k výplatě).
  */
 export async function POST(request: NextRequest) {
-  const db = getAdminFirestore();
+  const authHeader = request.headers.get("authorization") || "";
+  const { verifyCompanyBearerWithPortalAccess } = await import("@/lib/api-company-auth");
+  const portalAuth = await verifyCompanyBearerWithPortalAccess(authHeader, {
+    moduleId: "labor",
+    method: "POST",
+  });
+  if (!portalAuth.ok) {
+    return NextResponse.json({ error: portalAuth.error }, { status: portalAuth.status });
+  }
+  const db = portalAuth.db;
   const auth = getAdminAuth();
-  if (!db || !auth) {
+  if (!auth) {
     return NextResponse.json({ error: "Firebase Admin není nakonfigurován." }, { status: 503 });
   }
 
-  const authHeader = request.headers.get("authorization") || "";
-  const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-  if (!idToken) {
-    return NextResponse.json({ error: "Chybí Authorization Bearer token." }, { status: 401 });
-  }
-
-  let callerUid: string;
-  try {
-    const decoded = await auth.verifyIdToken(idToken);
-    callerUid = decoded.uid;
-  } catch {
-    return NextResponse.json({ error: "Neplatný token." }, { status: 401 });
-  }
+  const callerUid = portalAuth.caller.uid;
 
   let body: Body;
   try {
@@ -76,10 +73,7 @@ export async function POST(request: NextRequest) {
     const callerRole = String(caller.role || "");
     const globalRoles = caller.globalRoles as string[] | undefined;
     const isSuper = Array.isArray(globalRoles) && globalRoles.includes("super_admin");
-    const privileged =
-      isSuper || ["owner", "admin", "manager", "accountant"].includes(callerRole);
-
-    if (!privileged || callerCompany !== companyId) {
+    if (callerCompany !== companyId && !isSuper) {
       return NextResponse.json({ error: "Nedostatečná oprávnění." }, { status: 403 });
     }
 

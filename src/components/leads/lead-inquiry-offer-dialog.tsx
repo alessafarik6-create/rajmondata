@@ -19,6 +19,7 @@ export function LeadInquiryOfferDialog(props: {
   draftOfferId?: string | null;
   initial?: InquiryOfferReuseInitial;
   aiGenerationId?: string | null;
+  canWrite?: boolean;
   onSent?: (info: {
     offerId?: string;
     subject: string;
@@ -43,6 +44,7 @@ export function LeadInquiryOfferDialog(props: {
       draftOfferId={props.draftOfferId}
       initial={props.initial}
       aiGenerationId={props.aiGenerationId}
+      canWrite={props.canWrite}
       onSent={(info: InquiryOfferSentInfo) => {
         props.onSent?.({
           offerId: info.offerId,
@@ -67,6 +69,7 @@ export function StandaloneInquiryOfferDialog(props: {
   templates: InquiryOfferTemplate[];
   initial?: InquiryOfferReuseInitial;
   onSent?: (info: InquiryOfferSentInfo) => void;
+  canWrite?: boolean;
 }) {
   return (
     <InquiryOfferComposer
@@ -78,6 +81,7 @@ export function StandaloneInquiryOfferDialog(props: {
       mode="standalone"
       initial={props.initial}
       onSent={props.onSent}
+      canWrite={props.canWrite}
     />
   );
 }

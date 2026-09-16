@@ -74,7 +74,8 @@ export function httpMethodRequiresWrite(method: string): boolean {
 /** Mapování API cest na modul (rozšiřitelné). */
 export function portalModuleIdFromApiPath(pathname: string): PortalModuleId | null {
   const p = String(pathname ?? "");
-  if (p.includes("/inquiry-offers/") || p.includes("/inquiry-ai/")) return "leads";
+  if (p.includes("/inquiry-offers/")) return "offers";
+  if (p.includes("/inquiry-ai/")) return "leads";
   if (p.includes("/portal-invoices/") || p.includes("/platform-invoices/")) return "invoices";
   if (p.includes("/production/")) return "vyroba";
   if (p.includes("/meeting-records/")) return "meetingRecords";

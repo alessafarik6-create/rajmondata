@@ -4,6 +4,7 @@ import React from "react";
 import { Loader2 } from "lucide-react";
 import { useCompany } from "@/firebase/firestore/use-company";
 import { CompanyChat } from "@/components/chat/CompanyChat";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 /**
@@ -15,6 +16,7 @@ export default function PortalChatPage() {
     isLoading: companyLoading,
     companyDocMissing,
   } = useCompany();
+  const { canWrite: canWriteChat } = usePortalModuleAccess("chat");
 
   if (companyLoading) {
     return (
@@ -59,7 +61,10 @@ export default function PortalChatPage() {
         companyId={companyId}
         mode="admin"
         title="Firemní chat"
-        placeholder="Napište odpověď zaměstnanci…"
+        placeholder={
+          canWriteChat ? "Napište odpověď zaměstnanci…" : "Máte pouze náhled — odesílání zpráv je vypnuto."
+        }
+        readOnly={!canWriteChat}
       />
     </div>
   );

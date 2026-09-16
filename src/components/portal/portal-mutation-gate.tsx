@@ -15,6 +15,9 @@ export function PortalMutationGate(props: {
   return <>{props.children}</>;
 }
 
+/** Alias dle konvence WriteOnly. */
+export const WriteOnly = PortalMutationGate;
+
 /** Prop pro disabled stav u inputů v READ režimu. */
 export function usePortalMutationDisabled(moduleId: PortalModuleId): boolean {
   const { canWrite } = usePortalModuleAccess(moduleId);
