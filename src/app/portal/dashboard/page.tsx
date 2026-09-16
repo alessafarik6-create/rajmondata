@@ -67,7 +67,10 @@ import {
 import { isEmployeeActivityUnresolved } from "@/lib/employee-activity";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { AttendanceRow } from "@/lib/employee-attendance";
-import { sumOrientacniCenyFromLeadRows } from "@/lib/lead-estimated-price";
+import {
+  formatPortfolioMillionsKc,
+  type LeadPortfolioStats,
+} from "@/lib/lead-portfolio-value";
 import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
 import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
 import {
@@ -639,6 +642,10 @@ export default function CompanyDashboard() {
   const [importLeadsRows, setImportLeadsRows] = useState<LeadImportRow[]>([]);
   const [importLeadsLoading, setImportLeadsLoading] = useState(false);
   const [importLeadsError, setImportLeadsError] = useState<string | null>(null);
+  const [leadPortfolioStats, setLeadPortfolioStats] = useState<LeadPortfolioStats | null>(
+    null
+  );
+  const [leadPortfolioLoading, setLeadPortfolioLoading] = useState(false);
   const [customerActivitiesExpanded, setCustomerActivitiesExpanded] = useState(false);
   const [employeeActivitiesExpanded, setEmployeeActivitiesExpanded] = useState(false);
   const [resolvingCustomerActivityId, setResolvingCustomerActivityId] = useState<string | null>(
@@ -714,19 +721,56 @@ export default function CompanyDashboard() {
     }
   }, [companyId, user]);
 
-  useEffect(() => {
-    if (!showAdminDashboard || !companyId || !user) return;
-    void loadImportLeadsForDashboard();
-  }, [showAdminDashboard, companyId, user, loadImportLeadsForDashboard]);
+  const loadLeadPortfolioForDashboard = useCallback(async () => {
+    if (!companyId || !user) return;
+    setLeadPortfolioLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(
+        `/api/company/leads/portfolio-value?companyId=${encodeURIComponent(companyId)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const data = (await res.json()) as {
+        ok?: boolean;
+        stats?: LeadPortfolioStats;
+      };
+      if (res.ok && data.ok && data.stats) {
+        setLeadPortfolioStats(data.stats);
+      }
+    } catch {
+      setLeadPortfolioStats(null);
+    } finally {
+      setLeadPortfolioLoading(false);
+    }
+  }, [companyId, user]);
 
   useEffect(() => {
     if (!showAdminDashboard || !companyId || !user) return;
-    const t = window.setInterval(
-      () => void loadImportLeadsForDashboard(),
-      DASHBOARD_LEADS_POLL_MS
-    );
+    void loadImportLeadsForDashboard();
+    void loadLeadPortfolioForDashboard();
+  }, [showAdminDashboard, companyId, user, loadImportLeadsForDashboard, loadLeadPortfolioForDashboard]);
+
+  useEffect(() => {
+    if (!showAdminDashboard || !companyId || !user) return;
+    const t = window.setInterval(() => {
+      void loadImportLeadsForDashboard();
+      void loadLeadPortfolioForDashboard();
+    }, DASHBOARD_LEADS_POLL_MS);
     return () => window.clearInterval(t);
-  }, [showAdminDashboard, companyId, user, loadImportLeadsForDashboard]);
+  }, [
+    showAdminDashboard,
+    companyId,
+    user,
+    loadImportLeadsForDashboard,
+    loadLeadPortfolioForDashboard,
+  ]);
 
   useEffect(() => {
     if (!companyId || !user || !canSeePlatformOperatorInvoices) {
@@ -790,11 +834,6 @@ export default function CompanyDashboard() {
     }
     return m;
   }, [importLeadOverlaysRaw]);
-
-  const leadsValueStats = useMemo(
-    () => sumOrientacniCenyFromLeadRows(importLeadsRows),
-    [importLeadsRows]
-  );
 
   const latestFiveDashboardLeads = useMemo(() => {
     if (!importLeadsRows.length) return [];
@@ -1274,32 +1313,74 @@ export default function CompanyDashboard() {
                       Poptávky aktuálně v hodnotě
                     </CardTitle>
                     <CardDescription className="text-sm text-black/75">
-                      Součet orientačních cen z importovaných poptávek vaší firmy (řádky s platnou
-                      vyplněnou cenou).
+                      Odhadovaná hodnota aktivních poptávek (cena z importu, nabídky, AI odhad nebo
+                      statistika typu).
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3 pt-0">
-                    {importLeadsLoading ? (
+                    {importLeadsLoading || leadPortfolioLoading ? (
                       <div className="flex min-h-[4.5rem] items-center">
                         <span className="inline-block h-9 w-9 animate-spin rounded-full border-2 border-black border-t-transparent" />
                       </div>
-                    ) : importLeadsError ? (
+                    ) : importLeadsError && !leadPortfolioStats ? (
                       <p className="text-sm text-destructive">{importLeadsError}</p>
-                    ) : (
+                    ) : leadPortfolioStats ? (
                       <>
-                        <p className="text-3xl font-bold tabular-nums tracking-tight text-black sm:text-4xl">
-                          {formatKc(leadsValueStats.totalKc)}
-                        </p>
-                        <p className="text-sm leading-snug text-black/85">
-                          {leadsValueStats.totalCount === 0
-                            ? "V importu zatím nejsou žádné poptávky."
-                            : `Orientační cenu má vyplněnou ${leadsValueStats.withPriceCount} z ${leadsValueStats.totalCount} poptávek.`}
-                        </p>
+                        {leadPortfolioStats.activeCount === 0 ? (
+                          <>
+                            <p className="text-2xl font-semibold text-black/80">
+                              Žádné aktivní poptávky
+                            </p>
+                            <p className="text-sm text-black/75">
+                              V importu není otevřená poptávka, nebo jsou všechny uzavřené.
+                            </p>
+                          </>
+                        ) : leadPortfolioStats.showNotQuantifiedMessage ? (
+                          <>
+                            <p className="text-2xl font-semibold text-black/85">
+                              Hodnota zatím není vyčíslena
+                            </p>
+                            <p className="text-sm text-black/85">
+                              {leadPortfolioStats.activeCount} aktivních poptávek — doplněte cenu,
+                              nabídku nebo počkejte na AI odhad.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-3xl font-bold tabular-nums tracking-tight text-black sm:text-4xl">
+                              {formatKc(leadPortfolioStats.totalGrossKc)}
+                            </p>
+                            {formatPortfolioMillionsKc(leadPortfolioStats.totalGrossKc) ? (
+                              <p className="text-sm font-medium text-black/80">
+                                Odhadovaná hodnota aktivních poptávek:{" "}
+                                {formatPortfolioMillionsKc(leadPortfolioStats.totalGrossKc)}
+                              </p>
+                            ) : null}
+                            <p className="text-sm leading-snug text-black/85">
+                              {leadPortfolioStats.activeCount} aktivních poptávek
+                            </p>
+                            <p className="text-xs leading-relaxed text-black/75">
+                              Z toho: {leadPortfolioStats.bySource.explicit_price} s přesnou cenou
+                              · {leadPortfolioStats.bySource.offer} podle nabídky ·{" "}
+                              {leadPortfolioStats.bySource.ai_generation +
+                                leadPortfolioStats.bySource.cached_ai_estimate +
+                                leadPortfolioStats.bySource.type_statistic}{" "}
+                              odhad / statistika
+                            </p>
+                            {leadPortfolioStats.hasEstimatePortion ? (
+                              <p className="text-xs text-amber-900/90">
+                                Část hodnoty je dopočítána odhadem.
+                              </p>
+                            ) : null}
+                          </>
+                        )}
                         <p className="text-xs text-black/70">
-                          Klepnutím otevřete sekci Poptávky — hodnota se přepočítá při načtení importu
-                          (cca každou minutu) a při změnách v přehledu poptávek.
+                          Přepočet cca každou minutu; odhady se ukládají k poptávce (bez opakovaného
+                          AI při každém načtení).
                         </p>
                       </>
+                    ) : (
+                      <p className="text-sm text-black/75">Hodnotu poptávek se nepodařilo načíst.</p>
                     )}
                   </CardContent>
                 </Card>

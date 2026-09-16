@@ -15,7 +15,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { useCompany, useFirestore } from "@/firebase";
+import { useCompany, useFirestore, useUser } from "@/firebase";
 import { HELP_CONTENT_COLLECTION } from "@/lib/firestore-collections";
 import {
   bestHelpReplyFromRows,
@@ -48,8 +48,15 @@ const WELCOME: ChatMessage = {
   id: "welcome",
   role: "assistant",
   text:
-    "Dobrý den, jsem nápověda k portálu. Zeptejte se na ovládání modulů, nebo zvolte rychlou otázku. Odpovědi vycházejí z nastavení nápovědy pro vaši organizaci — nejsou náhradou za podporu u složitých chyb.",
+    "Dobrý den, jsem AI nápověda k portálu RajmonData. Zeptejte se, kde něco najdete nebo jak postupovat — beru v úvahu vaši roli, oprávnění a aktuální stránku.",
 };
+
+const EXAMPLE_QUESTIONS = [
+  "Jak vytvořit nabídku?",
+  "Kde najdu zálohy?",
+  "Jak přidat zaměstnance?",
+  "Jak změnit stav zakázky?",
+];
 
 const quickChipClass =
   "inline-flex min-h-8 max-w-full items-center rounded-md border border-slate-300 bg-[#f3f4f6] px-2.5 py-1.5 text-left text-xs font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#e5e7eb] hover:border-slate-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50";
@@ -59,6 +66,7 @@ export function ChatAssistant() {
   const router = useRouter();
   const firestore = useFirestore();
   const { companyId } = useCompany();
+  const { user } = useUser();
 
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
@@ -173,7 +181,33 @@ export function ChatAssistant() {
       const q = question.trim();
       if (!q) return;
       setTyping(true);
-      window.setTimeout(() => {
+
+      void (async () => {
+        try {
+          if (user) {
+            const token = await user.getIdToken();
+            const res = await fetch("/api/company/portal-assistant/ask", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ question: q, pathname }),
+            });
+            const data = (await res.json()) as {
+              ok?: boolean;
+              reply?: PortalAssistantReply;
+              error?: string;
+            };
+            if (res.ok && data.ok && data.reply?.text) {
+              pushAssistantFromReply(data.reply);
+              return;
+            }
+          }
+        } catch {
+          /* fallback */
+        }
+
         const fromDb = bestHelpReplyFromRows(q, helpRows);
         if (fromDb) {
           pushAssistantFromReply(fromDb);
@@ -182,10 +216,9 @@ export function ChatAssistant() {
         } else {
           pushAssistantFromReply(getPortalAssistantReply(q, pathname));
         }
-        setTyping(false);
-      }, 420);
+      })().finally(() => setTyping(false));
     },
-    [pathname, helpRows, pushAssistantFromReply]
+    [pathname, helpRows, pushAssistantFromReply, user]
   );
 
   const sendUserMessage = useCallback(
@@ -234,7 +267,7 @@ export function ChatAssistant() {
           <SheetHeader className="shrink-0 border-b border-slate-100 px-4 py-4 text-left space-y-1">
             <SheetTitle className="flex items-center gap-2 text-base font-semibold text-slate-900">
               <Sparkles className="h-5 w-5 text-primary shrink-0" />
-              Nápověda k portálu
+              AI nápověda
             </SheetTitle>
             <SheetDescription className="text-xs text-slate-600 leading-snug">
               Modul: <span className="font-medium text-slate-800">{helpModule}</span>
@@ -265,6 +298,19 @@ export function ChatAssistant() {
                     {row.question}
                   </button>
                 ))}
+                {quickTop.length === 0
+                  ? EXAMPLE_QUESTIONS.map((ex) => (
+                      <button
+                        key={ex}
+                        type="button"
+                        className={quickChipClass}
+                        disabled={typing}
+                        onClick={() => sendUserMessage(ex)}
+                      >
+                        {ex}
+                      </button>
+                    ))
+                  : null}
               </div>
             )}
           </div>
@@ -324,7 +370,7 @@ export function ChatAssistant() {
               {typing ? (
                 <div className="flex gap-2 items-center text-xs text-slate-500 pl-11">
                   <span className="inline-flex gap-1">
-                    <span className="animate-pulse">Píšu</span>
+                    <span className="animate-pulse">AI hledá odpověď v portálu…</span>
                     <span className="inline-flex gap-0.5">
                       <span className="inline-block w-1 h-1 rounded-full bg-slate-400 animate-bounce [animation-delay:-0.2s]" />
                       <span className="inline-block w-1 h-1 rounded-full bg-slate-400 animate-bounce [animation-delay:-0.1s]" />
@@ -344,7 +390,7 @@ export function ChatAssistant() {
             <Input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="Napište otázku…"
+              placeholder="Zeptejte se, kde něco najdete nebo jak se něco dělá…"
               className="min-h-10 bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-500"
               disabled={typing}
               aria-label="Text otázky"
