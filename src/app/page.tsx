@@ -1,36 +1,23 @@
+import type { Metadata } from "next";
+import HomePageClient from "@/app/home-page-client";
+import { SITE_URL } from "@/lib/site-url";
+import {
+  PLATFORM_DESCRIPTION,
+  PLATFORM_METADATA_TITLE,
+} from "@/lib/platform-brand";
 
-"use client";
-
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { useUser } from '@/firebase';
-import { PublicLanding } from '@/components/marketing/public-landing';
+export const metadata: Metadata = {
+  title: PLATFORM_METADATA_TITLE,
+  description: PLATFORM_DESCRIPTION,
+  alternates: {
+    canonical: `${SITE_URL}/`,
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+};
 
 export default function Home() {
-  const { user, isUserLoading } = useUser();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!isUserLoading && user) {
-      router.replace('/portal/dashboard');
-    }
-  }, [user, isUserLoading, router]);
-
-  if (isUserLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
-  }
-
-  if (user) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
-  }
-
-  return <PublicLanding />;
+  return <HomePageClient />;
 }

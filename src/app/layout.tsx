@@ -7,6 +7,7 @@ import {
   PLATFORM_METADATA_TITLE,
   PLATFORM_NAME,
 } from '@/lib/platform-brand';
+import { SITE_URL } from '@/lib/site-url';
 
 export const viewport: Viewport = {
   themeColor: [
@@ -19,6 +20,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: PLATFORM_METADATA_TITLE,
   description: PLATFORM_DESCRIPTION,
   applicationName: PLATFORM_NAME,
