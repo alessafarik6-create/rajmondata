@@ -186,6 +186,12 @@ import {
 } from "@/lib/company-document-czk";
 import { resolveEurCzkRate } from "@/lib/exchange-rate-eur-czk";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
+import {
+  computePortalPaymentOverviewStats,
+  filterActiveFinancialDocuments,
+  filterActivePortalInvoices,
+} from "@/lib/portal-payment-summary";
+import { softDeleteLinkedDocumentsForInvoice } from "@/lib/portal-invoice-documents-sync";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
 import { PORTAL_MANUAL_INVOICE_TYPE } from "@/lib/portal-manual-invoice";
 import { printInvoiceHtmlDocument } from "@/lib/print-html";
@@ -1029,42 +1035,6 @@ function overduePaymentSectionForDoc(
   return null;
 }
 
-/**
- * Jednotná množina položek „po splatnosti“ pro badge, kliknutí a filtr tabulek
- * (getDocumentPaymentUrgency / getPortalInvoicePaymentUrgency === overdue).
- */
-function collectOverduePaymentFlashTargets(
-  financialActive: CompanyDocumentRow[],
-  invoices: Array<Record<string, unknown> & { id: string }>,
-  todayIso: string
-): OverduePaymentFlashTarget[] {
-  const out: OverduePaymentFlashTarget[] = [];
-  for (const d of financialActive) {
-    const pr = d as CompanyDocumentPaymentRow;
-    if (getDocumentPaymentUrgency(pr, todayIso) !== "overdue") continue;
-    const sec = overduePaymentSectionForDoc(d);
-    if (!sec) continue;
-    out.push({
-      flashRowKey: `doc:${d.id}`,
-      due: String(d.dueDate ?? "").trim() || "9999-12-31",
-      section: sec,
-    });
-  }
-  for (const inv of invoices) {
-    if (getPortalInvoicePaymentUrgency(inv, todayIso) !== "overdue") continue;
-    out.push({
-      flashRowKey: `inv:${inv.id}`,
-      due: String(inv.dueDate ?? "").trim() || "9999-12-31",
-      section: "issued",
-    });
-  }
-  out.sort(
-    (a, b) =>
-      a.due.localeCompare(b.due) || a.flashRowKey.localeCompare(b.flashRowKey)
-  );
-  return out;
-}
-
 function pickDocumentsTabForOverdueTargets(
   targets: OverduePaymentFlashTarget[]
 ): "all" | "received" | "issued" {
@@ -1478,11 +1448,9 @@ function DocumentsPageContent() {
 
   const financialDocumentsActive = useMemo(
     () =>
-      ((documents ?? []) as CompanyDocumentRow[]).filter(
-        (d) =>
-          (isFinancialCompanyDocument(d) || isDeliveryNote(d)) &&
-          isActiveFirestoreDoc(d)
-      ),
+      filterActiveFinancialDocuments(
+        (documents ?? []) as CompanyDocumentPaymentRow[]
+      ) as CompanyDocumentRow[],
     [documents]
   );
 
@@ -1501,12 +1469,15 @@ function DocumentsPageContent() {
       ? financialDocumentsDeleted
       : financialDocumentsActive;
 
-  const invoicesActiveList = useMemo(() => {
-    const raw = Array.isArray(invoicesRaw) ? invoicesRaw : [];
-    return raw.filter((inv) =>
-      isActiveFirestoreDoc(inv as { isDeleted?: unknown })
-    );
-  }, [invoicesRaw]);
+  const invoicesActiveList = useMemo(
+    () =>
+      filterActivePortalInvoices(
+        (Array.isArray(invoicesRaw) ? invoicesRaw : []) as Array<
+          Record<string, unknown> & { id: string }
+        >
+      ),
+    [invoicesRaw]
+  );
 
   const invoicesDeletedList = useMemo(() => {
     const raw = Array.isArray(invoicesRaw) ? invoicesRaw : [];
@@ -1540,45 +1511,15 @@ function DocumentsPageContent() {
     [financialDocumentsActive]
   );
 
-  const paymentOverviewStats = useMemo(() => {
-    const list = financialDocumentsActive as CompanyDocumentPaymentRow[];
-    let toPay = 0;
-    let totalKc = 0;
-    for (const d of list) {
-      if (!isDocumentEligibleForPaymentBox(d)) continue;
-      toPay += 1;
-      totalKc += documentGrossForPayment(d);
-    }
-    const invList = invoicesActiveList;
-    for (const raw of invList) {
-      const inv = raw as Record<string, unknown>;
-      if (inv.status === "paid") continue;
-      const gross = Number(inv.amountGross ?? inv.totalAmount ?? 0);
-      if (!Number.isFinite(gross) || gross <= 0) continue;
-      toPay += 1;
-      totalKc += roundMoney2(gross);
-    }
-    const overdueTargets = collectOverduePaymentFlashTargets(
-      financialDocumentsActive,
-      invList as Array<Record<string, unknown> & { id: string }>,
-      todayIso
-    );
-    const overdueDocuments = overdueTargets.filter((t) =>
-      t.flashRowKey.startsWith("doc:")
-    ).length;
-    const overdueInvoices = overdueTargets.filter((t) =>
-      t.flashRowKey.startsWith("inv:")
-    ).length;
-    const overdueTotal = overdueTargets.length;
-    return {
-      toPay,
-      overdueDocuments,
-      overdueInvoices,
-      overdueTotal,
-      totalKc,
-      overdueTargets,
-    };
-  }, [financialDocumentsActive, invoicesActiveList, todayIso]);
+  const paymentOverviewStats = useMemo(
+    () =>
+      computePortalPaymentOverviewStats(
+        financialDocumentsActive as CompanyDocumentPaymentRow[],
+        invoicesActiveList,
+        todayIso
+      ),
+    [financialDocumentsActive, invoicesActiveList, todayIso]
+  );
 
   const onPaymentOverdueSummaryClick = useCallback(() => {
     if (paymentOverviewStats.overdueTotal <= 0) {
@@ -2960,6 +2901,19 @@ function DocumentsPageContent() {
           updatedAt: serverTimestamp(),
         } as unknown as UpdateData<DocumentData>
       );
+      const linkedInvId = String(row.sourceInvoiceId ?? "").trim();
+      if (linkedInvId) {
+        await updateDoc(
+          doc(firestore, "companies", companyId, "invoices", linkedInvId),
+          {
+            isDeleted: true,
+            deletedAt: serverTimestamp(),
+            deletedBy: user.uid,
+            updatedAt: serverTimestamp(),
+            updatedBy: user.uid,
+          } as unknown as UpdateData<DocumentData>
+        ).catch(() => undefined);
+      }
       logActivitySafe(firestore, companyId, user, profile, {
         actionType: "document.soft_delete",
         actionLabel: "Skrytí dokladu (koš)",
@@ -2996,6 +2950,12 @@ function DocumentsPageContent() {
           updatedAt: serverTimestamp(),
           updatedBy: user.uid,
         } as unknown as UpdateData<DocumentData>
+      );
+      await softDeleteLinkedDocumentsForInvoice(
+        firestore,
+        companyId,
+        t.id,
+        user.uid
       );
       logActivitySafe(firestore, companyId, user, profile, {
         actionType: "invoice.soft_delete",

@@ -3,6 +3,7 @@
  */
 
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
+import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import type { CompanyDocumentLike } from "@/lib/company-documents-financial";
 import { roundMoney2 } from "@/lib/vat-calculations";
 
@@ -98,6 +99,7 @@ export function documentGrossForPayment(row: CompanyDocumentPaymentRow): number 
 export function isDocumentEligibleForPaymentBox(
   row: CompanyDocumentPaymentRow
 ): boolean {
+  if (!isActiveFirestoreDoc(row)) return false;
   if (!row.requiresPayment) return false;
   if (resolveCompanyDocumentPaymentStatus(row) === "paid") return false;
   if (!isFinancialCompanyDocument(row)) return false;

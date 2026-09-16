@@ -123,3 +123,30 @@ export async function syncPortalInvoiceToDocuments(
   } as DocumentData);
   return ref.id;
 }
+
+/** Při soft-delete faktury skryje i zrcadla v documents (sourceInvoiceId). */
+export async function softDeleteLinkedDocumentsForInvoice(
+  firestore: Firestore,
+  companyId: string,
+  invoiceId: string,
+  userId: string
+): Promise<number> {
+  const id = String(invoiceId ?? "").trim();
+  if (!id) return 0;
+  const docsCol = collection(firestore, "companies", companyId, "documents");
+  const q = query(docsCol, where("sourceInvoiceId", "==", id), limit(25));
+  const snap = await getDocs(q);
+  let updated = 0;
+  for (const d of snap.docs) {
+    const data = d.data() as { isDeleted?: unknown };
+    if (data.isDeleted === true) continue;
+    await updateDoc(d.ref, {
+      isDeleted: true,
+      deletedAt: serverTimestamp(),
+      deletedBy: userId,
+      updatedAt: serverTimestamp(),
+    } as UpdateData<DocumentData>);
+    updated += 1;
+  }
+  return updated;
+}

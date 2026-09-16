@@ -19,7 +19,11 @@ import {
   type CompanyDocumentPaymentRow,
   urgencyLabel,
 } from "@/lib/company-document-payment";
-import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
+import {
+  computePortalPaymentOverviewStats,
+  filterActiveFinancialDocuments,
+  isPortalInvoiceMirrorDocument,
+} from "@/lib/portal-payment-summary";
 import { DASHBOARD_WIDGET_LIST_SCROLL_CLASS } from "@/lib/dashboard-widget-list-styles";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 
@@ -38,28 +42,40 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
     return collection(firestore, "companies", companyId, "documents");
   }, [firestore, companyId]);
 
-  const { data: rawDocs, isLoading } = useCollection(qRef);
+  const invoicesRef = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, "companies", companyId, "invoices");
+  }, [firestore, companyId]);
+
+  const { data: rawDocs, isLoading: docsLoading } = useCollection(qRef);
+  const { data: rawInvoices, isLoading: invLoading } = useCollection(invoicesRef);
+  const isLoading = docsLoading || invLoading;
+
+  const activeDocs = useMemo(
+    () => filterActiveFinancialDocuments((rawDocs ?? []) as CompanyDocumentPaymentRow[]),
+    [rawDocs]
+  );
+
+  const stats = useMemo(
+    () =>
+      computePortalPaymentOverviewStats(
+        activeDocs,
+        (Array.isArray(rawInvoices) ? rawInvoices : []) as Array<
+          Record<string, unknown> & { id: string }
+        >,
+        todayIso
+      ),
+    [activeDocs, rawInvoices, todayIso]
+  );
 
   const rows = useMemo(() => {
-    const list = (rawDocs ?? []) as CompanyDocumentPaymentRow[];
-    const filtered = list.filter(isDocumentEligibleForPaymentBox);
+    const filtered = activeDocs.filter(
+      (d) =>
+        !isPortalInvoiceMirrorDocument(d) && isDocumentEligibleForPaymentBox(d)
+    );
     filtered.sort((a, b) => compareDocumentsForPaymentQueue(a, b, todayIso));
     return filtered;
-  }, [rawDocs, todayIso]);
-
-  const stats = useMemo(() => {
-    const list = (rawDocs ?? []) as CompanyDocumentPaymentRow[];
-    let totalKc = 0;
-    let overdue = 0;
-    let toPay = 0;
-    for (const d of list) {
-      if (!isDocumentEligibleForPaymentBox(d)) continue;
-      toPay += 1;
-      totalKc += documentGrossForPayment(d);
-      if (getDocumentPaymentUrgency(d, todayIso) === "overdue") overdue += 1;
-    }
-    return { totalKc, overdue, toPay };
-  }, [rawDocs, todayIso]);
+  }, [activeDocs, todayIso]);
 
   const markPaid = async (id: string) => {
     if (!canWriteDocuments) return;
@@ -110,10 +126,10 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
           <span className="font-semibold tabular-nums">
             {Math.round(stats.totalKc).toLocaleString("cs-CZ")} Kč
           </span>
-          {stats.overdue > 0 ? (
+          {stats.overdueTotal > 0 ? (
             <span className="text-red-700">
               {" "}
-              · Po splatnosti: <strong>{stats.overdue}</strong>
+              · Po splatnosti: <strong>{stats.overdueTotal}</strong>
             </span>
           ) : null}
         </CardDescription>

@@ -17,6 +17,7 @@ import {
   where,
 } from "firebase/firestore";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
+import { softDeleteLinkedDocumentsForInvoice } from "@/lib/portal-invoice-documents-sync";
 import {
   computeExpenseAmountsFromInput,
   normalizeVatRate,
@@ -2122,4 +2123,11 @@ export async function deleteJobInvoice(params: {
     updatedAt: serverTimestamp(),
     updatedBy: params.userId,
   });
+
+  await softDeleteLinkedDocumentsForInvoice(
+    params.firestore,
+    params.companyId,
+    params.invoiceId,
+    params.userId
+  );
 }
