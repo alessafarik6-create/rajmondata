@@ -54,10 +54,15 @@ import {
 import { computeWorkBudgetSummary, sortWorkBudgetItems } from "@/lib/work-budget-calculations";
 import { buildWorkBudgetReportPdfHtml } from "@/lib/work-budget-report-pdf";
 import {
+  assessWorkBudgetInvoiceRegeneration,
   billableWorkBudgetItems,
   createInvoiceFromWorkBudgetItems,
+  isWorkBudgetInvoiceStale,
+  isWorkBudgetSourceInvoice,
+  regenerateInvoiceFromWorkBudgetItems,
 } from "@/lib/work-budget-invoice";
 import { JobWorkBudgetPdfPreviewDialog } from "@/components/jobs/job-work-budget-pdf-preview-dialog";
+import { JobWorkBudgetRegenerateDialog } from "@/components/jobs/job-work-budget-regenerate-dialog";
 import {
   createWorkBudgetTemplate,
   fetchWorkBudgetTemplates,
@@ -95,6 +100,9 @@ import {
 import type { OrgBankAccountRow } from "@/lib/invoice-billing-meta";
 import { logActivitySafe } from "@/lib/activity-log";
 import { useRouter } from "next/navigation";
+import { query, where, limit } from "firebase/firestore";
+import { RefreshCw } from "lucide-react";
+import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 
 function formatKc(n: number): string {
   return `${n.toLocaleString("cs-CZ")} Kč`;
@@ -261,6 +269,27 @@ export function JobWorkBudgetSection(props: {
   );
   const billable = useMemo(() => billableWorkBudgetItems(items), [items]);
 
+  const jobInvoicesQuery = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? query(
+            collection(firestore, "companies", companyId, "invoices"),
+            where("jobId", "==", jobId),
+            limit(40)
+          )
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: jobInvoicesRaw = [] } = useCollection<Record<string, unknown>>(jobInvoicesQuery);
+  const workBudgetInvoices = useMemo(() => {
+    return (jobInvoicesRaw ?? [])
+      .filter((row) => isActiveFirestoreDoc(row as { isDeleted?: unknown }))
+      .filter((row) => isWorkBudgetSourceInvoice(row as Record<string, unknown>))
+      .map((row) => row as Record<string, unknown> & { id: string });
+  }, [jobInvoicesRaw]);
+  const singleWorkBudgetInvoice =
+    workBudgetInvoices.length === 1 ? workBudgetInvoices[0]! : null;
+
   type RowFilter = "all" | "normal" | "extra_work";
   const [rowFilter, setRowFilter] = useState<RowFilter>("all");
   const filteredItems = useMemo(() => {
@@ -284,6 +313,10 @@ export function JobWorkBudgetSection(props: {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
   const [invoiceBusy, setInvoiceBusy] = useState(false);
+  const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
+  const [regenerateTarget, setRegenerateTarget] = useState<
+    (Record<string, unknown> & { id: string }) | null
+  >(null);
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
 
   const pdfHtml = useMemo(
@@ -617,6 +650,65 @@ export function JobWorkBudgetSection(props: {
     }
   };
 
+  const openRegenerateDialog = (inv: Record<string, unknown> & { id: string }) => {
+    const assessment = assessWorkBudgetInvoiceRegeneration(inv);
+    if (!assessment.allowed) {
+      toast({
+        variant: "destructive",
+        title: "Nelze přegenerovat",
+        description: assessment.blockedReason,
+      });
+      return;
+    }
+    setRegenerateTarget(inv);
+    setRegenerateDialogOpen(true);
+  };
+
+  const regenerateInvoice = async (selectedAdvanceIds: string[]) => {
+    if (!canManage || !regenerateTarget || !customerId?.trim()) return;
+    if (
+      !window.confirm(
+        "Faktura bude znovu vytvořena podle aktuálního položkového rozpočtu zakázky. Ruční změny v položkách faktury mohou být přepsány. Pokračovat?"
+      )
+    ) {
+      return;
+    }
+    setInvoiceBusy(true);
+    try {
+      const result = await regenerateInvoiceFromWorkBudgetItems({
+        firestore,
+        companyId,
+        jobId,
+        invoiceId: regenerateTarget.id,
+        jobDisplayName: jobDisplayName ?? "Zakázka",
+        customerId: customerId.trim(),
+        customer,
+        companyDoc,
+        orgBankAccounts,
+        items,
+        advances,
+        selectedAdvanceIds,
+        userId: user.uid,
+        profileDisplayName,
+      });
+      toast({
+        title: "Faktura aktualizována",
+        description: `${result.invoiceNumber} · ${formatKc(result.amountGross)}`,
+      });
+      setRegenerateDialogOpen(false);
+      setRegenerateTarget(null);
+      router.push(`/portal/invoices/${result.invoiceId}`);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Přegenerování se nezdařilo",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setInvoiceBusy(false);
+    }
+  };
+
   const draftPreview = useMemo(() => parseDraft(draft), [draft]);
 
   return (
@@ -656,15 +748,29 @@ export function JobWorkBudgetSection(props: {
             Export PDF
           </Button>
           {canManage ? (
-            <Button
-              type="button"
-              size="sm"
-              onClick={openInvoiceDialog}
-              disabled={invoiceBusy || billable.length === 0}
-            >
-              <Receipt className="mr-1.5 h-4 w-4" />
-              Vygenerovat fakturu z hotových položek
-            </Button>
+            <>
+              <Button
+                type="button"
+                size="sm"
+                onClick={openInvoiceDialog}
+                disabled={invoiceBusy || billable.length === 0}
+              >
+                <Receipt className="mr-1.5 h-4 w-4" />
+                Vygenerovat fakturu z hotových položek
+              </Button>
+              {singleWorkBudgetInvoice ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={invoiceBusy}
+                  onClick={() => openRegenerateDialog(singleWorkBudgetInvoice)}
+                >
+                  <RefreshCw className="mr-1.5 h-4 w-4" />
+                  Přegenerovat existující fakturu
+                </Button>
+              ) : null}
+            </>
           ) : null}
         </div>
       </div>
@@ -1113,6 +1219,19 @@ export function JobWorkBudgetSection(props: {
         advances={advances}
         busy={invoiceBusy}
         onConfirm={(ids) => void generateInvoice(ids)}
+      />
+
+      <JobWorkBudgetRegenerateDialog
+        open={regenerateDialogOpen}
+        onOpenChange={(o) => {
+          setRegenerateDialogOpen(o);
+          if (!o) setRegenerateTarget(null);
+        }}
+        invoice={regenerateTarget}
+        items={items}
+        advances={advances}
+        busy={invoiceBusy}
+        onConfirm={(ids) => void regenerateInvoice(ids)}
       />
 
       <JobWorkBudgetPdfPreviewDialog

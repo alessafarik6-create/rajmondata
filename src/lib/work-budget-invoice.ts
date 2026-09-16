@@ -2,6 +2,7 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
   serverTimestamp,
   updateDoc,
   writeBatch,
@@ -29,9 +30,10 @@ import {
 } from "@/lib/work-budget-types";
 import type { JobWorkBudgetAdvanceDoc } from "@/lib/work-budget-advances";
 import {
+  aggregateBudgetItemAmounts,
   applyAdvanceDeductionsToGross,
-  splitBillableByItemType,
 } from "@/lib/work-budget-financial-overview";
+import { isNormalBudgetItem } from "@/lib/work-budget-types";
 import { roundMoney2 } from "@/lib/vat-calculations";
 
 function trim(v: unknown): string {
@@ -69,14 +71,108 @@ function workBudgetItemToInvoiceLine(item: JobWorkBudgetItemDoc): PortalManualFo
   };
 }
 
+/** Položky pro novou fakturu nebo přegenerování existující (včetně již vázaných na tuto fakturu). */
+export function workBudgetItemsEligibleForInvoice(
+  items: JobWorkBudgetItemDoc[],
+  regenerateInvoiceId?: string | null
+): JobWorkBudgetItemDoc[] {
+  const reg = String(regenerateInvoiceId ?? "").trim();
+  return items.filter((row) => {
+    if (!row.done || row.amountGross <= 0) return false;
+    if (isExtraWorkItem(row) && !isApprovedExtraWorkItem(row)) return false;
+    if (reg && row.linkedInvoiceId === reg) return true;
+    if (!row.invoiced) return true;
+    return false;
+  });
+}
+
 export function billableWorkBudgetItems(items: JobWorkBudgetItemDoc[]): JobWorkBudgetItemDoc[] {
-  return items.filter(
-    (row) =>
-      row.done &&
-      !row.invoiced &&
-      row.amountGross > 0 &&
-      (!isExtraWorkItem(row) || isApprovedExtraWorkItem(row))
-  );
+  return workBudgetItemsEligibleForInvoice(items, null);
+}
+
+export function isWorkBudgetSourceInvoice(inv: Record<string, unknown>): boolean {
+  return inv.workBudgetSource === true;
+}
+
+export type WorkBudgetInvoiceRegenerateAssessment = {
+  allowed: boolean;
+  blockedReason?: string;
+  manualEditWarning?: boolean;
+};
+
+export function assessWorkBudgetInvoiceRegeneration(
+  inv: Record<string, unknown>
+): WorkBudgetInvoiceRegenerateAssessment {
+  if (!isWorkBudgetSourceInvoice(inv)) {
+    return { allowed: false, blockedReason: "Faktura nevznikla z položkového rozpočtu." };
+  }
+  if (inv.isDeleted === true) {
+    return { allowed: false, blockedReason: "Faktura byla smazána." };
+  }
+  const st = String(inv.status ?? "").trim().toLowerCase();
+  if (st === "cancelled" || st === "storno" || inv.storno === true) {
+    return { allowed: false, blockedReason: "Stornovanou fakturu nelze přegenerovat." };
+  }
+  const ps = String(inv.paymentStatus ?? "unpaid").trim().toLowerCase();
+  if (ps === "paid") {
+    return { allowed: false, blockedReason: "Zaplacenou fakturu nelze přegenerovat." };
+  }
+  if (ps === "partial" && Number(inv.paidAmount ?? inv.paidGrossReceived ?? 0) > 0) {
+    return {
+      allowed: false,
+      blockedReason: "Částečně zaplacenou fakturu nelze přegenerovat.",
+    };
+  }
+  let manualEditWarning = false;
+  if (inv.workBudgetLinesPristine === false) {
+    manualEditWarning = true;
+  } else {
+    const ids = Array.isArray(inv.workBudgetItemIds)
+      ? (inv.workBudgetItemIds as string[])
+      : [];
+    const lineItems = Array.isArray(inv.items) ? inv.items : [];
+    if (ids.length > 0 && lineItems.length > 0 && lineItems.length !== ids.length) {
+      manualEditWarning = true;
+    }
+  }
+  return { allowed: true, manualEditWarning };
+}
+
+export function isWorkBudgetInvoiceStale(params: {
+  invoice: Record<string, unknown>;
+  items: JobWorkBudgetItemDoc[];
+  advances: JobWorkBudgetAdvanceDoc[];
+}): boolean {
+  if (!isWorkBudgetSourceInvoice(params.invoice)) return false;
+  const inv = params.invoice;
+  const invId = String(inv.id ?? "").trim();
+  if (!invId) return false;
+  const advanceIds = Array.isArray(inv.workBudgetAdvanceIds)
+    ? (inv.workBudgetAdvanceIds as string[])
+    : [];
+  try {
+    const preview = buildWorkBudgetInvoicePreview({
+      items: params.items,
+      advances: params.advances,
+      selectedAdvanceIds: advanceIds,
+      regenerateInvoiceId: invId,
+    });
+    const oldSub = roundMoney2(Number(inv.workBudgetSubtotalGross ?? 0));
+    const oldPay = roundMoney2(Number(inv.amountGross ?? 0));
+    const oldIds = new Set(
+      Array.isArray(inv.workBudgetItemIds) ? (inv.workBudgetItemIds as string[]) : []
+    );
+    const newIds = new Set(preview.billableItems.map((r) => r.id));
+    if (Math.abs(preview.subtotalGross - oldSub) > 0.009) return true;
+    if (Math.abs(preview.amountGross - oldPay) > 0.009) return true;
+    if (oldIds.size !== newIds.size) return true;
+    for (const id of newIds) {
+      if (!oldIds.has(id)) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 export type WorkBudgetInvoicePreview = {
@@ -97,9 +193,12 @@ export function buildWorkBudgetInvoicePreview(params: {
   items: JobWorkBudgetItemDoc[];
   advances: JobWorkBudgetAdvanceDoc[];
   selectedAdvanceIds: string[];
+  regenerateInvoiceId?: string | null;
 }): WorkBudgetInvoicePreview {
-  const billable = billableWorkBudgetItems(params.items);
-  const { normal, extraWork } = splitBillableByItemType(billable);
+  const reg = String(params.regenerateInvoiceId ?? "").trim() || null;
+  const billable = workBudgetItemsEligibleForInvoice(params.items, reg);
+  const normal = aggregateBudgetItemAmounts(billable.filter(isNormalBudgetItem));
+  const extraWork = aggregateBudgetItemAmounts(billable.filter(isApprovedExtraWorkItem));
   let subtotalNet = roundMoney2(normal.net + extraWork.net);
   let subtotalVat = roundMoney2(normal.vat + extraWork.vat);
   let subtotalGross = roundMoney2(normal.gross + extraWork.gross);
@@ -109,7 +208,7 @@ export function buildWorkBudgetInvoicePreview(params: {
   const idSet = new Set(params.selectedAdvanceIds);
   for (const adv of params.advances) {
     if (!idSet.has(adv.id)) continue;
-    if (adv.appliedToInvoiceId) {
+    if (adv.appliedToInvoiceId && adv.appliedToInvoiceId !== reg) {
       throw new Error(`Záloha „${adv.label}“ už byla započtena jinou fakturou.`);
     }
     deductionGross = roundMoney2(deductionGross + adv.amountGross);
@@ -142,6 +241,210 @@ export function buildWorkBudgetInvoicePreview(params: {
   };
 }
 
+type WorkBudgetInvoiceBuildInput = {
+  jobDisplayName: string;
+  customerId: string;
+  customer: unknown;
+  companyDoc: Record<string, unknown> | null | undefined;
+  orgBankAccounts: OrgBankAccountRow[];
+  preview: WorkBudgetInvoicePreview;
+  invoiceNumber: string;
+  issueDate: string;
+  dueDate: string;
+  taxSupplyDate: string;
+};
+
+function buildWorkBudgetInvoiceNotes(preview: WorkBudgetInvoicePreview): string {
+  let notes = "Faktura za provedené práce dle položkového rozpočtu zakázky.";
+  if (preview.advancesApplied.length > 0) {
+    notes += `\n\nZapočtené zálohy:\n${preview.advancesApplied
+      .map((a) => `- ${a.label}: ${a.amountGross.toLocaleString("cs-CZ")} Kč`)
+      .join("\n")}`;
+    notes += `\n\nMezisoučet položek: ${preview.subtotalGross.toLocaleString("cs-CZ")} Kč s DPH`;
+    notes += `\nOdečet záloh: -${preview.deductionGross.toLocaleString("cs-CZ")} Kč`;
+    notes += `\nK úhradě: ${preview.amountGross.toLocaleString("cs-CZ")} Kč s DPH`;
+  }
+  return notes;
+}
+
+function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
+  const billable = input.preview.billableItems;
+  const invoiceLines = billable.map(workBudgetItemToInvoiceLine);
+  const recipient = invoiceRecipientFromCustomerDoc(input.customerId, input.customer);
+  const companyMeta = handoverCompanyPdfMeta(input.companyDoc);
+  const c = input.companyDoc ?? {};
+  const supplierIco = trim(c.ico ?? c.companyIco) || null;
+  const supplierDic = trim(c.dic ?? c.companyDic) || null;
+  const legacyCompanyBank = trim(c.bankAccount ?? c.companyBankAccount) || null;
+  const notes = buildWorkBudgetInvoiceNotes(input.preview);
+
+  const built = buildPortalManualInvoiceHtml({
+    invoiceNumber: input.invoiceNumber,
+    issueDate: input.issueDate,
+    dueDate: input.dueDate,
+    taxSupplyDate: input.taxSupplyDate,
+    jobName: input.jobDisplayName,
+    notes,
+    recipient,
+    supplierName: companyMeta.contractorCompanyName,
+    supplierAddressLines: buildCompanyRegisteredAddress(c) ?? companyMeta.companyAddressText,
+    supplierIco,
+    supplierDic,
+    logoUrl: companyMeta.logoUrl,
+    items: invoiceLines,
+    orgBankAccounts: input.orgBankAccounts,
+    legacyCompanyBankLine: legacyCompanyBank,
+  });
+
+  let { html, amountNet, vatAmount, amountGross, variableSymbol, vatBreakdown } = built;
+  const preview = input.preview;
+  if (preview.deductionGross > 0) {
+    amountNet = preview.amountNet;
+    vatAmount = preview.vatAmount;
+    amountGross = preview.amountGross;
+    if (amountGross > 0 && vatBreakdown.length === 1) {
+      const ratio = preview.subtotalGross > 0 ? preview.amountGross / preview.subtotalGross : 1;
+      vatBreakdown = vatBreakdown.map((b) => ({
+        rate: b.rate,
+        base: roundMoney2(b.base * ratio),
+        vat: roundMoney2(b.vat * ratio),
+      }));
+    }
+  }
+
+  return {
+    billable,
+    invoiceLines,
+    recipient,
+    html,
+    amountNet,
+    vatAmount,
+    amountGross,
+    variableSymbol,
+    vatBreakdown,
+    notes,
+    displayName: recipientDisplayName(recipient),
+    addrLines: buildRecipientAddressMultiline(recipient),
+    itemIds: billable.map((row) => row.id),
+  };
+}
+
+function writeWorkBudgetInvoiceLinksToBatch(params: {
+  batch: ReturnType<typeof writeBatch>;
+  firestore: Firestore;
+  companyId: string;
+  jobId: string;
+  invoiceId: string;
+  allItems: JobWorkBudgetItemDoc[];
+  previousItemIds: string[];
+  billable: JobWorkBudgetItemDoc[];
+  previousAdvanceIds: string[];
+  appliedAdvanceIds: string[];
+}): void {
+  const invoicedAt = new Date().toISOString();
+  const newItemSet = new Set(params.billable.map((r) => r.id));
+  const prevItemSet = new Set(params.previousItemIds);
+  const newAdvSet = new Set(params.appliedAdvanceIds);
+  const prevAdvSet = new Set(params.previousAdvanceIds);
+  const batch = params.batch;
+
+  for (const row of params.allItems) {
+    if (prevItemSet.has(row.id) && !newItemSet.has(row.id) && row.linkedInvoiceId === params.invoiceId) {
+      batch.update(
+        doc(
+          params.firestore,
+          "companies",
+          params.companyId,
+          "jobs",
+          params.jobId,
+          "workBudgetItems",
+          row.id
+        ),
+        {
+          invoiced: false,
+          invoicedAt: null,
+          linkedInvoiceId: null,
+          updatedAt: serverTimestamp(),
+        }
+      );
+    }
+  }
+
+  for (const row of params.billable) {
+    batch.update(
+      doc(
+        params.firestore,
+        "companies",
+        params.companyId,
+        "jobs",
+        params.jobId,
+        "workBudgetItems",
+        row.id
+      ),
+      {
+        invoiced: true,
+        invoicedAt,
+        linkedInvoiceId: params.invoiceId,
+        updatedAt: serverTimestamp(),
+      }
+    );
+  }
+
+  for (const advId of prevAdvSet) {
+    if (!newAdvSet.has(advId)) {
+      batch.update(
+        doc(
+          params.firestore,
+          "companies",
+          params.companyId,
+          "jobs",
+          params.jobId,
+          "workBudgetAdvances",
+          advId
+        ),
+        {
+          appliedToInvoiceId: null,
+          updatedAt: serverTimestamp(),
+        }
+      );
+    }
+  }
+
+  for (const advId of newAdvSet) {
+    batch.update(
+      doc(
+        params.firestore,
+        "companies",
+        params.companyId,
+        "jobs",
+        params.jobId,
+        "workBudgetAdvances",
+        advId
+      ),
+      {
+        appliedToInvoiceId: params.invoiceId,
+        updatedAt: serverTimestamp(),
+      }
+    );
+  }
+}
+
+async function applyWorkBudgetInvoiceLinks(params: {
+  firestore: Firestore;
+  companyId: string;
+  jobId: string;
+  invoiceId: string;
+  allItems: JobWorkBudgetItemDoc[];
+  previousItemIds: string[];
+  billable: JobWorkBudgetItemDoc[];
+  previousAdvanceIds: string[];
+  appliedAdvanceIds: string[];
+}): Promise<void> {
+  const batch = writeBatch(params.firestore);
+  writeWorkBudgetInvoiceLinksToBatch({ ...params, batch });
+  await batch.commit();
+}
+
 export async function createInvoiceFromWorkBudgetItems(params: {
   firestore: Firestore;
   companyId: string;
@@ -162,18 +465,9 @@ export async function createInvoiceFromWorkBudgetItems(params: {
     advances: params.advances ?? [],
     selectedAdvanceIds: params.selectedAdvanceIds ?? [],
   });
-  const billable = preview.billableItems;
-  if (billable.length === 0) {
+  if (preview.billableItems.length === 0) {
     throw new Error("Žádné provedené nevyfakturované položky k fakturaci.");
   }
-
-  const invoiceLines = billable.map(workBudgetItemToInvoiceLine);
-  const recipient = invoiceRecipientFromCustomerDoc(params.customerId, params.customer);
-  const companyMeta = handoverCompanyPdfMeta(params.companyDoc);
-  const c = params.companyDoc ?? {};
-  const supplierIco = trim(c.ico ?? c.companyIco) || null;
-  const supplierDic = trim(c.dic ?? c.companyDic) || null;
-  const legacyCompanyBank = trim(c.bankAccount ?? c.companyBankAccount) || null;
 
   const issueDate = new Date().toISOString().split("T")[0];
   const dueDate = defaultDueDateIso();
@@ -183,51 +477,18 @@ export async function createInvoiceFromWorkBudgetItems(params: {
     "FA"
   );
 
-  let notes = "Faktura za provedené práce dle položkového rozpočtu zakázky.";
-  if (preview.advancesApplied.length > 0) {
-    notes += `\n\nZapočtené zálohy:\n${preview.advancesApplied
-      .map((a) => `- ${a.label}: ${a.amountGross.toLocaleString("cs-CZ")} Kč`)
-      .join("\n")}`;
-    notes += `\n\nMezisoučet položek: ${preview.subtotalGross.toLocaleString("cs-CZ")} Kč s DPH`;
-    notes += `\nOdečet záloh: -${preview.deductionGross.toLocaleString("cs-CZ")} Kč`;
-    notes += `\nK úhradě: ${preview.amountGross.toLocaleString("cs-CZ")} Kč s DPH`;
-  }
-
-  const built = buildPortalManualInvoiceHtml({
+  const bundle = buildWorkBudgetInvoiceHtmlBundle({
+    jobDisplayName: params.jobDisplayName,
+    customerId: params.customerId,
+    customer: params.customer,
+    companyDoc: params.companyDoc,
+    orgBankAccounts: params.orgBankAccounts,
+    preview,
     invoiceNumber,
     issueDate,
     dueDate,
     taxSupplyDate: issueDate,
-    jobName: params.jobDisplayName,
-    notes,
-    recipient,
-    supplierName: companyMeta.contractorCompanyName,
-    supplierAddressLines: buildCompanyRegisteredAddress(c) ?? companyMeta.companyAddressText,
-    supplierIco,
-    supplierDic,
-    logoUrl: companyMeta.logoUrl,
-    items: invoiceLines,
-    orgBankAccounts: params.orgBankAccounts,
-    legacyCompanyBankLine: legacyCompanyBank,
   });
-
-  let { html, amountNet, vatAmount, amountGross, variableSymbol, vatBreakdown } = built;
-  if (preview.deductionGross > 0) {
-    amountNet = preview.amountNet;
-    vatAmount = preview.vatAmount;
-    amountGross = preview.amountGross;
-    if (amountGross > 0 && vatBreakdown.length === 1) {
-      const ratio = preview.subtotalGross > 0 ? preview.amountGross / preview.subtotalGross : 1;
-      vatBreakdown = vatBreakdown.map((b) => ({
-        rate: b.rate,
-        base: roundMoney2(b.base * ratio),
-        vat: roundMoney2(b.vat * ratio),
-      }));
-    }
-  }
-  const displayName = recipientDisplayName(recipient);
-  const addrLines = buildRecipientAddressMultiline(recipient);
-  const itemIds = billable.map((row) => row.id);
 
   const basePayload = scrubFirestoreValue({
     type: PORTAL_MANUAL_INVOICE_TYPE,
@@ -236,49 +497,51 @@ export async function createInvoiceFromWorkBudgetItems(params: {
     jobId: params.jobId,
     customerId: params.customerId.trim() || null,
     invoiceRecipient: scrubFirestoreValue({
-      type: recipient.type,
-      name: recipient.name,
-      companyName: recipient.companyName ?? null,
-      ico: recipient.ico ?? null,
-      dic: recipient.dic ?? null,
-      street: recipient.street ?? null,
-      city: recipient.city ?? null,
-      postalCode: recipient.postalCode ?? null,
-      country: recipient.country ?? null,
-      email: recipient.email ?? null,
-      phone: recipient.phone ?? null,
-      recipientNote: recipient.recipientNote ?? null,
-      sourceCustomerId: recipient.sourceCustomerId ?? null,
+      type: bundle.recipient.type,
+      name: bundle.recipient.name,
+      companyName: bundle.recipient.companyName ?? null,
+      ico: bundle.recipient.ico ?? null,
+      dic: bundle.recipient.dic ?? null,
+      street: bundle.recipient.street ?? null,
+      city: bundle.recipient.city ?? null,
+      postalCode: bundle.recipient.postalCode ?? null,
+      country: bundle.recipient.country ?? null,
+      email: bundle.recipient.email ?? null,
+      phone: bundle.recipient.phone ?? null,
+      recipientNote: bundle.recipient.recipientNote ?? null,
+      sourceCustomerId: bundle.recipient.sourceCustomerId ?? null,
     }),
-    customerName: displayName,
-    customerAddressLines: addrLines || displayName,
-    customerPhone: recipient.phone ?? null,
-    customerEmail: recipient.email ?? null,
-    customerIco: recipient.ico ?? null,
-    customerDic: recipient.dic ?? null,
+    customerName: bundle.displayName,
+    customerAddressLines: bundle.addrLines || bundle.displayName,
+    customerPhone: bundle.recipient.phone ?? null,
+    customerEmail: bundle.recipient.email ?? null,
+    customerIco: bundle.recipient.ico ?? null,
+    customerDic: bundle.recipient.dic ?? null,
     invoiceNumber,
-    items: portalFormItemsForFirestore(invoiceLines),
-    totalAmount: amountGross,
-    amountNet,
-    vatAmount,
-    amountGross,
-    vatBreakdown: vatBreakdown.map((b) => ({ rate: b.rate, base: b.base, vat: b.vat })),
+    items: portalFormItemsForFirestore(bundle.invoiceLines),
+    totalAmount: bundle.amountGross,
+    amountNet: bundle.amountNet,
+    vatAmount: bundle.vatAmount,
+    amountGross: bundle.amountGross,
+    vatBreakdown: bundle.vatBreakdown.map((b) => ({ rate: b.rate, base: b.base, vat: b.vat })),
     paymentStatus: "unpaid",
     requiresPayment: true,
-    variableSymbol,
-    pdfHtml: html,
+    variableSymbol: bundle.variableSymbol,
+    pdfHtml: bundle.html,
     issueDate,
     dueDate,
     taxSupplyDate: issueDate,
-    notes: "Faktura za provedené práce dle položkového rozpočtu zakázky.",
+    notes: bundle.notes,
     status: "draft",
     issueStatus: "issued",
     isDeleted: false,
     workBudgetSource: true,
-    workBudgetItemIds: itemIds,
+    workBudgetItemIds: bundle.itemIds,
     workBudgetAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
     workBudgetSubtotalGross: preview.subtotalGross,
     workBudgetAdvanceDeductionGross: preview.deductionGross,
+    workBudgetLinesPristine: true,
+    workBudgetSyncedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
     createdBy: params.userId,
     updatedAt: serverTimestamp(),
@@ -296,14 +559,14 @@ export async function createInvoiceFromWorkBudgetItems(params: {
     userId: params.userId,
     uploadedByName: params.profileDisplayName ?? "Uživatel",
     invoiceNumber,
-    customerName: displayName,
+    customerName: bundle.displayName,
     jobId: params.jobId,
     jobName: params.jobDisplayName !== "—" ? params.jobDisplayName : null,
     issueDate,
     dueDate,
-    amountNet,
-    vatAmount,
-    amountGross,
+    amountNet: bundle.amountNet,
+    vatAmount: bundle.vatAmount,
+    amountGross: bundle.amountGross,
   });
 
   await updateDoc(doc(params.firestore, "companies", params.companyId, "invoices", invRef.id), {
@@ -311,52 +574,158 @@ export async function createInvoiceFromWorkBudgetItems(params: {
   });
 
   await addDoc(collection(params.firestore, "companies", params.companyId, "finance"), {
-    amount: amountGross,
+    amount: bundle.amountGross,
     type: "revenue",
     date: issueDate,
     description: `Faktura ${invoiceNumber}`,
     createdAt: serverTimestamp(),
   });
 
-  const invoicedAt = new Date().toISOString();
+  await applyWorkBudgetInvoiceLinks({
+    firestore: params.firestore,
+    companyId: params.companyId,
+    jobId: params.jobId,
+    invoiceId: invRef.id,
+    allItems: params.items,
+    previousItemIds: [],
+    billable: bundle.billable,
+    previousAdvanceIds: [],
+    appliedAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
+  });
+
+  return { invoiceId: invRef.id, invoiceNumber, amountGross: bundle.amountGross };
+}
+
+export async function regenerateInvoiceFromWorkBudgetItems(params: {
+  firestore: Firestore;
+  companyId: string;
+  jobId: string;
+  invoiceId: string;
+  jobDisplayName: string;
+  customerId: string;
+  customer: unknown;
+  companyDoc: Record<string, unknown> | null | undefined;
+  orgBankAccounts: OrgBankAccountRow[];
+  items: JobWorkBudgetItemDoc[];
+  advances?: JobWorkBudgetAdvanceDoc[];
+  selectedAdvanceIds?: string[];
+  userId: string;
+  profileDisplayName?: string;
+}): Promise<{ invoiceId: string; invoiceNumber: string; amountGross: number }> {
+  const invRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "invoices",
+    params.invoiceId
+  );
+  const invSnap = await getDoc(invRef);
+  if (!invSnap.exists()) {
+    throw new Error("Faktura neexistuje.");
+  }
+  const inv = { id: invSnap.id, ...invSnap.data() } as Record<string, unknown>;
+  if (String(inv.jobId ?? "") !== params.jobId) {
+    throw new Error("Faktura nepatří k této zakázce.");
+  }
+  const assessment = assessWorkBudgetInvoiceRegeneration(inv);
+  if (!assessment.allowed) {
+    throw new Error(assessment.blockedReason ?? "Fakturu nelze přegenerovat.");
+  }
+
+  const preview = buildWorkBudgetInvoicePreview({
+    items: params.items,
+    advances: params.advances ?? [],
+    selectedAdvanceIds: params.selectedAdvanceIds ?? [],
+    regenerateInvoiceId: params.invoiceId,
+  });
+  if (preview.billableItems.length === 0) {
+    throw new Error("Žádné položky k fakturaci podle aktuálního rozpočtu.");
+  }
+
+  const invoiceNumber = String(inv.invoiceNumber ?? "").trim();
+  if (!invoiceNumber) {
+    throw new Error("Faktura nemá číslo dokladu.");
+  }
+  const issueDate = String(inv.issueDate ?? new Date().toISOString().split("T")[0]).trim();
+  const dueDate = String(inv.dueDate ?? defaultDueDateIso()).trim();
+  const taxSupplyDate = String(inv.taxSupplyDate ?? issueDate).trim();
+
+  const bundle = buildWorkBudgetInvoiceHtmlBundle({
+    jobDisplayName: params.jobDisplayName,
+    customerId: params.customerId,
+    customer: params.customer,
+    companyDoc: params.companyDoc,
+    orgBankAccounts: params.orgBankAccounts,
+    preview,
+    invoiceNumber,
+    issueDate,
+    dueDate,
+    taxSupplyDate,
+  });
+
+  const previousItemIds = Array.isArray(inv.workBudgetItemIds)
+    ? (inv.workBudgetItemIds as string[])
+    : [];
+  const previousAdvanceIds = Array.isArray(inv.workBudgetAdvanceIds)
+    ? (inv.workBudgetAdvanceIds as string[])
+    : [];
+
+  const updatePayload = scrubFirestoreValue({
+    items: portalFormItemsForFirestore(bundle.invoiceLines),
+    totalAmount: bundle.amountGross,
+    amountNet: bundle.amountNet,
+    vatAmount: bundle.vatAmount,
+    amountGross: bundle.amountGross,
+    vatBreakdown: bundle.vatBreakdown.map((b) => ({ rate: b.rate, base: b.base, vat: b.vat })),
+    pdfHtml: bundle.html,
+    notes: bundle.notes,
+    workBudgetItemIds: bundle.itemIds,
+    workBudgetAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
+    workBudgetSubtotalGross: preview.subtotalGross,
+    workBudgetAdvanceDeductionGross: preview.deductionGross,
+    workBudgetLinesPristine: true,
+    workBudgetSyncedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }) as Record<string, unknown>;
+
   const batch = writeBatch(params.firestore);
-  for (const row of billable) {
-    batch.update(
-      doc(
-        params.firestore,
-        "companies",
-        params.companyId,
-        "jobs",
-        params.jobId,
-        "workBudgetItems",
-        row.id
-      ),
-      {
-        invoiced: true,
-        invoicedAt,
-        linkedInvoiceId: invRef.id,
-        updatedAt: serverTimestamp(),
-      }
-    );
-  }
-  for (const adv of preview.advancesApplied) {
-    batch.update(
-      doc(
-        params.firestore,
-        "companies",
-        params.companyId,
-        "jobs",
-        params.jobId,
-        "workBudgetAdvances",
-        adv.advanceId
-      ),
-      {
-        appliedToInvoiceId: invRef.id,
-        updatedAt: serverTimestamp(),
-      }
-    );
-  }
+  batch.update(invRef, updatePayload as Record<string, import("firebase/firestore").FieldValue>);
+  writeWorkBudgetInvoiceLinksToBatch({
+    batch,
+    firestore: params.firestore,
+    companyId: params.companyId,
+    jobId: params.jobId,
+    invoiceId: params.invoiceId,
+    allItems: params.items,
+    previousItemIds,
+    billable: bundle.billable,
+    previousAdvanceIds,
+    appliedAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
+  });
   await batch.commit();
 
-  return { invoiceId: invRef.id, invoiceNumber, amountGross };
+  await syncPortalInvoiceToDocuments({
+    firestore: params.firestore,
+    companyId: params.companyId,
+    invoiceId: params.invoiceId,
+    userId: params.userId,
+    uploadedByName: params.profileDisplayName ?? "Uživatel",
+    invoiceNumber,
+    customerName: bundle.displayName,
+    jobId: params.jobId,
+    jobName: params.jobDisplayName !== "—" ? params.jobDisplayName : null,
+    issueDate,
+    dueDate,
+    amountNet: bundle.amountNet,
+    vatAmount: bundle.vatAmount,
+    amountGross: bundle.amountGross,
+    linkedDocumentId:
+      inv.linkedDocumentId != null ? String(inv.linkedDocumentId) : null,
+  });
+
+  return {
+    invoiceId: params.invoiceId,
+    invoiceNumber,
+    amountGross: bundle.amountGross,
+  };
 }

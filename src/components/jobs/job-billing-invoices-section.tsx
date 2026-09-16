@@ -29,7 +29,23 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, FileText, Printer, PlusCircle, Plus, Trash2, Pencil } from "lucide-react";
+import { Loader2, FileText, Printer, PlusCircle, Plus, Trash2, Pencil, RefreshCw } from "lucide-react";
+import {
+  assessWorkBudgetInvoiceRegeneration,
+  isWorkBudgetInvoiceStale,
+  isWorkBudgetSourceInvoice,
+  regenerateInvoiceFromWorkBudgetItems,
+} from "@/lib/work-budget-invoice";
+import {
+  parseJobWorkBudgetItemFromFirestore,
+  WORK_BUDGET_ITEMS_COLLECTION,
+} from "@/lib/work-budget-types";
+import {
+  parseWorkBudgetAdvanceFromFirestore,
+  WORK_BUDGET_ADVANCES_COLLECTION,
+} from "@/lib/work-budget-advances";
+import { JobWorkBudgetRegenerateDialog } from "@/components/jobs/job-work-budget-regenerate-dialog";
+import { sortWorkBudgetItems } from "@/lib/work-budget-calculations";
 import { buildCustomerAddressMultiline } from "@/lib/customer-address-display";
 import type { JobBudgetBreakdown } from "@/lib/vat-calculations";
 import { normalizeVatRate, resolveJobPaidFromFirestore } from "@/lib/vat-calculations";
@@ -214,6 +230,61 @@ export function JobBillingInvoicesSection({
   const [creatingManual, setCreatingManual] = useState(false);
   const [creatingSettlement, setCreatingSettlement] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [regenerateBusy, setRegenerateBusy] = useState(false);
+  const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
+  const [regenerateTarget, setRegenerateTarget] = useState<
+    (Record<string, unknown> & { id: string }) | null
+  >(null);
+
+  const workBudgetItemsColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? collection(firestore, "companies", companyId, "jobs", jobId, WORK_BUDGET_ITEMS_COLLECTION)
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: workBudgetItemsRaw = [] } = useCollection<Record<string, unknown>>(
+    workBudgetItemsColRef
+  );
+  const workBudgetItems = useMemo(
+    () =>
+      sortWorkBudgetItems(
+        (workBudgetItemsRaw ?? []).map((row, idx) =>
+          parseJobWorkBudgetItemFromFirestore(
+            row,
+            String((row as { id?: string }).id ?? `wb-${idx}`)
+          )
+        )
+      ),
+    [workBudgetItemsRaw]
+  );
+  const workBudgetAdvancesColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? collection(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            jobId,
+            WORK_BUDGET_ADVANCES_COLLECTION
+          )
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: workBudgetAdvancesRaw = [] } = useCollection<Record<string, unknown>>(
+    workBudgetAdvancesColRef
+  );
+  const workBudgetAdvances = useMemo(
+    () =>
+      (workBudgetAdvancesRaw ?? []).map((row, idx) =>
+        parseWorkBudgetAdvanceFromFirestore(
+          row,
+          String((row as { id?: string }).id ?? `adv-${idx}`)
+        )
+      ),
+    [workBudgetAdvancesRaw]
+  );
 
   const organizationLogoUrl = useMemo(() => {
     const u = (companyDoc as { organizationLogoUrl?: string | null })?.organizationLogoUrl;
@@ -705,6 +776,67 @@ export function JobBillingInvoicesSection({
     }
   };
 
+  const profileDisplayName =
+    String(user?.displayName ?? "").trim() || String(user?.email ?? "").trim() || "Uživatel";
+
+  const openRegenerateWorkBudgetInvoice = (inv: Record<string, unknown> & { id: string }) => {
+    const assessment = assessWorkBudgetInvoiceRegeneration(inv);
+    if (!assessment.allowed) {
+      toast({
+        variant: "destructive",
+        title: "Nelze přegenerovat",
+        description: assessment.blockedReason,
+      });
+      return;
+    }
+    setRegenerateTarget(inv);
+    setRegenerateDialogOpen(true);
+  };
+
+  const confirmRegenerateWorkBudgetInvoice = async (selectedAdvanceIds: string[]) => {
+    if (!user || !regenerateTarget || !customerId?.trim()) return;
+    if (
+      !window.confirm(
+        "Faktura bude znovu vytvořena podle aktuálního položkového rozpočtu zakázky. Ruční změny v položkách faktury mohou být přepsány. Pokračovat?"
+      )
+    ) {
+      return;
+    }
+    setRegenerateBusy(true);
+    try {
+      const result = await regenerateInvoiceFromWorkBudgetItems({
+        firestore,
+        companyId,
+        jobId,
+        invoiceId: regenerateTarget.id,
+        jobDisplayName: jobName,
+        customerId: String(customerId).trim(),
+        customer: customerDoc,
+        companyDoc,
+        orgBankAccounts,
+        items: workBudgetItems,
+        advances: workBudgetAdvances,
+        selectedAdvanceIds,
+        userId: user.uid,
+        profileDisplayName,
+      });
+      toast({
+        title: "Faktura aktualizována",
+        description: `${result.invoiceNumber} · ${result.amountGross.toLocaleString("cs-CZ")} Kč`,
+      });
+      setRegenerateDialogOpen(false);
+      setRegenerateTarget(null);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Přegenerování se nezdařilo",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setRegenerateBusy(false);
+    }
+  };
+
   return (
     <>
       <Card
@@ -882,13 +1014,40 @@ export function JobBillingInvoicesSection({
                           {displayGross.toLocaleString("cs-CZ")}{" "}
                           Kč
                         </div>
+                        {isWorkBudgetSourceInvoice(row) &&
+                        isWorkBudgetInvoiceStale({
+                          invoice: row,
+                          items: workBudgetItems,
+                          advances: workBudgetAdvances,
+                        }) ? (
+                          <p className="mt-1 text-xs font-medium text-amber-800">
+                            Položkový rozpočet byl změněn.
+                          </p>
+                        ) : null}
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        {isWorkBudgetSourceInvoice(row) && canManage ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="min-h-9 gap-1 w-full sm:w-auto"
+                            disabled={regenerateBusy}
+                            onClick={() =>
+                              openRegenerateWorkBudgetInvoice(
+                                row as Record<string, unknown> & { id: string }
+                              )
+                            }
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Aktualizovat podle rozpočtu
+                          </Button>
+                        ) : null}
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="gap-1 border-neutral-950"
+                          className="gap-1 border-neutral-950 min-h-9 w-full sm:w-auto"
                           asChild
                         >
                           <Link href={`/portal/invoices/${row.id}`}>Otevřít</Link>
@@ -1196,6 +1355,19 @@ export function JobBillingInvoicesSection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <JobWorkBudgetRegenerateDialog
+        open={regenerateDialogOpen}
+        onOpenChange={(open) => {
+          setRegenerateDialogOpen(open);
+          if (!open) setRegenerateTarget(null);
+        }}
+        invoice={regenerateTarget}
+        items={workBudgetItems}
+        advances={workBudgetAdvances}
+        busy={regenerateBusy}
+        onConfirm={(ids) => void confirmRegenerateWorkBudgetInvoice(ids)}
+      />
     </>
   );
 }

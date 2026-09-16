@@ -487,6 +487,9 @@ export function PortalManualInvoiceForm({
       bankCode: bankSnap.bankCode,
       iban: bankSnap.iban,
       swift: bankSnap.swift,
+      ...((initialInvoice as { workBudgetSource?: boolean })?.workBudgetSource === true
+        ? { workBudgetLinesPristine: false }
+        : {}),
     }) as Record<string, unknown>;
 
     if (mode === "edit" && invoiceId) {

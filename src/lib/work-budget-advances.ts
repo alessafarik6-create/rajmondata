@@ -88,9 +88,19 @@ export function parseWorkBudgetAdvanceFromFirestore(
 }
 
 export function isAdvanceAvailableForDeduction(row: JobWorkBudgetAdvanceDoc): boolean {
-  if (row.appliedToInvoiceId) return false;
+  return isAdvanceAvailableForInvoice(row, null);
+}
+
+/** Záloha volitelná pro fakturu (nová) nebo pro přegenerování stejné faktury. */
+export function isAdvanceAvailableForInvoice(
+  row: JobWorkBudgetAdvanceDoc,
+  regenerateInvoiceId: string | null | undefined
+): boolean {
   if (row.amountGross <= 0) return false;
-  return true;
+  const applied = row.appliedToInvoiceId;
+  if (!applied) return true;
+  const reg = String(regenerateInvoiceId ?? "").trim();
+  return reg.length > 0 && applied === reg;
 }
 
 export function defaultIncludeAdvanceInFinalInvoice(

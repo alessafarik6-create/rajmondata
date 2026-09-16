@@ -9,6 +9,9 @@ import {
   buildWorkBudgetInvoicePreview,
   billableWorkBudgetItems,
   formatWorkBudgetItemInvoiceDescription,
+  workBudgetItemsEligibleForInvoice,
+  assessWorkBudgetInvoiceRegeneration,
+  isWorkBudgetInvoiceStale,
 } from "../src/lib/work-budget-invoice.ts";
 import {
   EXTRA_WORK_STATUSES,
@@ -43,7 +46,7 @@ function item(partial) {
     note: null,
     invoiced: partial.invoiced ?? false,
     invoicedAt: null,
-    linkedInvoiceId: null,
+    linkedInvoiceId: partial.linkedInvoiceId ?? null,
   };
 }
 
@@ -170,6 +173,112 @@ const jobBudget = {
     item({ id: "2", done: true, invoiced: false, amountNet: 200, vatAmount: 42, amountGross: 242 }),
   ];
   assert.equal(billableWorkBudgetItems(rows).length, 1);
+}
+
+// 8b) přegenerování — již fakturovaná položka vázaná na tuto fakturu je znovu billable
+{
+  const rows = [
+    item({
+      id: "1",
+      done: true,
+      invoiced: true,
+      linkedInvoiceId: "inv-1",
+      amountNet: 100,
+      vatAmount: 21,
+      amountGross: 121,
+    }),
+    item({ id: "2", done: true, invoiced: false, amountNet: 200, vatAmount: 42, amountGross: 242 }),
+  ];
+  assert.equal(workBudgetItemsEligibleForInvoice(rows, "inv-1").length, 2);
+  assert.equal(workBudgetItemsEligibleForInvoice(rows, null).length, 1);
+}
+
+// 7b) záloha už započtená na stejnou fakturu — při regenerate povoleno
+{
+  const line = item({
+    id: "l1",
+    done: true,
+    invoiced: true,
+    linkedInvoiceId: "inv-1",
+    amountGross: 100_000,
+    amountNet: 82_645,
+    vatAmount: 17_355,
+  });
+  const adv = {
+    id: "a1",
+    label: "Z",
+    amountGross: 50_000,
+    appliedToInvoiceId: "inv-1",
+    includeInFinalInvoice: true,
+    paymentStatus: "paid",
+    sourceType: "invoice",
+    companyId: "c1",
+    jobId: "j1",
+    invoiceId: "inv-1",
+    documentNumber: null,
+    variableSymbol: null,
+    issueDate: null,
+    amountNet: 0,
+    vatAmount: 0,
+    note: null,
+  };
+  const preview = buildWorkBudgetInvoicePreview({
+    items: [line],
+    advances: [adv],
+    selectedAdvanceIds: ["a1"],
+    regenerateInvoiceId: "inv-1",
+  });
+  assert.equal(preview.deductionGross, 50_000);
+  assert.equal(preview.amountGross, 50_000);
+}
+
+// 10) stale — změna ceny položky
+{
+  const invId = "inv-1";
+  const budgetRow = item({
+    id: "l1",
+    done: true,
+    invoiced: true,
+    linkedInvoiceId: invId,
+    amountGross: 121_000,
+    amountNet: 100_000,
+    vatAmount: 21_000,
+  });
+  const invoice = {
+    id: invId,
+    workBudgetSource: true,
+    workBudgetItemIds: ["l1"],
+    workBudgetAdvanceIds: [],
+    workBudgetSubtotalGross: 100_000,
+    amountGross: 100_000,
+    status: "draft",
+    paymentStatus: "unpaid",
+  };
+  assert.equal(isWorkBudgetInvoiceStale({ invoice, items: [budgetRow], advances: [] }), true);
+  const preview = buildWorkBudgetInvoicePreview({
+    items: [budgetRow],
+    advances: [],
+    selectedAdvanceIds: [],
+    regenerateInvoiceId: invId,
+  });
+  const updatedInvoice = {
+    ...invoice,
+    workBudgetSubtotalGross: preview.subtotalGross,
+    amountGross: preview.amountGross,
+  };
+  assert.equal(
+    isWorkBudgetInvoiceStale({ invoice: updatedInvoice, items: [budgetRow], advances: [] }),
+    false
+  );
+}
+
+// 9) zaplacená faktura z rozpočtu — regenerate blocked
+{
+  const a = assessWorkBudgetInvoiceRegeneration({
+    workBudgetSource: true,
+    paymentStatus: "paid",
+  });
+  assert.equal(a.allowed, false);
 }
 
 // VÍCEPRÁCE prefix on invoice line description only
