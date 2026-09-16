@@ -3,6 +3,7 @@ import { getAdminFirestore, getAdminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { passwordPolicyError } from "@/lib/employee-password-policy";
 import { userPortalRoleForEmployeeDocRole, type EmployeeOrgRole } from "@/lib/employee-organization";
+import { parseEmployeePortalRole } from "@/lib/employee-portal-role";
 
 type Body = {
   firstName?: string;
@@ -11,7 +12,7 @@ type Body = {
   password?: string;
   jobTitle?: string;
   hourlyRate?: number | null;
-  /** Role v organizaci: employee | orgAdmin */
+  /** Role v organizaci: employee | accountant | orgAdmin */
   role?: string;
   visibleInAttendanceTerminal?: boolean;
 };
@@ -86,8 +87,13 @@ export async function POST(request: NextRequest) {
       : null;
 
   const rawOrgRole = String(body.role || "employee").trim();
-  const orgRole: EmployeeOrgRole =
-    rawOrgRole === "orgAdmin" ? "orgAdmin" : "employee";
+  const orgRole: EmployeeOrgRole = parseEmployeePortalRole(rawOrgRole);
+  if (rawOrgRole !== orgRole) {
+    return NextResponse.json(
+      { error: "role musí být employee, accountant nebo orgAdmin." },
+      { status: 400 }
+    );
+  }
   const visibleInAttendanceTerminal = body.visibleInAttendanceTerminal !== false;
 
   if (!firstName || !lastName || !email || !password) {

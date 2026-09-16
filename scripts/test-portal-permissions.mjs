@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 
+import { parseEmployeePortalRole } from "../src/lib/employee-portal-role.ts";
 import {
   buildAccountantPermissionPreset,
   buildLegacyEmployeePermissionPreset,
@@ -52,6 +53,11 @@ const preset = buildAccountantPermissionPreset();
 assert.equal(preset.employees, "read");
 assert.equal(preset.jobs, "read");
 assert.equal(preset.billing, "none");
+assert.equal(preset.settings, "none");
+
+assert.equal(parseEmployeePortalRole("accountant"), "accountant");
+assert.equal(parseEmployeePortalRole("orgAdmin"), "orgAdmin");
+assert.equal(parseEmployeePortalRole("invalid"), "employee");
 
 const readAll = applyPermissionPreset("read_all");
 assert.equal(readAll.sklad, "read");

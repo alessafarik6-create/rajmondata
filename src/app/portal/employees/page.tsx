@@ -98,6 +98,12 @@ import {
   parseEmployeeOrgRole,
 } from "@/lib/employee-organization";
 import {
+  EMPLOYEE_PORTAL_ROLE_OPTIONS,
+  employeePortalRoleLabel,
+  parseEmployeePortalRole,
+  type EmployeePortalRoleId,
+} from "@/lib/employee-portal-role";
+import {
   attendanceRowMatchesEmployee,
   buildEmployeeMap,
 } from "@/lib/attendance-overview-compute";
@@ -357,7 +363,7 @@ export default function EmployeesPage() {
     firstName: '',
     lastName: '',
     email: '',
-    orgRole: 'employee' as 'employee' | 'orgAdmin',
+    orgRole: 'employee' as EmployeePortalRoleId,
     visibleInAttendanceTerminal: true,
     jobTitle: '',
     hourlyRate: ''
@@ -365,7 +371,7 @@ export default function EmployeesPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [orgSettingsEmp, setOrgSettingsEmp] = useState<any | null>(null);
-  const [orgSettingsRole, setOrgSettingsRole] = useState<'employee' | 'orgAdmin'>('employee');
+  const [orgSettingsRole, setOrgSettingsRole] = useState<EmployeePortalRoleId>('employee');
   const [orgSettingsTerminalVisible, setOrgSettingsTerminalVisible] = useState(true);
   const [orgSettingsCanWarehouse, setOrgSettingsCanWarehouse] = useState(false);
   const [orgSettingsCanProduction, setOrgSettingsCanProduction] = useState(false);
@@ -1410,12 +1416,15 @@ export default function EmployeesPage() {
                       onChange={(e) =>
                         setInviteData({
                           ...inviteData,
-                          orgRole: e.target.value === "orgAdmin" ? "orgAdmin" : "employee",
+                          orgRole: parseEmployeePortalRole(e.target.value),
                         })
                       }
                     >
-                      <option value="employee">Běžný zaměstnanec</option>
-                      <option value="orgAdmin">Administrátor organizace</option>
+                      {EMPLOYEE_PORTAL_ROLE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
                     </select>
                     <p className="text-[10px] text-gray-600">
                       Administrátor organizace spravuje tuto firmu v portálu (zaměstnanci, zakázky, docházka…), bez
@@ -1544,11 +1553,14 @@ export default function EmployeesPage() {
                 className={INVITE_SELECT_TRIGGER_CLASS}
                 value={orgSettingsRole}
                 onChange={(e) =>
-                  setOrgSettingsRole(e.target.value === "orgAdmin" ? "orgAdmin" : "employee")
+                  setOrgSettingsRole(parseEmployeePortalRole(e.target.value))
                 }
               >
-                <option value="employee">Běžný zaměstnanec</option>
-                <option value="orgAdmin">Administrátor organizace</option>
+                {EMPLOYEE_PORTAL_ROLE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1855,9 +1867,7 @@ export default function EmployeesPage() {
                             {emp.firstName} {emp.lastName}
                           </p>
                           <p className="truncate text-[11px] text-slate-400">
-                            {parseEmployeeOrgRole(emp as { role?: unknown }) === "orgAdmin"
-                              ? "Administrátor organizace"
-                              : "Zaměstnanec"}
+                            {employeePortalRoleLabel(parseEmployeeOrgRole(emp as { role?: unknown }))}
                           </p>
                           <p className="truncate text-[11px] text-slate-400">{String(emp.phone ?? "—")}</p>
                           <p className="truncate text-[11px] text-slate-400">{String(emp.email ?? "—")}</p>
@@ -2071,9 +2081,7 @@ export default function EmployeesPage() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="border-primary/30 text-primary">
-                        {parseEmployeeOrgRole(emp as { role?: unknown }) === "orgAdmin"
-                          ? "Administrátor organizace"
-                          : "Zaměstnanec"}
+                        {employeePortalRoleLabel(parseEmployeeOrgRole(emp as { role?: unknown }))}
                       </Badge>
                     </TableCell>
                     <TableCell>

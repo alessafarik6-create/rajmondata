@@ -73,7 +73,7 @@ export function buildAccountantPermissionPreset(): Record<PortalModuleId, Portal
     "help",
   ];
   for (const id of readIds) out[id] = "read";
-  out.settings = "read";
+  out.settings = "none";
   out.billing = "none";
   out.aiCenter = "none";
   return out;
@@ -245,6 +245,10 @@ function fullWritePermissionMap(): Record<PortalModuleId, PortalAccessLevel> {
   return out;
 }
 
+export function buildOrgAdminPermissionPreset(): Record<PortalModuleId, PortalAccessLevel> {
+  return fullWritePermissionMap();
+}
+
 function applyOverrides(
   base: Record<PortalModuleId, PortalAccessLevel>,
   overrides: PortalModulePermissionMap,
@@ -337,6 +341,67 @@ export function serializePortalModulePermissionsForFirestore(
     if (v !== "none") out[id] = v;
   }
   return out;
+}
+
+/** Zpětná kompatibilita: hrubé přepínače zaměstnaneckého portálu. */
+export function portalPermissionsToLegacyEmployeeModules(
+  map: Record<PortalModuleId, PortalAccessLevel>
+): EmployeePortalModules {
+  const level = (id: PortalModuleId) => map[id] ?? "none";
+  const anyAccess = (ids: PortalModuleId[]) =>
+    ids.some((id) => level(id) !== "none");
+  return {
+    zakazky: anyAccess([
+      "jobs",
+      "leads",
+      "customers",
+      "offers",
+      "productCatalogs",
+      "customerChats",
+      "meetingRecords",
+    ]),
+    penize: anyAccess(["finance", "invoices", "documents", "billing", "vyuctovani"]),
+    zpravy: level("chat") !== "none",
+    dochazka: level("labor") !== "none",
+  };
+}
+
+export function legacyAccessFlagsFromPortalPermissions(
+  map: Record<PortalModuleId, PortalAccessLevel>
+): {
+  canAccessWarehouse: boolean;
+  canAccessProduction: boolean;
+  canAccessMeetingNotes: boolean;
+} {
+  const level = (id: PortalModuleId) => map[id] ?? "none";
+  return {
+    canAccessWarehouse: level("sklad") !== "none",
+    canAccessProduction: level("vyroba") !== "none",
+    canAccessMeetingNotes: level("meetingRecords") !== "none",
+  };
+}
+
+/** Výchozí mapa pro UI podle role v dokumentu zaměstnance. */
+export function initialPortalPermissionLevelsForEmployee(
+  employeeDoc: Record<string, unknown> | null | undefined,
+  portalRole: import("@/lib/employee-portal-role").EmployeePortalRoleId
+): Record<PortalModuleId, PortalAccessLevel> {
+  const raw = employeeDoc?.portalModulePermissions;
+  if (raw && typeof raw === "object" && Object.keys(raw as object).length > 0) {
+    const m = emptyPermissionMap();
+    for (const id of ALL_PORTAL_MODULE_IDS) {
+      const v = String((raw as Record<string, unknown>)[id] ?? "").trim().toLowerCase();
+      if (v === "read" || v === "write" || v === "none") m[id] = v;
+    }
+    return m;
+  }
+  if (portalRole === "orgAdmin") {
+    return fullWritePermissionMap();
+  }
+  if (portalRole === "accountant") {
+    return buildAccountantPermissionPreset();
+  }
+  return buildLegacyEmployeePermissionPreset(employeeDoc);
 }
 
 /** Modul správy oprávnění — jen owner/admin. */

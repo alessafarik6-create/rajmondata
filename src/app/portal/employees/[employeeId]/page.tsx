@@ -47,6 +47,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { EmployeePortalRolePermissionsEditor } from "@/components/employees/employee-portal-role-permissions-editor";
+import {
+  parseEmployeePortalRole,
+  type EmployeePortalRoleId,
+} from "@/lib/employee-portal-role";
+import {
+  ALL_PORTAL_MODULE_IDS,
+  initialPortalPermissionLevelsForEmployee,
+  type PortalAccessLevel,
+  type PortalModuleId,
+} from "@/lib/portal-permissions";
 import { useToast } from "@/hooks/use-toast";
 import { getFirebaseStorage } from "@/firebase/storage";
 import {
@@ -476,29 +487,20 @@ export default function EmployeeDetailPage() {
 
   // roles & portal modules via existing API
   const [orgSaving, setOrgSaving] = useState(false);
-  const [orgRole, setOrgRole] = useState<"employee" | "orgAdmin">("employee");
+  const [portalRole, setPortalRole] = useState<EmployeePortalRoleId>("employee");
+  const [moduleLevels, setModuleLevels] = useState<Record<PortalModuleId, PortalAccessLevel>>(() =>
+    initialPortalPermissionLevelsForEmployee(null, "employee")
+  );
   const [visibleInTerminal, setVisibleInTerminal] = useState(true);
-  const [canWh, setCanWh] = useState(false);
-  const [canProd, setCanProd] = useState(false);
-  const [canMeet, setCanMeet] = useState(false);
-  const [pmZakazky, setPmZakazky] = useState(true);
-  const [pmPenize, setPmPenize] = useState(true);
-  const [pmZpravy, setPmZpravy] = useState(true);
-  const [pmDochazka, setPmDochazka] = useState(true);
 
   useEffect(() => {
     if (!employeeDoc) return;
-    const r = String((employeeDoc as any).role ?? "employee") as "employee" | "orgAdmin";
-    setOrgRole(r === "orgAdmin" ? "orgAdmin" : "employee");
-    setVisibleInTerminal((employeeDoc as any).visibleInAttendanceTerminal !== false);
-    setCanWh((employeeDoc as any).canAccessWarehouse === true);
-    setCanProd((employeeDoc as any).canAccessProduction === true);
-    setCanMeet((employeeDoc as any).canAccessMeetingNotes === true);
-    const pm = (employeeDoc as any).employeePortalModules as any;
-    setPmZakazky(pm?.zakazky !== false);
-    setPmPenize(pm?.penize !== false);
-    setPmZpravy(pm?.zpravy !== false);
-    setPmDochazka(pm?.dochazka !== false);
+    const role = parseEmployeePortalRole((employeeDoc as Record<string, unknown>).role);
+    setPortalRole(role);
+    setModuleLevels(
+      initialPortalPermissionLevelsForEmployee(employeeDoc as Record<string, unknown>, role)
+    );
+    setVisibleInTerminal((employeeDoc as Record<string, unknown>).visibleInAttendanceTerminal !== false);
   }, [employeeDoc]);
 
   const saveOrg = async () => {
@@ -514,17 +516,15 @@ export default function EmployeeDetailPage() {
         },
         body: JSON.stringify({
           employeeId,
-          role: orgRole,
+          role: portalRole,
           visibleInAttendanceTerminal: visibleInTerminal,
-          canAccessWarehouse: canWh,
-          canAccessProduction: canProd,
-          canAccessMeetingNotes: canMeet,
-          employeePortalModules: {
-            zakazky: pmZakazky === true,
-            penize: pmPenize === true,
-            zpravy: pmZpravy === true,
-            dochazka: pmDochazka === true,
-          },
+          portalModulePermissions: (() => {
+            const full: Record<string, string> = {};
+            for (const id of ALL_PORTAL_MODULE_IDS) {
+              full[id] = moduleLevels[id] ?? "none";
+            }
+            return full;
+          })(),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1372,59 +1372,22 @@ export default function EmployeeDetailPage() {
               <CardTitle className={cardTitleCls}>Role a oprávnění</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Role v portálu</Label>
-                  <select className={selectCls} disabled={!canManage} value={orgRole} onChange={(e) => setOrgRole(e.target.value as any)}>
-                    <option value="employee">Zaměstnanec</option>
-                    <option value="orgAdmin">Administrátor organizace</option>
-                  </select>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 p-3">
+                <div>
+                  <p className="text-sm font-medium text-black">Viditelný v docházkovém terminálu</p>
+                  <p className="text-xs text-slate-600">Zaměstnanec se zobrazí pro přihlášení na terminálu.</p>
                 </div>
-                <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 p-3">
-                  <div>
-                    <p className="text-sm font-medium text-black">Viditelný v docházkovém terminálu</p>
-                    <p className="text-xs text-slate-600">Zaměstnanec se zobrazí pro přihlášení na terminálu.</p>
-                  </div>
-                  <Switch checked={visibleInTerminal} disabled={!canManage} onCheckedChange={(v) => setVisibleInTerminal(v)} />
-                </div>
+                <Switch checked={visibleInTerminal} disabled={!canManage} onCheckedChange={(v) => setVisibleInTerminal(v)} />
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="flex items-center gap-2 rounded-md border border-slate-200 p-3">
-                  <Checkbox checked={canWh} disabled={!canManage} onCheckedChange={(v) => setCanWh(v === true)} />
-                  <span className="text-sm text-black">Sklad</span>
-                </div>
-                <div className="flex items-center gap-2 rounded-md border border-slate-200 p-3">
-                  <Checkbox checked={canProd} disabled={!canManage} onCheckedChange={(v) => setCanProd(v === true)} />
-                  <span className="text-sm text-black">Výroba</span>
-                </div>
-                <div className="flex items-center gap-2 rounded-md border border-slate-200 p-3">
-                  <Checkbox checked={canMeet} disabled={!canManage} onCheckedChange={(v) => setCanMeet(v === true)} />
-                  <span className="text-sm text-black">Schůzky</span>
-                </div>
-              </div>
-
-              <div className="rounded-md border border-slate-200 p-4">
-                <p className="text-sm font-semibold text-black">Oprávnění do portálu (moduly)</p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div className="flex items-center gap-2">
-                    <Checkbox checked={pmZakazky} disabled={!canManage} onCheckedChange={(v) => setPmZakazky(v === true)} />
-                    <span className="text-sm text-black">Zakázky</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Checkbox checked={pmPenize} disabled={!canManage} onCheckedChange={(v) => setPmPenize(v === true)} />
-                    <span className="text-sm text-black">Peníze</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Checkbox checked={pmZpravy} disabled={!canManage} onCheckedChange={(v) => setPmZpravy(v === true)} />
-                    <span className="text-sm text-black">Zprávy</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Checkbox checked={pmDochazka} disabled={!canManage} onCheckedChange={(v) => setPmDochazka(v === true)} />
-                    <span className="text-sm text-black">Docházka</span>
-                  </div>
-                </div>
-              </div>
+              <EmployeePortalRolePermissionsEditor
+                disabled={!canManage}
+                portalRole={portalRole}
+                onPortalRoleChange={setPortalRole}
+                levels={moduleLevels}
+                onLevelsChange={setModuleLevels}
+                roleSelectClassName={selectCls}
+              />
 
               <div className={cn("flex justify-end", belowLg && "w-full")}>
                 <Button type="button" className={saveBtnCls} disabled={!canManage || orgSaving} onClick={() => void saveOrg()}>

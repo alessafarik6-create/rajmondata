@@ -5,6 +5,15 @@ import {
   parseEmployeeOrgRole,
   userPortalRoleForEmployeeDocRole,
 } from "@/lib/employee-organization";
+import { parseEmployeePortalRole } from "@/lib/employee-portal-role";
+import {
+  legacyAccessFlagsFromPortalPermissions,
+  parsePortalModulePermissionsFromEmployee,
+  portalPermissionsToLegacyEmployeeModules,
+  type PortalAccessLevel,
+  type PortalModuleId,
+  ALL_PORTAL_MODULE_IDS,
+} from "@/lib/portal-permissions";
 
 type Body = {
   employeeId?: string;
@@ -24,6 +33,8 @@ type Body = {
     zpravy?: boolean;
     dochazka?: boolean;
   };
+  /** NONE / READ / WRITE po modulech sidebaru — merge na employees.portalModulePermissions. */
+  portalModulePermissions?: Record<string, string>;
 };
 
 /**
@@ -111,12 +122,23 @@ export async function PATCH(request: NextRequest) {
   const hasPortalMods =
     body.employeePortalModules != null &&
     typeof body.employeePortalModules === "object";
+  const hasPortalMatrix =
+    body.portalModulePermissions != null &&
+    typeof body.portalModulePermissions === "object";
 
-  if (!hasOrgRole && !hasVisible && !hasWh && !hasPr && !hasMn && !hasPortalMods) {
+  if (
+    !hasOrgRole &&
+    !hasVisible &&
+    !hasWh &&
+    !hasPr &&
+    !hasMn &&
+    !hasPortalMods &&
+    !hasPortalMatrix
+  ) {
     return NextResponse.json(
       {
         error:
-          "Pošlete role, visibleInAttendanceTerminal, canAccessWarehouse / canAccessProduction, canAccessMeetingNotes a/nebo employeePortalModules.",
+          "Pošlete role, visibleInAttendanceTerminal, canAccessWarehouse / canAccessProduction, canAccessMeetingNotes, employeePortalModules a/nebo portalModulePermissions.",
       },
       { status: 400 }
     );
@@ -125,13 +147,14 @@ export async function PATCH(request: NextRequest) {
   let orgRole = parseEmployeeOrgRole(emp as { role?: unknown });
   if (hasOrgRole) {
     const raw = String(body.role || "").trim();
-    if (raw !== "employee" && raw !== "orgAdmin") {
+    const parsed = parseEmployeePortalRole(raw);
+    if (raw !== parsed) {
       return NextResponse.json(
-        { error: "role musí být employee nebo orgAdmin." },
+        { error: "role musí být employee, accountant nebo orgAdmin." },
         { status: 400 }
       );
     }
-    orgRole = raw as "employee" | "orgAdmin";
+    orgRole = parsed;
   }
 
   const patch: Record<string, unknown> = {
@@ -161,6 +184,35 @@ export async function PATCH(request: NextRequest) {
       zpravy: pm.zpravy === true,
       dochazka: pm.dochazka === true,
     };
+  }
+
+  if (hasPortalMatrix && body.portalModulePermissions) {
+    const incoming = body.portalModulePermissions;
+    const existing = parsePortalModulePermissionsFromEmployee(emp);
+    const merged: Record<string, string> = {};
+    for (const id of ALL_PORTAL_MODULE_IDS) {
+      const fromBody = incoming[id];
+      const v =
+        typeof fromBody === "string"
+          ? fromBody.trim().toLowerCase()
+          : String(existing[id] ?? "none").trim().toLowerCase();
+      if (v === "read" || v === "write" || v === "none") {
+        merged[id] = v;
+      }
+    }
+    patch.portalModulePermissions = merged;
+
+    const levelMap = {} as Record<PortalModuleId, PortalAccessLevel>;
+    for (const id of ALL_PORTAL_MODULE_IDS) {
+      const v = String(merged[id] ?? "none").trim().toLowerCase();
+      levelMap[id] =
+        v === "read" || v === "write" || v === "none" ? v : "none";
+    }
+    patch.employeePortalModules = portalPermissionsToLegacyEmployeeModules(levelMap);
+    const flags = legacyAccessFlagsFromPortalPermissions(levelMap);
+    patch.canAccessWarehouse = flags.canAccessWarehouse;
+    patch.canAccessProduction = flags.canAccessProduction;
+    patch.canAccessMeetingNotes = flags.canAccessMeetingNotes;
   }
 
   await empRef.set(patch, { merge: true });
