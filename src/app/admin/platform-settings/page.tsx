@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { AdminPlatformNotificationsPanel } from "@/components/admin/admin-platform-notifications-panel";
 
 export default function AdminPlatformSettingsPage() {
   const { toast } = useToast();
@@ -103,6 +104,8 @@ export default function AdminPlatformSettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      <AdminPlatformNotificationsPanel />
     </div>
   );
 }

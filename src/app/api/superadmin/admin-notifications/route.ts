@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
-import { getSessionFromCookie } from "@/lib/superadmin-auth";
+import { requireSuperadminSession } from "@/lib/superadmin-guard";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { PLATFORM_ADMIN_NOTIFICATIONS_COLLECTION } from "@/lib/firestore-collections";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const session = await getSessionFromCookie();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requireSuperadminSession();
+  if ("response" in auth) return auth.response;
   const db = getAdminFirestore();
   if (!db) return NextResponse.json({ error: "Firebase Admin není k dispozici." }, { status: 503 });
 
@@ -25,8 +25,9 @@ export async function GET() {
 }
 
 export async function PATCH(request: NextRequest) {
-  const session = await getSessionFromCookie();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requireSuperadminSession();
+  if ("response" in auth) return auth.response;
+  const session = auth.session;
   const db = getAdminFirestore();
   if (!db) return NextResponse.json({ error: "Firebase Admin není k dispozici." }, { status: 503 });
 

@@ -1,4 +1,8 @@
+"use client";
+
 import Link from "next/link";
+import { Suspense } from "react";
+import { PublicAnalyticsBeacon, trackPublicEvent } from "@/components/marketing/public-analytics-beacon";
 import { Button } from "@/components/ui/button";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 import {
@@ -17,6 +21,9 @@ export function PublicLandingPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
       <PublicLandingJsonLd />
+      <Suspense fallback={null}>
+        <PublicAnalyticsBeacon />
+      </Suspense>
 
       <PublicMarketingHeader />
 
@@ -40,7 +47,9 @@ export function PublicLandingPage() {
 
             <div className="mt-6 flex w-full min-w-0 flex-col gap-2 sm:mt-8 sm:flex-row sm:flex-wrap sm:gap-3">
               <Button size="default" className="h-11 w-full min-w-0 sm:h-10 sm:w-auto sm:px-6" asChild>
-                <Link href="/register">Vyzkoušet RAJMONDATA</Link>
+                <Link href="/register" onClick={() => trackPublicEvent("funnel_cta_try")}>
+                  Vyzkoušet RAJMONDATA
+                </Link>
               </Button>
               <Button
                 size="default"
@@ -48,7 +57,9 @@ export function PublicLandingPage() {
                 className="h-11 w-full min-w-0 border-white/20 bg-white/5 text-slate-50 hover:bg-white/10 sm:h-10 sm:w-auto sm:px-6"
                 asChild
               >
-                <Link href="/funkce">Podívat se na funkce</Link>
+                <Link href="/funkce" onClick={() => trackPublicEvent("click_features")}>
+                  Podívat se na funkce
+                </Link>
               </Button>
               <Button
                 size="default"

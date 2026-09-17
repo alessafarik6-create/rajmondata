@@ -30,6 +30,7 @@ import {
   CircleHelp,
   LifeBuoy,
   Sparkles,
+  ShieldAlert,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
@@ -65,6 +66,8 @@ type PortalNavLink = { label: string; href: string; icon: LucideIcon; navId?: st
 
 const adminLinksStatic: PortalNavLink[] = [
   { label: 'Přehled', href: '/admin/dashboard', icon: LayoutDashboard },
+  { label: 'Analytika', href: '/admin/analytics', icon: BarChart3 },
+  { label: 'Bezpečnost', href: '/admin/security', icon: ShieldAlert },
   { label: 'Organizace', href: '/admin/companies', icon: Building2 },
   { label: 'Moduly', href: '/admin/modules', icon: Briefcase },
   { label: 'Ceník', href: '/admin/pricing', icon: Tags },

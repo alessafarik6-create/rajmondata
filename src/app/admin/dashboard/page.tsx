@@ -22,6 +22,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
+import { AdminAnalyticsDashboard } from "@/components/admin/admin-analytics-dashboard";
+import { AdminSecurityDashboard } from "@/components/admin/admin-security-dashboard";
 
 type CompanyLicense = {
   status?: string;
@@ -136,6 +138,11 @@ export default function AdminDashboardPage() {
           Vítejte v globální administraci {PLATFORM_NAME}. Zde můžete spravovat
           organizace a licence.
         </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <AdminAnalyticsDashboard compact />
+        <AdminSecurityDashboard compact />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-4">

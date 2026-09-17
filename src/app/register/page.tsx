@@ -42,6 +42,7 @@ import {
 } from '@/lib/company-lookup-api';
 import { Checkbox } from '@/components/ui/checkbox';
 import { LEGAL_PRIVACY, LEGAL_TERMS } from '@/lib/marketing/legal-versions';
+import { trackPublicEvent } from '@/components/marketing/public-analytics-beacon';
 
 /** Jednotná normalizace e-mailu pro Firebase (registrace i přihlášení). */
 function normalizeEmail(email: string): string {
@@ -345,6 +346,8 @@ export default function RegisterPage() {
       });
 
       await batch.commit();
+
+      trackPublicEvent("funnel_register_success", "/register");
 
       console.info("[Platform]", "Company registered with inactive license", { companyId });
 

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { createSession, setSessionCookie } from "@/lib/superadmin-auth";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { clientIpFromHeaders, hashIp } from "@/lib/security/ip-hash";
+import { trackSuperadminFailedLogin } from "@/lib/security/auth-failure-tracker";
 
 export async function POST(request: NextRequest) {
   try {
@@ -146,6 +148,16 @@ export async function POST(request: NextRequest) {
     console.warn("[superadmin/login] invalid credentials", {
       username: trimmedUsername,
     });
+
+    const dbFail = getAdminFirestore();
+    if (dbFail) {
+      const ipHash = hashIp(clientIpFromHeaders(request.headers));
+      void trackSuperadminFailedLogin(
+        dbFail,
+        ipHash,
+        request.headers.get("user-agent") || ""
+      );
+    }
 
     return NextResponse.json(
       { error: "Neplatné uživatelské jméno nebo heslo." },
