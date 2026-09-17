@@ -2135,7 +2135,7 @@ function PayrollAdminPageInner() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-2 pb-12 print:max-w-none sm:px-4">
+    <div className="mx-auto max-w-6xl space-y-4 px-2 pb-12 print:max-w-none sm:px-4">
       <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <Banknote className="mt-1 h-8 w-8 shrink-0 text-primary" />
@@ -2383,342 +2383,12 @@ function PayrollAdminPageInner() {
         </CardContent>
       </Card>
 
-      {payrollSummaryFromDailyDetail &&
-      payrollTargetEmployee &&
-      selectedEmployeeId !== "all" ? (
-        <Card className="border-slate-200 bg-white print:border-0">
-          <CardHeader className="flex flex-col gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between print:hidden">
-            <div>
-              <CardTitle className="text-lg text-black">
-                Souhrn výplaty za období
-              </CardTitle>
-              <p className="text-xs text-slate-600">
-                Součty jsou agregací rozpisu po dnech níže (docházka, segmenty, výkazy) a záloh ve
-                stejném období.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="border-slate-300 text-black"
-              disabled={pdfSummaryExporting}
-              onClick={() => void handlePayrollSummaryPdf()}
-            >
-              {pdfSummaryExporting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <FileDown className="mr-2 h-4 w-4" />
-              )}
-              Export souhrnu do PDF
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div
-              ref={payrollSummaryRef}
-              className="space-y-6 bg-white p-2 text-black sm:p-4 print:border-0 print:bg-white"
-            >
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <h2 className="text-xl font-bold">Souhrn výplaty</h2>
-                {companyName ? (
-                  <p className="text-sm text-slate-700">{companyName}</p>
-                ) : null}
-                <p className="mt-2 font-medium">
-                  {employeeLabelById[payrollTargetEmployee.id] ||
-                    payrollTargetEmployee.displayName}
-                </p>
-                {selectedEmp?.jobTitle ? (
-                  <p className="text-sm text-slate-600">
-                    Pozice: {String(selectedEmp.jobTitle)}
-                  </p>
-                ) : null}
-                <p className="mt-1 text-sm">
-                  Období: {periodBounds.startStr} — {periodBounds.endStr} (
-                  {periodBounds.label})
-                </p>
-                <p className="text-xs text-slate-600">
-                  Přehled vygenerován:{" "}
-                  {format(new Date(), "d. M. yyyy HH:mm", { locale: cs })}
-                </p>
-              </div>
-
-              <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="mb-2 font-semibold">Hodiny (součet dní v rozpisu)</h3>
-                <ul className="space-y-1 text-sm">
-                  <li>
-                    Celkem odpracovaných hodin:{" "}
-                    <strong>{payrollSummaryFromDailyDetail.totalHours} h</strong>
-                  </li>
-                  <li>
-                    Schválené hodiny (model výplaty):{" "}
-                    <strong>{payrollSummaryFromDailyDetail.approvedHours} h</strong>
-                  </li>
-                  <li>
-                    Neschválené / čekající hodiny:{" "}
-                    <strong>{payrollSummaryFromDailyDetail.unapprovedHours} h</strong>
-                  </li>
-                </ul>
-              </div>
-
-              <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="mb-2 font-semibold">Stav výplaty (dny v rozpisu)</h3>
-                <ul className="space-y-1 text-sm">
-                  <li>
-                    Vyplacené dny:{" "}
-                    <strong>{payrollSummaryFromDailyDetail.dailyTotals.paidDays}</strong>
-                  </li>
-                  <li>
-                    Nevyplacené dny (evidence k výplatě):{" "}
-                    <strong>{payrollSummaryFromDailyDetail.dailyTotals.unpaidDays}</strong>
-                  </li>
-                </ul>
-              </div>
-
-              <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="mb-2 font-semibold">Částky (součet sloupců Schv. / Neschv. Kč)</h3>
-                <p className="text-sm">
-                  Hodinová sazba zaměstnance:{" "}
-                  <strong>
-                    {hourlyRate > 0 ? `${hourlyRate} Kč/h` : "není nastavena"}
-                  </strong>
-                </p>
-                <ul className="mt-2 space-y-1 text-sm">
-                  <li className="font-semibold">
-                    Schválená částka (součet „Schv. Kč“ za období):{" "}
-                    {formatKc(payrollSummaryFromDailyDetail.grossApprovedKc)}
-                  </li>
-                  <li className="text-slate-700">
-                    Neschválená částka (součet „Neschv. Kč“):{" "}
-                    {formatKc(payrollSummaryFromDailyDetail.grossPendingKc)}
-                  </li>
-                  <li className="text-slate-700">
-                    Orientační částka dle denního modelu (tarify / zakázky / sazba):{" "}
-                    {formatKc(payrollSummaryFromDailyDetail.orientacniKc)}
-                  </li>
-                </ul>
-              </div>
-
-              <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="mb-2 font-semibold">
-                  Zálohy ve vybraném období (stav vyplaceno)
-                </h3>
-                {payrollSummaryFromDailyDetail.advancesInPeriod.length === 0 ? (
-                  <p className="text-sm text-slate-600">Žádné zálohy v období.</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="text-black">Datum</TableHead>
-                          <TableHead className="text-black">Částka</TableHead>
-                          <TableHead className="text-black">Stav</TableHead>
-                          <TableHead className="text-black">Poznámka</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {payrollSummaryFromDailyDetail.advancesInPeriod.map((a) => (
-                          <TableRow key={a.id}>
-                            <TableCell className="text-black">
-                              {String(a.date ?? "").slice(0, 10)}
-                            </TableCell>
-                            <TableCell className="text-black">
-                              {formatKc(a.amount)}
-                            </TableCell>
-                            <TableCell className="text-black">
-                              {a.status === "paid" ? "Vyplaceno" : "Nezaplaceno"}
-                            </TableCell>
-                            <TableCell className="max-w-[240px] text-black">
-                              {a.note?.trim() || "—"}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-                <p className="mt-3 text-sm font-semibold">
-                  Součet vyplacených záloh v období:{" "}
-                  {formatKc(payrollSummaryFromDailyDetail.advancesPaidTotalKc)}
-                </p>
-              </div>
-
-              <div className="rounded-lg border-2 border-emerald-700/40 bg-emerald-50/50 p-4">
-                <h3 className="mb-2 font-semibold text-emerald-900">Výsledek</h3>
-                <p className="text-sm">
-                  Schválená částka za období (jako součet „Schv. Kč“):{" "}
-                  <strong>{formatKc(payrollSummaryFromDailyDetail.grossApprovedKc)}</strong>
-                </p>
-                <p className="text-sm">
-                  Mínus vyplacené zálohy v období:{" "}
-                  <strong>
-                    -{formatKc(payrollSummaryFromDailyDetail.advancesPaidTotalKc)}
-                  </strong>
-                </p>
-                <p className="mt-2 text-lg font-bold text-emerald-900">
-                  K doplacení (po zálohách v období):{" "}
-                  {formatKc(payrollSummaryFromDailyDetail.netAfterAdvancesKc)}
-                </p>
-              </div>
-
-              <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="mb-2 font-semibold">Rozpis po dnech (agregace)</h3>
-                {employeeDailySummaryRows.length === 0 ? (
-                  <p className="text-sm text-slate-600">
-                    Za toto období nejsou žádné denní řádky (docházka / segmenty /
-                    výkazy podle stejné logiky jako přehled docházky).
-                  </p>
-                ) : (
-                  <>
-                    <div className="hidden overflow-x-auto md:block">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="text-black">Den</TableHead>
-                            <TableHead className="text-black">Odprac. (h)</TableHead>
-                            <TableHead className="text-black">Schváleno</TableHead>
-                            <TableHead className="text-black">Výplata</TableHead>
-                            <TableHead className="text-black">Bloky</TableHead>
-                            <TableHead className="text-black">Schv. Kč</TableHead>
-                            <TableHead className="text-black">Neschv. Kč</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {employeeDailySummaryRows.map((row) => (
-                            <TableRow key={row.key}>
-                              <TableCell className="whitespace-nowrap text-black">
-                                {row.dayTitle}
-                              </TableCell>
-                              <TableCell className="text-black">
-                                {row.odpracovanoH != null
-                                  ? `${row.odpracovanoH} h`
-                                  : "—"}
-                              </TableCell>
-                              <TableCell className="text-black">
-                                <div className="flex flex-wrap gap-1">
-                                  <Badge
-                                    variant={
-                                      row.schvalenoStatus === "approved"
-                                        ? "default"
-                                        : row.schvalenoStatus === "pending"
-                                          ? "secondary"
-                                          : "outline"
-                                    }
-                                    className="font-normal"
-                                  >
-                                    {row.schvalenoStatus === "approved"
-                                      ? "Schváleno"
-                                      : row.schvalenoStatus === "pending"
-                                        ? "Čeká"
-                                        : "—"}
-                                  </Badge>
-                                </div>
-                              </TableCell>
-                              <TableCell className="text-black">
-                                <Badge
-                                  variant={
-                                    row.paidStatus === "paid"
-                                      ? "default"
-                                      : row.paidStatus === "unpaid"
-                                        ? "secondary"
-                                        : "outline"
-                                  }
-                                  className="font-normal"
-                                >
-                                  {getPaymentBadgeLabel(row.paidStatus)}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-black">{row.bloku}</TableCell>
-                              <TableCell className="text-black">
-                                {formatKc(row.schvalenoKc)}
-                              </TableCell>
-                              <TableCell className="text-black">
-                                {formatKc(row.neschvalenoKc)}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                    <div className="space-y-3 md:hidden">
-                      {employeeDailySummaryRows.map((row) => (
-                        <div
-                          key={row.key}
-                          className="rounded-md border border-slate-200 p-3 text-sm"
-                        >
-                          <p className="font-semibold text-black">{row.dayTitle}</p>
-                          <p className="text-slate-700">
-                            Odpracováno:{" "}
-                            {row.odpracovanoH != null ? `${row.odpracovanoH} h` : "—"}
-                          </p>
-                          <p className="flex flex-wrap items-center gap-2 text-slate-700">
-                            <span>Schválení:</span>
-                            <Badge
-                              variant={
-                                row.schvalenoStatus === "approved"
-                                  ? "default"
-                                  : row.schvalenoStatus === "pending"
-                                    ? "secondary"
-                                    : "outline"
-                              }
-                            >
-                              {row.schvalenoStatus === "approved"
-                                ? "Schváleno"
-                                : row.schvalenoStatus === "pending"
-                                  ? "Čeká"
-                                  : "—"}
-                            </Badge>
-                            <span>Výplata:</span>
-                            <Badge
-                              variant={
-                                row.paidStatus === "paid"
-                                  ? "default"
-                                  : row.paidStatus === "unpaid"
-                                    ? "secondary"
-                                    : "outline"
-                              }
-                            >
-                              {getPaymentBadgeLabel(row.paidStatus)}
-                            </Badge>
-                          </p>
-                          <p className="text-slate-700">
-                            Bloky: {row.bloku} · Schv. {formatKc(row.schvalenoKc)} ·
-                            Neschv. {formatKc(row.neschvalenoKc)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {companyId ? (
-        <PayrollPeriodPanel
-          firestore={firestore}
-          companyId={companyId}
-          userId={user?.uid}
-          payrollPeriod={periodBounds.payrollPeriod}
-          periodLabel={periodBounds.label}
-          periodRangeStr={`${periodBounds.startStr} — ${periodBounds.endStr}`}
-          overviewRows={payrollOverviewRows}
-          paymentRaw={payrollPaymentsRaw ?? []}
-          toast={toast}
-          dailyDetailByEmployee={dailyDetailByEmployeeForPayrollOverview}
-          autoExpandEmployeeId={
-            selectedEmployeeId && selectedEmployeeId !== "all"
-              ? selectedEmployeeId
-              : null
-          }
-        />
-      ) : null}
-
       {!selectedEmployeeId ? (
         <p className="text-black">Vyberte zaměstnance.</p>
       ) : selectedEmployeeId === "all" ? (
+        <div className="space-y-3">
         <Tabs defaultValue="worklogs" className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-slate-100 p-1 print:hidden sm:max-w-md">
+          <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-slate-100 p-1 print:hidden">
             <TabsTrigger
               value="worklogs"
               className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
@@ -2726,7 +2396,7 @@ function PayrollAdminPageInner() {
               Výkazy (všichni)
             </TabsTrigger>
           </TabsList>
-          <TabsContent value="worklogs" className="mt-4 space-y-4">
+          <TabsContent value="worklogs" className="mt-2 space-y-3">
             <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
               <Button
                 type="button"
@@ -2901,30 +2571,47 @@ function PayrollAdminPageInner() {
             </div>
           </TabsContent>
         </Tabs>
+        {companyId ? (
+          <PayrollPeriodPanel
+            firestore={firestore}
+            companyId={companyId}
+            userId={user?.uid}
+            payrollPeriod={periodBounds.payrollPeriod}
+            periodLabel={periodBounds.label}
+            periodRangeStr={`${periodBounds.startStr} — ${periodBounds.endStr}`}
+            overviewRows={payrollOverviewRows}
+            paymentRaw={payrollPaymentsRaw ?? []}
+            toast={toast}
+            dailyDetailByEmployee={dailyDetailByEmployeeForPayrollOverview}
+            autoExpandEmployeeId={null}
+          />
+        ) : null}
+        </div>
       ) : (
+        <div className="space-y-3">
         <Tabs defaultValue="worklogs" className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 bg-slate-100 p-1 print:hidden sm:max-w-xl">
+          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 bg-slate-100 p-1 print:hidden">
             <TabsTrigger
               value="worklogs"
-              className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
+              className="min-h-[44px] text-sm font-semibold data-[state=active]:bg-white data-[state=active]:text-black sm:min-h-[48px] sm:text-base"
             >
               Výkazy
             </TabsTrigger>
             <TabsTrigger
               value="advances"
-              className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
+              className="min-h-[44px] text-sm font-semibold data-[state=active]:bg-white data-[state=active]:text-black sm:min-h-[48px] sm:text-base"
             >
               Zálohy
             </TabsTrigger>
             <TabsTrigger
               value="debts"
-              className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
+              className="min-h-[44px] text-sm font-semibold data-[state=active]:bg-white data-[state=active]:text-black sm:min-h-[48px] sm:text-base"
             >
               Dluhy
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="worklogs" className="mt-4 space-y-4">
+          <TabsContent value="worklogs" className="mt-2 space-y-3">
             <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
               <Button
                 type="button"
@@ -3258,7 +2945,7 @@ function PayrollAdminPageInner() {
             </div>
           </TabsContent>
 
-          <TabsContent value="advances" className="mt-4 space-y-4">
+          <TabsContent value="advances" className="mt-2 space-y-3">
             <Card className="border-slate-200 bg-white">
               <CardHeader>
                 <CardTitle className="text-lg text-black">Nová záloha</CardTitle>
@@ -3478,7 +3165,7 @@ function PayrollAdminPageInner() {
               </CardContent>
             </Card>
           </TabsContent>
-          <TabsContent value="debts" className="mt-4 space-y-4">
+          <TabsContent value="debts" className="mt-2 space-y-3">
             <Card className="border-slate-200 bg-white">
               <CardHeader>
                 <CardTitle className="text-lg text-black">Dluh</CardTitle>
@@ -3554,6 +3241,316 @@ function PayrollAdminPageInner() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {payrollSummaryFromDailyDetail && payrollTargetEmployee ? (
+        <Card className="border-slate-200 bg-white print:border-0">
+          <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between print:hidden">
+            <div>
+              <CardTitle className="text-lg text-black">
+                Souhrn výplaty za období
+              </CardTitle>
+              <p className="text-xs text-slate-600">
+                Součty jsou agregací rozpisu po dnech níže (docházka, segmenty, výkazy) a záloh ve
+                stejném období.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-slate-300 text-black"
+              disabled={pdfSummaryExporting}
+              onClick={() => void handlePayrollSummaryPdf()}
+            >
+              {pdfSummaryExporting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="mr-2 h-4 w-4" />
+              )}
+              Export souhrnu do PDF
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div
+              ref={payrollSummaryRef}
+              className="space-y-4 bg-white p-2 text-black sm:p-4 print:border-0 print:bg-white"
+            >
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h2 className="text-xl font-bold">Souhrn výplaty</h2>
+                {companyName ? (
+                  <p className="text-sm text-slate-700">{companyName}</p>
+                ) : null}
+                <p className="mt-2 font-medium">
+                  {employeeLabelById[payrollTargetEmployee.id] ||
+                    payrollTargetEmployee.displayName}
+                </p>
+                {selectedEmp?.jobTitle ? (
+                  <p className="text-sm text-slate-600">
+                    Pozice: {String(selectedEmp.jobTitle)}
+                  </p>
+                ) : null}
+                <p className="mt-1 text-sm">
+                  Období: {periodBounds.startStr} — {periodBounds.endStr} (
+                  {periodBounds.label})
+                </p>
+                <p className="text-xs text-slate-600">
+                  Přehled vygenerován:{" "}
+                  {format(new Date(), "d. M. yyyy HH:mm", { locale: cs })}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">Hodiny (součet dní v rozpisu)</h3>
+                <ul className="space-y-1 text-sm">
+                  <li>
+                    Celkem odpracovaných hodin:{" "}
+                    <strong>{payrollSummaryFromDailyDetail.totalHours} h</strong>
+                  </li>
+                  <li>
+                    Schválené hodiny (model výplaty):{" "}
+                    <strong>{payrollSummaryFromDailyDetail.approvedHours} h</strong>
+                  </li>
+                  <li>
+                    Neschválené / čekající hodiny:{" "}
+                    <strong>{payrollSummaryFromDailyDetail.unapprovedHours} h</strong>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">Stav výplaty (dny v rozpisu)</h3>
+                <ul className="space-y-1 text-sm">
+                  <li>
+                    Vyplacené dny:{" "}
+                    <strong>{payrollSummaryFromDailyDetail.dailyTotals.paidDays}</strong>
+                  </li>
+                  <li>
+                    Nevyplacené dny (evidence k výplatě):{" "}
+                    <strong>{payrollSummaryFromDailyDetail.dailyTotals.unpaidDays}</strong>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">Částky (součet sloupců Schv. / Neschv. Kč)</h3>
+                <p className="text-sm">
+                  Hodinová sazba zaměstnance:{" "}
+                  <strong>
+                    {hourlyRate > 0 ? `${hourlyRate} Kč/h` : "není nastavena"}
+                  </strong>
+                </p>
+                <ul className="mt-2 space-y-1 text-sm">
+                  <li className="font-semibold">
+                    Schválená částka (součet „Schv. Kč“ za období):{" "}
+                    {formatKc(payrollSummaryFromDailyDetail.grossApprovedKc)}
+                  </li>
+                  <li className="text-slate-700">
+                    Neschválená částka (součet „Neschv. Kč“):{" "}
+                    {formatKc(payrollSummaryFromDailyDetail.grossPendingKc)}
+                  </li>
+                  <li className="text-slate-700">
+                    Orientační částka dle denního modelu (tarify / zakázky / sazba):{" "}
+                    {formatKc(payrollSummaryFromDailyDetail.orientacniKc)}
+                  </li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">
+                  Zálohy ve vybraném období (stav vyplaceno)
+                </h3>
+                {payrollSummaryFromDailyDetail.advancesInPeriod.length === 0 ? (
+                  <p className="text-sm text-slate-600">Žádné zálohy v období.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-black">Datum</TableHead>
+                          <TableHead className="text-black">Částka</TableHead>
+                          <TableHead className="text-black">Stav</TableHead>
+                          <TableHead className="text-black">Poznámka</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {payrollSummaryFromDailyDetail.advancesInPeriod.map((a) => (
+                          <TableRow key={a.id}>
+                            <TableCell className="text-black">
+                              {String(a.date ?? "").slice(0, 10)}
+                            </TableCell>
+                            <TableCell className="text-black">
+                              {formatKc(a.amount)}
+                            </TableCell>
+                            <TableCell className="text-black">
+                              {a.status === "paid" ? "Vyplaceno" : "Nezaplaceno"}
+                            </TableCell>
+                            <TableCell className="max-w-[240px] text-black">
+                              {a.note?.trim() || "—"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+                <p className="mt-3 text-sm font-semibold">
+                  Součet vyplacených záloh v období:{" "}
+                  {formatKc(payrollSummaryFromDailyDetail.advancesPaidTotalKc)}
+                </p>
+              </div>
+
+              <div className="rounded-lg border-2 border-emerald-700/40 bg-emerald-50/50 p-4">
+                <h3 className="mb-2 font-semibold text-emerald-900">Výsledek</h3>
+                <p className="text-sm">
+                  Schválená částka za období (jako součet „Schv. Kč“):{" "}
+                  <strong>{formatKc(payrollSummaryFromDailyDetail.grossApprovedKc)}</strong>
+                </p>
+                <p className="text-sm">
+                  Mínus vyplacené zálohy v období:{" "}
+                  <strong>
+                    -{formatKc(payrollSummaryFromDailyDetail.advancesPaidTotalKc)}
+                  </strong>
+                </p>
+                <p className="mt-2 text-lg font-bold text-emerald-900">
+                  K doplacení (po zálohách v období):{" "}
+                  {formatKc(payrollSummaryFromDailyDetail.netAfterAdvancesKc)}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">Rozpis po dnech (agregace)</h3>
+                {employeeDailySummaryRows.length === 0 ? (
+                  <p className="text-sm text-slate-600">
+                    Za toto období nejsou žádné denní řádky (docházka / segmenty /
+                    výkazy podle stejné logiky jako přehled docházky).
+                  </p>
+                ) : (
+                  <>
+                    <div className="hidden overflow-x-auto md:block">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-black">Den</TableHead>
+                            <TableHead className="text-black">Odprac. (h)</TableHead>
+                            <TableHead className="text-black">Schváleno</TableHead>
+                            <TableHead className="text-black">Výplata</TableHead>
+                            <TableHead className="text-black">Bloky</TableHead>
+                            <TableHead className="text-black">Schv. Kč</TableHead>
+                            <TableHead className="text-black">Neschv. Kč</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {employeeDailySummaryRows.map((row) => (
+                            <TableRow key={row.key}>
+                              <TableCell className="whitespace-nowrap text-black">
+                                {row.dayTitle}
+                              </TableCell>
+                              <TableCell className="text-black">
+                                {row.odpracovanoH != null
+                                  ? `${row.odpracovanoH} h`
+                                  : "—"}
+                              </TableCell>
+                              <TableCell className="text-black">
+                                <div className="flex flex-wrap gap-1">
+                                  <Badge
+                                    variant={
+                                      row.schvalenoStatus === "approved"
+                                        ? "default"
+                                        : row.schvalenoStatus === "pending"
+                                          ? "secondary"
+                                          : "outline"
+                                    }
+                                    className="font-normal"
+                                  >
+                                    {row.schvalenoStatus === "approved"
+                                      ? "Schváleno"
+                                      : row.schvalenoStatus === "pending"
+                                        ? "Čeká"
+                                        : "—"}
+                                  </Badge>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-black">
+                                <Badge
+                                  variant={
+                                    row.paidStatus === "paid"
+                                      ? "default"
+                                      : row.paidStatus === "unpaid"
+                                        ? "secondary"
+                                        : "outline"
+                                  }
+                                  className="font-normal"
+                                >
+                                  {getPaymentBadgeLabel(row.paidStatus)}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-black">{row.bloku}</TableCell>
+                              <TableCell className="text-black">
+                                {formatKc(row.schvalenoKc)}
+                              </TableCell>
+                              <TableCell className="text-black">
+                                {formatKc(row.neschvalenoKc)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="space-y-2 md:hidden">
+                      {employeeDailySummaryRows.map((row) => (
+                        <div
+                          key={row.key}
+                          className="rounded-md border border-slate-200 p-3 text-sm"
+                        >
+                          <p className="font-semibold text-black">{row.dayTitle}</p>
+                          <p className="text-slate-700">
+                            Odpracováno:{" "}
+                            {row.odpracovanoH != null ? `${row.odpracovanoH} h` : "—"}
+                          </p>
+                          <p className="flex flex-wrap items-center gap-2 text-slate-700">
+                            <span>Schválení:</span>
+                            <Badge
+                              variant={
+                                row.schvalenoStatus === "approved"
+                                  ? "default"
+                                  : row.schvalenoStatus === "pending"
+                                    ? "secondary"
+                                    : "outline"
+                              }
+                            >
+                              {row.schvalenoStatus === "approved"
+                                ? "Schváleno"
+                                : row.schvalenoStatus === "pending"
+                                  ? "Čeká"
+                                  : "—"}
+                            </Badge>
+                            <span>Výplata:</span>
+                            <Badge
+                              variant={
+                                row.paidStatus === "paid"
+                                  ? "default"
+                                  : row.paidStatus === "unpaid"
+                                    ? "secondary"
+                                    : "outline"
+                              }
+                            >
+                              {getPaymentBadgeLabel(row.paidStatus)}
+                            </Badge>
+                          </p>
+                          <p className="text-slate-700">
+                            Bloky: {row.bloku} · Schv. {formatKc(row.schvalenoKc)} ·
+                            Neschv. {formatKc(row.neschvalenoKc)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        ) : null}
+        </div>
       )}
 
       <Dialog open={advanceEditOpen} onOpenChange={setAdvanceEditOpen}>
