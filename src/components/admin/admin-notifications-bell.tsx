@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { adminOrganizationDetailPath } from "@/lib/platform-admin-notifications/new-organization-notify";
+import { adminOrganizationDetailPath } from "@/lib/platform-admin-notifications/paths";
 
 type AdminNotificationRow = {
   id: string;

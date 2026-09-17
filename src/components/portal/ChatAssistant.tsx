@@ -3,7 +3,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { collection, getDocs, limit, query, where } from "firebase/firestore";
-import { MessageCircle, Send, Sparkles, User } from "lucide-react";
+import { Loader2, MessageCircle, Mic, Send, Sparkles, Square, User } from "lucide-react";
+import { useIsBelowLg } from "@/hooks/use-mobile";
+import { usePortalAssistantVoice } from "@/hooks/use-portal-assistant-voice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -61,12 +63,17 @@ const EXAMPLE_QUESTIONS = [
 const quickChipClass =
   "inline-flex min-h-8 max-w-full items-center rounded-md border border-slate-300 bg-[#f3f4f6] px-2.5 py-1.5 text-left text-xs font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#e5e7eb] hover:border-slate-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50";
 
+const FAB_BOTTOM_MOBILE =
+  "bottom-[calc(var(--mobile-bottom-nav-height,72px)+16px+env(safe-area-inset-bottom,0px))]";
+const FAB_BOTTOM_DESKTOP = "bottom-[calc(16px+env(safe-area-inset-bottom,0px))]";
+
 export function ChatAssistant() {
   const pathname = usePathname() || "";
   const router = useRouter();
   const firestore = useFirestore();
   const { companyId } = useCompany();
   const { user } = useUser();
+  const isMobileLayout = useIsBelowLg();
 
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
@@ -237,6 +244,17 @@ export function ChatAssistant() {
     sendUserMessage(draft);
   };
 
+  const { voiceState, voiceStatusHint, toggleMic } = usePortalAssistantVoice({
+    user,
+    onTranscript: (text) => setDraft((prev) => (prev ? `${prev.trimEnd()} ${text}` : text)),
+    onError: (msg) => {
+      setMessages((prev) => [
+        ...prev,
+        { id: newId(), role: "assistant", text: msg },
+      ]);
+    },
+  });
+
   const quickTop = helpRows.slice(0, 6);
 
   return (
@@ -247,7 +265,8 @@ export function ChatAssistant() {
           aria-label="Otevřít nápovědu k portálu"
           onClick={() => setOpen(true)}
           className={cn(
-            "fixed bottom-4 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-lg",
+            "fixed right-4 z-[80] flex h-14 w-14 min-h-[56px] min-w-[56px] items-center justify-center rounded-full shadow-lg",
+            isMobileLayout ? FAB_BOTTOM_MOBILE : FAB_BOTTOM_DESKTOP,
             "bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
             "transition-transform hover:scale-105 active:scale-95 print:hidden"
           )}
@@ -258,10 +277,12 @@ export function ChatAssistant() {
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
-          side="right"
+          side={isMobileLayout ? "bottom" : "right"}
           className={cn(
-            "flex w-full flex-col gap-0 border-slate-200 bg-white p-0 sm:max-w-md",
-            "text-slate-900 h-[100dvh] max-h-[100dvh] overflow-hidden"
+            "flex w-full flex-col gap-0 border-slate-200 bg-white p-0 text-slate-900 overflow-hidden",
+            isMobileLayout
+              ? "h-[88dvh] max-h-[88dvh] rounded-t-2xl pb-[env(safe-area-inset-bottom,0px)]"
+              : "sm:max-w-md h-[100dvh] max-h-[100dvh]"
           )}
         >
           <SheetHeader className="shrink-0 border-b border-slate-100 px-4 py-4 text-left space-y-1">
@@ -385,25 +406,55 @@ export function ChatAssistant() {
 
           <form
             onSubmit={onSubmit}
-            className="shrink-0 border-t border-slate-100 p-3 bg-white flex gap-2 items-end"
+            className="shrink-0 border-t border-slate-100 p-3 bg-white flex flex-col gap-2"
           >
-            <Input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Zeptejte se, kde něco najdete nebo jak se něco dělá…"
-              className="min-h-10 bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-500"
-              disabled={typing}
-              aria-label="Text otázky"
-            />
-            <Button
-              type="submit"
-              size="icon"
-              className="h-10 w-10 shrink-0"
-              disabled={typing || !draft.trim()}
-              aria-label="Odeslat"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
+            {voiceStatusHint ? (
+              <p className="text-xs text-slate-600 px-0.5" role="status">
+                {voiceStatusHint}
+              </p>
+            ) : null}
+            <div className="flex gap-2 items-end">
+              <Input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Zeptejte se, kde něco najdete nebo jak se něco dělá…"
+                className="min-h-11 flex-1 bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-500"
+                disabled={typing || voiceState === "processing"}
+                aria-label="Text otázky"
+              />
+              <Button
+                type="button"
+                size="icon"
+                variant={voiceState === "recording" ? "destructive" : "outline"}
+                className="h-11 w-11 shrink-0"
+                disabled={typing || voiceState === "processing"}
+                aria-label={
+                  voiceState === "recording"
+                    ? "Zastavit nahrávání"
+                    : voiceState === "processing"
+                      ? "Přepisuji řeč"
+                      : "Mluvit do mikrofonu"
+                }
+                onClick={toggleMic}
+              >
+                {voiceState === "processing" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : voiceState === "recording" ? (
+                  <Square className="h-4 w-4" />
+                ) : (
+                  <Mic className="h-4 w-4" />
+                )}
+              </Button>
+              <Button
+                type="submit"
+                size="icon"
+                className="h-11 w-11 shrink-0"
+                disabled={typing || !draft.trim() || voiceState === "processing"}
+                aria-label="Odeslat"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
           </form>
         </SheetContent>
       </Sheet>

@@ -9,16 +9,10 @@ import {
 import { buildNotificationHtml, sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
 import { loadPlatformProviderContactEmail } from "@/lib/platform-admin-notifications/provider-email";
 import { resolveAppBaseUrl } from "@/lib/password-reset-link";
-
-export const NEW_ORG_NOTIFICATION_DOC_PREFIX = "new_org_";
-
-export function newOrganizationNotificationDocId(organizationId: string): string {
-  return `${NEW_ORG_NOTIFICATION_DOC_PREFIX}${organizationId}`;
-}
-
-export function adminOrganizationDetailPath(organizationId: string): string {
-  return `/admin/companies?orgId=${encodeURIComponent(organizationId)}`;
-}
+import {
+  adminOrganizationDetailPath,
+  newOrganizationNotificationDocId,
+} from "@/lib/platform-admin-notifications/paths";
 
 function formatRegistrationTime(value: unknown): string {
   if (value && typeof value === "object" && "toDate" in value) {

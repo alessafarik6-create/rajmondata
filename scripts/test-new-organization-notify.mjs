@@ -8,7 +8,7 @@ import {
   newOrganizationNotificationDocId,
   NEW_ORG_NOTIFICATION_DOC_PREFIX,
   adminOrganizationDetailPath,
-} from "../src/lib/platform-admin-notifications/new-organization-notify.ts";
+} from "../src/lib/platform-admin-notifications/paths.ts";
 import { isValidPlatformContactEmail } from "../src/lib/platform-admin-notifications/provider-email.ts";
 import { canTriggerNewOrganizationNotify } from "../src/lib/platform-admin-notifications/access.ts";
 
