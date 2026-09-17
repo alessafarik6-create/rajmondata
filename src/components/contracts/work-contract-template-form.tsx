@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
+import { useCompany, useFirestore, useUser } from "@/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,7 +13,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
+import { ContractTemplateAiModal } from "@/components/contracts/contract-template-ai-modal";
 import { cn } from "@/lib/utils";
 import { LIGHT_FORM_CONTROL_CLASS } from "@/lib/light-form-control-classes";
 import {
@@ -57,6 +59,16 @@ export function WorkContractTemplateForm({
   onCancel,
 }: WorkContractTemplateFormProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const firestore = useFirestore();
+  const { user } = useUser();
+  const { companyId } = useCompany();
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiInitialMode, setAiInitialMode] = useState<"generate" | "improve">("generate");
+
+  const openAiGenerate = () => {
+    setAiInitialMode(content.trim() ? "improve" : "generate");
+    setAiOpen(true);
+  };
 
   const insertPlaceholder = (key: (typeof CONTRACT_TEMPLATE_PLACEHOLDER_KEYS)[number]) => {
     const snippet = `{{${key}}}`;
@@ -110,11 +122,25 @@ export function WorkContractTemplateForm({
 
           <Card className="border-slate-200 shadow-sm">
             <CardHeader className="space-y-1 pb-3">
-              <CardTitle className="text-base text-slate-900">Obsah smlouvy</CardTitle>
-              <CardDescription>
-                Hlavní text dokumentu. Na velké obrazovce má editor více místa — posuňte okrajem
-                okna dialogu.
-              </CardDescription>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="text-base text-slate-900">Obsah smlouvy</CardTitle>
+                  <CardDescription>
+                    Hlavní text dokumentu (tělo šablony). Hlavičku, strany a podpisy doplní systém
+                    při vytvoření smlouvy u zakázky.
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-10 shrink-0 gap-2 border-violet-300 bg-violet-50/80 text-violet-950 hover:bg-violet-100"
+                  disabled={disabled}
+                  onClick={openAiGenerate}
+                >
+                  <Sparkles className="h-4 w-4 text-violet-700" />
+                  {content.trim() ? "Upravit pomocí AI" : "Vygenerovat pomocí AI"}
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="pt-0">
               <Textarea
@@ -210,6 +236,17 @@ export function WorkContractTemplateForm({
           )}
         </Button>
       </div>
+
+      <ContractTemplateAiModal
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        companyId={companyId}
+        firestore={firestore}
+        user={user}
+        existingContent={content}
+        initialMode={aiInitialMode}
+        onApplyText={(text) => onContentChange(text)}
+      />
     </div>
   );
 }
