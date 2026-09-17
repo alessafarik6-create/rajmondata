@@ -39,6 +39,9 @@ import {
 import { parseKnowledgeQueryIntent } from "@/lib/ai/knowledge-query-intent";
 import { answerKnowledgeQuestion } from "@/lib/ai/knowledge-answer-service";
 import type { KnowledgeSearchAnswer } from "@/lib/search/types";
+import { extractLikelyJobNameFromQuery } from "@/lib/search/file-content-intent";
+import { resolveJobsForSearchQuery } from "@/lib/search/job-name-resolver";
+import { loadJobLinkedDocumentCandidates } from "@/lib/search/job-document-candidates";
 
 export type RunCompanySearchParams = {
   db: Firestore;
@@ -98,6 +101,21 @@ export async function runCompanySearch(
   intent.knowledgeQuestion = knowledgeIntent.intent === "knowledge_question";
   intent.needsVisualContext = knowledgeIntent.needsVisualContext;
 
+  if (intent.fileContentSearch || intent.jobQuery) {
+    const resolved = await resolveJobsForSearchQuery(
+      params.db,
+      params.companyId,
+      intent.jobQuery,
+      intent.jobQuery ? null : extractLikelyJobNameFromQuery(q)
+    );
+    intent.resolvedJobIds = resolved.jobIds;
+    intent.resolvedJobNames = resolved.jobNamesById;
+    intent.resolvedPrimaryJobName = resolved.primaryJobName;
+    if (!intent.jobQuery && resolved.primaryJobName) {
+      intent.jobQuery = resolved.primaryJobName;
+    }
+  }
+
   const access = await buildSearchAccessContext(params.db, params.caller);
   const limit = params.limit ?? SEARCH_MAX_RESULTS;
 
@@ -131,6 +149,18 @@ export async function runCompanySearch(
       limitPerType: intent.entityListing ? 120 : 80,
     });
     for (const row of live) {
+      candidates.set(`${row.entityType}_${row.entityId}`, row);
+    }
+  }
+
+  if (intent.fileContentSearch && intent.resolvedJobIds?.length) {
+    usedLiveFallback = true;
+    const jobDocs = await loadJobLinkedDocumentCandidates(
+      params.db,
+      params.companyId,
+      intent.resolvedJobIds
+    );
+    for (const row of jobDocs) {
       candidates.set(`${row.entityType}_${row.entityId}`, row);
     }
   }
@@ -186,7 +216,15 @@ export async function runCompanySearch(
   }
 
   scored.sort((a, b) => b.score - a.score);
-  const results = scored.slice(0, limit);
+  let results = scored.slice(0, limit);
+
+  if (intent.fileContentSearch) {
+    const files = results.filter((r) => r.entityType === "document" || r.entityType === "file");
+    const rest = results.filter((r) => r.entityType !== "document" && r.entityType !== "file");
+    if (files.length) results = [...files, ...rest].slice(0, limit);
+  }
+
+  const summaryText = buildFileSearchSummary(results, intent);
 
   let knowledgeAnswer: KnowledgeSearchAnswer | null = null;
   if (
@@ -281,8 +319,29 @@ export async function runCompanySearch(
     total: results.length,
     knowledgeAnswer,
     isKnowledgeQuestion: intent.knowledgeQuestion === true,
+    summaryText,
     meta: params.debug ? meta : undefined,
   };
+}
+
+function buildFileSearchSummary(
+  results: import("@/lib/search/types").SearchResultItem[],
+  intent: SearchIntent
+): string | null {
+  if (!intent.fileContentSearch) return null;
+  const files = results.filter((r) => r?.entityType === "document" || r?.entityType === "file");
+  const kind = intent.fileContentLabel ?? "soubor";
+  const jobLabel =
+    intent.resolvedPrimaryJobName ?? intent.jobQuery ?? null;
+  if (files.length === 0) {
+    return jobLabel
+      ? `K zakázce „${jobLabel}“ jsem nenašel odpovídající ${kind}.`
+      : `Nenašel jsem soubory odpovídající dotazu (${kind}).`;
+  }
+  const n = files.length;
+  const word = n === 1 ? "soubor" : n < 5 ? "soubory" : "souborů";
+  const tail = jobLabel ? ` k zakázce ${jobLabel}` : "";
+  return `Našel jsem ${n} ${word}, které vypadají jako ${kind}${tail}.`;
 }
 
 function logSearchDebug(query: string, intent: SearchIntent, meta: SearchDebugMeta): void {

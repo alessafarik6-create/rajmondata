@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
 import { LogOut, User, Menu, MessageSquare, Bell } from 'lucide-react';
-import { GlobalSearchBar } from '@/components/search/global-search-bar';
+import { GlobalSearchBar, GLOBAL_SEARCH_TRIGGER_WIDTH_CLASS } from '@/components/search/global-search-bar';
 import { Button } from '@/components/ui/button';
 import { Logo } from '@/components/ui/logo';
 import Link from 'next/link';
@@ -116,13 +116,13 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   return (
     <header
       className={cn(
-        "print:hidden h-14 sm:h-16 sticky top-0 z-40 flex items-center justify-between gap-2 px-4 sm:px-6 lg:px-8 backdrop-blur-sm border-b",
+        "print:hidden h-14 sm:h-16 sticky top-0 z-40 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 sm:px-6 lg:px-8 backdrop-blur-sm border-b sm:grid-cols-[auto_auto_minmax(380px,520px)_1fr_auto]",
         dashboardDark
           ? "border-white/10 bg-slate-950/95 text-slate-50"
           : "border-slate-200 bg-white/90 text-slate-900"
       )}
     >
-      <div className="flex items-center gap-2 min-w-0 flex-1">
+      <div className="flex items-center gap-2 min-w-0 sm:col-span-2">
         {onOpenMobileMenu && (
           <Button
             variant="ghost"
@@ -178,10 +178,20 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
             <span className="truncate">{companyName}</span>
           </div>
         )}
-        <GlobalSearchBar dashboardDark={dashboardDark} />
       </div>
 
-      <div className="flex items-center gap-1 sm:gap-4 shrink-0">
+      <div
+        className={cn(
+          "flex items-center justify-end sm:justify-start col-start-2 row-start-1 sm:col-start-3",
+          GLOBAL_SEARCH_TRIGGER_WIDTH_CLASS
+        )}
+      >
+        <GlobalSearchBar dashboardDark={dashboardDark} className="w-full" />
+      </div>
+
+      <div className="hidden sm:block" aria-hidden />
+
+      <div className="flex items-center gap-1 sm:gap-4 shrink-0 justify-end col-start-2 sm:col-start-5">
         {isAdminArea ? <AdminNotificationsBell /> : null}
         {!isAdminArea ? (
           <Button

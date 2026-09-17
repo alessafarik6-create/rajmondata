@@ -22,6 +22,11 @@ import {
   parseCzechAmountToken,
 } from "@/lib/search/normalize";
 import { isEntityListingIntent, meaningfulQueryTokens } from "@/lib/search/entity-listing";
+import {
+  entityTypesForFileContentSearch,
+  extractLikelyJobNameFromQuery,
+  parseFileContentIntent,
+} from "@/lib/search/file-content-intent";
 
 const DOC_NUMBER_RE =
   /\b(FV|FA|NAB|DOD|DD|DL|OBJ|ZAK)[- ]?\d{4}[-/]?\d{2,6}\b/i;
@@ -39,6 +44,8 @@ const ENTITY_HINTS: Array<{ re: RegExp; types: SearchEntityType[] }> = [
   { re: /\bpdf\b/, types: ["document", "file"] },
   { re: /\bfot(o|ka|ografie)?\b/, types: ["file", "document"] },
   { re: /\bkatalog|\bprodukt/, types: ["product"] },
+  { re: /\bpudorys|\bpůdorys|\bvykres|\bvýkres|\bplan\b|\bprojekt\b/, types: ["file", "document"] },
+  { re: /\bzamer|\bzaměř|\bpriloh|\bpříloh|\bsmlouv|\bnab[ií]dk/, types: ["file", "document"] },
 ];
 
 const MONTHS: Record<string, number> = {
@@ -178,8 +185,22 @@ function extractSupplierCustomer(text: string): { supplier: string | null; custo
 }
 
 function extractJobQuery(text: string): string | null {
-  const m = text.match(/\b(?:k\s+zak[aá]zce|zak[aá]zka)\s+([A-Za-zÁČĎÉĚÍŇÓŘŠŤÚŮÝŽáčďéěíňóřšťúůýž0-9 .-]{2,40})/i);
-  return m ? m[1].trim() : null;
+  const patterns = [
+    /\b(?:k\s+)?zak[aá]z(?:ce|ka|ku)\s+([A-Za-zÁČĎÉĚÍŇÓŘŠŤÚŮÝŽáčďéěíňóřšťúůýž0-9 .-]{2,50})/i,
+    /\b(?:u|pro)\s+([A-Za-zÁČĎÉĚÍŇÓŘŠŤÚŮÝŽáčďéěíňóřšťúůýž0-9 .-]{2,40})/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m?.[1]) {
+      const name = m[1].trim().replace(/\s+(pdf|soubor|dokument)$/i, "");
+      if (name.length >= 2) return name;
+    }
+  }
+  const fileIntent = parseFileContentIntent(text);
+  if (fileIntent.fileContentSearch) {
+    return extractLikelyJobNameFromQuery(text);
+  }
+  return null;
 }
 
 export function parseSearchQueryDeterministic(rawQuery: string, now = new Date()): SearchIntent {
@@ -191,6 +212,7 @@ export function parseSearchQueryDeterministic(rawQuery: string, now = new Date()
   const entityTypes = extractEntityTypes(normalized);
   const { supplier, customer } = extractSupplierCustomer(rawQueryTrimmed);
   const jobQuery = extractJobQuery(rawQueryTrimmed);
+  const fileContent = parseFileContentIntent(rawQueryTrimmed);
   const monthRange = parseMonthRange(normalized, now) ?? parseRelativeDates(normalized, now);
   const amounts = parseAmountFilters(normalized);
 
@@ -206,9 +228,13 @@ export function parseSearchQueryDeterministic(rawQuery: string, now = new Date()
     (!docNum || normalized.split(/\s+/).length > 2) &&
     meaningfulQueryTokens(rawQueryTrimmed).length > 0;
 
+  const mergedEntityTypes = fileContent.fileContentSearch
+    ? entityTypesForFileContentSearch(entityTypes)
+    : entityTypes;
+
   const intent: SearchIntent = {
     rawQuery: rawQueryTrimmed,
-    entityTypes,
+    entityTypes: mergedEntityTypes,
     supplier,
     customer,
     jobQuery,
@@ -220,6 +246,10 @@ export function parseSearchQueryDeterministic(rawQuery: string, now = new Date()
     dateTo: monthRange?.to ?? null,
     semanticQuery: null,
     useAiParser,
+    fileContentSearch: fileContent.fileContentSearch,
+    fileContentLabel: fileContent.fileContentLabel,
+    fileNameBoostTerms: fileContent.fileNameBoostTerms,
+    preferFileMime: fileContent.preferMime,
   };
 
   intent.entityListing = isEntityListingIntent(intent);

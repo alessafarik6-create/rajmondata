@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { SearchResultsList } from "@/components/search/search-results-list";
 import { KnowledgeSearchAnswerCard } from "@/components/search/knowledge-search-answer-card";
+import { SearchInlineFilePreview } from "@/components/search/search-inline-file-preview";
 import {
   fetchCompanySearch,
   loadRecentSearches,
@@ -24,10 +25,27 @@ import { cn } from "@/lib/utils";
 
 const DEBOUNCE_MS = 320;
 
+/** Pevná šířka spouštěče v headeru — nesmí se měnit podle modalu. */
+export const GLOBAL_SEARCH_TRIGGER_WIDTH_CLASS =
+  "w-[clamp(360px,32vw,520px)] max-w-[520px] shrink-0";
+
 type GlobalSearchProps = {
   className?: string;
   dashboardDark?: boolean;
 };
+
+function isPreviewableFile(item: SearchResultItem): boolean {
+  const title = item.metadata.fileName ?? item.title;
+  const mime = item.mimeType ?? "";
+  return (
+    !!item.fileUrl &&
+    (item.entityType === "file" ||
+      item.entityType === "document" ||
+      mime.includes("pdf") ||
+      mime.startsWith("image/") ||
+      /\.(pdf|jpe?g|png|webp|gif)$/i.test(title))
+  );
+}
 
 export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps) {
   const router = useRouter();
@@ -41,6 +59,7 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
   const [response, setResponse] = useState<SearchResponse | null>(null);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [recent, setRecent] = useState<string[]>([]);
+  const [previewItem, setPreviewItem] = useState<SearchResultItem | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -48,6 +67,8 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
     if (open) {
       setRecent(loadRecentSearches());
       setTimeout(() => inputRef.current?.focus(), 50);
+    } else {
+      setPreviewItem(null);
     }
   }, [open]);
 
@@ -61,6 +82,7 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
       if (withKnowledge) setKnowledgeLoading(true);
       else setLoading(true);
       setError(null);
+      setPreviewItem(null);
       try {
         const token = await user.getIdToken();
         const data = await fetchCompanySearch({
@@ -90,6 +112,7 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
       setResponse(null);
       setLoading(false);
       setKnowledgeLoading(false);
+      setPreviewItem(null);
       return;
     }
     debounceRef.current = setTimeout(() => {
@@ -117,6 +140,10 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
     router.push(item.openUrl);
   };
 
+  const openPreview = (item: SearchResultItem) => {
+    setPreviewItem(item);
+  };
+
   const askKnowledge = () => {
     if (!query.trim()) return;
     pushRecentSearch(query.trim());
@@ -126,6 +153,10 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const results = response?.results ?? [];
     if (e.key === "Escape") {
+      if (previewItem) {
+        setPreviewItem(null);
+        return;
+      }
       setOpen(false);
       return;
     }
@@ -142,7 +173,16 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
     if (e.key === "Enter") {
       if (activeIndex >= 0 && results[activeIndex]) {
         e.preventDefault();
-        openResult(results[activeIndex]);
+        const item = results[activeIndex];
+        if ((e.ctrlKey || e.metaKey) && item.fileUrl) {
+          window.open(item.fileUrl, "_blank", "noopener,noreferrer");
+          return;
+        }
+        if (isPreviewableFile(item)) {
+          openPreview(item);
+          return;
+        }
+        openResult(item);
         return;
       }
       if (query.trim()) {
@@ -174,7 +214,8 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
       <button
         type="button"
         className={cn(
-          "relative hidden min-w-0 w-full max-w-md items-center sm:flex",
+          "relative hidden items-center sm:flex",
+          GLOBAL_SEARCH_TRIGGER_WIDTH_CLASS,
           className
         )}
         onClick={() => setOpen(true)}
@@ -188,14 +229,18 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
         />
         <Input
           readOnly
-          placeholder="Hledejte zákazníka, doklad, fakturu, PDF, zakázku nebo napište dotaz…"
-          className={cn("pl-10 cursor-pointer", dashboardDark && "bg-white/10 border-white/20 text-white placeholder:text-slate-300")}
+          tabIndex={-1}
+          placeholder="Hledejte zákazníka, doklad, fakturu, PDF, zakázku…"
+          className={cn(
+            "h-10 w-full cursor-pointer pl-10",
+            dashboardDark && "bg-white/10 border-white/20 text-white placeholder:text-slate-300"
+          )}
         />
       </button>
 
       <button
         type="button"
-        className="sm:hidden inline-flex h-10 w-10 items-center justify-center rounded-md border"
+        className="sm:hidden inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border"
         onClick={() => setOpen(true)}
         aria-label="Hledat"
       >
@@ -203,21 +248,28 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl gap-0 p-0 sm:max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
-          <DialogHeader className="border-b px-4 py-3 shrink-0">
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="h-4 w-4 text-blue-600" />
-              Hledat v RajmonData
-            </DialogTitle>
+        <DialogContent
+          className={cn(
+            "fixed left-1/2 top-[max(1rem,8vh)] z-50 flex max-h-[min(80dvh,760px)] w-[min(760px,calc(100vw-32px))] -translate-x-1/2 flex-col gap-0 overflow-hidden p-0",
+            "sm:max-w-[min(760px,calc(100vw-32px))]"
+          )}
+        >
+          <DialogHeader className="sr-only">
+            <DialogTitle>Hledat v RajmonData</DialogTitle>
           </DialogHeader>
-          <div className="px-4 pt-3 shrink-0 space-y-2">
+
+          <div className="sticky top-0 z-10 shrink-0 border-b bg-background px-4 py-3 space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+              <Sparkles className="h-4 w-4 text-blue-600 shrink-0" />
+              Hledat v RajmonData
+            </div>
             <Input
               ref={inputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Hledejte zákazníka, doklad, fakturu, PDF, zakázku nebo napište dotaz…"
-              className="h-11"
+              placeholder="Hledejte zákazníka, doklad, fakturu, PDF, zakázku…"
+              className="h-11 w-full"
             />
             {showKnowledgeHint ? (
               <div className="flex flex-wrap items-center gap-2">
@@ -233,8 +285,10 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
           </div>
 
           {!query.trim() && recent.length > 0 ? (
-            <div className="px-4 py-3 shrink-0">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Nedávné</p>
+            <div className="px-4 py-3 shrink-0 border-b">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Nedávné
+              </p>
               <div className="flex flex-wrap gap-2">
                 {recent.map((r) => (
                   <button
@@ -252,7 +306,11 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
 
           {error ? <p className="px-4 py-3 text-sm text-destructive shrink-0">{error}</p> : null}
 
-          <div className="overflow-y-auto flex-1 min-h-0 px-4 pb-2 space-y-3">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-2 space-y-3">
+            {previewItem ? (
+              <SearchInlineFilePreview item={previewItem} onClose={() => setPreviewItem(null)} />
+            ) : null}
+
             {knowledgeLoading ? (
               <KnowledgeSearchAnswerCard
                 answer={{
@@ -275,14 +333,16 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
               activeIndex={activeIndex}
               onActiveIndexChange={setActiveIndex}
               onOpenResult={openResult}
+              onPreviewResult={openPreview}
               loading={loading && !!query.trim() && !knowledgeLoading}
               emptyMessage={emptyMessage}
+              summaryText={response?.summaryText}
               compact
             />
           </div>
 
-          <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-muted-foreground shrink-0">
-            <span>↑↓ navigace · Enter · Esc zavřít</span>
+          <div className="flex shrink-0 items-center justify-between border-t px-4 py-2 text-xs text-muted-foreground">
+            <span>↑↓ · Enter náhled · Ctrl+Enter otevřít soubor · Esc</span>
             {response?.usedSemantic ? <span>Sémantické vyhledávání</span> : null}
           </div>
         </DialogContent>

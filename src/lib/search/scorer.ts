@@ -32,10 +32,19 @@ function passesFilters(entry: SearchIndexDoc, intent: SearchIntent): boolean {
     const hay = normalizeSearchText(`${md.customer ?? ""} ${entry.title} ${entry.searchText}`);
     if (!hay.includes(c)) return false;
   }
-  if (intent.jobQuery) {
+  if (intent.resolvedJobIds?.length) {
+    const jid = md.jobId;
+    if (intent.fileContentSearch && (entry.entityType === "document" || entry.entityType === "file")) {
+      if (!jid || !intent.resolvedJobIds.includes(jid)) return false;
+    }
+  } else if (intent.jobQuery) {
     const jq = normalizeSearchText(intent.jobQuery);
     const hay = normalizeSearchText(`${md.jobName ?? ""} ${md.jobId ?? ""} ${entry.searchText}`);
-    if (!hay.includes(jq)) return false;
+    const jqTokens = jq.split(/\s+/).filter((t) => t.length >= 3);
+    const matchesPhrase = hay.includes(jq);
+    const matchesTokens =
+      jqTokens.length > 0 && jqTokens.every((t) => hay.includes(t) || hay.includes(t.slice(0, 4)));
+    if (!matchesPhrase && !matchesTokens) return false;
   }
 
   const amount = md.amountGross ?? md.amountNet ?? null;
@@ -91,6 +100,34 @@ function exactScore(query: string, entry: SearchIndexDoc): { score: number; reas
   }
 
   return null;
+}
+
+function fileNameBoostScore(entry: SearchIndexDoc, intent: SearchIntent): number {
+  if (!intent.fileContentSearch) return 0;
+  const terms = intent.fileNameBoostTerms ?? [];
+  if (!terms.length) return 0;
+  const hay = normalizeSearchText(
+    `${entry.metadata.fileName ?? ""} ${entry.title} ${entry.searchText} ${entry.subtitle ?? ""}`
+  );
+  let boost = 0;
+  for (const t of terms) {
+    if (hay.includes(normalizeSearchText(t))) boost += 12;
+  }
+  const mime = entry.mimeType ?? "";
+  const fn = String(entry.metadata.fileName ?? entry.title).toLowerCase();
+  if (intent.preferFileMime?.includes("pdf") && (mime.includes("pdf") || fn.endsWith(".pdf"))) {
+    boost += 8;
+  }
+  if (
+    intent.preferFileMime?.includes("image") &&
+    (mime.startsWith("image/") || /\.(jpe?g|png|webp)$/i.test(fn))
+  ) {
+    boost += 8;
+  }
+  if (entry.metadata.jobId && intent.resolvedJobIds?.includes(entry.metadata.jobId)) {
+    boost += 15;
+  }
+  return boost;
 }
 
 function formatDetail(entry: SearchIndexDoc): string | null {
@@ -166,9 +203,22 @@ export function scoreSearchEntry(
       } else {
         return null;
       }
+    } else if (intent.fileContentSearch && (entry.entityType === "document" || entry.entityType === "file")) {
+      const overlap = tokenOverlapScore(q, entry);
+      if (overlap <= 0 && !intent.resolvedJobIds?.length) return null;
+      score = 35 + overlap * 25;
+      reason = "full_text";
+      detail = "Soubor zakázky";
     } else {
       return null;
     }
+  }
+
+  score += fileNameBoostScore(entry, intent);
+
+  if (intent.fileContentSearch && entry.entityType !== "document" && entry.entityType !== "file") {
+    score -= 25;
+    if (score < 25) return null;
   }
 
   return {

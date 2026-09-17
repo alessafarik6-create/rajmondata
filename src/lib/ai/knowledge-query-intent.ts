@@ -67,6 +67,16 @@ export function parseKnowledgeQueryIntent(
     };
   }
 
+  if (searchIntent?.fileContentSearch) {
+    return {
+      intent: "crm_search",
+      query: q,
+      preferredSources: ["crm"],
+      needsVisualContext: false,
+      preferredCategories: [],
+    };
+  }
+
   const n = normalize(q);
   const isKnowledge = KNOWLEDGE_QUESTION_RE.test(n);
   const needsVisual = VISUAL_RE.test(n);

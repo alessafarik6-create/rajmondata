@@ -108,6 +108,14 @@ export type SearchIntent = {
   /** Dotaz do znalostní báze (manuály, návody). */
   knowledgeQuestion?: boolean;
   needsVisualContext?: boolean;
+  /** Hledání výkresů / půdorysů / PDF / obrázků u zakázky. */
+  fileContentSearch?: boolean;
+  fileContentLabel?: string | null;
+  fileNameBoostTerms?: string[];
+  preferFileMime?: ("pdf" | "image")[];
+  resolvedJobIds?: string[];
+  resolvedJobNames?: Record<string, string>;
+  resolvedPrimaryJobName?: string | null;
 };
 
 export type SearchDebugMeta = {
@@ -153,6 +161,8 @@ export type SearchResponse = {
   meta?: SearchDebugMeta;
   knowledgeAnswer?: KnowledgeSearchAnswer | null;
   isKnowledgeQuestion?: boolean;
+  /** Krátká AI-style odpověď u file search (např. počet nalezených souborů). */
+  summaryText?: string | null;
 };
 
 export function searchIndexDocId(entityType: SearchEntityType, entityId: string): string {
