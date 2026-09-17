@@ -36,6 +36,7 @@ import {
   isWorkBudgetSourceInvoice,
   regenerateInvoiceFromWorkBudgetItems,
 } from "@/lib/work-budget-invoice";
+import { PORTAL_MANUAL_INVOICE_TYPE } from "@/lib/portal-manual-invoice";
 import {
   parseJobWorkBudgetItemFromFirestore,
   WORK_BUDGET_ITEMS_COLLECTION,
@@ -1025,13 +1026,13 @@ export function JobBillingInvoicesSection({
                           </p>
                         ) : null}
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex max-w-full flex-wrap gap-2">
                         {isWorkBudgetSourceInvoice(row) && canManage ? (
                           <Button
                             type="button"
                             variant="secondary"
                             size="sm"
-                            className="min-h-9 gap-1 w-full sm:w-auto"
+                            className="min-h-9 shrink-0 gap-1 w-full sm:w-auto"
                             disabled={regenerateBusy}
                             onClick={() =>
                               openRegenerateWorkBudgetInvoice(
@@ -1047,30 +1048,39 @@ export function JobBillingInvoicesSection({
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="gap-1 border-neutral-950 min-h-9 w-full sm:w-auto"
+                          className="min-h-9 shrink-0 gap-1 border-neutral-950 w-full sm:w-auto"
                           asChild
                         >
                           <Link href={`/portal/invoices/${row.id}`}>Otevřít</Link>
                         </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="gap-1 border-neutral-950"
-                          onClick={() => printRow(row.pdfHtml)}
-                        >
-                          <Printer className="h-3.5 w-3.5" />
-                          Tisk / PDF
-                        </Button>
-                        {(t === JOB_INVOICE_TYPES.ADVANCE || t === JOB_INVOICE_TYPES.FINAL_INVOICE) &&
+                        {(t === JOB_INVOICE_TYPES.ADVANCE ||
+                          t === JOB_INVOICE_TYPES.FINAL_INVOICE ||
+                          t === PORTAL_MANUAL_INVOICE_TYPE ||
+                          isWorkBudgetSourceInvoice(row)) &&
                         canManage ? (
-                          <Button type="button" variant="outline" size="sm" className="gap-1" asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="min-h-9 shrink-0 gap-1 border-neutral-950 w-full sm:w-auto"
+                            asChild
+                          >
                             <Link href={`/portal/invoices/${row.id}/edit`}>
                               <Pencil className="h-3.5 w-3.5" />
                               Upravit
                             </Link>
                           </Button>
                         ) : null}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="min-h-9 shrink-0 gap-1 border-neutral-950 w-full sm:w-auto"
+                          onClick={() => printRow(row.pdfHtml)}
+                        >
+                          <Printer className="h-3.5 w-3.5" />
+                          Tisk / PDF
+                        </Button>
                         {canManage &&
                         canSoftDeleteInvoices &&
                         (t === JOB_INVOICE_TYPES.ADVANCE ||

@@ -19,6 +19,7 @@ import { PortalInvoiceSendDialog } from "@/components/invoices/portal-invoice-se
 import { PortalInvoicePreviewViewer } from "@/components/invoices/portal-invoice-preview-viewer";
 import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice-preview-dialog";
 import { formatCsDateTimeDot } from "@/lib/date-safe";
+import { canManagePortalInvoices } from "@/lib/portal-invoice-permissions";
 
 export default function InvoiceDocumentPage() {
   const params = useParams();
@@ -234,6 +235,9 @@ export default function InvoiceDocumentPage() {
 
   const isInvoiceDeleted =
     (invoice as { isDeleted?: boolean }).isDeleted === true;
+  const canEditInvoice = canManagePortalInvoices(
+    String((profile as { role?: string } | null | undefined)?.role ?? "employee")
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 px-2 pb-10 sm:px-0">
@@ -256,7 +260,7 @@ export default function InvoiceDocumentPage() {
         </Button>
         <h1 className="text-xl font-bold text-neutral-950 sm:text-2xl">{title}</h1>
         <div className="ml-auto flex flex-wrap gap-2">
-          {isAdvance || isSettlement || isTaxReceipt || isPortalManual ? (
+          {canEditInvoice && (isAdvance || isSettlement || isTaxReceipt || isPortalManual) ? (
             <Button type="button" variant="outline" className="gap-2 border-neutral-950" asChild>
               <Link href={`/portal/invoices/${invoiceId}/edit`}>
                 <Pencil className="h-4 w-4" />

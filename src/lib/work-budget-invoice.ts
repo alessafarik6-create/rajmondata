@@ -17,6 +17,7 @@ import {
   buildPortalManualInvoiceHtml,
   buildRecipientAddressMultiline,
   invoiceRecipientFromCustomerDoc,
+  parseInvoiceRecipientFromInvoiceDoc,
   PORTAL_MANUAL_INVOICE_TYPE,
   portalFormItemsForFirestore,
   recipientDisplayName,
@@ -365,6 +366,47 @@ function resolveWorkBudgetSelectedAdvanceIds(params: {
   return [];
 }
 
+export type WorkBudgetInvoiceStoredHeader = {
+  issueDate: string;
+  dueDate: string;
+  taxSupplyDate: string;
+  variableSymbol: string | null;
+  overrideBankAccountId: string | null;
+};
+
+/** Hlavička z existující faktury — při regeneraci se nemění, pokud není explicitně přepsána. */
+export function readWorkBudgetInvoiceHeaderFromDocument(
+  inv: Record<string, unknown>
+): WorkBudgetInvoiceStoredHeader {
+  const issueDate =
+    String(inv.issueDate ?? "").trim().slice(0, 10) ||
+    new Date().toISOString().split("T")[0];
+  const dueDate =
+    String(inv.dueDate ?? "").trim().slice(0, 10) || defaultDueDateIso();
+  const taxSupplyDate =
+    String(inv.taxSupplyDate ?? issueDate).trim().slice(0, 10) || issueDate;
+  const variableSymbol = String(inv.variableSymbol ?? "").trim() || null;
+  const overrideBankAccountId = String(inv.bankAccountId ?? "").trim() || null;
+  return {
+    issueDate,
+    dueDate,
+    taxSupplyDate,
+    variableSymbol,
+    overrideBankAccountId,
+  };
+}
+
+export function resolveWorkBudgetInvoiceNotesForDocument(
+  inv: Record<string, unknown> | null | undefined,
+  preview: WorkBudgetInvoicePreview
+): string {
+  if (inv?.workBudgetHeaderManual === true) {
+    const manual = String(inv.notes ?? "").trim();
+    if (manual) return manual;
+  }
+  return buildWorkBudgetInvoiceNotes(preview);
+}
+
 type WorkBudgetInvoiceBuildInput = {
   jobDisplayName: string;
   customerId: string;
@@ -378,6 +420,8 @@ type WorkBudgetInvoiceBuildInput = {
   issueDate: string;
   dueDate: string;
   taxSupplyDate: string;
+  /** Při regeneraci — zachovat ruční hlavičku a odběratele z dokladu */
+  existingInvoice?: Record<string, unknown> | null;
 };
 
 function buildWorkBudgetInvoiceNotes(preview: WorkBudgetInvoicePreview): string {
@@ -406,19 +450,31 @@ function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
     overpaymentGross: input.preview.overpaymentGross,
     invoiceLines,
   });
-  const recipient = invoiceRecipientFromCustomerDoc(input.customerId, input.customer);
+  const storedHeader = input.existingInvoice
+    ? readWorkBudgetInvoiceHeaderFromDocument(input.existingInvoice)
+    : null;
+  const issueDate = storedHeader?.issueDate ?? input.issueDate;
+  const dueDate = storedHeader?.dueDate ?? input.dueDate;
+  const taxSupplyDate = storedHeader?.taxSupplyDate ?? input.taxSupplyDate;
+  const recipientFromDoc = input.existingInvoice
+    ? parseInvoiceRecipientFromInvoiceDoc(input.existingInvoice)
+    : null;
+  const recipient =
+    recipientFromDoc ??
+    invoiceRecipientFromCustomerDoc(input.customerId, input.customer);
   const companyMeta = handoverCompanyPdfMeta(input.companyDoc);
   const c = input.companyDoc ?? {};
   const supplierIco = trim(c.ico ?? c.companyIco) || null;
   const supplierDic = trim(c.dic ?? c.companyDic) || null;
   const legacyCompanyBank = trim(c.bankAccount ?? c.companyBankAccount) || null;
-  const notes = buildWorkBudgetInvoiceNotes(input.preview);
-
+  const notes = input.existingInvoice
+    ? resolveWorkBudgetInvoiceNotesForDocument(input.existingInvoice, input.preview)
+    : buildWorkBudgetInvoiceNotes(input.preview);
   const built = buildPortalManualInvoiceHtml({
     invoiceNumber: input.invoiceNumber,
-    issueDate: input.issueDate,
-    dueDate: input.dueDate,
-    taxSupplyDate: input.taxSupplyDate,
+    issueDate,
+    dueDate,
+    taxSupplyDate,
     jobName: input.jobDisplayName,
     notes,
     recipient,
@@ -431,6 +487,8 @@ function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
     orgBankAccounts: input.orgBankAccounts,
     legacyCompanyBankLine: legacyCompanyBank,
     advanceSettlement,
+    overrideVariableSymbol: storedHeader?.variableSymbol ?? null,
+    overrideBankAccountId: storedHeader?.overrideBankAccountId ?? null,
   });
 
   const { html, amountNet, vatAmount, amountGross, variableSymbol, vatBreakdown } = built;
@@ -806,9 +864,7 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
   if (!invoiceNumber) {
     throw new Error("Faktura nemá číslo dokladu.");
   }
-  const issueDate = String(inv.issueDate ?? new Date().toISOString().split("T")[0]).trim();
-  const dueDate = String(inv.dueDate ?? defaultDueDateIso()).trim();
-  const taxSupplyDate = String(inv.taxSupplyDate ?? issueDate).trim();
+  const header = readWorkBudgetInvoiceHeaderFromDocument(inv);
 
   const bundle = buildWorkBudgetInvoiceHtmlBundle({
     jobDisplayName: params.jobDisplayName,
@@ -819,9 +875,10 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     preview,
     budgetCatalog,
     invoiceNumber,
-    issueDate,
-    dueDate,
-    taxSupplyDate,
+    issueDate: header.issueDate,
+    dueDate: header.dueDate,
+    taxSupplyDate: header.taxSupplyDate,
+    existingInvoice: inv,
   });
 
   const previousItemIds = Array.isArray(inv.workBudgetItemIds)
@@ -835,7 +892,7 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     amountGross: bundle.amountGross,
     vatBreakdown: bundle.vatBreakdown.map((b) => ({ rate: b.rate, base: b.base, vat: b.vat })),
     pdfHtml: bundle.html,
-    notes: bundle.notes,
+    notes: resolveWorkBudgetInvoiceNotesForDocument(inv, preview),
     workBudgetItemIds: bundle.itemIds,
     workBudgetAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
     workBudgetAdvancesApplied: preview.advancesApplied.map((a) => ({
@@ -876,8 +933,8 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     customerName: bundle.displayName,
     jobId: params.jobId,
     jobName: params.jobDisplayName !== "—" ? params.jobDisplayName : null,
-    issueDate,
-    dueDate,
+    issueDate: header.issueDate,
+    dueDate: header.dueDate,
     amountNet: bundle.amountNet,
     vatAmount: bundle.vatAmount,
     amountGross: bundle.amountGross,

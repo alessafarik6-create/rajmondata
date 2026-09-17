@@ -8,6 +8,8 @@ import { computeWorkBudgetFinancialOverview, applyAdvanceDeductionsToGross } fro
 import {
   buildWorkBudgetInvoicePreview,
   buildInvoiceFromBudgetAndAdvances,
+  readWorkBudgetInvoiceHeaderFromDocument,
+  resolveWorkBudgetInvoiceNotesForDocument,
   billableWorkBudgetItems,
   formatWorkBudgetItemInvoiceDescription,
   buildInvoiceLinesFromWorkBudgetItems,
@@ -482,6 +484,51 @@ const jobBudget = {
   assert.match(built.html, /K úhradě/);
   assert.match(built.html, /645\s*881\s*Kč/);
   assert.match(built.html, /4\s*073\s*331\s*Kč/);
+}
+
+// 12) regenerace zachová ruční hlavičku (splatnost, DUZP, poznámka)
+{
+  const invDoc = {
+    issueDate: "2026-09-17",
+    dueDate: "2026-10-01",
+    taxSupplyDate: "2026-09-20",
+    variableSymbol: "2026005",
+    bankAccountId: "acc-1",
+    workBudgetHeaderManual: true,
+    notes: "Ruční poznámka na faktuře.",
+  };
+  const header = readWorkBudgetInvoiceHeaderFromDocument(invDoc);
+  assert.equal(header.issueDate, "2026-09-17");
+  assert.equal(header.dueDate, "2026-10-01");
+  assert.equal(header.taxSupplyDate, "2026-09-20");
+  assert.equal(header.variableSymbol, "2026005");
+  assert.equal(header.overrideBankAccountId, "acc-1");
+
+  const line = item({
+    id: "l1",
+    done: true,
+    amountGross: 4_073_331.36,
+    amountNet: 3_366_389.55,
+    vatAmount: 706_941.81,
+  });
+  const preview = buildWorkBudgetInvoicePreview({
+    items: [line],
+    advances: [],
+    selectedAdvanceIds: [],
+  });
+  const notesKept = resolveWorkBudgetInvoiceNotesForDocument(invDoc, preview);
+  assert.equal(notesKept, "Ruční poznámka na faktuře.");
+
+  const preview2 = buildInvoiceFromBudgetAndAdvances({
+    items: [{ ...line, amountGross: 5_000_000, amountNet: 4_132_231, vatAmount: 867_769 }],
+    advances: [],
+    selectedAdvanceIds: [],
+    regenerateInvoiceId: "inv-x",
+  });
+  assert.ok(preview2.grossTotal > 4_000_000);
+  const headerAfter = readWorkBudgetInvoiceHeaderFromDocument(invDoc);
+  assert.equal(headerAfter.dueDate, "2026-10-01");
+  assert.equal(headerAfter.taxSupplyDate, "2026-09-20");
 }
 
 console.log("test-work-budget-financial-logic: OK");

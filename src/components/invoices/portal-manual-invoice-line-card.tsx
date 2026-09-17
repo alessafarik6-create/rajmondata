@@ -39,6 +39,7 @@ type Props = {
   onChange: (patch: Partial<PortalManualFormItem>) => void;
   onRemove: () => void;
   canRemove: boolean;
+  readOnly?: boolean;
 };
 
 export function PortalManualInvoiceLineCard({
@@ -47,6 +48,7 @@ export function PortalManualInvoiceLineCard({
   onChange,
   onRemove,
   canRemove,
+  readOnly = false,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -73,7 +75,10 @@ export function PortalManualInvoiceLineCard({
   };
 
   return (
-    <div className="rounded-lg border border-border bg-background p-4 shadow-sm space-y-3">
+    <fieldset
+      disabled={readOnly}
+      className="rounded-lg border border-border bg-background p-4 shadow-sm space-y-3 disabled:opacity-90"
+    >
       <div className="flex items-start gap-3">
         {item.imageUrl ? (
           <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md border border-border bg-muted">
@@ -225,6 +230,6 @@ export function PortalManualInvoiceLineCard({
       {item.inventoryItemId ? (
         <p className="text-[11px] text-muted-foreground">Vazba na sklad: {item.inventoryItemId}</p>
       ) : null}
-    </div>
+    </fieldset>
   );
 }

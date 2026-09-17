@@ -410,6 +410,8 @@ export type BuildPortalManualInvoiceHtmlParams = {
   legacyCompanyBankLine?: string | null;
   /** Odečet záloh — QR a „K úhradě“ použijí amountDue z vypořádání */
   advanceSettlement?: InvoiceAdvanceSettlement | null;
+  /** Ručně uložený VS (jinak z čísla faktury) */
+  overrideVariableSymbol?: string | null;
 };
 
 export function buildPortalManualInvoiceHtml(params: BuildPortalManualInvoiceHtmlParams): {
@@ -449,10 +451,13 @@ export function buildPortalManualInvoiceHtml(params: BuildPortalManualInvoiceHtm
     ico: params.supplierIco,
     dic: params.supplierDic,
   });
-  const vs = resolveInvoiceVariableSymbol({
-    contractNumber: null,
-    invoiceNumber: params.invoiceNumber,
-  });
+  const vsOverride = trim(params.overrideVariableSymbol);
+  const vs =
+    vsOverride ||
+    resolveInvoiceVariableSymbol({
+      contractNumber: null,
+      invoiceNumber: params.invoiceNumber,
+    });
   const bankSnap = resolvePaymentAccount({
     bankAccounts: params.orgBankAccounts ?? [],
     overrideBankAccountId: params.overrideBankAccountId ?? null,

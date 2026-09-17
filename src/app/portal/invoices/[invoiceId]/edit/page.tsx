@@ -39,6 +39,7 @@ import { normalizeVatRate } from "@/lib/vat-calculations";
 import { useToast } from "@/hooks/use-toast";
 import { PORTAL_MANUAL_INVOICE_TYPE } from "@/lib/portal-manual-invoice";
 import { PortalManualInvoiceForm } from "@/components/invoices/portal-manual-invoice-form";
+import { canManagePortalInvoices } from "@/lib/portal-invoice-permissions";
 
 const VAT_OPTIONS = [0, 12, 21] as const;
 
@@ -400,6 +401,20 @@ export default function EditAdvanceInvoicePage() {
   }
 
   const invType = String((invoice as { type?: string }).type ?? "");
+  const userRole = String((profile as { role?: string } | null | undefined)?.role ?? "employee");
+  if (!canManagePortalInvoices(userRole)) {
+    return (
+      <Alert className="max-w-xl">
+        <AlertTitle>Bez oprávnění</AlertTitle>
+        <AlertDescription>
+          Úpravu faktury mohou provádět pouze role s oprávněním k fakturaci.{" "}
+          <Link href={`/portal/invoices/${invoiceId}`} className="underline">
+            Zpět na náhled
+          </Link>
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   if (invType === PORTAL_MANUAL_INVOICE_TYPE && user && firestore && companyId && invoiceId) {
     return (

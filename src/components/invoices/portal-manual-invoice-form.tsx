@@ -55,12 +55,15 @@ import {
   buildRecipientAddressMultiline,
 } from "@/lib/portal-manual-invoice";
 import { syncPortalInvoiceToDocuments } from "@/lib/portal-invoice-documents-sync";
+import { logActivitySafe } from "@/lib/activity-log";
+import { buildWorkBudgetAdvanceSettlementFromInvoiceDoc } from "@/lib/work-budget-invoice-settlement";
+import { roundMoney2 } from "@/lib/vat-calculations";
 import { PortalManualInvoiceLineCard } from "@/components/invoices/portal-manual-invoice-line-card";
 import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice-preview-dialog";
 import { PortalInvoiceSendDialog } from "@/components/invoices/portal-invoice-send-dialog";
 import type { InventoryItemRow } from "@/lib/inventory-types";
 import type { PortalInvoiceInventoryPick } from "@/components/invoices/portal-manual-invoice-line-card";
-import { VAT_RATE_OPTIONS } from "@/lib/vat-calculations";
+import { normalizeVatRate, VAT_RATE_OPTIONS } from "@/lib/vat-calculations";
 
 type Props = {
   firestore: Firestore;
@@ -108,7 +111,13 @@ export function PortalManualInvoiceForm({
   });
   const [taxSupplyDate, setTaxSupplyDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [notes, setNotes] = useState("");
+  const [variableSymbol, setVariableSymbol] = useState("");
   const [bankAccountId, setBankAccountId] = useState<string>("");
+
+  const isWorkBudgetInvoice =
+    mode === "edit" &&
+    (initialInvoice as { workBudgetSource?: boolean } | null | undefined)?.workBudgetSource ===
+      true;
 
   const { data: customersRaw } = useCollection(
     useMemoFirebase(
@@ -225,6 +234,7 @@ export function PortalManualInvoiceForm({
           : new Date().toISOString().split("T")[0]
     );
     setNotes(String(inv.notes ?? ""));
+    setVariableSymbol(String(inv.variableSymbol ?? ""));
     setJobId(typeof inv.jobId === "string" ? inv.jobId : "");
     setCustomerId(typeof inv.customerId === "string" ? inv.customerId : "");
     setBankAccountId(String(inv.bankAccountId ?? ""));
@@ -341,29 +351,52 @@ export function PortalManualInvoiceForm({
 
   const invoiceTotals = useMemo(() => computePortalManualInvoiceTotals(items), [items]);
 
+  const workBudgetStoredTotals = useMemo(() => {
+    if (!isWorkBudgetInvoice || !initialInvoice) return null;
+    const inv = initialInvoice as Record<string, unknown>;
+    return {
+      amountNet: roundMoney2(Number(inv.amountNet) || 0),
+      vatAmount: roundMoney2(Number(inv.vatAmount) || 0),
+      amountGross: roundMoney2(Number(inv.amountGross) || 0),
+      subtotalGross: roundMoney2(Number(inv.workBudgetSubtotalGross) || 0),
+      advanceDeduction: roundMoney2(Number(inv.workBudgetAdvanceDeductionGross) || 0),
+    };
+  }, [isWorkBudgetInvoice, initialInvoice]);
+
   const profileDisplayName = useMemo(() => {
     const c = company as { displayName?: string } | null;
     return String(c?.displayName ?? user?.email ?? "").trim() || "Uživatel";
   }, [company, user?.email]);
 
-  const buildHtmlParams = (invoiceNumberStr: string) => ({
-    invoiceNumber: invoiceNumberStr,
-    issueDate,
-    dueDate,
-    taxSupplyDate,
-    jobName: jobDisplayName,
-    notes: notes || null,
-    recipient,
-    supplierName,
-    supplierAddressLines,
-    supplierIco,
-    supplierDic,
-    logoUrl,
-    items,
-    orgBankAccounts,
-    overrideBankAccountId: bankAccountId.trim() || null,
-    legacyCompanyBankLine: legacyCompanyBank,
-  });
+  const buildHtmlParams = (invoiceNumberStr: string) => {
+    const advanceSettlement =
+      isWorkBudgetInvoice && initialInvoice
+        ? buildWorkBudgetAdvanceSettlementFromInvoiceDoc(
+            initialInvoice as Record<string, unknown>,
+            items
+          )
+        : null;
+    return {
+      invoiceNumber: invoiceNumberStr,
+      issueDate,
+      dueDate,
+      taxSupplyDate,
+      jobName: jobDisplayName,
+      notes: notes || null,
+      recipient,
+      supplierName,
+      supplierAddressLines,
+      supplierIco,
+      supplierDic,
+      logoUrl,
+      items,
+      orgBankAccounts,
+      overrideBankAccountId: bankAccountId.trim() || null,
+      legacyCompanyBankLine: legacyCompanyBank,
+      advanceSettlement,
+      overrideVariableSymbol: variableSymbol.trim() || null,
+    };
+  };
 
   const openPreview = () => {
     const err = validateInvoiceRecipientSnapshot(
@@ -425,7 +458,25 @@ export function PortalManualInvoiceForm({
       return;
     }
 
-    const { html, amountNet, vatAmount, amountGross, variableSymbol, vatBreakdown } = built;
+    let { html, amountNet, vatAmount, amountGross, variableSymbol: vsResolved, vatBreakdown } =
+      built;
+    if (isWorkBudgetInvoice && workBudgetStoredTotals) {
+      amountNet = workBudgetStoredTotals.amountNet;
+      vatAmount = workBudgetStoredTotals.vatAmount;
+      amountGross = workBudgetStoredTotals.amountGross;
+      const rawBreakdown = (initialInvoice as { vatBreakdown?: unknown })?.vatBreakdown;
+      if (Array.isArray(rawBreakdown) && rawBreakdown.length > 0) {
+        vatBreakdown = rawBreakdown.map((row) => {
+          const r = row as { rate?: unknown; base?: unknown; vat?: unknown };
+          return {
+            rate: normalizeVatRate(Number(r.rate) || 0),
+            base: roundMoney2(Number(r.base) || 0),
+            vat: roundMoney2(Number(r.vat) || 0),
+          };
+        });
+      }
+    }
+    const variableSymbolFinal = variableSymbol.trim() || vsResolved;
     const bankSnap = resolvePaymentAccount({
       bankAccounts: orgBankAccounts,
       overrideBankAccountId: bankAccountId.trim() || null,
@@ -472,7 +523,7 @@ export function PortalManualInvoiceForm({
       vatBreakdown: vatBreakdown.map((b) => ({ rate: b.rate, base: b.base, vat: b.vat })),
       paymentStatus: (initialInvoice as { paymentStatus?: string })?.paymentStatus ?? "unpaid",
       requiresPayment: true,
-      variableSymbol,
+      variableSymbol: variableSymbolFinal,
       pdfHtml: html,
       issueDate,
       dueDate,
@@ -488,7 +539,7 @@ export function PortalManualInvoiceForm({
       iban: bankSnap.iban,
       swift: bankSnap.swift,
       ...((initialInvoice as { workBudgetSource?: boolean })?.workBudgetSource === true
-        ? { workBudgetLinesPristine: false }
+        ? { workBudgetHeaderManual: true }
         : {}),
     }) as Record<string, unknown>;
 
@@ -497,6 +548,21 @@ export function PortalManualInvoiceForm({
         doc(firestore, "companies", companyId, "invoices", invoiceId),
         basePayload as UpdateData<DocumentData>
       );
+      if (isWorkBudgetInvoice && user) {
+        void logActivitySafe(firestore, companyId, user, null, {
+          actionType: "invoice_updated",
+          actionLabel: `Konečná faktura ${invoiceNumberStr} byla upravena`,
+          entityType: "invoice",
+          entityId: invoiceId,
+          entityName: invoiceNumberStr,
+          sourceModule: "invoices",
+          route: `/portal/invoices/${invoiceId}/edit`,
+          metadata: {
+            workBudgetSource: true,
+            fields: ["issueDate", "dueDate", "taxSupplyDate", "notes", "recipient", "bank", "variableSymbol"],
+          },
+        });
+      }
       const linkedDocumentId =
         typeof (initialInvoice as { linkedDocumentId?: string })?.linkedDocumentId === "string"
           ? String((initialInvoice as { linkedDocumentId?: string }).linkedDocumentId)
@@ -843,6 +909,15 @@ export function PortalManualInvoiceForm({
             <Input type="date" className="bg-background" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
           </div>
           <div className="space-y-2">
+            <Label>Variabilní symbol</Label>
+            <Input
+              className="bg-background"
+              value={variableSymbol}
+              onChange={(e) => setVariableSymbol(e.target.value.replace(/\D/g, "").slice(0, 10))}
+              placeholder="Volitelné — jinak z čísla faktury"
+            />
+          </div>
+          <div className="space-y-2">
             <Label>Bankovní účet (pro QR)</Label>
             <Select
               value={bankAccountId || "__default__"}
@@ -886,14 +961,24 @@ export function PortalManualInvoiceForm({
       <Card className="bg-surface border-border">
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Položky faktury</CardTitle>
-          <Button type="button" variant="outline" size="sm" onClick={addItem} className="gap-2">
-            <Plus className="h-4 w-4" /> Přidat řádek
-          </Button>
+          {!isWorkBudgetInvoice ? (
+            <Button type="button" variant="outline" size="sm" onClick={addItem} className="gap-2">
+              <Plus className="h-4 w-4" /> Přidat řádek
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-xs text-muted-foreground">
-            U každé položky zvolte, zda je cena bez DPH nebo včetně DPH, a sazbu 0 / 12 / 21 %.
-          </p>
+          {isWorkBudgetInvoice ? (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+              Faktura vznikla z položkového rozpočtu zakázky. Položky a částky upravte akcí{" "}
+              <strong>Aktualizovat podle rozpočtu</strong> v detailu zakázky. Zde lze měnit hlavičku,
+              odběratele, data a poznámku.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              U každé položky zvolte, zda je cena bez DPH nebo včetně DPH, a sazbu 0 / 12 / 21 %.
+            </p>
+          )}
           <div className="space-y-4">
             {items.map((item) => (
               <PortalManualInvoiceLineCard
@@ -902,33 +987,55 @@ export function PortalManualInvoiceForm({
                 inventoryItems={inventoryItems}
                 onChange={(patch) => updateItem(item.id, patch)}
                 onRemove={() => removeItem(item.id)}
-                canRemove={items.length > 1}
+                canRemove={!isWorkBudgetInvoice && items.length > 1}
+                readOnly={isWorkBudgetInvoice}
               />
             ))}
           </div>
         </CardContent>
         <Separator />
         <CardFooter className="flex flex-col items-stretch gap-2 py-6 sm:items-end">
-          <p className="text-sm text-muted-foreground w-full sm:text-right">
-            Celkem bez DPH: {formatPortalInvoiceMoney(invoiceTotals.amountNet)}
-          </p>
-          {VAT_RATE_OPTIONS.map((rate) => {
-            const row = invoiceTotals.vatBreakdown.find((b) => b.rate === rate);
-            if (!row || (row.base <= 0 && row.vat <= 0)) return null;
-            return (
-              <p key={rate} className="text-xs text-muted-foreground w-full sm:text-right">
-                {rate === 0
-                  ? `Základ DPH 0 %: ${formatPortalInvoiceMoney(row.base)}`
-                  : `DPH ${rate} %: ${formatPortalInvoiceMoney(row.vat)} (základ ${formatPortalInvoiceMoney(row.base)})`}
+          {isWorkBudgetInvoice && workBudgetStoredTotals ? (
+            <>
+              {workBudgetStoredTotals.subtotalGross > 0 ? (
+                <p className="text-sm text-muted-foreground w-full sm:text-right">
+                  Mezisoučet položek s DPH:{" "}
+                  {formatPortalInvoiceMoney(workBudgetStoredTotals.subtotalGross)}
+                </p>
+              ) : null}
+              {workBudgetStoredTotals.advanceDeduction > 0 ? (
+                <p className="text-sm text-orange-800 w-full sm:text-right">
+                  Započtené zálohy: −{formatPortalInvoiceMoney(workBudgetStoredTotals.advanceDeduction)}
+                </p>
+              ) : null}
+              <p className="flex items-center gap-2 text-2xl font-bold text-primary w-full sm:justify-end">
+                K úhradě: {formatPortalInvoiceMoney(workBudgetStoredTotals.amountGross)}
               </p>
-            );
-          })}
-          <p className="text-sm font-medium w-full sm:text-right">
-            Celkem DPH: {formatPortalInvoiceMoney(invoiceTotals.vatAmount)}
-          </p>
-          <p className="flex items-center gap-2 text-2xl font-bold text-primary w-full sm:justify-end">
-            {formatPortalInvoiceMoney(invoiceTotals.amountGross)}
-          </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground w-full sm:text-right">
+                Celkem bez DPH: {formatPortalInvoiceMoney(invoiceTotals.amountNet)}
+              </p>
+              {VAT_RATE_OPTIONS.map((rate) => {
+                const row = invoiceTotals.vatBreakdown.find((b) => b.rate === rate);
+                if (!row || (row.base <= 0 && row.vat <= 0)) return null;
+                return (
+                  <p key={rate} className="text-xs text-muted-foreground w-full sm:text-right">
+                    {rate === 0
+                      ? `Základ DPH 0 %: ${formatPortalInvoiceMoney(row.base)}`
+                      : `DPH ${rate} %: ${formatPortalInvoiceMoney(row.vat)} (základ ${formatPortalInvoiceMoney(row.base)})`}
+                  </p>
+                );
+              })}
+              <p className="text-sm font-medium w-full sm:text-right">
+                Celkem DPH: {formatPortalInvoiceMoney(invoiceTotals.vatAmount)}
+              </p>
+              <p className="flex items-center gap-2 text-2xl font-bold text-primary w-full sm:justify-end">
+                {formatPortalInvoiceMoney(invoiceTotals.amountGross)}
+              </p>
+            </>
+          )}
         </CardFooter>
       </Card>
 
