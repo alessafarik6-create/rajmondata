@@ -11,6 +11,7 @@ import {
   sanitizeRegisterImages,
 } from "@/lib/platform-seo-sanitize";
 import { ensureAllPlatformData } from "@/lib/superadmin-platform-seed";
+import { sanitizePublicPageSeo } from "@/lib/platform-seo-public-pages-sanitize";
 
 export async function GET() {
   const session = await getSessionFromCookie();
@@ -85,6 +86,7 @@ export async function PUT(request: NextRequest) {
     if ("registerVideo" in body) patch.registerVideo = sanitizePromoVideo(body.registerVideo);
     if ("loginImages" in body) patch.loginImages = sanitizeLoginImages(body.loginImages);
     if ("loginVideo" in body) patch.loginVideo = sanitizePromoVideo(body.loginVideo);
+    if ("publicPageSeo" in body) patch.publicPageSeo = sanitizePublicPageSeo(body.publicPageSeo);
 
     await db.collection(PLATFORM_SEO_COLLECTION).doc(PLATFORM_SEO_DOC).set(patch, { merge: true });
     console.info("[Platform]", "SEO settings updated", { by: session.username });

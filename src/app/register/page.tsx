@@ -40,6 +40,8 @@ import {
   lookupCzechCompanyByIco,
   type CompanyLookupResult,
 } from '@/lib/company-lookup-api';
+import { Checkbox } from '@/components/ui/checkbox';
+import { LEGAL_PRIVACY, LEGAL_TERMS } from '@/lib/marketing/legal-versions';
 
 /** Jednotná normalizace e-mailu pro Firebase (registrace i přihlášení). */
 function normalizeEmail(email: string): string {
@@ -80,6 +82,9 @@ export default function RegisterPage() {
   const [icoLookupLoading, setIcoLookupLoading] = useState(false);
   const [icoLookupError, setIcoLookupError] = useState<string | null>(null);
   const [icoLookupResults, setIcoLookupResults] = useState<CompanyLookupResult[]>([]);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [acceptedPrivacy, setAcceptedPrivacy] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
 
   const [formData, setFormData] = useState({
     companyName: '',
@@ -169,6 +174,16 @@ export default function RegisterPage() {
       toast({ variant: "destructive", title: "Načítání", description: "Firebase se ještě načítá. Zkuste to za chvíli." });
       return;
     }
+    if (!acceptedTerms || !acceptedPrivacy) {
+      toast({
+        variant: 'destructive',
+        title: 'Souhlas s podmínkami',
+        description:
+          'Pro registraci je nutné potvrdit seznámení s Obchodními podmínkami a Zásadami ochrany osobních údajů.',
+      });
+      return;
+    }
+
     setLoading(true);
 
     /** Po úspěšném createUserWithEmailAndPassword – pro případný rollback při chybě Firestore / profilu. */
@@ -270,6 +285,20 @@ export default function RegisterPage() {
         ...platformDenorm,
         onboardingCompleted: false,
         onboardingStep: 0,
+        platformLegalAcceptance: {
+          terms: {
+            docSlug: LEGAL_TERMS.slug,
+            version: LEGAL_TERMS.version,
+            effectiveDate: LEGAL_TERMS.effectiveDate,
+          },
+          privacy: {
+            docSlug: LEGAL_PRIVACY.slug,
+            version: LEGAL_PRIVACY.version,
+            effectiveDate: LEGAL_PRIVACY.effectiveDate,
+          },
+          marketingConsent: marketingConsent,
+          acceptedAt: serverTimestamp(),
+        },
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -298,6 +327,12 @@ export default function RegisterPage() {
           role: "owner",
           globalRoles: [],
           language: "cs",
+          platformLegalAcceptance: {
+            termsVersion: LEGAL_TERMS.version,
+            privacyVersion: LEGAL_PRIVACY.version,
+            marketingConsent: marketingConsent,
+            acceptedAt: serverTimestamp(),
+          },
           createdAt: serverTimestamp(),
         },
         { merge: true }
@@ -643,12 +678,58 @@ export default function RegisterPage() {
                 />
               </div>
 
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-700">
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="acceptTerms"
+                    checked={acceptedTerms}
+                    onCheckedChange={(v) => setAcceptedTerms(v === true)}
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="acceptTerms" className="font-normal leading-snug">
+                    Registrací potvrzujete, že jste se seznámili s{" "}
+                    <Link href="/obchodni-podminky" className="text-orange-600 underline" target="_blank">
+                      Obchodními podmínkami
+                    </Link>{" "}
+                    (verze {LEGAL_TERMS.version}).
+                  </Label>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="acceptPrivacy"
+                    checked={acceptedPrivacy}
+                    onCheckedChange={(v) => setAcceptedPrivacy(v === true)}
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="acceptPrivacy" className="font-normal leading-snug">
+                    Potvrzujete seznámení se{" "}
+                    <Link href="/ochrana-osobnich-udaju" className="text-orange-600 underline" target="_blank">
+                      Zásadami ochrany osobních údajů
+                    </Link>
+                    .
+                  </Label>
+                </div>
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    id="marketingConsent"
+                    checked={marketingConsent}
+                    onCheckedChange={(v) => setMarketingConsent(v === true)}
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="marketingConsent" className="font-normal leading-snug text-slate-600">
+                    Volitelně: souhlas se zasláním novinek a tipů k produktu (lze kdykoli odvolat).
+                  </Label>
+                </div>
+              </div>
+
               <Button
                 type="submit"
                 className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20"
                 disabled={
                   // On SSR + very first client render, keep disabled stable to avoid hydration mismatch.
-                  !hasMounted ? false : Boolean(loading || !areServicesAvailable)
+                  !hasMounted
+                    ? false
+                    : Boolean(loading || !areServicesAvailable || !acceptedTerms || !acceptedPrivacy)
                 }
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : "Vytvořit firemní portál"}

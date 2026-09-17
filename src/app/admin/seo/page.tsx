@@ -10,6 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Trash2, ChevronUp, ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { PlatformSeoHeroImage, PlatformSeoPromoVideo } from "@/lib/platform-seo-sanitize";
+import { AdminPublicPageSeoFields } from "@/components/admin/admin-public-page-seo-fields";
+import type { SanitizedPublicPageSeo } from "@/lib/platform-seo-public-pages-sanitize";
 
 const HERO_ACCEPT = "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp";
 const PROMO_ACCEPT = "video/mp4,video/webm,.mp4,.webm";
@@ -86,6 +88,8 @@ export default function AdminSeoPage() {
 
   const [loginVideo, setLoginVideo] = useState<PlatformSeoPromoVideo | null>(null);
   const [loginEmbedUrl, setLoginEmbedUrl] = useState("");
+  const [publicPageSeo, setPublicPageSeo] = useState<SanitizedPublicPageSeo>({});
+  const [publicPageSeoSlug, setPublicPageSeoSlug] = useState("funkce");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -140,6 +144,10 @@ export default function AdminSeoPage() {
       const l = parseVideo(data.loginVideo);
       setLoginVideo(l.video);
       setLoginEmbedUrl(l.embed);
+
+      if (data.publicPageSeo && typeof data.publicPageSeo === "object") {
+        setPublicPageSeo(data.publicPageSeo as SanitizedPublicPageSeo);
+      }
     } finally {
       setLoading(false);
     }
@@ -287,6 +295,7 @@ export default function AdminSeoPage() {
           promoVideo,
           registerVideo,
           loginVideo,
+          publicPageSeo,
         }),
       });
       const j = await res.json().catch(() => ({}));
@@ -506,9 +515,20 @@ export default function AdminSeoPage() {
                 />
               </div>
               <div className="space-y-1">
-                <Label>Canonical URL</Label>
-                <Input value={canonicalUrl} onChange={(e) => setCanonicalUrl(e.target.value)} className="bg-white" />
+                <Label>Canonical URL (homepage)</Label>
+                <Input
+                  value={canonicalUrl}
+                  onChange={(e) => setCanonicalUrl(e.target.value)}
+                  className="bg-white"
+                  placeholder="https://rajmondata.cz/"
+                />
               </div>
+              <AdminPublicPageSeoFields
+                selectedSlug={publicPageSeoSlug}
+                onSelectSlug={setPublicPageSeoSlug}
+                value={publicPageSeo}
+                onChange={setPublicPageSeo}
+              />
               <div className="space-y-1">
                 <Label>Úvodní odstavec (lead)</Label>
                 <Textarea

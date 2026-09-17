@@ -39,30 +39,37 @@ function BulletList({ items }: { items: string[] }) {
   );
 }
 
-function WorkflowSteps() {
-  const steps = [
-    "Poptávka",
-    "Nabídka",
-    "Zákazník",
-    "Zaměření",
-    "Zakázka",
-    "Úkoly",
-    "Dokumentace",
-    "Výroba / realizace",
-    "Fakturace",
-    "Předání",
+function WorkflowPipeline() {
+  const steps: { title: string; detail: string }[] = [
+    { title: "Poptávka", detail: "Lead z webu nebo ručně — kontakt, požadavek, stav a přílohy." },
+    { title: "AI odpověď / komunikace", detail: "Rychlá reakce z portálu, historie u poptávky." },
+    { title: "Nabídka", detail: "Položky, ceny, PDF; AI může připravit návrh k vaší kontrole." },
+    { title: "Zákazník", detail: "Karta zákazníka se zakázkami, dokumenty a komunikací." },
+    { title: "Zaměření", detail: "Rozměry, fotografie a poznámky z terénu (mobil/tablet)." },
+    { title: "Zakázka", detail: "Termíny, úkoly, pracovníci a celý průběh realizace." },
+    { title: "Smlouva", detail: "Dokumenty u zakázky; AI návrh smlouvy nebo dodatku." },
+    { title: "Výroba / realizace", detail: "Výrobní kroky, materiál a montáž na stavbě." },
+    { title: "Vícepráce", detail: "Evidence změn a dodatečných prací v rozpočtu." },
+    { title: "Fakturace", detail: "Zálohy, faktury, DPH a PDF — návaznost na rozpočet." },
+    { title: "Úhrada", detail: "Přehled dokladů a zbývající částky u zakázky." },
+    { title: "Reporting", detail: "Manažerské reporty a finance v portálu." },
   ];
   return (
-    <ol className="flex flex-wrap gap-2 text-xs sm:text-sm">
-      {steps.map((s, i) => (
-        <li key={s} className="flex items-center gap-2">
-          <span className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1 font-medium text-slate-100">
-            {s}
-          </span>
-          {i < steps.length - 1 ? <span className="text-slate-500" aria-hidden="true">→</span> : null}
-        </li>
-      ))}
-    </ol>
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold text-slate-100">Od první poptávky až po zaplacenou fakturu</h3>
+      <ol className="relative space-y-3 border-l border-primary/30 pl-4 sm:pl-6">
+        {steps.map((s) => (
+          <li key={s.title} className="relative">
+            <span
+              className="absolute -left-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full bg-primary sm:-left-[1.65rem]"
+              aria-hidden="true"
+            />
+            <p className="font-medium text-slate-100">{s.title}</p>
+            <p className="text-sm text-slate-400">{s.detail}</p>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 
@@ -129,7 +136,7 @@ export function PublicLandingSeoSections() {
           první poptávky po fakturaci. Evidence zakázek, zákazníků a dokumentů zůstává na jednom místě,
           bez přepisování mezi tabulkami a e-maily.
         </p>
-        <WorkflowSteps />
+        <WorkflowPipeline />
         <p className="pt-2">V jedné zakázce máte mimo jiné:</p>
         <BulletList
           items={[
@@ -325,7 +332,26 @@ export function PublicLandingSeoSections() {
         />
       </Section>
 
-      <Section id="integrace" title="RAJMONDATA se přizpůsobí vašemu workflow" altBg>
+      <Section id="schuzky-katalogy" title="Schůzky, katalogy produktů a reporty">
+        <p>
+          Plánované schůzky s vazbou na zákazníka nebo zakázku, produktové katalogy pro tvorbu nabídek a
+          manažerské reporty nad daty organizace doplňují každodenní práci obchodníků i vedení.
+        </p>
+        <p>
+          Finanční přehledy v portálu pomáhají sledovat cashflow firmy — v rozsahu modulů aktivních ve vaší
+          licenci.
+        </p>
+      </Section>
+
+      <Section id="zalohovani" title="Zálohování dat organizace" altBg>
+        <p>
+          V nastavení firmy lze využít funkce zálohování dat organizace (tam, kde je modul v produkci
+          aktivní). Zálohy doplňují standardní provoz cloudové platformy — doporučujeme mít i vlastní
+          exportní postupy pro kritická data.
+        </p>
+      </Section>
+
+      <Section id="integrace" title="RAJMONDATA se přizpůsobí vašemu workflow">
         <p>
           Napojení poptávkových formulářů z webu, firemní e-mailové workflow, externí weby, AI služby a
           dokumenty. Systém lze dále napojovat na firemní procesy a externí služby podle konkrétní

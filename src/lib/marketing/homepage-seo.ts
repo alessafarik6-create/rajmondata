@@ -1,16 +1,16 @@
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
 export const HOME_SEO_TITLE =
-  "RAJMONDATA | Firemní portál pro zakázky, zaměstnance a AI řízení firmy";
+  "RAJMONDATA | Řízení zakázek, docházka, fakturace a AI pro firmy";
 
 export const HOME_SEO_DESCRIPTION =
-  "RAJMONDATA je firemní portál pro řízení zakázek, poptávek, nabídek, zaměstnanců, docházky, dokumentů, fakturace a výroby. AI pomáhá s nabídkami, smlouvami, dodatky i vyhledáváním v portálu.";
+  "RAJMONDATA spojuje zakázky, poptávky, nabídky, fakturaci, docházku, zaměstnance, dokumenty a firemní komunikaci. AI pomáhá s nabídkami, smlouvami a dodatky.";
 
 export const HOME_H1 =
   "Firemní portál pro řízení zakázek, zaměstnanců a celé firmy s podporou AI";
 
 export const HOME_HERO_LEAD =
-  "RAJMONDATA propojuje poptávky, zákazníky, zakázky, nabídky, dokumenty, fakturaci, zaměstnance, výrobu a komunikaci do jednoho systému.";
+  "RAJMONDATA spojuje poptávky, zákazníky, nabídky, zakázky, zaměření, dokumenty, smlouvy, fakturaci, docházku, zaměstnance, výrobu, sklad a komunikaci do jednoho systému.";
 
 export const HOME_HERO_AI =
   "AI pomáhá rychle vytvářet nabídky, smlouvy a dodatky, hledat informace a orientovat se v celé firmě.";
@@ -85,6 +85,15 @@ export function buildHomeJsonLd(siteUrl: string) {
   const appId = `${siteUrl}/#software`;
 
   return [
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "@id": `${siteUrl}/#website`,
+      name: PLATFORM_NAME,
+      url: siteUrl,
+      description: HOME_SEO_DESCRIPTION,
+      publisher: { "@id": orgId },
+    },
     {
       "@context": "https://schema.org",
       "@type": "Organization",
