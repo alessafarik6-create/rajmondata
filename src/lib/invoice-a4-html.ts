@@ -84,6 +84,21 @@ export type InvoiceLineRow = {
   lineGross: number;
 };
 
+/** Odečet záloh na vyúčtovací / rozpočtové faktuře — zobrazení v patičce PDF. */
+export type InvoiceAdvanceSettlement = {
+  linesGrossTotal: number;
+  linesAmountNet: number;
+  linesVatAmount: number;
+  linesVatBreakdown: Array<{ rate: number; base: number; vat: number }>;
+  advances: Array<{ label: string; amountGross: number }>;
+  advanceTotalGross: number;
+  amountDueGross: number;
+  amountDueNet: number;
+  amountDueVat: number;
+  /** Přeplatek, pokud zálohy převýší fakturovanou částku */
+  overpaymentGross?: number;
+};
+
 function fmtKc(n: number): string {
   return `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
 }
@@ -129,6 +144,8 @@ export function buildAdvanceInvoiceHtml(params: {
   primaryVatRateLabel?: string;
   /** Rozpis DPH podle sazeb (0 / 12 / 21 %) */
   vatBreakdownByRate?: Array<{ rate: number; base: number; vat: number }>;
+  /** Mezisoučet položek + odečet záloh + částka k úhradě */
+  advanceSettlement?: InvoiceAdvanceSettlement | null;
   note?: string;
   supplierStampUrl?: string | null;
   supplierFooterText?: string | null;
@@ -174,29 +191,74 @@ export function buildAdvanceInvoiceHtml(params: {
     ? `<div class="payment-warn">${escapeHtml(params.paymentQrWarning)}</div>`
     : "";
 
-  const breakdown = Array.isArray(params.vatBreakdownByRate)
-    ? params.vatBreakdownByRate.filter((b) => b.base > 0 || b.vat > 0)
-    : [];
-  const totalsRowsHtml =
-    breakdown.length > 0
-      ? [
-          `<tr><td>Celkem bez DPH</td><td>${fmtKc(params.amountNet)}</td></tr>`,
-          ...breakdown.flatMap((b) => {
-            const rows: string[] = [];
-            if (b.rate === 0) {
+  const settlement = params.advanceSettlement ?? null;
+  const breakdownSource = settlement
+    ? settlement.linesVatBreakdown
+    : Array.isArray(params.vatBreakdownByRate)
+      ? params.vatBreakdownByRate
+      : [];
+  const breakdown = breakdownSource.filter((b) => b.base > 0 || b.vat > 0);
+  const netForBreakdown = settlement ? settlement.linesAmountNet : params.amountNet;
+  const vatForBreakdown = settlement ? settlement.linesVatAmount : params.vatAmount;
+
+  let totalsRowsHtml: string;
+  if (settlement && settlement.advanceTotalGross > 0) {
+    const vatRows =
+      breakdown.length > 0
+        ? [
+            `<tr><td>Celkem bez DPH</td><td>${fmtKc(netForBreakdown)}</td></tr>`,
+            ...breakdown.flatMap((b) => {
+              const rows: string[] = [];
               rows.push(`<tr><td>Základ DPH ${b.rate} %</td><td>${fmtKc(b.base)}</td></tr>`);
-            } else {
-              rows.push(`<tr><td>Základ DPH ${b.rate} %</td><td>${fmtKc(b.base)}</td></tr>`);
-              rows.push(`<tr><td>DPH ${b.rate} %</td><td>${fmtKc(b.vat)}</td></tr>`);
-            }
-            return rows;
-          }),
-          `<tr><td>Celkem DPH</td><td>${fmtKc(params.vatAmount)}</td></tr>`,
-          `<tr class="grand"><td><strong>Celkem k úhradě</strong></td><td>${fmtKc(params.amountGross)}</td></tr>`,
-        ].join("")
-      : `<tr><td>Základ daně celkem</td><td>${fmtKc(params.amountNet)}</td></tr>
+              if (b.rate !== 0) {
+                rows.push(`<tr><td>DPH ${b.rate} %</td><td>${fmtKc(b.vat)}</td></tr>`);
+              }
+              return rows;
+            }),
+            `<tr><td>Celkem DPH</td><td>${fmtKc(vatForBreakdown)}</td></tr>`,
+          ]
+        : [
+            `<tr><td>Základ daně celkem</td><td>${fmtKc(netForBreakdown)}</td></tr>`,
+            `<tr><td>DPH${params.primaryVatRateLabel ? ` (${escapeHtml(params.primaryVatRateLabel)})` : ""}</td><td>${fmtKc(vatForBreakdown)}</td></tr>`,
+          ];
+    const advanceRows = settlement.advances.map(
+      (a) =>
+        `<tr><td>Záloha: ${escapeHtml(a.label)}</td><td>-${fmtKc(a.amountGross)}</td></tr>`
+    );
+    const overpay =
+      settlement.overpaymentGross && settlement.overpaymentGross > 0
+        ? `<tr><td>Přeplatek (zálohy nad fakturovanou částkou)</td><td>${fmtKc(settlement.overpaymentGross)}</td></tr>`
+        : "";
+    totalsRowsHtml = [
+      ...vatRows,
+      `<tr><td><strong>Celkem s DPH</strong></td><td><strong>${fmtKc(settlement.linesGrossTotal)}</strong></td></tr>`,
+      ...advanceRows,
+      `<tr><td>Zálohy celkem</td><td>-${fmtKc(settlement.advanceTotalGross)}</td></tr>`,
+      overpay,
+      `<tr class="grand"><td><strong>K úhradě</strong></td><td><strong>${fmtKc(settlement.amountDueGross)}</strong></td></tr>`,
+    ].join("");
+  } else {
+    totalsRowsHtml =
+      breakdown.length > 0
+        ? [
+            `<tr><td>Celkem bez DPH</td><td>${fmtKc(params.amountNet)}</td></tr>`,
+            ...breakdown.flatMap((b) => {
+              const rows: string[] = [];
+              if (b.rate === 0) {
+                rows.push(`<tr><td>Základ DPH ${b.rate} %</td><td>${fmtKc(b.base)}</td></tr>`);
+              } else {
+                rows.push(`<tr><td>Základ DPH ${b.rate} %</td><td>${fmtKc(b.base)}</td></tr>`);
+                rows.push(`<tr><td>DPH ${b.rate} %</td><td>${fmtKc(b.vat)}</td></tr>`);
+              }
+              return rows;
+            }),
+            `<tr><td>Celkem DPH</td><td>${fmtKc(params.vatAmount)}</td></tr>`,
+            `<tr class="grand"><td><strong>Celkem k úhradě</strong></td><td>${fmtKc(params.amountGross)}</td></tr>`,
+          ].join("")
+        : `<tr><td>Základ daně celkem</td><td>${fmtKc(params.amountNet)}</td></tr>
       <tr><td>DPH${params.primaryVatRateLabel ? ` (${escapeHtml(params.primaryVatRateLabel)})` : ""}</td><td>${fmtKc(params.vatAmount)}</td></tr>
       <tr class="grand"><td><strong>Celkem k úhradě</strong></td><td>${fmtKc(params.amountGross)}</td></tr>`;
+  }
   return `<!DOCTYPE html>
 <html lang="cs">
 <head>

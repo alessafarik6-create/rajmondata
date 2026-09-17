@@ -29,7 +29,10 @@ import {
   parseInvoiceRecipientFromInvoiceDoc,
   parsePortalManualFormItemFromFirestore,
   PORTAL_MANUAL_INVOICE_TYPE,
+  type PortalManualFormItem,
 } from "@/lib/portal-manual-invoice";
+import { roundMoney2 } from "@/lib/vat-calculations";
+import { buildWorkBudgetAdvanceSettlement } from "@/lib/work-budget-invoice-settlement";
 import {
   errorStackFromUnknown,
   serializeUnknownForLog,
@@ -452,6 +455,52 @@ async function loadOrgBankAccountsAdmin(
   });
 }
 
+function workBudgetAdvanceSettlementFromInvoiceDoc(
+  data: Record<string, unknown>,
+  items: PortalManualFormItem[]
+) {
+  if (data.workBudgetSource !== true) return null;
+  const deduction = roundMoney2(Number(data.workBudgetAdvanceDeductionGross) || 0);
+  if (deduction <= 0) return null;
+  const subtotalGross = roundMoney2(
+    Number(data.workBudgetSubtotalGross) || 0
+  );
+  const appliedRaw = Array.isArray(data.workBudgetAdvancesApplied)
+    ? data.workBudgetAdvancesApplied
+    : [];
+  const advancesApplied = appliedRaw
+    .map((row) => {
+      const r = row as Record<string, unknown>;
+      const amountGross = roundMoney2(Number(r.amountGross) || 0);
+      if (amountGross <= 0) return null;
+      return {
+        advanceId: String(r.advanceId ?? "").trim() || "advance",
+        label: String(r.label ?? "Záloha").trim() || "Záloha",
+        amountGross,
+      };
+    })
+    .filter((a): a is NonNullable<typeof a> => a != null);
+  const grossTotal =
+    subtotalGross > 0 ? subtotalGross : roundMoney2(Number(data.amountGross) + deduction);
+  const applied =
+    advancesApplied.length > 0
+      ? advancesApplied
+      : [{ advanceId: "advances", label: "Započtené zálohy", amountGross: deduction }];
+  const rawDeduction = applied.reduce((s, a) => roundMoney2(s + a.amountGross), 0);
+  const overpaymentGross =
+    rawDeduction > grossTotal ? roundMoney2(rawDeduction - grossTotal) : undefined;
+  return buildWorkBudgetAdvanceSettlement({
+    subtotalGross: grossTotal,
+    deductionGross: deduction,
+    amountDueGross: roundMoney2(Number(data.amountGross) || 0),
+    amountDueNet: roundMoney2(Number(data.amountNet) || 0),
+    amountDueVat: roundMoney2(Number(data.vatAmount) || 0),
+    advancesApplied: applied,
+    overpaymentGross,
+    invoiceLines: items,
+  });
+}
+
 async function rebuildPortalManualInvoiceHtmlAdmin(
   db: Firestore,
   companyId: string,
@@ -478,6 +527,7 @@ async function rebuildPortalManualInvoiceHtmlAdmin(
   const legacyBank = trimField(company.bankAccount ?? company.companyBankAccount) || null;
 
   try {
+    const advanceSettlement = workBudgetAdvanceSettlementFromInvoiceDoc(data, items);
     const built = buildPortalManualInvoiceHtml({
       invoiceNumber,
       issueDate,
@@ -496,6 +546,7 @@ async function rebuildPortalManualInvoiceHtmlAdmin(
       orgBankAccounts: bankAccounts,
       overrideBankAccountId: trimField(data.bankAccountId) || null,
       legacyCompanyBankLine: legacyBank,
+      advanceSettlement,
     });
     return built.html;
   } catch {

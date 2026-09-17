@@ -2,8 +2,11 @@
  * Ruční faktura z portálu — položky s DPH po řádcích, vazba na sklad.
  */
 
-import type { InvoiceLineRow } from "@/lib/invoice-a4-html";
-import { buildAdvanceInvoiceHtml } from "@/lib/invoice-a4-html";
+import {
+  buildAdvanceInvoiceHtml,
+  type InvoiceAdvanceSettlement,
+  type InvoiceLineRow,
+} from "@/lib/invoice-a4-html";
 import {
   buildInvoicePaymentQr,
   formatBankBlockPlainLines,
@@ -405,6 +408,8 @@ export type BuildPortalManualInvoiceHtmlParams = {
   orgBankAccounts: OrgBankAccountRow[];
   overrideBankAccountId?: string | null;
   legacyCompanyBankLine?: string | null;
+  /** Odečet záloh — QR a „K úhradě“ použijí amountDue z vypořádání */
+  advanceSettlement?: InvoiceAdvanceSettlement | null;
 };
 
 export function buildPortalManualInvoiceHtml(params: BuildPortalManualInvoiceHtmlParams): {
@@ -416,10 +421,17 @@ export function buildPortalManualInvoiceHtml(params: BuildPortalManualInvoiceHtm
   vatBreakdown: PortalManualVatBreakdown[];
   variableSymbol: string;
 } {
-  const { rows, amountNet, vatAmount, amountGross, vatBreakdown } =
-    computePortalManualInvoiceTotals(params.items);
-  if (rows.length === 0 || amountGross <= 0) {
+  const lineTotals = computePortalManualInvoiceTotals(params.items);
+  const { rows } = lineTotals;
+  let { amountNet, vatAmount, amountGross, vatBreakdown } = lineTotals;
+  if (rows.length === 0 || lineTotals.amountGross <= 0) {
     throw new Error("Přidejte alespoň jednu položku s kladnou částkou.");
+  }
+  const settlement = params.advanceSettlement ?? null;
+  if (settlement && settlement.advanceTotalGross > 0) {
+    amountNet = settlement.amountDueNet;
+    vatAmount = settlement.amountDueVat;
+    amountGross = settlement.amountDueGross;
   }
   const name = recipientDisplayName(params.recipient);
   const addrBlock = buildRecipientAddressMultiline(params.recipient);
@@ -486,7 +498,8 @@ export function buildPortalManualInvoiceHtml(params: BuildPortalManualInvoiceHtm
     vatAmount,
     amountGross,
     primaryVatRateLabel: allSameVat ? `${rows[0].vatRate}` : "smíšené",
-    vatBreakdownByRate: vatBreakdown,
+    vatBreakdownByRate: settlement ? settlement.linesVatBreakdown : vatBreakdown,
+    advanceSettlement: settlement,
     note,
   });
   return { html, rows, amountNet, vatAmount, amountGross, vatBreakdown, variableSymbol: vs };

@@ -33,11 +33,16 @@ import {
 } from "@/lib/work-budget-types";
 import type { JobWorkBudgetAdvanceDoc } from "@/lib/work-budget-advances";
 import {
+  isAdvanceAvailableForInvoice,
+  WORK_BUDGET_ADVANCE_PAYMENT_STATUS,
+} from "@/lib/work-budget-advances";
+import {
   aggregateBudgetItemAmounts,
   applyAdvanceDeductionsToGross,
 } from "@/lib/work-budget-financial-overview";
 import { isNormalBudgetItem } from "@/lib/work-budget-types";
 import { roundMoney2 } from "@/lib/vat-calculations";
+import { buildWorkBudgetAdvanceSettlement } from "@/lib/work-budget-invoice-settlement";
 
 function trim(v: unknown): string {
   return String(v ?? "").trim();
@@ -237,7 +242,52 @@ export type WorkBudgetInvoicePreview = {
   vatAmount: number;
   amountGross: number;
   advancesApplied: Array<{ advanceId: string; label: string; amountGross: number }>;
+  /** Zálohy nad fakturovanou částkou (amountDue = 0) */
+  overpaymentGross?: number;
 };
+
+export type WorkBudgetInvoiceAmounts = {
+  netTotal: number;
+  taxTotal: number;
+  grossTotal: number;
+  appliedAdvanceTotal: number;
+  amountDue: number;
+  amountDueNet: number;
+  amountDueVat: number;
+  advancesApplied: WorkBudgetInvoicePreview["advancesApplied"];
+  billableItems: JobWorkBudgetItemDoc[];
+};
+
+function isAdvanceEligibleForInvoiceDeduction(
+  adv: JobWorkBudgetAdvanceDoc,
+  regenerateInvoiceId: string | null
+): boolean {
+  if (adv.amountGross <= 0) return false;
+  if (adv.includeInFinalInvoice === false) return false;
+  if (adv.paymentStatus === WORK_BUDGET_ADVANCE_PAYMENT_STATUS.UNPAID) return false;
+  if (!isAdvanceAvailableForInvoice(adv, regenerateInvoiceId)) return false;
+  return true;
+}
+
+/** Společný výpočet CREATE + REGENERATE: položky rozpočtu a započtené zálohy. */
+export function buildInvoiceFromBudgetAndAdvances(params: {
+  items: JobWorkBudgetItemDoc[];
+  advances: JobWorkBudgetAdvanceDoc[];
+  selectedAdvanceIds: string[];
+  regenerateInvoiceId?: string | null;
+}): WorkBudgetInvoiceAmounts & WorkBudgetInvoicePreview {
+  const preview = buildWorkBudgetInvoicePreview(params);
+  return {
+    ...preview,
+    netTotal: preview.subtotalNet,
+    taxTotal: preview.subtotalVat,
+    grossTotal: preview.subtotalGross,
+    appliedAdvanceTotal: preview.deductionGross,
+    amountDue: preview.amountGross,
+    amountDueNet: preview.amountNet,
+    amountDueVat: preview.vatAmount,
+  };
+}
 
 export function buildWorkBudgetInvoicePreview(params: {
   items: JobWorkBudgetItemDoc[];
@@ -249,15 +299,21 @@ export function buildWorkBudgetInvoicePreview(params: {
   const billable = workBudgetItemsEligibleForInvoice(params.items, reg);
   const normal = aggregateBudgetItemAmounts(billable.filter(isNormalBudgetItem));
   const extraWork = aggregateBudgetItemAmounts(billable.filter(isApprovedExtraWorkItem));
-  let subtotalNet = roundMoney2(normal.net + extraWork.net);
-  let subtotalVat = roundMoney2(normal.vat + extraWork.vat);
-  let subtotalGross = roundMoney2(normal.gross + extraWork.gross);
+  const subtotalNet = roundMoney2(normal.net + extraWork.net);
+  const subtotalVat = roundMoney2(normal.vat + extraWork.vat);
+  const subtotalGross = roundMoney2(normal.gross + extraWork.gross);
 
   const advancesApplied: WorkBudgetInvoicePreview["advancesApplied"] = [];
   let deductionGross = 0;
-  const idSet = new Set(params.selectedAdvanceIds);
+  const idSet = new Set(params.selectedAdvanceIds.filter((id) => String(id).trim()));
+  const seenAdvanceIds = new Set<string>();
   for (const adv of params.advances) {
     if (!idSet.has(adv.id)) continue;
+    if (seenAdvanceIds.has(adv.id)) continue;
+    seenAdvanceIds.add(adv.id);
+    if (!isAdvanceEligibleForInvoiceDeduction(adv, reg)) {
+      throw new Error(`Záloha „${adv.label}“ nelze započítat do faktury.`);
+    }
     if (adv.appliedToInvoiceId && adv.appliedToInvoiceId !== reg) {
       throw new Error(`Záloha „${adv.label}“ už byla započtena jinou fakturou.`);
     }
@@ -269,12 +325,15 @@ export function buildWorkBudgetInvoicePreview(params: {
     });
   }
 
+  const rawDeduction = deductionGross;
   const after = applyAdvanceDeductionsToGross({
     subtotalNet,
     subtotalVat,
     subtotalGross,
     deductionGross,
   });
+  const overpaymentGross =
+    rawDeduction > subtotalGross ? roundMoney2(rawDeduction - subtotalGross) : 0;
 
   return {
     billableItems: billable,
@@ -288,7 +347,22 @@ export function buildWorkBudgetInvoicePreview(params: {
     vatAmount: after.vat,
     amountGross: after.gross,
     advancesApplied,
+    ...(overpaymentGross > 0 ? { overpaymentGross } : {}),
   };
+}
+
+function resolveWorkBudgetSelectedAdvanceIds(params: {
+  selectedAdvanceIds?: string[];
+  regenerateInvoiceId?: string | null;
+  existingAdvanceIds?: string[];
+}): string[] {
+  const explicit = (params.selectedAdvanceIds ?? []).map((id) => String(id).trim()).filter(Boolean);
+  if (explicit.length > 0) return [...new Set(explicit)];
+  const reg = String(params.regenerateInvoiceId ?? "").trim();
+  if (reg && params.existingAdvanceIds?.length) {
+    return [...new Set(params.existingAdvanceIds.map((id) => String(id).trim()).filter(Boolean))];
+  }
+  return [];
 }
 
 type WorkBudgetInvoiceBuildInput = {
@@ -322,6 +396,16 @@ function buildWorkBudgetInvoiceNotes(preview: WorkBudgetInvoicePreview): string 
 function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
   const billable = input.preview.billableItems;
   const invoiceLines = buildInvoiceLinesFromWorkBudgetItems(billable, input.budgetCatalog);
+  const advanceSettlement = buildWorkBudgetAdvanceSettlement({
+    subtotalGross: input.preview.subtotalGross,
+    deductionGross: input.preview.deductionGross,
+    amountDueGross: input.preview.amountGross,
+    amountDueNet: input.preview.amountNet,
+    amountDueVat: input.preview.vatAmount,
+    advancesApplied: input.preview.advancesApplied,
+    overpaymentGross: input.preview.overpaymentGross,
+    invoiceLines,
+  });
   const recipient = invoiceRecipientFromCustomerDoc(input.customerId, input.customer);
   const companyMeta = handoverCompanyPdfMeta(input.companyDoc);
   const c = input.companyDoc ?? {};
@@ -346,22 +430,19 @@ function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
     items: invoiceLines,
     orgBankAccounts: input.orgBankAccounts,
     legacyCompanyBankLine: legacyCompanyBank,
+    advanceSettlement,
   });
 
-  let { html, amountNet, vatAmount, amountGross, variableSymbol, vatBreakdown } = built;
+  const { html, amountNet, vatAmount, amountGross, variableSymbol, vatBreakdown } = built;
   const preview = input.preview;
-  if (preview.deductionGross > 0) {
-    amountNet = preview.amountNet;
-    vatAmount = preview.vatAmount;
-    amountGross = preview.amountGross;
-    if (amountGross > 0 && vatBreakdown.length === 1) {
-      const ratio = preview.subtotalGross > 0 ? preview.amountGross / preview.subtotalGross : 1;
-      vatBreakdown = vatBreakdown.map((b) => ({
-        rate: b.rate,
-        base: roundMoney2(b.base * ratio),
-        vat: roundMoney2(b.vat * ratio),
-      }));
-    }
+  let storedVatBreakdown = vatBreakdown;
+  if (preview.deductionGross > 0 && storedVatBreakdown.length === 1) {
+    const ratio = preview.subtotalGross > 0 ? preview.amountGross / preview.subtotalGross : 1;
+    storedVatBreakdown = storedVatBreakdown.map((b) => ({
+      rate: b.rate,
+      base: roundMoney2(b.base * ratio),
+      vat: roundMoney2(b.vat * ratio),
+    }));
   }
 
   return {
@@ -373,11 +454,12 @@ function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
     vatAmount,
     amountGross,
     variableSymbol,
-    vatBreakdown,
+    vatBreakdown: storedVatBreakdown,
     notes,
     displayName: recipientDisplayName(recipient),
     addrLines: buildRecipientAddressMultiline(recipient),
     itemIds: billable.map((row) => row.id),
+    advancesApplied: preview.advancesApplied,
   };
 }
 
@@ -513,10 +595,13 @@ export async function createInvoiceFromWorkBudgetItems(params: {
   profileDisplayName?: string;
 }): Promise<{ invoiceId: string; invoiceNumber: string; amountGross: number }> {
   const budgetCatalog = params.items;
-  const preview = buildWorkBudgetInvoicePreview({
+  const selectedAdvanceIds = resolveWorkBudgetSelectedAdvanceIds({
+    selectedAdvanceIds: params.selectedAdvanceIds,
+  });
+  const preview = buildInvoiceFromBudgetAndAdvances({
     items: budgetCatalog,
     advances: params.advances ?? [],
-    selectedAdvanceIds: params.selectedAdvanceIds ?? [],
+    selectedAdvanceIds,
   });
   if (preview.billableItems.length === 0) {
     throw new Error("Žádné provedené nevyfakturované položky k fakturaci.");
@@ -592,6 +677,11 @@ export async function createInvoiceFromWorkBudgetItems(params: {
     workBudgetSource: true,
     workBudgetItemIds: bundle.itemIds,
     workBudgetAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
+    workBudgetAdvancesApplied: preview.advancesApplied.map((a) => ({
+      advanceId: a.advanceId,
+      label: a.label,
+      amountGross: a.amountGross,
+    })),
     workBudgetSubtotalGross: preview.subtotalGross,
     workBudgetAdvanceDeductionGross: preview.deductionGross,
     workBudgetLinesPristine: true,
@@ -694,10 +784,18 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
   const budgetCatalog =
     serverBudgetItems.length > 0 ? serverBudgetItems : params.items;
 
-  const preview = buildWorkBudgetInvoicePreview({
+  const previousAdvanceIds = Array.isArray(inv.workBudgetAdvanceIds)
+    ? (inv.workBudgetAdvanceIds as string[])
+    : [];
+  const selectedAdvanceIds = resolveWorkBudgetSelectedAdvanceIds({
+    selectedAdvanceIds: params.selectedAdvanceIds,
+    regenerateInvoiceId: params.invoiceId,
+    existingAdvanceIds: previousAdvanceIds,
+  });
+  const preview = buildInvoiceFromBudgetAndAdvances({
     items: budgetCatalog,
     advances: params.advances ?? [],
-    selectedAdvanceIds: params.selectedAdvanceIds ?? [],
+    selectedAdvanceIds,
     regenerateInvoiceId: params.invoiceId,
   });
   if (preview.billableItems.length === 0) {
@@ -729,10 +827,6 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
   const previousItemIds = Array.isArray(inv.workBudgetItemIds)
     ? (inv.workBudgetItemIds as string[])
     : [];
-  const previousAdvanceIds = Array.isArray(inv.workBudgetAdvanceIds)
-    ? (inv.workBudgetAdvanceIds as string[])
-    : [];
-
   const updatePayload = scrubFirestoreValue({
     items: portalFormItemsForFirestore(bundle.invoiceLines),
     totalAmount: bundle.amountGross,
@@ -744,6 +838,11 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     notes: bundle.notes,
     workBudgetItemIds: bundle.itemIds,
     workBudgetAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
+    workBudgetAdvancesApplied: preview.advancesApplied.map((a) => ({
+      advanceId: a.advanceId,
+      label: a.label,
+      amountGross: a.amountGross,
+    })),
     workBudgetSubtotalGross: preview.subtotalGross,
     workBudgetAdvanceDeductionGross: preview.deductionGross,
     workBudgetLinesPristine: true,

@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { computeWorkBudgetFinancialOverview, applyAdvanceDeductionsToGross } from "../src/lib/work-budget-financial-overview.ts";
 import {
   buildWorkBudgetInvoicePreview,
+  buildInvoiceFromBudgetAndAdvances,
   billableWorkBudgetItems,
   formatWorkBudgetItemInvoiceDescription,
   buildInvoiceLinesFromWorkBudgetItems,
@@ -14,6 +15,8 @@ import {
   assessWorkBudgetInvoiceRegeneration,
   isWorkBudgetInvoiceStale,
 } from "../src/lib/work-budget-invoice.ts";
+import { buildWorkBudgetAdvanceSettlement } from "../src/lib/work-budget-invoice-settlement.ts";
+import { buildPortalManualInvoiceHtml } from "../src/lib/portal-manual-invoice.ts";
 import {
   EXTRA_WORK_STATUSES,
   WORK_BUDGET_ITEM_TYPES,
@@ -381,6 +384,104 @@ const jobBudget = {
     deductionGross: 210,
   });
   assert.equal(after.gross, 1000);
+}
+
+// 11) regrese — zálohy se odečítají od k úhradě (CREATE i REGENERATE)
+{
+  const grossTotal = 4_073_331;
+  const line = item({
+    id: "main",
+    done: true,
+    amountGross: grossTotal,
+    amountNet: 3_366_389.26,
+    vatAmount: 706_941.74,
+  });
+  const mkAdv = (id, label, amountGross) => ({
+    id,
+    label,
+    amountGross,
+    appliedToInvoiceId: null,
+    includeInFinalInvoice: true,
+    paymentStatus: "paid",
+    sourceType: "invoice",
+    companyId: "c1",
+    jobId: "j1",
+    invoiceId: null,
+    documentNumber: label,
+    variableSymbol: null,
+    issueDate: "2026-01-01",
+    amountNet: 0,
+    vatAmount: 0,
+    note: null,
+  });
+  const advances = [
+    mkAdv("a1", "ZF3", 1_227_450),
+    mkAdv("a2", "ZF-2026-019", 900_000),
+    mkAdv("a3", "ZF2", 1_000_000),
+    mkAdv("a4", "ZF1", 300_000),
+  ];
+  const selected = advances.map((a) => a.id);
+  const create = buildInvoiceFromBudgetAndAdvances({
+    items: [line],
+    advances,
+    selectedAdvanceIds: selected,
+  });
+  assert.equal(create.grossTotal, grossTotal);
+  assert.equal(create.appliedAdvanceTotal, 3_427_450);
+  assert.equal(create.amountDue, 645_881);
+
+  const invId = "inv-regress";
+  const linkedAdvances = advances.map((a) => ({ ...a, appliedToInvoiceId: invId }));
+  const regenerate = buildInvoiceFromBudgetAndAdvances({
+    items: [{ ...line, invoiced: true, linkedInvoiceId: invId }],
+    advances: linkedAdvances,
+    selectedAdvanceIds: selected,
+    regenerateInvoiceId: invId,
+  });
+  assert.equal(regenerate.amountDue, 645_881);
+  assert.equal(regenerate.appliedAdvanceTotal, 3_427_450);
+
+  const lines = buildInvoiceLinesFromWorkBudgetItems([line], [line]);
+  const settlement = buildWorkBudgetAdvanceSettlement({
+    subtotalGross: create.subtotalGross,
+    deductionGross: create.deductionGross,
+    amountDueGross: create.amountDue,
+    amountDueNet: create.amountDueNet,
+    amountDueVat: create.amountDueVat,
+    advancesApplied: create.advancesApplied,
+    invoiceLines: lines,
+  });
+  assert.ok(settlement);
+  const built = buildPortalManualInvoiceHtml({
+    invoiceNumber: "FA-TEST",
+    issueDate: "2026-03-01",
+    dueDate: "2026-03-15",
+    jobName: "Zakázka",
+    recipient: {
+      type: "company",
+      name: "Odběratel s.r.o.",
+      companyName: "Odběratel s.r.o.",
+      ico: "12345678",
+      dic: "CZ12345678",
+      street: "Ulice 1",
+      city: "Praha",
+      postalCode: "11000",
+      country: "CZ",
+      email: null,
+      phone: null,
+      recipientNote: null,
+      sourceCustomerId: null,
+    },
+    supplierName: "Dodavatel s.r.o.",
+    supplierAddressLines: "Město 1",
+    items: lines,
+    orgBankAccounts: [],
+    advanceSettlement: settlement,
+  });
+  assert.equal(built.amountGross, 645_881);
+  assert.match(built.html, /K úhradě/);
+  assert.match(built.html, /645\s*881\s*Kč/);
+  assert.match(built.html, /4\s*073\s*331\s*Kč/);
 }
 
 console.log("test-work-budget-financial-logic: OK");
