@@ -1189,7 +1189,11 @@ service cloud.firestore {
             (request.resource.data.adjustmentUpdatedByName is string &&
               request.resource.data.adjustmentUpdatedByName.size() <= 120)) &&
           (!('adjustmentAudit' in request.resource.data) ||
-            request.resource.data.adjustmentAudit is list);
+            request.resource.data.adjustmentAudit is list) &&
+          (!('manualAttendance' in request.resource.data) ||
+            request.resource.data.manualAttendance is map) &&
+          (!('manualAttendanceAudit' in request.resource.data) ||
+            request.resource.data.manualAttendanceAudit is list);
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 

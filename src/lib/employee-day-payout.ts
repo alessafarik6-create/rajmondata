@@ -27,6 +27,29 @@ export type EmployeeDayPayoutAdjustmentAudit = {
   note: string | null;
 };
 
+export type EmployeeDayManualAttendance = {
+  checkInHm: string;
+  checkOutHm: string;
+  breakMinutes: number;
+  workedMinutes: number;
+  reasonCode: string;
+  note: string | null;
+  updatedAt: string | null;
+  updatedByName: string | null;
+};
+
+export type EmployeeDayManualAttendanceAudit = {
+  at: string;
+  byUid: string;
+  byName: string | null;
+  checkInHm: string;
+  checkOutHm: string;
+  breakMinutes: number;
+  workedMinutes: number;
+  reasonCode: string;
+  note: string | null;
+};
+
 export type EmployeeDayPayoutState = {
   paid: boolean;
   paidNote: string | null;
@@ -39,6 +62,9 @@ export type EmployeeDayPayoutState = {
   adjustmentUpdatedAt?: string | null;
   adjustmentUpdatedByName?: string | null;
   adjustmentAudit?: EmployeeDayPayoutAdjustmentAudit[];
+  /** Náhrada terminálu pro výplatu (raw attendance se nemění). */
+  manualAttendance?: EmployeeDayManualAttendance;
+  manualAttendanceAudit?: EmployeeDayManualAttendanceAudit[];
 };
 
 export function employeeDayPayoutDocId(
@@ -76,6 +102,45 @@ export function buildGlobalDayPayoutMap(
       ? (auditRaw as EmployeeDayPayoutAdjustmentAudit[]).slice(-20)
       : undefined;
 
+    const manualRaw = d?.manualAttendance;
+    let manualAttendance: EmployeeDayManualAttendance | undefined;
+    if (manualRaw && typeof manualRaw === "object") {
+      const ma = manualRaw as Record<string, unknown>;
+      const checkInHm = String(ma.checkInHm ?? "").trim();
+      const checkOutHm = String(ma.checkOutHm ?? "").trim();
+      const wm = ma.workedMinutes;
+      if (
+        checkInHm &&
+        checkOutHm &&
+        typeof wm === "number" &&
+        Number.isFinite(wm) &&
+        wm > 0
+      ) {
+        manualAttendance = {
+          checkInHm,
+          checkOutHm,
+          breakMinutes:
+            typeof ma.breakMinutes === "number" && Number.isFinite(ma.breakMinutes)
+              ? Math.round(ma.breakMinutes)
+              : 0,
+          workedMinutes: Math.round(wm),
+          reasonCode: String(ma.reasonCode ?? "").slice(0, 64),
+          note:
+            typeof ma.note === "string" && ma.note.trim()
+              ? String(ma.note).trim().slice(0, 400)
+              : null,
+          updatedAt:
+            typeof ma.updatedAt === "string" ? ma.updatedAt : null,
+          updatedByName:
+            typeof ma.updatedByName === "string" ? ma.updatedByName : null,
+        };
+      }
+    }
+    const manualAuditRaw = d?.manualAttendanceAudit;
+    const manualAttendanceAudit = Array.isArray(manualAuditRaw)
+      ? (manualAuditRaw as EmployeeDayManualAttendanceAudit[]).slice(-20)
+      : undefined;
+
     m.set(`${eid}|${date}`, {
       paid: d?.paid === true,
       paidNote: note,
@@ -92,6 +157,8 @@ export function buildGlobalDayPayoutMap(
       adjustmentUpdatedByName:
         typeof d?.adjustmentUpdatedByName === "string" ? d.adjustmentUpdatedByName : null,
       adjustmentAudit,
+      manualAttendance,
+      manualAttendanceAudit,
     });
   }
   return m;

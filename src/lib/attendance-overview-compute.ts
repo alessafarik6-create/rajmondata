@@ -39,8 +39,10 @@ import {
 } from "@/lib/employee-money";
 import {
   dayPayoutMapForEmployee,
+  type EmployeeDayManualAttendance,
   type EmployeeDayPayoutState,
 } from "@/lib/employee-day-payout";
+import { resolveDayPayrollWorkedMinutes } from "@/lib/manual-attendance-payout";
 import {
   computePayrollDisplayEarningsKc,
   computePayrollDisplayHourlyHours,
@@ -476,8 +478,13 @@ export type EmployeeDailyDetailRow = {
   adjustmentMinutes: number;
   adjustmentReasonCode: string | null;
   adjustmentNote: string | null;
-  /** Započtené hodiny pro výplatu (terminál + korekce). */
+  /** Započtené hodiny pro výplatu (base + korekce). */
   payrollWorkedH: number | null;
+  /** Hodiny z terminálu před override / korekcí (pro zobrazení). */
+  baseWorkedH: number | null;
+  /** Ruční docházka admina (náhrada terminálu pro mzdu). */
+  manualAttendance: EmployeeDayManualAttendance | null;
+  payrollSource: "terminal" | "manual" | "none";
 };
 
 /**
@@ -541,12 +548,50 @@ export function buildEmployeeDailyDetailRows(params: {
       !hasIncompleteAttendance && h != null && Number.isFinite(h) ? h : 0;
     const payoutState = dayPayoutByDate?.get(dateIso);
     const adjustmentMinutes = Math.round(Number(payoutState?.adjustmentMinutes ?? 0) || 0);
-    const hoursNum = Math.max(
-      0,
-      Math.round((terminalH + adjustmentMinutes / 60) * 100) / 100
-    );
+    const manualAttendance = payoutState?.manualAttendance ?? null;
+    const manualWorkedMinutes = manualAttendance?.workedMinutes ?? null;
+
+    const resolved = resolveDayPayrollWorkedMinutes({
+      terminalWorkedH: h,
+      terminalIncomplete: hasIncompleteAttendance,
+      manualWorkedMinutes,
+      adjustmentMinutes,
+    });
+    const hoursNum = resolved.finalWorkedH;
+    const baseWorkedH =
+      Math.round((resolved.baseMinutes / 60) * 100) / 100;
     const payrollWorkedH =
-      hasIncompleteAttendance ? null : hoursNum > 0 || terminalH > 0 ? hoursNum : h;
+      resolved.blockPayForIncompleteTerminal && hoursNum <= 0
+        ? null
+        : hoursNum > 0
+          ? hoursNum
+          : hasIncompleteAttendance
+            ? null
+            : h;
+    const payrollSource: "terminal" | "manual" | "none" =
+      manualWorkedMinutes != null && manualWorkedMinutes > 0
+        ? "manual"
+        : terminalH > 0 || (h != null && h > 0 && !hasIncompleteAttendance)
+          ? "terminal"
+          : "none";
+    const displayPrichod = manualAttendance?.checkInHm ?? one?.checkIn ?? "—";
+    const displayOdchod = manualAttendance?.checkOutHm ?? one?.checkOut ?? "—";
+    const displayPauseH =
+      manualAttendance != null
+        ? Math.round((manualAttendance.breakMinutes / 60) * 100) / 100
+        : pauseH;
+    const displayTotalSpanH =
+      manualAttendance != null && manualAttendance.checkInHm && manualAttendance.checkOutHm
+        ? (() => {
+            const inM = manualAttendance.checkInHm.split(":").map(Number);
+            const outM = manualAttendance.checkOutHm.split(":").map(Number);
+            if (inM.length < 2 || outM.length < 2) return totalSpanH;
+            const pres =
+              outM[0] * 60 + outM[1] - (inM[0] * 60 + inM[1]);
+            return pres > 0 ? Math.round((pres / 60) * 100) / 100 : totalSpanH;
+          })()
+        : totalSpanH;
+    const payBlockedByIncomplete = resolved.blockPayForIncompleteTerminal;
     const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dateIso, auth);
 
     const daySegs = sortSegmentsByStart(
@@ -659,14 +704,14 @@ export function buildEmployeeDailyDetailRows(params: {
           pendingDailyEst: pendD,
           pendingBlockEst: pendB,
         });
-    const orientacniKc = hasIncompleteAttendance ? 0 : orientacniKcRaw;
+    const orientacniKc = payBlockedByIncomplete ? 0 : orientacniKcRaw;
 
     const repSt = dailyReportStatusForDay(dailyReports, employee, dateIso);
     const dayApprovedByReport = repSt === "approved";
     const dayPendingByReport =
       Boolean(repSt) && repSt !== "approved" && repSt !== "rejected";
     let schvalenoKcRaw = 0;
-    if (hasIncompleteAttendance) schvalenoKcRaw = 0;
+    if (payBlockedByIncomplete) schvalenoKcRaw = 0;
     else if (dayApprovedByReport) schvalenoKcRaw = orientacniKc;
     else if (dayPendingByReport) schvalenoKcRaw = 0;
     else if (dayBlocks.length === 0) {
@@ -736,7 +781,7 @@ export function buildEmployeeDailyDetailRows(params: {
         workNeschvalenoKc,
         explicitWorkApproved,
         paidForDay,
-        hasIncompleteAttendance,
+        hasIncompleteAttendance: payBlockedByIncomplete,
         adminDayApproved,
       });
 
@@ -758,16 +803,19 @@ export function buildEmployeeDailyDetailRows(params: {
       key: `${eid}-${dateIso}`,
       dateIso,
       dayTitle,
-      prichod: one?.checkIn ?? "—",
-      odchod: one?.checkOut ?? "—",
-      totalSpanH,
-      pauseH,
+      prichod: displayPrichod,
+      odchod: displayOdchod,
+      totalSpanH: displayTotalSpanH,
+      pauseH: displayPauseH,
       odpracovanoH: payrollWorkedH,
       terminalOdpracovanoH: hasIncompleteAttendance ? null : h,
       adjustmentMinutes,
       adjustmentReasonCode: payoutState?.adjustmentReasonCode ?? null,
       adjustmentNote: payoutState?.adjustmentNote ?? null,
       payrollWorkedH,
+      baseWorkedH: baseWorkedH > 0 ? baseWorkedH : terminalH > 0 ? terminalH : null,
+      manualAttendance,
+      payrollSource,
       tariffSegments,
       jobSegments,
       tariffHoursTotal: sumTariffH,

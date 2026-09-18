@@ -115,10 +115,13 @@ import { filterAdvancesInPeriod } from "@/lib/payroll-employee-summary-compute";
 import { PayrollPeriodPanel } from "@/components/portal/PayrollPeriodPanel";
 import {
   PayrollDailyBreakdownSection,
-  type SaveDayAdjustmentPayload,
+  type SaveDayPayrollEditPayload,
   type SaveDayAdjustmentResult,
 } from "@/components/portal/payroll-daily-breakdown-section";
-import type { EmployeeDayPayoutAdjustmentAudit } from "@/lib/employee-day-payout";
+import type {
+  EmployeeDayManualAttendanceAudit,
+  EmployeeDayPayoutAdjustmentAudit,
+} from "@/lib/employee-day-payout";
 import {
   buildWorklogPdfFileName,
   downloadWorklogPdfFromElement,
@@ -156,7 +159,9 @@ const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
 function dayRowHasPayrollActivity(row: EmployeeDailyDetailRow): boolean {
   return (
     (row.odpracovanoH != null && row.odpracovanoH > 0) ||
+    (row.payrollWorkedH != null && row.payrollWorkedH > 0) ||
     (row.terminalOdpracovanoH != null && row.terminalOdpracovanoH > 0) ||
+    row.manualAttendance != null ||
     row.adjustmentMinutes !== 0 ||
     row.tariffSegments.length > 0 ||
     row.jobSegments.length > 0 ||
@@ -913,6 +918,20 @@ function PayrollAdminPageInner() {
     return m.size ? m : undefined;
   }, [payrollTargetEmployee, dayPayoutGlobalMap]);
 
+  const payrollManualAttendanceAuditByDate = useMemo(() => {
+    if (!payrollTargetEmployee) return undefined;
+    const per = dayPayoutMapForEmployee(
+      dayPayoutGlobalMap,
+      payrollTargetEmployee.id
+    );
+    if (!per) return undefined;
+    const m = new Map<string, EmployeeDayManualAttendanceAudit[]>();
+    for (const [date, st] of per) {
+      if (st.manualAttendanceAudit?.length) m.set(date, st.manualAttendanceAudit);
+    }
+    return m.size ? m : undefined;
+  }, [payrollTargetEmployee, dayPayoutGlobalMap]);
+
   const dailyDetailByEmployeeForPayrollOverview = useMemo(() => {
     const map = new Map<string, EmployeeDailyDetailRow[]>();
     const drAll = (Array.isArray(dailyReportsRaw) ? dailyReportsRaw : []) as Record<
@@ -1294,8 +1313,8 @@ function PayrollAdminPageInner() {
     ]
   );
 
-  const saveDayAdjustment = useCallback(
-    async (payload: SaveDayAdjustmentPayload): Promise<SaveDayAdjustmentResult> => {
+  const saveDayPayrollEdit = useCallback(
+    async (payload: SaveDayPayrollEditPayload): Promise<SaveDayAdjustmentResult> => {
       if (payrollMutationsDisabled) {
         const message = "Nemáte oprávnění upravovat mzdy (modul Práce a mzdy — zápis).";
         toast({
@@ -1328,22 +1347,11 @@ function PayrollAdminPageInner() {
         });
         return { ok: false, message };
       }
-      const adjustmentMinutes = Math.round(payload.adjustmentMinutes);
       const byName =
         (user.displayName && String(user.displayName).trim()) ||
         (user.email && String(user.email).trim()) ||
         null;
-      const existingAudit = st?.adjustmentAudit ?? [];
-      const auditEntry: EmployeeDayPayoutAdjustmentAudit = {
-        at: new Date().toISOString(),
-        byUid: user.uid,
-        byName,
-        previousMinutes: Math.round(payload.previousMinutes),
-        newMinutes: adjustmentMinutes,
-        reasonCode: payload.reasonCode,
-        note: payload.note.trim() ? payload.note.trim().slice(0, 400) : null,
-      };
-      const nextAudit = [...existingAudit, auditEntry].slice(-20);
+      const wasApproved = st?.approved === true;
       setDayAdjustmentSaving(true);
       try {
         const id = employeeDayPayoutDocId(
@@ -1364,6 +1372,76 @@ function PayrollAdminPageInner() {
                 .trim()
                 .slice(0, MAX_EMPLOYEE_DAY_PAYOUT_NOTE_LEN)
             : null;
+
+        const approvalReset = wasApproved
+          ? {
+              approved: false,
+              approvedAt: deleteField(),
+              approvedBy: deleteField(),
+            }
+          : {
+              approved: Boolean(st?.approved),
+            };
+
+        if (payload.mode === "manual_attendance") {
+          const existingManualAudit = st?.manualAttendanceAudit ?? [];
+          const manualAuditEntry: EmployeeDayManualAttendanceAudit = {
+            at: new Date().toISOString(),
+            byUid: user.uid,
+            byName,
+            checkInHm: payload.checkInHm,
+            checkOutHm: payload.checkOutHm,
+            breakMinutes: Math.round(payload.breakMinutes),
+            workedMinutes: Math.round(payload.workedMinutes),
+            reasonCode: payload.reasonCode,
+            note: payload.note.trim().slice(0, 400),
+          };
+          const nextManualAudit = [...existingManualAudit, manualAuditEntry].slice(
+            -20
+          );
+          await setDoc(
+            ref,
+            {
+              companyId,
+              employeeId: payrollTargetEmployee.id,
+              date: payload.dateIso,
+              paid: Boolean(st?.paid),
+              paidNote,
+              ...approvalReset,
+              manualAttendance: {
+                checkInHm: payload.checkInHm,
+                checkOutHm: payload.checkOutHm,
+                breakMinutes: Math.round(payload.breakMinutes),
+                workedMinutes: Math.round(payload.workedMinutes),
+                reasonCode: payload.reasonCode,
+                note: payload.note.trim().slice(0, 400),
+                updatedAt: new Date().toISOString(),
+                updatedByName: byName,
+              },
+              manualAttendanceAudit: nextManualAudit,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+          toast({
+            title: "Ruční docházka uložena",
+            description: "Výplata za den se přepočítá podle zadaných časů.",
+          });
+          return { ok: true };
+        }
+
+        const adjustmentMinutes = Math.round(payload.adjustmentMinutes);
+        const existingAudit = st?.adjustmentAudit ?? [];
+        const auditEntry: EmployeeDayPayoutAdjustmentAudit = {
+          at: new Date().toISOString(),
+          byUid: user.uid,
+          byName,
+          previousMinutes: Math.round(payload.previousMinutes),
+          newMinutes: adjustmentMinutes,
+          reasonCode: payload.reasonCode,
+          note: payload.note.trim() ? payload.note.trim().slice(0, 400) : null,
+        };
+        const nextAudit = [...existingAudit, auditEntry].slice(-20);
         await setDoc(
           ref,
           {
@@ -1372,7 +1450,7 @@ function PayrollAdminPageInner() {
             date: payload.dateIso,
             paid: Boolean(st?.paid),
             paidNote,
-            approved: Boolean(st?.approved),
+            ...approvalReset,
             adjustmentMinutes,
             adjustmentReasonCode: payload.reasonCode,
             adjustmentNote: payload.note.trim().slice(0, 400),
@@ -3564,8 +3642,8 @@ function PayrollAdminPageInner() {
               <div className="min-w-0 max-w-full rounded-lg border border-slate-200 p-3 sm:p-4">
                 <h3 className="mb-2 font-semibold">Rozpis po dnech</h3>
                 <p className="mb-3 text-xs text-slate-600">
-                  Příchody a odchody z terminálu (beze změny surových záznamů). Ruční
-                  korekce se ukládají jen pro výplatu.
+                  Terminál zůstává v docházce beze změny. Ruční docházka a korekce se
+                  ukládají jen pro výplatu na tomto dni.
                 </p>
                 {payrollTargetEmployee ? (
                   <PayrollDailyBreakdownSection
@@ -3574,8 +3652,9 @@ function PayrollAdminPageInner() {
                     employee={payrollTargetEmployee}
                     canWrite={!payrollMutationsDisabled}
                     saving={dayAdjustmentSaving}
-                    onSaveAdjustment={saveDayAdjustment}
+                    onSavePayrollEdit={saveDayPayrollEdit}
                     adjustmentAuditByDate={payrollAdjustmentAuditByDate}
+                    manualAttendanceAuditByDate={payrollManualAttendanceAuditByDate}
                   />
                 ) : null}
               </div>

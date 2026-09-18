@@ -7,8 +7,10 @@ import { formatHoursMinutes, formatKc } from "@/lib/attendance-overview-compute"
 import { buildAttendanceDayTimeline } from "@/lib/attendance-day-timeline";
 import {
   PAYROLL_ADJUSTMENT_REASONS,
+  type EmployeeDayManualAttendanceAudit,
   type EmployeeDayPayoutAdjustmentAudit,
 } from "@/lib/employee-day-payout";
+import { computeManualAttendanceWorkedMinutes } from "@/lib/manual-attendance-payout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,12 +41,28 @@ import {
 } from "@/lib/payroll-day-adjustment";
 
 export type SaveDayAdjustmentPayload = {
+  mode: "adjustment";
   dateIso: string;
   adjustmentMinutes: number;
   reasonCode: string;
   note: string;
   previousMinutes: number;
 };
+
+export type SaveDayManualAttendancePayload = {
+  mode: "manual_attendance";
+  dateIso: string;
+  checkInHm: string;
+  checkOutHm: string;
+  breakMinutes: number;
+  workedMinutes: number;
+  reasonCode: string;
+  note: string;
+};
+
+export type SaveDayPayrollEditPayload =
+  | SaveDayAdjustmentPayload
+  | SaveDayManualAttendancePayload;
 
 export type SaveDayAdjustmentResult =
   | { ok: true }
@@ -56,11 +74,28 @@ type Props = {
   employee: EmployeeLite;
   canWrite: boolean;
   saving?: boolean;
-  onSaveAdjustment: (
-    payload: SaveDayAdjustmentPayload
+  onSavePayrollEdit: (
+    payload: SaveDayPayrollEditPayload
   ) => Promise<SaveDayAdjustmentResult>;
   adjustmentAuditByDate?: Map<string, EmployeeDayPayoutAdjustmentAudit[]>;
+  manualAttendanceAuditByDate?: Map<string, EmployeeDayManualAttendanceAudit[]>;
 };
+
+function dayPayDisplayKc(row: EmployeeDailyDetailRow): number {
+  if (row.orientacniKc > 0) return row.orientacniKc;
+  return row.schvalenoKc;
+}
+
+function hasTerminalWorkForDay(row: EmployeeDailyDetailRow): boolean {
+  if (row.manualAttendance) return Boolean(row.terminalOdpracovanoH && row.terminalOdpracovanoH > 0);
+  return (
+    (row.terminalOdpracovanoH != null && row.terminalOdpracovanoH > 0) ||
+    (row.prichod !== "—" && row.odchod !== "—") ||
+    row.hasIncompleteAttendance
+  );
+}
+
+type EditMode = "manual_attendance" | "adjustment";
 
 function formatAdjHours(minutes: number): string {
   if (!minutes) return "0 h";
@@ -101,15 +136,17 @@ function rowTariffShort(
 }
 
 function compactStatusLine(row: EmployeeDailyDetailRow): string {
+  const manual =
+    row.payrollSource === "manual" ? "Ručně · " : "";
   const appr =
     row.schvalenoStatus === "approved"
       ? "Schv."
       : row.schvalenoStatus === "pending"
         ? "Čeká"
         : "—";
-  if (row.paidStatus === "paid") return `${appr} · Vypl.`;
-  if (row.paidStatus === "unpaid") return `${appr} · Nezapl.`;
-  return appr;
+  if (row.paidStatus === "paid") return `${manual}${appr} · Vypl.`;
+  if (row.paidStatus === "unpaid") return `${manual}${appr} · Nezapl.`;
+  return `${manual}${appr}`;
 }
 
 const thClass =
@@ -123,30 +160,49 @@ function DayDetailPanel(props: {
 }) {
   const { row, timeline, employee } = props;
   const rate = employee.hourlyRate;
+  const sourceLabel =
+    row.payrollSource === "manual"
+      ? "Ručně zadáno administrátorem"
+      : row.payrollSource === "terminal"
+        ? "Terminál"
+        : "—";
 
   return (
     <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50/80 p-3 text-sm text-slate-900">
+      <p className="text-slate-700">
+        <span className="font-medium">Zdroj pro výplatu:</span> {sourceLabel}
+      </p>
       <div className="grid gap-2 sm:grid-cols-2">
         <p>
           <span className="text-slate-600">Příchod:</span>{" "}
-          <strong>{timeline?.checkInHm ?? row.prichod}</strong>
+          <strong>{row.prichod}</strong>
         </p>
         <p>
           <span className="text-slate-600">Odchod:</span>{" "}
-          <strong>{timeline?.checkOutHm ?? row.odchod}</strong>
+          <strong>{row.odchod}</strong>
         </p>
         <p>
           <span className="text-slate-600">Celková přítomnost:</span>{" "}
-          {formatHoursMinutes(timeline?.totalSpanH ?? row.totalSpanH)}
+          {formatHoursMinutes(row.totalSpanH)}
         </p>
         <p>
           <span className="text-slate-600">Oběd / přestávka:</span>{" "}
-          {formatHoursMinutes(timeline?.breakH ?? row.pauseH)}
+          {formatHoursMinutes(row.pauseH)}
         </p>
         <p>
-          <span className="text-slate-600">Terminál (započteno):</span>{" "}
+          <span className="text-slate-600">Terminál (raw):</span>{" "}
           {formatHoursMinutes(row.terminalOdpracovanoH)}
         </p>
+        <p>
+          <span className="text-slate-600">Základ pro mzdu:</span>{" "}
+          {formatHoursMinutes(row.baseWorkedH)}
+        </p>
+        {row.adjustmentMinutes ? (
+          <p>
+            <span className="text-slate-600">Korekce:</span>{" "}
+            {formatAdjHours(row.adjustmentMinutes)}
+          </p>
+        ) : null}
         <p>
           <span className="text-slate-600">Výsledně pro výplatu:</span>{" "}
           <strong>{formatHoursMinutes(row.payrollWorkedH)}</strong>
@@ -237,15 +293,20 @@ export function PayrollDailyBreakdownSection({
   employee,
   canWrite,
   saving,
-  onSaveAdjustment,
+  onSavePayrollEdit,
   adjustmentAuditByDate,
+  manualAttendanceAuditByDate,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [editRow, setEditRow] = useState<EmployeeDailyDetailRow | null>(null);
+  const [editMode, setEditMode] = useState<EditMode>("manual_attendance");
   const [adjHours, setAdjHours] = useState("0");
   const [adjMinutes, setAdjMinutes] = useState("0");
   const [adjDirection, setAdjDirection] =
     useState<PayrollAdjustmentDirection>("add");
+  const [manualCheckIn, setManualCheckIn] = useState("07:00");
+  const [manualCheckOut, setManualCheckOut] = useState("15:30");
+  const [manualBreakMin, setManualBreakMin] = useState("30");
   const [reasonCode, setReasonCode] = useState<string>("attendance_fix");
   const [note, setNote] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -270,8 +331,23 @@ export function PayrollDailyBreakdownSection({
     setAdjDirection(fields.direction);
     setAdjHours(fields.hours);
     setAdjMinutes(fields.minutes);
-    setReasonCode(row.adjustmentReasonCode ?? "attendance_fix");
-    setNote(row.adjustmentNote ?? "");
+    const ma = row.manualAttendance;
+    setManualCheckIn(
+      ma?.checkInHm ?? (row.prichod !== "—" ? row.prichod : "07:00")
+    );
+    setManualCheckOut(
+      ma?.checkOutHm ?? (row.odchod !== "—" ? row.odchod : "15:30")
+    );
+    setManualBreakMin(String(ma?.breakMinutes ?? 30));
+    setEditMode(
+      hasTerminalWorkForDay(row) && !ma ? "adjustment" : "manual_attendance"
+    );
+    setReasonCode(
+      row.manualAttendance?.reasonCode ??
+        row.adjustmentReasonCode ??
+        "off_terminal_work"
+    );
+    setNote(row.manualAttendance?.note ?? row.adjustmentNote ?? "");
     setFormError(null);
     setEditRow(row);
   };
@@ -280,11 +356,39 @@ export function PayrollDailyBreakdownSection({
     if (!editRow) return;
     setFormError(null);
     if (!reasonCode.trim()) {
-      setFormError("Vyberte důvod korekce.");
+      setFormError("Vyberte důvod.");
       return;
     }
     if (!note.trim()) {
       setFormError("Vyplňte poznámku.");
+      return;
+    }
+    if (editMode === "manual_attendance") {
+      const br = Number(manualBreakMin) || 0;
+      const computed = computeManualAttendanceWorkedMinutes(
+        manualCheckIn,
+        manualCheckOut,
+        br
+      );
+      if (!computed.ok) {
+        setFormError(computed.error);
+        return;
+      }
+      const result = await onSavePayrollEdit({
+        mode: "manual_attendance",
+        dateIso: editRow.dateIso,
+        checkInHm: manualCheckIn.trim(),
+        checkOutHm: manualCheckOut.trim(),
+        breakMinutes: br,
+        workedMinutes: computed.workedMinutes,
+        reasonCode,
+        note: note.trim(),
+      });
+      if (!result.ok) {
+        setFormError(result.message);
+        return;
+      }
+      setEditRow(null);
       return;
     }
     const parsed = parsePayrollAdjustmentMinutes(adjHours, adjMinutes, adjDirection);
@@ -292,7 +396,8 @@ export function PayrollDailyBreakdownSection({
       setFormError(parsed.error);
       return;
     }
-    const result = await onSaveAdjustment({
+    const result = await onSavePayrollEdit({
+      mode: "adjustment",
       dateIso: editRow.dateIso,
       adjustmentMinutes: parsed.minutes,
       reasonCode,
@@ -384,7 +489,7 @@ export function PayrollDailyBreakdownSection({
                     </td>
                     <td className={cn(tdClass, "leading-tight")}>{rowTariffShort(row, employee)}</td>
                     <td className={cn(tdClass, "font-medium tabular-nums")}>
-                      {formatKc(row.schvalenoKc)}
+                      {formatKc(dayPayDisplayKc(row))}
                     </td>
                     <td className={cn(tdClass, "leading-tight text-slate-700")}>
                       {compactStatusLine(row)}
@@ -428,6 +533,20 @@ export function PayrollDailyBreakdownSection({
                           </p>
                         ) : null}
                         <DayDetailPanel row={row} timeline={tl ?? null} employee={employee} />
+                        {manualAttendanceAuditByDate?.get(row.dateIso)?.length ? (
+                          <div className="mt-3 border-t pt-2 text-xs text-slate-600">
+                            <p className="font-medium text-slate-800">Historie ruční docházky</p>
+                            {manualAttendanceAuditByDate
+                              .get(row.dateIso)!
+                              .slice(-3)
+                              .map((a, i) => (
+                                <p key={i}>
+                                  {a.at}: {a.byName ?? a.byUid} — {a.checkInHm}–{a.checkOutHm},
+                                  přestávka {a.breakMinutes} min ({a.reasonCode}) {a.note}
+                                </p>
+                              ))}
+                          </div>
+                        ) : null}
                         {adjustmentAuditByDate?.get(row.dateIso)?.length ? (
                           <div className="mt-3 border-t pt-2 text-xs text-slate-600">
                             <p className="font-medium text-slate-800">Historie korekcí</p>
@@ -461,8 +580,8 @@ export function PayrollDailyBreakdownSection({
               </p>
               <p>Oběd: {formatHoursMinutes(row.pauseH)}</p>
               <p>
-                Započteno: {formatHoursMinutes(row.payrollWorkedH)} · Schv.{" "}
-                {formatKc(row.schvalenoKc)}
+                Započteno: {formatHoursMinutes(row.payrollWorkedH)} · Výplata{" "}
+                {formatKc(dayPayDisplayKc(row))}
               </p>
               {row.adjustmentMinutes ? (
                 <Badge variant="secondary" className="mt-1">
@@ -502,69 +621,133 @@ export function PayrollDailyBreakdownSection({
       <Dialog open={!!editRow} onOpenChange={(o) => !o && setEditRow(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Upravit započtený čas</DialogTitle>
+            <DialogTitle>Upravit docházku / výplatu dne</DialogTitle>
           </DialogHeader>
           {editRow?.schvalenoStatus === "approved" ? (
             <Alert>
               <AlertDescription>
-                Tento den je již schválen. Úpravou se přepočítá schválená částka.
+                Tento den je již schválen. Po úpravě bude nutné ho znovu schválit.
               </AlertDescription>
             </Alert>
           ) : null}
           <div className="grid gap-3 py-2">
             <p className="text-sm text-slate-700">
-              Terminál:{" "}
+              Terminál (raw):{" "}
               <strong>{formatHoursMinutes(editRow?.terminalOdpracovanoH ?? null)}</strong>
+              {editRow ? (
+                <>
+                  {" "}
+                  · Základ mzdy:{" "}
+                  <strong>{formatHoursMinutes(editRow.baseWorkedH)}</strong>
+                </>
+              ) : null}
             </p>
             <div className="space-y-2">
-              <Label>Typ korekce</Label>
+              <Label>Typ úpravy</Label>
               <RadioGroup
-                value={adjDirection}
-                onValueChange={(v) =>
-                  setAdjDirection(v as PayrollAdjustmentDirection)
-                }
-                className="flex flex-wrap gap-4"
+                value={editMode}
+                onValueChange={(v) => {
+                  setEditMode(v as EditMode);
+                  setFormError(null);
+                }}
+                className="flex flex-col gap-2"
               >
                 <div className="flex items-center gap-2">
-                  <RadioGroupItem value="add" id="adj-add" />
-                  <Label htmlFor="adj-add" className="cursor-pointer font-normal">
-                    Přidat čas
+                  <RadioGroupItem value="manual_attendance" id="mode-manual" />
+                  <Label htmlFor="mode-manual" className="cursor-pointer font-normal">
+                    Ručně zadat docházku
                   </Label>
                 </div>
                 <div className="flex items-center gap-2">
-                  <RadioGroupItem value="subtract" id="adj-sub" />
-                  <Label htmlFor="adj-sub" className="cursor-pointer font-normal">
-                    Odebrat čas
+                  <RadioGroupItem value="adjustment" id="mode-adj" />
+                  <Label htmlFor="mode-adj" className="cursor-pointer font-normal">
+                    Přidat / odebrat korekci k základu
                   </Label>
                 </div>
               </RadioGroup>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label>Hodiny</Label>
-                <Input
-                  value={adjHours}
-                  onChange={(e) => {
-                    setAdjHours(e.target.value);
-                    setFormError(null);
-                  }}
-                  inputMode="numeric"
-                  placeholder="0"
-                />
+            {editMode === "manual_attendance" ? (
+              <div className="grid gap-2 rounded-md border border-slate-200 p-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label>Příchod</Label>
+                    <Input
+                      value={manualCheckIn}
+                      onChange={(e) => setManualCheckIn(e.target.value)}
+                      placeholder="06:33"
+                    />
+                  </div>
+                  <div>
+                    <Label>Odchod</Label>
+                    <Input
+                      value={manualCheckOut}
+                      onChange={(e) => setManualCheckOut(e.target.value)}
+                      placeholder="15:30"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label>Přestávka / oběd (minuty)</Label>
+                  <Input
+                    value={manualBreakMin}
+                    onChange={(e) => setManualBreakMin(e.target.value)}
+                    inputMode="numeric"
+                  />
+                </div>
               </div>
-              <div>
-                <Label>Minuty (0–59)</Label>
-                <Input
-                  value={adjMinutes}
-                  onChange={(e) => {
-                    setAdjMinutes(e.target.value);
-                    setFormError(null);
-                  }}
-                  inputMode="numeric"
-                  placeholder="0"
-                />
+            ) : (
+              <div className="grid gap-2 rounded-md border border-slate-200 p-3">
+                <div className="space-y-2">
+                  <Label>Typ korekce</Label>
+                  <RadioGroup
+                    value={adjDirection}
+                    onValueChange={(v) =>
+                      setAdjDirection(v as PayrollAdjustmentDirection)
+                    }
+                    className="flex flex-wrap gap-4"
+                  >
+                    <div className="flex items-center gap-2">
+                      <RadioGroupItem value="add" id="adj-add" />
+                      <Label htmlFor="adj-add" className="cursor-pointer font-normal">
+                        Přidat čas
+                      </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <RadioGroupItem value="subtract" id="adj-sub" />
+                      <Label htmlFor="adj-sub" className="cursor-pointer font-normal">
+                        Odebrat čas
+                      </Label>
+                    </div>
+                  </RadioGroup>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label>Hodiny</Label>
+                    <Input
+                      value={adjHours}
+                      onChange={(e) => {
+                        setAdjHours(e.target.value);
+                        setFormError(null);
+                      }}
+                      inputMode="numeric"
+                      placeholder="0"
+                    />
+                  </div>
+                  <div>
+                    <Label>Minuty (0–59)</Label>
+                    <Input
+                      value={adjMinutes}
+                      onChange={(e) => {
+                        setAdjMinutes(e.target.value);
+                        setFormError(null);
+                      }}
+                      inputMode="numeric"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
             {formError ? (
               <Alert variant="destructive">
                 <AlertDescription>{formError}</AlertDescription>

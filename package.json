@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:payroll-adjustment": "npx --yes tsx src/lib/payroll-day-adjustment.test.ts",
+    "test:manual-attendance": "npx --yes tsx src/lib/manual-attendance-payout.test.ts",
     "postinstall": "node scripts/copy-pdf-fonts.mjs && node scripts/copy-pdf-worker.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
     "seed-superadmin": "node scripts/seed-superadmin.js"
