@@ -82,6 +82,7 @@ export function portalModuleIdFromApiPath(pathname: string): PortalModuleId | nu
   if (p.includes("/employees/")) return "employees";
   if (p.includes("/documents/")) return "documents";
   if (p.includes("/jobs/")) return "jobs";
+  if (p.includes("/email-mailbox/")) return "emails";
   if (p.includes("/ai/")) return "aiCenter";
   if (p.includes("/daily-work-reports/")) return "labor";
   return null;

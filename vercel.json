@@ -20,6 +20,15 @@
     },
     "src/app/api/cron/organization-backups/route.ts": {
       "maxDuration": 300
+    },
+    "src/app/api/cron/sync-email-mailboxes/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/company/email-mailbox/accounts/[accountId]/sync/route.ts": {
+      "maxDuration": 120
+    },
+    "src/app/api/company/email-mailbox/messages/send/route.ts": {
+      "maxDuration": 120
     }
   }
 }

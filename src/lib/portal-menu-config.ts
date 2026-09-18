@@ -136,6 +136,15 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     platformModuleCode: "jobs",
   },
   {
+    id: "emails",
+    type: "child",
+    label: "E-maily",
+    href: "/portal/emails",
+    roles: ["owner", "admin", "manager", "accountant", "employee"],
+    parentLicenseKeys: ["zakazky"],
+    platformModuleCode: "jobs",
+  },
+  {
     id: "offers",
     type: "child",
     label: "Nabídky",

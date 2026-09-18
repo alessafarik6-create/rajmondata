@@ -821,6 +821,22 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      /** Firemní e-mailové schránky (IMAP/SMTP) — metadata READ dle modulu emails, zápis Admin SDK. */
+      match /email_accounts/{accountId} {
+        allow read: if signedIn() && sameCompany(companyId) && portalModuleReadOk(companyId, 'emails');
+        allow write: if false;
+
+        match /private/{docId} {
+          allow read, write: if false;
+        }
+      }
+
+      /** Importované e-maily — čtení dle modulu emails, zápis Admin SDK. */
+      match /email_messages/{messageId} {
+        allow read: if signedIn() && sameCompany(companyId) && portalModuleReadOk(companyId, 'emails');
+        allow write: if false;
+      }
+
       match /employees/{empId} {
         allow read: if (signedIn() && sameCompany(companyId)) || terminalCompanyMatches(companyId);
         allow write: if signedIn() && sameCompany(companyId) && canPrivilegedWrite();

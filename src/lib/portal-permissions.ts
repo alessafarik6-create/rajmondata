@@ -57,6 +57,7 @@ export function buildAccountantPermissionPreset(): Record<PortalModuleId, Portal
     "customers",
     "jobs",
     "leads",
+    "emails",
     "offers",
     "productCatalogs",
     "customerChats",
