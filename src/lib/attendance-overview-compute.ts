@@ -470,6 +470,14 @@ export type EmployeeDailyDetailRow = {
   payrollApprovedHourlyH: number;
   /** Hodiny započtené do neschváleného souhrnu. */
   payrollPendingHourlyH: number;
+  /** Hodiny z terminálu před ruční korekcí. */
+  terminalOdpracovanoH: number | null;
+  /** Ruční korekce v minutách (±). */
+  adjustmentMinutes: number;
+  adjustmentReasonCode: string | null;
+  adjustmentNote: string | null;
+  /** Započtené hodiny pro výplatu (terminál + korekce). */
+  payrollWorkedH: number | null;
 };
 
 /**
@@ -529,8 +537,16 @@ export function buildEmployeeDailyDetailRows(params: {
       Boolean(one) &&
       ((!one?.checkIn && Boolean(one?.checkOut)) ||
         (Boolean(one?.checkIn) && !one?.checkOut));
-    const hoursNum =
+    const terminalH =
       !hasIncompleteAttendance && h != null && Number.isFinite(h) ? h : 0;
+    const payoutState = dayPayoutByDate?.get(dateIso);
+    const adjustmentMinutes = Math.round(Number(payoutState?.adjustmentMinutes ?? 0) || 0);
+    const hoursNum = Math.max(
+      0,
+      Math.round((terminalH + adjustmentMinutes / 60) * 100) / 100
+    );
+    const payrollWorkedH =
+      hasIncompleteAttendance ? null : hoursNum > 0 || terminalH > 0 ? hoursNum : h;
     const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dateIso, auth);
 
     const daySegs = sortSegmentsByStart(
@@ -746,7 +762,12 @@ export function buildEmployeeDailyDetailRows(params: {
       odchod: one?.checkOut ?? "—",
       totalSpanH,
       pauseH,
-      odpracovanoH: h,
+      odpracovanoH: payrollWorkedH,
+      terminalOdpracovanoH: hasIncompleteAttendance ? null : h,
+      adjustmentMinutes,
+      adjustmentReasonCode: payoutState?.adjustmentReasonCode ?? null,
+      adjustmentNote: payoutState?.adjustmentNote ?? null,
+      payrollWorkedH,
       tariffSegments,
       jobSegments,
       tariffHoursTotal: sumTariffH,

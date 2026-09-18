@@ -114,6 +114,11 @@ import {
 import { filterAdvancesInPeriod } from "@/lib/payroll-employee-summary-compute";
 import { PayrollPeriodPanel } from "@/components/portal/PayrollPeriodPanel";
 import {
+  PayrollDailyBreakdownSection,
+  type SaveDayAdjustmentPayload,
+} from "@/components/portal/payroll-daily-breakdown-section";
+import type { EmployeeDayPayoutAdjustmentAudit } from "@/lib/employee-day-payout";
+import {
   buildWorklogPdfFileName,
   downloadWorklogPdfFromElement,
 } from "@/lib/worklog-report-pdf";
@@ -150,6 +155,8 @@ const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
 function dayRowHasPayrollActivity(row: EmployeeDailyDetailRow): boolean {
   return (
     (row.odpracovanoH != null && row.odpracovanoH > 0) ||
+    (row.terminalOdpracovanoH != null && row.terminalOdpracovanoH > 0) ||
+    row.adjustmentMinutes !== 0 ||
     row.tariffSegments.length > 0 ||
     row.jobSegments.length > 0 ||
     row.bloku > 0 ||
@@ -341,6 +348,7 @@ function PayrollAdminPageInner() {
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfSummaryExporting, setPdfSummaryExporting] = useState(false);
   const [bulkPayrollBusy, setBulkPayrollBusy] = useState(false);
+  const [dayAdjustmentSaving, setDayAdjustmentSaving] = useState(false);
   const [bulkApproveDialogOpen, setBulkApproveDialogOpen] = useState(false);
   const [bulkPaidDialogOpen, setBulkPaidDialogOpen] = useState(false);
   const [showCzechTranslation, setShowCzechTranslation] = useState(false);
@@ -890,6 +898,20 @@ function PayrollAdminPageInner() {
     dayPayoutGlobalMap,
   ]);
 
+  const payrollAdjustmentAuditByDate = useMemo(() => {
+    if (!payrollTargetEmployee) return undefined;
+    const per = dayPayoutMapForEmployee(
+      dayPayoutGlobalMap,
+      payrollTargetEmployee.id
+    );
+    if (!per) return undefined;
+    const m = new Map<string, EmployeeDayPayoutAdjustmentAudit[]>();
+    for (const [date, st] of per) {
+      if (st.adjustmentAudit?.length) m.set(date, st.adjustmentAudit);
+    }
+    return m.size ? m : undefined;
+  }, [payrollTargetEmployee, dayPayoutGlobalMap]);
+
   const dailyDetailByEmployeeForPayrollOverview = useMemo(() => {
     const map = new Map<string, EmployeeDailyDetailRow[]>();
     const drAll = (Array.isArray(dailyReportsRaw) ? dailyReportsRaw : []) as Record<
@@ -1266,6 +1288,111 @@ function PayrollAdminPageInner() {
       user?.uid,
       payrollTargetEmployee,
       employeeDailySummaryRows,
+      dayPayoutGlobalMap,
+      toast,
+    ]
+  );
+
+  const saveDayAdjustment = useCallback(
+    async (payload: SaveDayAdjustmentPayload) => {
+      if (payrollMutationsDisabled) return;
+      if (!firestore || !companyId || !user?.uid || !payrollTargetEmployee) {
+        toast({
+          variant: "destructive",
+          title: "Nelze uložit korekci",
+          description: "Chybí přihlášení nebo zaměstnanec.",
+        });
+        return;
+      }
+      const perMap = dayPayoutMapForEmployee(
+        dayPayoutGlobalMap,
+        payrollTargetEmployee.id
+      );
+      const st = perMap?.get(payload.dateIso);
+      if (st?.paid === true) {
+        toast({
+          variant: "destructive",
+          title: "Den je vyplacen",
+          description: "U vyplaceného dne nelze měnit korekci.",
+        });
+        return;
+      }
+      const byName =
+        (user.displayName && String(user.displayName).trim()) ||
+        (user.email && String(user.email).trim()) ||
+        null;
+      const existingAudit = st?.adjustmentAudit ?? [];
+      const auditEntry: EmployeeDayPayoutAdjustmentAudit = {
+        at: new Date().toISOString(),
+        byUid: user.uid,
+        byName,
+        previousMinutes: payload.previousMinutes,
+        newMinutes: payload.adjustmentMinutes,
+        reasonCode: payload.reasonCode,
+        note: payload.note.trim() ? payload.note.trim().slice(0, 400) : null,
+      };
+      const nextAudit = [...existingAudit, auditEntry].slice(-20);
+      setDayAdjustmentSaving(true);
+      try {
+        const id = employeeDayPayoutDocId(
+          payrollTargetEmployee.id,
+          payload.dateIso
+        );
+        const ref = doc(
+          firestore,
+          "companies",
+          companyId,
+          "employee_day_payouts",
+          id
+        );
+        const noteRaw = st?.paidNote;
+        const paidNote =
+          noteRaw != null && String(noteRaw).trim()
+            ? String(noteRaw)
+                .trim()
+                .slice(0, MAX_EMPLOYEE_DAY_PAYOUT_NOTE_LEN)
+            : null;
+        await setDoc(
+          ref,
+          {
+            companyId,
+            employeeId: payrollTargetEmployee.id,
+            date: payload.dateIso,
+            paid: Boolean(st?.paid),
+            paidNote,
+            approved: Boolean(st?.approved),
+            adjustmentMinutes: payload.adjustmentMinutes,
+            adjustmentReasonCode: payload.reasonCode,
+            adjustmentNote: payload.note.trim().slice(0, 400),
+            adjustmentUpdatedAt: new Date().toISOString(),
+            adjustmentUpdatedByName: byName,
+            adjustmentAudit: nextAudit,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+        toast({
+          title: "Korekce dne uložena",
+          description:
+            "Výplata za den se přepočítá podle nového započteného času.",
+        });
+      } catch (e) {
+        console.error(e);
+        toast({
+          variant: "destructive",
+          title: "Uložení korekce se nezdařilo",
+          description: e instanceof Error ? e.message : undefined,
+        });
+      } finally {
+        setDayAdjustmentSaving(false);
+      }
+    },
+    [
+      payrollMutationsDisabled,
+      firestore,
+      companyId,
+      user,
+      payrollTargetEmployee,
       dayPayoutGlobalMap,
       toast,
     ]
@@ -3417,134 +3544,22 @@ function PayrollAdminPageInner() {
               </div>
 
               <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="mb-2 font-semibold">Rozpis po dnech (agregace)</h3>
-                {employeeDailySummaryRows.length === 0 ? (
-                  <p className="text-sm text-slate-600">
-                    Za toto období nejsou žádné denní řádky (docházka / segmenty /
-                    výkazy podle stejné logiky jako přehled docházky).
-                  </p>
-                ) : (
-                  <>
-                    <div className="hidden overflow-x-auto md:block">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="text-black">Den</TableHead>
-                            <TableHead className="text-black">Odprac. (h)</TableHead>
-                            <TableHead className="text-black">Schváleno</TableHead>
-                            <TableHead className="text-black">Výplata</TableHead>
-                            <TableHead className="text-black">Bloky</TableHead>
-                            <TableHead className="text-black">Schv. Kč</TableHead>
-                            <TableHead className="text-black">Neschv. Kč</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {employeeDailySummaryRows.map((row) => (
-                            <TableRow key={row.key}>
-                              <TableCell className="whitespace-nowrap text-black">
-                                {row.dayTitle}
-                              </TableCell>
-                              <TableCell className="text-black">
-                                {row.odpracovanoH != null
-                                  ? `${row.odpracovanoH} h`
-                                  : "—"}
-                              </TableCell>
-                              <TableCell className="text-black">
-                                <div className="flex flex-wrap gap-1">
-                                  <Badge
-                                    variant={
-                                      row.schvalenoStatus === "approved"
-                                        ? "default"
-                                        : row.schvalenoStatus === "pending"
-                                          ? "secondary"
-                                          : "outline"
-                                    }
-                                    className="font-normal"
-                                  >
-                                    {row.schvalenoStatus === "approved"
-                                      ? "Schváleno"
-                                      : row.schvalenoStatus === "pending"
-                                        ? "Čeká"
-                                        : "—"}
-                                  </Badge>
-                                </div>
-                              </TableCell>
-                              <TableCell className="text-black">
-                                <Badge
-                                  variant={
-                                    row.paidStatus === "paid"
-                                      ? "default"
-                                      : row.paidStatus === "unpaid"
-                                        ? "secondary"
-                                        : "outline"
-                                  }
-                                  className="font-normal"
-                                >
-                                  {getPaymentBadgeLabel(row.paidStatus)}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-black">{row.bloku}</TableCell>
-                              <TableCell className="text-black">
-                                {formatKc(row.schvalenoKc)}
-                              </TableCell>
-                              <TableCell className="text-black">
-                                {formatKc(row.neschvalenoKc)}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                    <div className="space-y-2 md:hidden">
-                      {employeeDailySummaryRows.map((row) => (
-                        <div
-                          key={row.key}
-                          className="rounded-md border border-slate-200 p-3 text-sm"
-                        >
-                          <p className="font-semibold text-black">{row.dayTitle}</p>
-                          <p className="text-slate-700">
-                            Odpracováno:{" "}
-                            {row.odpracovanoH != null ? `${row.odpracovanoH} h` : "—"}
-                          </p>
-                          <p className="flex flex-wrap items-center gap-2 text-slate-700">
-                            <span>Schválení:</span>
-                            <Badge
-                              variant={
-                                row.schvalenoStatus === "approved"
-                                  ? "default"
-                                  : row.schvalenoStatus === "pending"
-                                    ? "secondary"
-                                    : "outline"
-                              }
-                            >
-                              {row.schvalenoStatus === "approved"
-                                ? "Schváleno"
-                                : row.schvalenoStatus === "pending"
-                                  ? "Čeká"
-                                  : "—"}
-                            </Badge>
-                            <span>Výplata:</span>
-                            <Badge
-                              variant={
-                                row.paidStatus === "paid"
-                                  ? "default"
-                                  : row.paidStatus === "unpaid"
-                                    ? "secondary"
-                                    : "outline"
-                              }
-                            >
-                              {getPaymentBadgeLabel(row.paidStatus)}
-                            </Badge>
-                          </p>
-                          <p className="text-slate-700">
-                            Bloky: {row.bloku} · Schv. {formatKc(row.schvalenoKc)} ·
-                            Neschv. {formatKc(row.neschvalenoKc)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                <h3 className="mb-2 font-semibold">Rozpis po dnech</h3>
+                <p className="mb-3 text-xs text-slate-600">
+                  Příchody a odchody z terminálu (beze změny surových záznamů). Ruční
+                  korekce se ukládají jen pro výplatu.
+                </p>
+                {payrollTargetEmployee ? (
+                  <PayrollDailyBreakdownSection
+                    rows={employeeDailySummaryRows}
+                    attendanceRaw={attendancePayrollFiltered as AttendanceRow[]}
+                    employee={payrollTargetEmployee}
+                    canWrite={!payrollMutationsDisabled}
+                    saving={dayAdjustmentSaving}
+                    onSaveAdjustment={saveDayAdjustment}
+                    adjustmentAuditByDate={payrollAdjustmentAuditByDate}
+                  />
+                ) : null}
               </div>
             </div>
           </CardContent>
