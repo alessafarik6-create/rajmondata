@@ -1166,7 +1166,30 @@ service cloud.firestore {
           (!('paidBy' in request.resource.data) ||
             request.resource.data.paidBy == null ||
             (request.resource.data.paidBy is string &&
-              request.resource.data.paidBy.size() > 0));
+              request.resource.data.paidBy.size() > 0)) &&
+          (!('updatedAt' in request.resource.data) ||
+            request.resource.data.updatedAt == null ||
+            request.resource.data.updatedAt is timestamp) &&
+          (!('adjustmentMinutes' in request.resource.data) ||
+            request.resource.data.adjustmentMinutes is int) &&
+          (!('adjustmentReasonCode' in request.resource.data) ||
+            request.resource.data.adjustmentReasonCode == null ||
+            (request.resource.data.adjustmentReasonCode is string &&
+              request.resource.data.adjustmentReasonCode.size() <= 64)) &&
+          (!('adjustmentNote' in request.resource.data) ||
+            request.resource.data.adjustmentNote == null ||
+            (request.resource.data.adjustmentNote is string &&
+              request.resource.data.adjustmentNote.size() <= 400)) &&
+          (!('adjustmentUpdatedAt' in request.resource.data) ||
+            request.resource.data.adjustmentUpdatedAt == null ||
+            (request.resource.data.adjustmentUpdatedAt is string &&
+              request.resource.data.adjustmentUpdatedAt.size() <= 40)) &&
+          (!('adjustmentUpdatedByName' in request.resource.data) ||
+            request.resource.data.adjustmentUpdatedByName == null ||
+            (request.resource.data.adjustmentUpdatedByName is string &&
+              request.resource.data.adjustmentUpdatedByName.size() <= 120)) &&
+          (!('adjustmentAudit' in request.resource.data) ||
+            request.resource.data.adjustmentAudit is list);
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 

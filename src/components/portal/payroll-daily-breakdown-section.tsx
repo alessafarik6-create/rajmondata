@@ -29,8 +29,14 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  directionAndFieldsFromAdjustmentMinutes,
+  parsePayrollAdjustmentMinutes,
+  type PayrollAdjustmentDirection,
+} from "@/lib/payroll-day-adjustment";
 
 export type SaveDayAdjustmentPayload = {
   dateIso: string;
@@ -40,13 +46,19 @@ export type SaveDayAdjustmentPayload = {
   previousMinutes: number;
 };
 
+export type SaveDayAdjustmentResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
 type Props = {
   rows: EmployeeDailyDetailRow[];
   attendanceRaw: AttendanceRow[];
   employee: EmployeeLite;
   canWrite: boolean;
   saving?: boolean;
-  onSaveAdjustment: (payload: SaveDayAdjustmentPayload) => Promise<void>;
+  onSaveAdjustment: (
+    payload: SaveDayAdjustmentPayload
+  ) => Promise<SaveDayAdjustmentResult>;
   adjustmentAuditByDate?: Map<string, EmployeeDayPayoutAdjustmentAudit[]>;
 };
 
@@ -232,8 +244,11 @@ export function PayrollDailyBreakdownSection({
   const [editRow, setEditRow] = useState<EmployeeDailyDetailRow | null>(null);
   const [adjHours, setAdjHours] = useState("0");
   const [adjMinutes, setAdjMinutes] = useState("0");
+  const [adjDirection, setAdjDirection] =
+    useState<PayrollAdjustmentDirection>("add");
   const [reasonCode, setReasonCode] = useState<string>("attendance_fix");
   const [note, setNote] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
 
   const timelines = useMemo(() => {
     const m = new Map<string, ReturnType<typeof buildAttendanceDayTimeline>>();
@@ -251,31 +266,43 @@ export function PayrollDailyBreakdownSection({
 
   const openEdit = (row: EmployeeDailyDetailRow) => {
     const totalMin = row.adjustmentMinutes ?? 0;
-    const sign = totalMin < 0 ? "-" : "";
-    const abs = Math.abs(totalMin);
-    setAdjHours(String(sign + Math.floor(abs / 60)));
-    setAdjMinutes(String(abs % 60));
+    const fields = directionAndFieldsFromAdjustmentMinutes(totalMin);
+    setAdjDirection(fields.direction);
+    setAdjHours(fields.hours);
+    setAdjMinutes(fields.minutes);
     setReasonCode(row.adjustmentReasonCode ?? "attendance_fix");
     setNote(row.adjustmentNote ?? "");
+    setFormError(null);
     setEditRow(row);
   };
 
   const submitEdit = async () => {
     if (!editRow) return;
-    const h = Number(String(adjHours).replace(",", ".")) || 0;
-    const m = Number(adjMinutes) || 0;
-    let total = Math.round(h * 60 + m);
-    if (String(adjHours).trim().startsWith("-")) total = -Math.abs(total);
-    else if (h < 0) total = -Math.abs(total);
-    if (!reasonCode) return;
-    if (!note.trim()) return;
-    await onSaveAdjustment({
+    setFormError(null);
+    if (!reasonCode.trim()) {
+      setFormError("Vyberte důvod korekce.");
+      return;
+    }
+    if (!note.trim()) {
+      setFormError("Vyplňte poznámku.");
+      return;
+    }
+    const parsed = parsePayrollAdjustmentMinutes(adjHours, adjMinutes, adjDirection);
+    if (!parsed.ok) {
+      setFormError(parsed.error);
+      return;
+    }
+    const result = await onSaveAdjustment({
       dateIso: editRow.dateIso,
-      adjustmentMinutes: total,
+      adjustmentMinutes: parsed.minutes,
       reasonCode,
       note: note.trim(),
       previousMinutes: editRow.adjustmentMinutes ?? 0,
     });
+    if (!result.ok) {
+      setFormError(result.message);
+      return;
+    }
     setEditRow(null);
   };
 
@@ -489,20 +516,60 @@ export function PayrollDailyBreakdownSection({
               Terminál:{" "}
               <strong>{formatHoursMinutes(editRow?.terminalOdpracovanoH ?? null)}</strong>
             </p>
+            <div className="space-y-2">
+              <Label>Typ korekce</Label>
+              <RadioGroup
+                value={adjDirection}
+                onValueChange={(v) =>
+                  setAdjDirection(v as PayrollAdjustmentDirection)
+                }
+                className="flex flex-wrap gap-4"
+              >
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="add" id="adj-add" />
+                  <Label htmlFor="adj-add" className="cursor-pointer font-normal">
+                    Přidat čas
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <RadioGroupItem value="subtract" id="adj-sub" />
+                  <Label htmlFor="adj-sub" className="cursor-pointer font-normal">
+                    Odebrat čas
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <Label>Hodiny (+/−)</Label>
-                <Input value={adjHours} onChange={(e) => setAdjHours(e.target.value)} />
+                <Label>Hodiny</Label>
+                <Input
+                  value={adjHours}
+                  onChange={(e) => {
+                    setAdjHours(e.target.value);
+                    setFormError(null);
+                  }}
+                  inputMode="numeric"
+                  placeholder="0"
+                />
               </div>
               <div>
-                <Label>Minuty</Label>
+                <Label>Minuty (0–59)</Label>
                 <Input
                   value={adjMinutes}
-                  onChange={(e) => setAdjMinutes(e.target.value)}
+                  onChange={(e) => {
+                    setAdjMinutes(e.target.value);
+                    setFormError(null);
+                  }}
                   inputMode="numeric"
+                  placeholder="0"
                 />
               </div>
             </div>
+            {formError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{formError}</AlertDescription>
+              </Alert>
+            ) : null}
             <div>
               <Label>Důvod</Label>
               <Select value={reasonCode} onValueChange={setReasonCode}>
@@ -529,10 +596,10 @@ export function PayrollDailyBreakdownSection({
             </Button>
             <Button
               type="button"
-              disabled={saving || !note.trim()}
+              disabled={saving}
               onClick={() => void submitEdit()}
             >
-              Uložit korekci
+              {saving ? "Ukládám…" : "Uložit korekci"}
             </Button>
           </DialogFooter>
         </DialogContent>

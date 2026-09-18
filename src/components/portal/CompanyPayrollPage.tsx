@@ -116,6 +116,7 @@ import { PayrollPeriodPanel } from "@/components/portal/PayrollPeriodPanel";
 import {
   PayrollDailyBreakdownSection,
   type SaveDayAdjustmentPayload,
+  type SaveDayAdjustmentResult,
 } from "@/components/portal/payroll-daily-breakdown-section";
 import type { EmployeeDayPayoutAdjustmentAudit } from "@/lib/employee-day-payout";
 import {
@@ -1294,15 +1295,24 @@ function PayrollAdminPageInner() {
   );
 
   const saveDayAdjustment = useCallback(
-    async (payload: SaveDayAdjustmentPayload) => {
-      if (payrollMutationsDisabled) return;
-      if (!firestore || !companyId || !user?.uid || !payrollTargetEmployee) {
+    async (payload: SaveDayAdjustmentPayload): Promise<SaveDayAdjustmentResult> => {
+      if (payrollMutationsDisabled) {
+        const message = "Nemáte oprávnění upravovat mzdy (modul Práce a mzdy — zápis).";
         toast({
           variant: "destructive",
           title: "Nelze uložit korekci",
-          description: "Chybí přihlášení nebo zaměstnanec.",
+          description: message,
         });
-        return;
+        return { ok: false, message };
+      }
+      if (!firestore || !companyId || !user?.uid || !payrollTargetEmployee) {
+        const message = "Chybí přihlášení nebo zaměstnanec.";
+        toast({
+          variant: "destructive",
+          title: "Nelze uložit korekci",
+          description: message,
+        });
+        return { ok: false, message };
       }
       const perMap = dayPayoutMapForEmployee(
         dayPayoutGlobalMap,
@@ -1310,13 +1320,15 @@ function PayrollAdminPageInner() {
       );
       const st = perMap?.get(payload.dateIso);
       if (st?.paid === true) {
+        const message = "U vyplaceného dne nelze měnit korekci.";
         toast({
           variant: "destructive",
           title: "Den je vyplacen",
-          description: "U vyplaceného dne nelze měnit korekci.",
+          description: message,
         });
-        return;
+        return { ok: false, message };
       }
+      const adjustmentMinutes = Math.round(payload.adjustmentMinutes);
       const byName =
         (user.displayName && String(user.displayName).trim()) ||
         (user.email && String(user.email).trim()) ||
@@ -1326,8 +1338,8 @@ function PayrollAdminPageInner() {
         at: new Date().toISOString(),
         byUid: user.uid,
         byName,
-        previousMinutes: payload.previousMinutes,
-        newMinutes: payload.adjustmentMinutes,
+        previousMinutes: Math.round(payload.previousMinutes),
+        newMinutes: adjustmentMinutes,
         reasonCode: payload.reasonCode,
         note: payload.note.trim() ? payload.note.trim().slice(0, 400) : null,
       };
@@ -1361,7 +1373,7 @@ function PayrollAdminPageInner() {
             paid: Boolean(st?.paid),
             paidNote,
             approved: Boolean(st?.approved),
-            adjustmentMinutes: payload.adjustmentMinutes,
+            adjustmentMinutes,
             adjustmentReasonCode: payload.reasonCode,
             adjustmentNote: payload.note.trim().slice(0, 400),
             adjustmentUpdatedAt: new Date().toISOString(),
@@ -1376,13 +1388,19 @@ function PayrollAdminPageInner() {
           description:
             "Výplata za den se přepočítá podle nového započteného času.",
         });
+        return { ok: true };
       } catch (e) {
         console.error(e);
+        const message =
+          e instanceof Error && e.message
+            ? e.message
+            : "Korekci se nepodařilo uložit.";
         toast({
           variant: "destructive",
           title: "Uložení korekce se nezdařilo",
-          description: e instanceof Error ? e.message : undefined,
+          description: message,
         });
+        return { ok: false, message };
       } finally {
         setDayAdjustmentSaving(false);
       }
