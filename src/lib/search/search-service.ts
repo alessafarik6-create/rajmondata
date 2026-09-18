@@ -42,6 +42,7 @@ import type { KnowledgeSearchAnswer } from "@/lib/search/types";
 import { extractLikelyJobNameFromQuery } from "@/lib/search/file-content-intent";
 import { resolveJobsForSearchQuery } from "@/lib/search/job-name-resolver";
 import { loadJobLinkedDocumentCandidates } from "@/lib/search/job-document-candidates";
+import { dedupeSearchResults } from "@/lib/search/dedupe-search-results";
 
 export type RunCompanySearchParams = {
   db: Firestore;
@@ -158,7 +159,8 @@ export async function runCompanySearch(
     const jobDocs = await loadJobLinkedDocumentCandidates(
       params.db,
       params.companyId,
-      intent.resolvedJobIds
+      intent.resolvedJobIds,
+      intent.resolvedJobNames
     );
     for (const row of jobDocs) {
       candidates.set(`${row.entityType}_${row.entityId}`, row);
@@ -223,6 +225,8 @@ export async function runCompanySearch(
     const rest = results.filter((r) => r.entityType !== "document" && r.entityType !== "file");
     if (files.length) results = [...files, ...rest].slice(0, limit);
   }
+
+  results = dedupeSearchResults(results).slice(0, limit);
 
   const summaryText = buildFileSearchSummary(results, intent);
 

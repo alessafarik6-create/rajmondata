@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useSearchModalInsets } from "@/hooks/use-search-modal-insets";
 import { useRouter } from "next/navigation";
 import { Search, Sparkles } from "lucide-react";
 import { useCompany, useUser } from "@/firebase";
@@ -62,6 +63,7 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
   const [previewItem, setPreviewItem] = useState<SearchResultItem | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { topPx, maxHeightCss } = useSearchModalInsets(open);
 
   useEffect(() => {
     if (open) {
@@ -249,16 +251,23 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
+          style={
+            {
+              "--search-modal-top": `${topPx}px`,
+              "--search-modal-max-h": maxHeightCss,
+            } as CSSProperties
+          }
           className={cn(
-            "fixed left-1/2 top-[max(1rem,8vh)] z-50 flex max-h-[min(80dvh,760px)] w-[min(760px,calc(100vw-32px))] -translate-x-1/2 flex-col gap-0 overflow-hidden p-0",
-            "sm:max-w-[min(760px,calc(100vw-32px))]"
+            "fixed left-1/2 z-50 flex w-[calc(100vw-16px)] max-w-[calc(100vw-16px)] flex-col gap-0 overflow-hidden p-0",
+            "!top-[var(--search-modal-top)] !max-h-[var(--search-modal-max-h)] !-translate-x-1/2 !translate-y-0",
+            "sm:w-[min(820px,calc(100vw-48px))] sm:max-w-[min(820px,calc(100vw-48px))]"
           )}
         >
           <DialogHeader className="sr-only">
             <DialogTitle>Hledat v RajmonData</DialogTitle>
           </DialogHeader>
 
-          <div className="sticky top-0 z-10 shrink-0 border-b bg-background px-4 py-3 space-y-2">
+          <div className="z-10 shrink-0 border-b bg-background px-4 py-3 space-y-2">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
               <Sparkles className="h-4 w-4 text-blue-600 shrink-0" />
               Hledat v RajmonData
@@ -306,42 +315,50 @@ export function GlobalSearchBar({ className, dashboardDark }: GlobalSearchProps)
 
           {error ? <p className="px-4 py-3 text-sm text-destructive shrink-0">{error}</p> : null}
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-2 space-y-3">
-            {previewItem ? (
-              <SearchInlineFilePreview item={previewItem} onClose={() => setPreviewItem(null)} />
-            ) : null}
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-3 pt-2">
+            <div className="space-y-3">
+              {previewItem ? (
+                <SearchInlineFilePreview
+                  item={previewItem}
+                  searchQuery={query}
+                  onBack={() => setPreviewItem(null)}
+                />
+              ) : (
+                <>
+                  {knowledgeLoading ? (
+                    <KnowledgeSearchAnswerCard
+                      answer={{
+                        found: false,
+                        answerText: "",
+                        sources: [],
+                        relatedSources: [],
+                        needsVisualContext: false,
+                        primarySource: null,
+                      }}
+                      loading
+                      compact
+                    />
+                  ) : response?.knowledgeAnswer ? (
+                    <KnowledgeSearchAnswerCard answer={response.knowledgeAnswer} compact />
+                  ) : null}
 
-            {knowledgeLoading ? (
-              <KnowledgeSearchAnswerCard
-                answer={{
-                  found: false,
-                  answerText: "",
-                  sources: [],
-                  relatedSources: [],
-                  needsVisualContext: false,
-                  primarySource: null,
-                }}
-                loading
-                compact
-              />
-            ) : response?.knowledgeAnswer ? (
-              <KnowledgeSearchAnswerCard answer={response.knowledgeAnswer} compact />
-            ) : null}
-
-            <SearchResultsList
-              results={response?.results ?? []}
-              activeIndex={activeIndex}
-              onActiveIndexChange={setActiveIndex}
-              onOpenResult={openResult}
-              onPreviewResult={openPreview}
-              loading={loading && !!query.trim() && !knowledgeLoading}
-              emptyMessage={emptyMessage}
-              summaryText={response?.summaryText}
-              compact
-            />
+                  <SearchResultsList
+                    results={response?.results ?? []}
+                    activeIndex={activeIndex}
+                    onActiveIndexChange={setActiveIndex}
+                    onOpenResult={openResult}
+                    onPreviewResult={openPreview}
+                    loading={loading && !!query.trim() && !knowledgeLoading}
+                    emptyMessage={emptyMessage}
+                    summaryText={response?.summaryText}
+                    compact
+                  />
+                </>
+              )}
+            </div>
           </div>
 
-          <div className="flex shrink-0 items-center justify-between border-t px-4 py-2 text-xs text-muted-foreground">
+          <div className="sticky bottom-0 z-10 flex shrink-0 items-center justify-between border-t bg-background px-4 py-2 text-xs text-muted-foreground">
             <span>↑↓ · Enter náhled · Ctrl+Enter otevřít soubor · Esc</span>
             {response?.usedSemantic ? <span>Sémantické vyhledávání</span> : null}
           </div>

@@ -76,6 +76,7 @@ export function PwaInstallBanner() {
       <>
         <div
           className={shellClass}
+          data-pwa-install-banner="true"
           role="region"
           aria-label="Instalace aplikace na plochu"
         >
@@ -141,7 +142,12 @@ export function PwaInstallBanner() {
 
   return (
     <>
-      <div className={shellClass} role="region" aria-label="Instalace aplikace">
+      <div
+        className={shellClass}
+        data-pwa-install-banner="true"
+        role="region"
+        aria-label="Instalace aplikace"
+      >
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1 text-sm text-slate-800 dark:text-slate-200 sm:max-w-2xl sm:text-[15px]">
             <p>{BANNER_COPY}</p>

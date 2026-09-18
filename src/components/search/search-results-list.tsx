@@ -35,12 +35,30 @@ function isPreviewableFile(item: SearchResultItem): boolean {
   );
 }
 
+const ENTITY_BADGE: Record<string, string> = {
+  job: "ZAKÁZKA",
+  customer: "ZÁKAZNÍK",
+  invoice: "FAKTURA",
+  document: "DOKLAD",
+  offer: "NABÍDKA",
+  inquiry: "POPTÁVKA",
+  product: "PRODUKT",
+  file: "SOUBOR",
+};
+
 function typeBadge(item: SearchResultItem): string | null {
   const title = item.metadata.fileName ?? item.title;
   const mime = item.mimeType ?? "";
   if (mime.includes("pdf") || title.toLowerCase().endsWith(".pdf")) return "PDF";
   if (mime.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/i.test(title)) return "OBRÁZEK";
+  const cat = (item.metadata.category ?? "").toLowerCase();
+  if (cat.includes("smlouv")) return "SMLOUVA";
+  if (cat.includes("nabídk") || cat.includes("nabidk")) return "NABÍDKA";
   return null;
+}
+
+function entityBadgeLabel(item: SearchResultItem): string {
+  return ENTITY_BADGE[item.entityType] ?? searchEntityLabel(item.entityType).toUpperCase();
 }
 
 export function SearchResultsList({
@@ -72,10 +90,12 @@ export function SearchResultsList({
       {summaryText ? (
         <p className="text-sm text-slate-800 leading-snug px-1">{summaryText}</p>
       ) : null}
-      <ul className={cn("divide-y rounded-md border", compact ? "max-h-[50vh] overflow-y-auto" : "")}>
+      <ul className={cn("divide-y rounded-md border", compact ? "overflow-y-auto" : "")}>
         {results.map((item, idx) => {
           const previewable = isPreviewableFile(item);
           const extraBadge = typeBadge(item);
+          const jobId = item.metadata.jobId;
+          const jobUrl = jobId ? `/portal/jobs/${encodeURIComponent(jobId)}` : null;
           return (
             <li key={`${item.entityType}-${item.entityId}`}>
               <div
@@ -102,7 +122,7 @@ export function SearchResultsList({
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                      {searchEntityLabel(item.entityType)}
+                      {entityBadgeLabel(item)}
                     </Badge>
                     {extraBadge ? (
                       <Badge variant="secondary" className="text-[10px]">
@@ -137,6 +157,13 @@ export function SearchResultsList({
                       <ExternalLink className="ml-1 h-3 w-3" />
                     </Link>
                   </Button>
+                  {jobUrl ? (
+                    <Button asChild variant="outline" size="sm" className="min-h-9">
+                      <Link href={jobUrl} onClick={(e) => e.stopPropagation()}>
+                        Zakázka
+                      </Link>
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </li>

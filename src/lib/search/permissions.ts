@@ -130,6 +130,12 @@ export function canViewSearchIndexEntry(
     return false;
   }
 
+  if (entry.entityType === "file") {
+    const jobId = entry.metadata.jobId;
+    if (!jobId) return false;
+    return access.accessibleJobIds?.has(jobId) ?? false;
+  }
+
   if (FINANCE_ENTITY_TYPES.has(entry.entityType)) {
     const jobId = entry.metadata.jobId;
     if (!jobId) return false;
