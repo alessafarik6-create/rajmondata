@@ -477,7 +477,7 @@ export default function SettingsPage() {
           )}
           {isAdmin && (
             <TabsTrigger value="email-mailbox" className="gap-2 min-h-[44px] sm:min-h-0">
-              <Mail className="w-4 h-4 shrink-0" /> E-mailová komunikace
+              <Mail className="w-4 h-4 shrink-0" /> E-mailové účty
             </TabsTrigger>
           )}
           {isAdmin && (

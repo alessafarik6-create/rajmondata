@@ -58,6 +58,7 @@ import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-ca
 import { DashboardJobTasksWidget } from "@/components/jobs/dashboard-job-tasks-widget";
 import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
 import { DashboardDocumentsToPayWidget } from "@/components/portal/dashboard-documents-to-pay-widget";
+import { DashboardEmailAttentionWidget } from "@/components/portal/dashboard-email-attention-widget";
 import { DashboardActivitySection } from "@/components/portal/dashboard-activity-section";
 import { DashboardUnassignedMeasurementPhotos } from "@/components/portal/dashboard-unassigned-measurement-photos";
 import {
@@ -1280,6 +1281,7 @@ export default function CompanyDashboard() {
 
           {companyId ? (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch lg:gap-6">
+              <DashboardEmailAttentionWidget companyId={companyId} />
               <div className="peer/pay min-w-0 h-full">
                 <DashboardDocumentsToPayWidget companyId={companyId} todayIso={todayIso} />
               </div>

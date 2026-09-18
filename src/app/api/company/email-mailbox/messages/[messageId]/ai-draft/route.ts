@@ -4,6 +4,7 @@ import { requireEmailMailboxWrite } from "@/lib/email-mailbox/api-auth";
 import { suggestEmailReplyDraft } from "@/lib/email-mailbox/ai-analyze-message";
 import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
 import type { EmailMessageDoc } from "@/lib/email-mailbox/types";
+import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -32,6 +33,13 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   await snap.ref.update({
     aiDraftReply: draft,
     updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  await logEmailMailboxAudit(perm.db, companyId, {
+    actionType: "email_ai_draft",
+    actionLabel: "AI návrh odpovědi na e-mail",
+    userId: perm.caller.uid,
+    entityId: messageId,
   });
 
   return NextResponse.json({ ok: true, draft });

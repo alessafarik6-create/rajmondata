@@ -6,11 +6,18 @@ export type EmailMessageDirection = "inbound" | "outbound";
 
 export type EmailMessageWorkflowView =
   | "inbox"
+  | "sent"
+  | "drafts"
+  | "archive"
+  | "spam"
+  | "trash"
   | "waiting_reply"
   | "ai_review"
   | "assigned"
   | "unassigned"
   | "resolved";
+
+export type EmailMailboxFolder = "inbox" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
 import type { Timestamp } from "firebase-admin/firestore";
 
@@ -31,6 +38,7 @@ export type EmailAccountDoc = {
   sentFolderPath?: string | null;
   lastSyncAt?: Timestamp | null;
   lastError?: string | null;
+  createdByUserId?: string | null;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 };
@@ -80,6 +88,12 @@ export type EmailMessageDoc = {
   offerId?: string | null;
   jobId?: string | null;
   resolved?: boolean;
+  isRead?: boolean;
+  isDraft?: boolean;
+  deleted?: boolean;
+  customerName?: string | null;
+  jobLabel?: string | null;
+  aiInsights?: string[] | null;
   repliedAt?: Timestamp | null;
   attachments?: EmailMessageAttachmentMeta[];
   aiDraftReply?: string | null;

@@ -56,9 +56,26 @@ export function buildMessageViewFilter(view: EmailMessageWorkflowView) {
         m.direction === "inbound" && !m.customerId && !m.jobId && !m.inquiryId && !m.resolved;
     case "resolved":
       return (m: EmailMessageDoc) => Boolean(m.resolved);
+    case "sent":
+      return (m: EmailMessageDoc) =>
+        m.direction === "outbound" && !m.isDraft && !m.deleted;
+    case "drafts":
+      return (m: EmailMessageDoc) => Boolean(m.isDraft) && !m.deleted;
+    case "archive":
+      return (m: EmailMessageDoc) => Boolean(m.resolved) && !m.deleted;
+    case "spam":
+      return (m: EmailMessageDoc) =>
+        String(m.aiClassification ?? "").toLowerCase() === "spam" && !m.deleted;
+    case "trash":
+      return (m: EmailMessageDoc) => Boolean(m.deleted);
     case "inbox":
     default:
-      return (m: EmailMessageDoc) => m.folder === "INBOX" && !m.resolved;
+      return (m: EmailMessageDoc) =>
+        m.direction === "inbound" &&
+        !m.deleted &&
+        !m.isDraft &&
+        !m.resolved &&
+        String(m.aiClassification ?? "").toLowerCase() !== "spam";
   }
 }
 

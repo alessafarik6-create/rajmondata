@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ messageId: string }> };
 
-export async function POST(request: NextRequest, ctx: Ctx) {
+export async function PATCH(request: NextRequest, ctx: Ctx) {
   const perm = await requireEmailMailboxWrite(request);
   if (!perm.ok) {
     return NextResponse.json({ ok: false, error: perm.error }, { status: perm.status });
@@ -17,9 +17,8 @@ export async function POST(request: NextRequest, ctx: Ctx) {
 
   let body: {
     companyId?: string;
-    customerId?: string | null;
-    jobId?: string | null;
-    inquiryId?: string | null;
+    isRead?: boolean;
+    deleted?: boolean;
     resolved?: boolean;
   };
   try {
@@ -32,29 +31,24 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   if (!emailMailboxTenantOk(perm.caller, companyId)) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
+
   const { messageId } = await ctx.params;
+  const ref = emailMessagesCol(perm.db, companyId).doc(messageId);
+  const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+  if (typeof body.isRead === "boolean") patch.isRead = body.isRead;
+  if (typeof body.deleted === "boolean") patch.deleted = body.deleted;
+  if (typeof body.resolved === "boolean") patch.resolved = body.resolved;
 
-  await emailMessagesCol(perm.db, companyId)
-    .doc(messageId)
-    .update({
-      customerId: body.customerId ?? null,
-      jobId: body.jobId ?? null,
-      inquiryId: body.inquiryId ?? null,
-      resolved: body.resolved ?? false,
-      aiReviewPending: false,
-      updatedAt: FieldValue.serverTimestamp(),
+  await ref.update(patch);
+
+  if (body.deleted) {
+    await logEmailMailboxAudit(perm.db, companyId, {
+      actionType: "email_message_deleted",
+      actionLabel: "E-mail přesunut do koše",
+      userId: perm.caller.uid,
+      entityId: messageId,
     });
-
-  await logEmailMailboxAudit(perm.db, companyId, {
-    actionType: "email_assignment_changed",
-    actionLabel: "Změna přiřazení e-mailu",
-    userId: perm.caller.uid,
-    entityId: messageId,
-    metadata: {
-      customerId: body.customerId ?? null,
-      jobId: body.jobId ?? null,
-    },
-  });
+  }
 
   return NextResponse.json({ ok: true });
 }

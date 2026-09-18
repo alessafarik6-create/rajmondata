@@ -31,6 +31,7 @@ const nextConfig: NextConfig = {
       { source: "/vyroba-a-sklad", destination: "/sklad-a-vyroba", permanent: true },
       { source: "/software-pro-remeslniky", destination: "/pro-remeslniky", permanent: true },
       { source: "/software-pro-montazni-firmy", destination: "/pro-montazni-firmy", permanent: true },
+      { source: "/portal/emails", destination: "/portal/email", permanent: false },
     ];
   },
   eslint: {

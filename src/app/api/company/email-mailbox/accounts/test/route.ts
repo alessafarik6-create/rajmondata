@@ -15,6 +15,7 @@ export async function POST(request: NextRequest) {
     provider?: EmailProviderKind;
     email?: string;
     password?: string;
+    username?: string;
     imapHost?: string;
     imapPort?: number;
     imapSecure?: boolean;
@@ -54,7 +55,8 @@ export async function POST(request: NextRequest) {
     smtpSecure: body.smtpSecure ?? preset.smtpSecure,
   };
 
-  const test = await adapter.testConnection(account, { username: email, password });
+  const username = String(body.username ?? email).trim();
+  const test = await adapter.testConnection(account, { username, password });
   if (!test.ok) {
     return NextResponse.json({ ok: false, error: test.message, test }, { status: 400 });
   }

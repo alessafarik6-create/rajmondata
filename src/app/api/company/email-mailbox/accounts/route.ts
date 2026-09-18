@@ -6,7 +6,12 @@ import {
   listEmailAccounts,
   saveEmailCredentials,
 } from "@/lib/email-mailbox/account-store";
-import { requireOrgEmailAdmin } from "@/lib/email-mailbox/api-auth";
+import {
+  emailMailboxTenantOk,
+  requireEmailMailboxRead,
+  requireOrgEmailAdmin,
+} from "@/lib/email-mailbox/api-auth";
+import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 import { getEmailProviderAdapter } from "@/lib/email-mailbox/adapters";
 import { presetForProvider } from "@/lib/email-mailbox/provider-presets";
 import type { EmailProviderKind } from "@/lib/email-mailbox/types";
@@ -15,13 +20,14 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
-  const auth = await requireOrgEmailAdmin(request);
-  if (!auth.ok) return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
-  const companyId = String(request.nextUrl.searchParams.get("companyId") ?? "").trim();
-  if (!companyId) {
-    return NextResponse.json({ ok: false, error: "Chybí companyId." }, { status: 400 });
+  const perm = await requireEmailMailboxRead(request);
+  if (!perm.ok) return NextResponse.json({ ok: false, error: perm.error }, { status: perm.status });
+  const companyId =
+    String(request.nextUrl.searchParams.get("companyId") ?? "").trim() || perm.caller.companyId;
+  if (!emailMailboxTenantOk(perm.caller, companyId)) {
+    return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
-  const accounts = await listEmailAccounts(auth.db, companyId);
+  const accounts = await listEmailAccounts(perm.db, companyId);
   const safe = accounts.map(({ id, ...a }) => ({
     id,
     provider: a.provider,
@@ -46,6 +52,7 @@ export async function POST(request: NextRequest) {
     email?: string;
     displayName?: string;
     password?: string;
+    username?: string;
     imapHost?: string;
     imapPort?: number;
     imapSecure?: boolean;
@@ -62,10 +69,14 @@ export async function POST(request: NextRequest) {
 
   const companyId = String(body.companyId ?? "").trim();
   const email = String(body.email ?? "").trim().toLowerCase();
+  const username = String(body.username ?? body.email ?? "").trim();
   const provider = body.provider as EmailProviderKind;
   const password = String(body.password ?? "");
   if (!companyId || !email || !password || !provider) {
     return NextResponse.json({ ok: false, error: "Vyplňte e-mail, heslo a provider." }, { status: 400 });
+  }
+  if (!emailMailboxTenantOk(auth.caller, companyId)) {
+    return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
   const preset = presetForProvider(provider);
@@ -97,7 +108,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!body.skipTest) {
-    const test = await adapter.testConnection(accountDraft, { username: email, password });
+    const test = await adapter.testConnection(accountDraft, { username, password });
     if (!test.ok) {
       return NextResponse.json({ ok: false, error: test.message ?? "Test připojení selhal.", test }, { status: 400 });
     }
@@ -108,10 +119,20 @@ export async function POST(request: NextRequest) {
     ...accountDraft,
     status: "connected",
     lastError: null,
+    createdByUserId: auth.caller.uid,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
-  await saveEmailCredentials(auth.db, companyId, accountId, { username: email, password });
+  await saveEmailCredentials(auth.db, companyId, accountId, { username, password });
+
+  await logEmailMailboxAudit(auth.db, companyId, {
+    actionType: "email_account_connected",
+    actionLabel: "Připojena e-mailová schránka",
+    userId: auth.caller.uid,
+    entityId: accountId,
+    details: email,
+    metadata: { provider },
+  });
 
   return NextResponse.json({ ok: true, accountId });
 }

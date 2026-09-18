@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireEmailMailboxWrite } from "@/lib/email-mailbox/api-auth";
 import { sendEmailFromAccount } from "@/lib/email-mailbox/send-service";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
+import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -31,6 +33,9 @@ export async function POST(request: NextRequest) {
   }
 
   const companyId = String(body.companyId ?? perm.caller.companyId).trim();
+  if (!emailMailboxTenantOk(perm.caller, companyId)) {
+    return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
+  }
   const accountId = String(body.accountId ?? "").trim();
   const to = Array.isArray(body.to) ? body.to.map(String) : [];
   const subject = String(body.subject ?? "").trim();
@@ -65,6 +70,13 @@ export async function POST(request: NextRequest) {
       textBody,
       htmlBody: body.htmlBody,
       replyToMessage,
+    });
+    await logEmailMailboxAudit(db, companyId, {
+      actionType: "email_sent",
+      actionLabel: "Odeslán e-mail",
+      userId: perm.caller.uid,
+      entityId: sent.messageDocId,
+      metadata: { to, subject },
     });
     return NextResponse.json({ ok: true, ...sent });
   } catch (err) {

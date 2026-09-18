@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { requireOrgEmailAdmin } from "@/lib/email-mailbox/api-auth";
 import { emailAccountsCol, saveEmailCredentials } from "@/lib/email-mailbox/account-store";
 import { getEmailProviderAdapter } from "@/lib/email-mailbox/adapters";
+import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -17,6 +18,12 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
   if (!companyId) return NextResponse.json({ ok: false, error: "Chybí companyId." }, { status: 400 });
 
   await emailAccountsCol(auth.db, companyId).doc(accountId).delete();
+  await logEmailMailboxAudit(auth.db, companyId, {
+    actionType: "email_account_disconnected",
+    actionLabel: "Odpojena e-mailová schránka",
+    userId: auth.caller.uid,
+    entityId: accountId,
+  });
   return NextResponse.json({ ok: true });
 }
 

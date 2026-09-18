@@ -15,6 +15,11 @@ import {
   saveInboundMessage,
 } from "@/lib/email-mailbox/message-store";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
+import {
+  extractEmailAddress,
+  resolveCustomerByEmail,
+  resolveJobHint,
+} from "@/lib/email-mailbox/contact-resolve";
 
 export async function syncEmailAccount(
   db: Firestore,
@@ -106,7 +111,23 @@ export async function syncEmailAccount(
         aiReviewPending: false,
       };
 
-      const messageId = await saveInboundMessage(db, companyId, base);
+      const fromEmail = extractEmailAddress(msg.from);
+      const customer = await resolveCustomerByEmail(db, companyId, fromEmail);
+      let jobHint: { jobId: string; jobLabel: string } | null = null;
+      if (customer) {
+        jobHint = await resolveJobHint(db, companyId, customer.customerId);
+      }
+
+      const messageId = await saveInboundMessage(db, companyId, {
+        ...base,
+        isRead: false,
+        customerId: customer?.customerId ?? null,
+        customerName: customer?.customerName ?? null,
+        suggestedCustomerId: customer?.customerId ?? null,
+        jobId: jobHint?.jobId ?? null,
+        jobLabel: jobHint?.jobLabel ?? null,
+        suggestedJobId: jobHint?.jobId ?? null,
+      });
       imported++;
 
       const ai = await analyzeEmailMessageWithAi(db, companyId, {
@@ -131,6 +152,7 @@ export async function syncEmailAccount(
             suggestedActions: ai.suggestedActions,
             inquiryDraft: ai.inquiryDraft ?? null,
             aiReviewPending: Boolean(ai.inquiryDraft || ai.suggestedActions.length),
+            aiInsights: ai.insights ?? [],
             updatedAt: FieldValue.serverTimestamp(),
           });
       }

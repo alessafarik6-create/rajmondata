@@ -44,6 +44,9 @@ export async function GET(request: NextRequest) {
       resolved: Boolean(m.resolved),
       aiReviewPending: Boolean(m.aiReviewPending),
       direction: m.direction,
+      isRead: Boolean(m.isRead),
+      customerName: m.customerName ?? null,
+      jobLabel: m.jobLabel ?? null,
     }));
 
   return NextResponse.json({ ok: true, view, messages });

@@ -14,6 +14,11 @@ export async function requireEmailMailboxWrite(request: NextRequest | Request) {
   return verifyCompanyPortalMutation(request, "emails");
 }
 
+/** Tenant isolation — pouze vlastní organizace. */
+export function emailMailboxTenantOk(caller: { companyId: string }, companyId: string): boolean {
+  return Boolean(companyId?.trim()) && caller.companyId === companyId.trim();
+}
+
 export async function requireOrgEmailAdmin(request: NextRequest | Request) {
   const db = getAdminFirestore();
   const auth = getAdminAuth();

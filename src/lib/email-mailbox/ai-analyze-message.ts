@@ -12,6 +12,7 @@ export type EmailAiAnalysis = {
   suggestedInquiryId?: string | null;
   suggestedActions: string[];
   inquiryDraft?: Record<string, unknown> | null;
+  insights?: string[];
 };
 
 const ALLOWED_ATTACHMENT_HINTS = ["pdf", "jpg", "jpeg", "png", "docx", "xlsx"];
@@ -45,6 +46,7 @@ export async function analyzeEmailMessageWithAi(
   "priority": "low|normal|high",
   "needsReply": true/false,
   "suggestedActions": ["..."],
+  "insights": ["krátké věty pro uživatele, např. termín nebo očekávání odpovědi"],
   "inquiryDraft": { "name": "", "email": "", "phone": "", "text": "", "type": "", "dimensions": "" } nebo null
 }
 Neposílej credentials. Od: ${message.from}. Předmět: ${message.subject}. Přílohy: ${attachmentNames.join(", ") || "—"}.
@@ -93,6 +95,9 @@ Text:\n${body.slice(0, 6000)}`;
         parsed.inquiryDraft && typeof parsed.inquiryDraft === "object"
           ? (parsed.inquiryDraft as Record<string, unknown>)
           : null,
+      insights: Array.isArray(parsed.insights)
+        ? parsed.insights.map(String).slice(0, 6)
+        : [],
       suggestedCustomerId: null,
       suggestedJobId: null,
       suggestedInquiryId: null,
