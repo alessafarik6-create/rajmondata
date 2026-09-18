@@ -5,7 +5,6 @@ import type { AttendanceRow } from "@/lib/employee-attendance";
 import type { EmployeeDailyDetailRow, EmployeeLite } from "@/lib/attendance-overview-compute";
 import { formatHoursMinutes, formatKc } from "@/lib/attendance-overview-compute";
 import { buildAttendanceDayTimeline } from "@/lib/attendance-day-timeline";
-import { getPaymentBadgeLabel } from "@/lib/payroll-entry-display";
 import {
   PAYROLL_ADJUSTMENT_REASONS,
   type EmployeeDayPayoutAdjustmentAudit,
@@ -29,14 +28,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -68,6 +59,50 @@ function formatAdjHours(minutes: number): string {
   if (m === 0) return `${sign}${h} h`;
   return `${sign}${h} h ${m} min`;
 }
+
+function formatHoursCompact(decimalHours: number | null): string {
+  if (decimalHours == null || !Number.isFinite(decimalHours) || decimalHours <= 0) {
+    return "—";
+  }
+  const totalMin = Math.round(decimalHours * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} m`;
+}
+
+function compactDayLabel(row: EmployeeDailyDetailRow): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(row.dateIso);
+  if (m) return `${Number(m[3])}. ${Number(m[2])}.`;
+  return row.dayTitle.split(" ").slice(-3).join(" ") || row.dayTitle;
+}
+
+function rowTariffShort(
+  row: EmployeeDailyDetailRow,
+  employee: EmployeeLite
+): string {
+  const seg = row.tariffSegments.find((t) => t.rateKcPerH != null);
+  if (seg?.rateKcPerH != null) return `${seg.rateKcPerH} Kč/h`;
+  if (row.tariffSegments.length > 1) return "Více tarifů";
+  if (employee.hourlyRate > 0) return `${employee.hourlyRate} Kč/h`;
+  return "—";
+}
+
+function compactStatusLine(row: EmployeeDailyDetailRow): string {
+  const appr =
+    row.schvalenoStatus === "approved"
+      ? "Schv."
+      : row.schvalenoStatus === "pending"
+        ? "Čeká"
+        : "—";
+  if (row.paidStatus === "paid") return `${appr} · Vypl.`;
+  if (row.paidStatus === "unpaid") return `${appr} · Nezapl.`;
+  return appr;
+}
+
+const thClass =
+  "h-9 px-2 text-left align-middle text-xs font-medium text-slate-800";
+const tdClass = "px-2 py-1.5 align-middle text-xs text-slate-900";
 
 function DayDetailPanel(props: {
   row: EmployeeDailyDetailRow;
@@ -254,36 +289,42 @@ export function PayrollDailyBreakdownSection({
 
   return (
     <>
-      <div className="hidden overflow-x-auto md:block">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-8" />
-              <TableHead>Den</TableHead>
-              <TableHead>Příchod–odchod</TableHead>
-              <TableHead>Přestávka</TableHead>
-              <TableHead>Terminál</TableHead>
-              <TableHead>Korekce</TableHead>
-              <TableHead>Výsledek</TableHead>
-              <TableHead>Schv. Kč</TableHead>
-              <TableHead>Stav</TableHead>
-              <TableHead className="text-right">Akce</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      <div className="hidden w-full min-w-0 max-w-full lg:block">
+        <table className="w-full min-w-0 table-fixed border-collapse text-sm">
+          <colgroup>
+            <col className="w-[2rem]" />
+            <col className="w-[12%]" />
+            <col className="w-[14%]" />
+            <col className="w-[14%]" />
+            <col className="w-[14%]" />
+            <col className="w-[12%]" />
+            <col style={{ width: "auto" }} />
+          </colgroup>
+          <thead className="[&_tr]:border-b">
+            <tr>
+              <th className={thClass} aria-label="Rozbalit" />
+              <th className={thClass}>Den</th>
+              <th className={thClass}>Odprac.</th>
+              <th className={thClass}>Tarif</th>
+              <th className={thClass}>Výplata</th>
+              <th className={thClass}>Stav</th>
+              <th className={cn(thClass, "min-w-[9.5rem] text-right")}>Akce</th>
+            </tr>
+          </thead>
+          <tbody className="[&_tr:last-child]:border-0">
             {rows.map((row) => {
               const open = expanded[row.key];
               const tl = timelines.get(row.dateIso);
               const isPaid = row.paidStatus === "paid";
               return (
                 <React.Fragment key={row.key}>
-                  <TableRow>
-                    <TableCell>
+                  <tr className="border-b transition-colors hover:bg-muted/40">
+                    <td className={tdClass}>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8"
+                        className="h-7 w-7 shrink-0"
                         onClick={() =>
                           setExpanded((e) => ({ ...e, [row.key]: !e[row.key] }))
                         }
@@ -294,56 +335,40 @@ export function PayrollDailyBreakdownSection({
                           <ChevronDown className="h-4 w-4" />
                         )}
                       </Button>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">{row.dayTitle}</TableCell>
-                    <TableCell className="whitespace-nowrap text-sm">
-                      {row.prichod !== "—" && row.odchod !== "—"
-                        ? `${row.prichod}–${row.odchod}`
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {formatHoursMinutes(row.pauseH)}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {row.terminalOdpracovanoH != null
-                        ? `${row.terminalOdpracovanoH} h`
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {row.adjustmentMinutes ? (
-                        <span title={`Původně terminál: ${row.terminalOdpracovanoH ?? "—"} h`}>
-                          <Badge variant="secondary" className="font-normal">
-                            Upraveno {formatAdjHours(row.adjustmentMinutes)}
-                          </Badge>
-                        </span>
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm font-medium">
-                      {row.payrollWorkedH != null ? `${row.payrollWorkedH} h` : "—"}
-                    </TableCell>
-                    <TableCell>{formatKc(row.schvalenoKc)}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        <Badge variant="outline" className="font-normal">
-                          {row.schvalenoStatus === "approved"
-                            ? "Schváleno"
-                            : row.schvalenoStatus === "pending"
-                              ? "Čeká"
-                              : "—"}
-                        </Badge>
-                        <Badge variant="outline" className="font-normal">
-                          {getPaymentBadgeLabel(row.paidStatus)}
-                        </Badge>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
+                    </td>
+                    <td className={cn(tdClass, "leading-tight")} title={row.dayTitle}>
+                      {compactDayLabel(row)}
+                    </td>
+                    <td className={cn(tdClass, "font-medium")}>
+                      <span
+                        title={
+                          row.adjustmentMinutes
+                            ? `Terminál: ${formatHoursCompact(row.terminalOdpracovanoH)} · Korekce: ${formatAdjHours(row.adjustmentMinutes)}`
+                            : undefined
+                        }
+                      >
+                        {formatHoursCompact(row.payrollWorkedH)}
+                        {row.adjustmentMinutes ? (
+                          <span className="ml-0.5 text-orange-600" aria-label="Ruční korekce">
+                            *
+                          </span>
+                        ) : null}
+                      </span>
+                    </td>
+                    <td className={cn(tdClass, "leading-tight")}>{rowTariffShort(row, employee)}</td>
+                    <td className={cn(tdClass, "font-medium tabular-nums")}>
+                      {formatKc(row.schvalenoKc)}
+                    </td>
+                    <td className={cn(tdClass, "leading-tight text-slate-700")}>
+                      {compactStatusLine(row)}
+                    </td>
+                    <td className={cn(tdClass, "text-right")}>
+                      <div className="flex shrink-0 flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
                         <Button
                           type="button"
                           size="sm"
                           variant="outline"
+                          className="h-7 px-2 text-xs"
                           onClick={() =>
                             setExpanded((e) => ({ ...e, [row.key]: !e[row.key] }))
                           }
@@ -354,9 +379,9 @@ export function PayrollDailyBreakdownSection({
                           <Button
                             type="button"
                             size="sm"
-                            variant="secondary"
                             disabled={isPaid || saving}
                             title={isPaid ? "Den je vyplacen — korekci nelze měnit" : undefined}
+                            className="h-7 shrink-0 whitespace-nowrap bg-orange-600 px-2 text-xs text-white hover:bg-orange-700"
                             onClick={() => openEdit(row)}
                           >
                             <Pencil className="mr-1 h-3.5 w-3.5" />
@@ -364,11 +389,17 @@ export function PayrollDailyBreakdownSection({
                           </Button>
                         ) : null}
                       </div>
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                   {open ? (
-                    <TableRow>
-                      <TableCell colSpan={10} className="bg-white">
+                    <tr className="border-b">
+                      <td colSpan={7} className="bg-white px-2 py-2">
+                        {row.adjustmentMinutes ? (
+                          <p className="mb-2 text-xs text-orange-800">
+                            Ruční korekce: {formatAdjHours(row.adjustmentMinutes)} (terminál:{" "}
+                            {formatHoursCompact(row.terminalOdpracovanoH)})
+                          </p>
+                        ) : null}
                         <DayDetailPanel row={row} timeline={tl ?? null} employee={employee} />
                         {adjustmentAuditByDate?.get(row.dateIso)?.length ? (
                           <div className="mt-3 border-t pt-2 text-xs text-slate-600">
@@ -381,17 +412,17 @@ export function PayrollDailyBreakdownSection({
                             ))}
                           </div>
                         ) : null}
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   ) : null}
                 </React.Fragment>
               );
             })}
-          </TableBody>
-        </Table>
+          </tbody>
+        </table>
       </div>
 
-      <div className="space-y-3 md:hidden">
+      <div className="space-y-3 lg:hidden">
         {rows.map((row) => {
           const open = expanded[row.key];
           const tl = timelines.get(row.dateIso);
@@ -421,8 +452,13 @@ export function PayrollDailyBreakdownSection({
                   Detail
                 </Button>
                 {canWrite && row.paidStatus !== "paid" ? (
-                  <Button type="button" size="sm" onClick={() => openEdit(row)}>
-                    Upravit den
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="bg-orange-600 text-white hover:bg-orange-700"
+                    onClick={() => openEdit(row)}
+                  >
+                    Upravit
                   </Button>
                 ) : null}
               </div>

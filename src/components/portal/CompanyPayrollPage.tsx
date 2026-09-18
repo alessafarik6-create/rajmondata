@@ -3370,7 +3370,7 @@ function PayrollAdminPageInner() {
         </Tabs>
 
         {payrollSummaryFromDailyDetail && payrollTargetEmployee ? (
-        <Card className="border-slate-200 bg-white print:border-0">
+        <Card className="min-w-0 max-w-full border-slate-200 bg-white print:border-0">
           <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between print:hidden">
             <div>
               <CardTitle className="text-lg text-black">
@@ -3396,10 +3396,10 @@ function PayrollAdminPageInner() {
               Export souhrnu do PDF
             </Button>
           </CardHeader>
-          <CardContent>
+          <CardContent className="min-w-0 max-w-full">
             <div
               ref={payrollSummaryRef}
-              className="space-y-4 bg-white p-2 text-black sm:p-4 print:border-0 print:bg-white"
+              className="min-w-0 max-w-full space-y-4 bg-white p-2 text-black sm:p-4 print:border-0 print:bg-white"
             >
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                 <h2 className="text-xl font-bold">Souhrn výplaty</h2>
@@ -3543,7 +3543,7 @@ function PayrollAdminPageInner() {
                 </p>
               </div>
 
-              <div className="rounded-lg border border-slate-200 p-4">
+              <div className="min-w-0 max-w-full rounded-lg border border-slate-200 p-3 sm:p-4">
                 <h3 className="mb-2 font-semibold">Rozpis po dnech</h3>
                 <p className="mb-3 text-xs text-slate-600">
                   Příchody a odchody z terminálu (beze změny surových záznamů). Ruční
