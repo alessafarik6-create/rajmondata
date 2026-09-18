@@ -3,10 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/logo";
 
 const nav = [
-  { href: "/funkce", label: "Funkce" },
   { href: "/rizeni-zakazek", label: "Zakázky" },
+  { href: "/poptavky-a-nabidky", label: "Poptávky" },
   { href: "/ai-pro-firmy", label: "AI" },
-  { href: "/#cenik", label: "Ceník" },
+  { href: "/evidence-dochazky", label: "Docházka" },
+  { href: "/fakturace", label: "Fakturace" },
 ];
 
 export function PublicMarketingHeader() {

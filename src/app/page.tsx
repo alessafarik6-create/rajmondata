@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import HomeAuthGate from "@/components/marketing/home-auth-gate";
+import { PublicLandingJsonLd } from "@/components/marketing/public-landing-json-ld";
 import { PublicLandingPage } from "@/components/marketing/public-landing-page";
 import { SITE_URL } from "@/lib/site-url";
 import {
@@ -45,8 +46,11 @@ export const metadata: Metadata = {
 
 export default function Home() {
   return (
-    <HomeAuthGate>
-      <PublicLandingPage />
-    </HomeAuthGate>
+    <>
+      <PublicLandingJsonLd />
+      <HomeAuthGate>
+        <PublicLandingPage />
+      </HomeAuthGate>
+    </>
   );
 }

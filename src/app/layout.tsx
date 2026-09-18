@@ -3,10 +3,10 @@ import './globals.css';
 import { Toaster } from '@/components/ui/toaster';
 import { FirebaseClientProvider } from '@/firebase/client-provider';
 import {
-  PLATFORM_DESCRIPTION,
-  PLATFORM_METADATA_TITLE,
-  PLATFORM_NAME,
-} from '@/lib/platform-brand';
+  HOME_SEO_DESCRIPTION,
+  HOME_SEO_TITLE,
+} from '@/lib/marketing/homepage-seo';
+import { PLATFORM_NAME } from '@/lib/platform-brand';
 import { SITE_URL } from '@/lib/site-url';
 
 export const viewport: Viewport = {
@@ -21,8 +21,8 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: PLATFORM_METADATA_TITLE,
-  description: PLATFORM_DESCRIPTION,
+  title: HOME_SEO_TITLE,
+  description: HOME_SEO_DESCRIPTION,
   applicationName: PLATFORM_NAME,
   appleWebApp: {
     capable: true,

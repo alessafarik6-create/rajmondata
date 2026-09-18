@@ -13,7 +13,7 @@ import {
   loadPublicPageSeoOverrides,
   mergePageSeo,
 } from "@/lib/marketing/public-page-seo-server";
-import { SITE_URL } from "@/lib/site-url";
+import { buildMarketingPageJsonLd } from "@/lib/marketing/marketing-page-jsonld";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -58,28 +58,20 @@ export default async function PublicMarketingPage({ params }: Props) {
 
   const operator = await loadPublicOperatorInfo();
 
-  const merged = mergePageSeo(page);
-  const jsonLd =
-    page.kind === "legal"
-      ? null
-      : {
-          "@context": "https://schema.org",
-          "@type": "WebPage",
-          name: page.h1,
-          description: page.description,
-          url: merged.canonical,
-          isPartOf: {
-            "@type": "WebSite",
-            name: "RAJMONDATA",
-            url: `${SITE_URL}/`,
-          },
-        };
+  const overrides = await loadPublicPageSeoOverrides();
+  const merged = mergePageSeo(page, overrides[slug]);
+  const jsonLdGraphs =
+    page.kind === "legal" ? null : buildMarketingPageJsonLd(page, merged.canonical);
 
   return (
     <MarketingPageShell contactEmail={operator.email || null}>
-      {jsonLd ? (
-        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      ) : null}
+      {jsonLdGraphs?.map((graph, i) => (
+        <script
+          key={i}
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(graph) }}
+        />
+      ))}
       {page.kind === "legal" && page.legalKey ? (
         <MarketingLegalDocument doc={resolveLegalDocument(page.legalKey, operator)} />
       ) : (

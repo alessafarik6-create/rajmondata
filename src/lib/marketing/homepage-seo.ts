@@ -1,7 +1,7 @@
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
 export const HOME_SEO_TITLE =
-  "RAJMONDATA | Řízení zakázek, docházka, fakturace a AI pro firmy";
+  "Řízení zakázek, docházka, fakturace a AI pro firmy | RAJMONDATA";
 
 export const HOME_SEO_DESCRIPTION =
   "RAJMONDATA spojuje zakázky, poptávky, nabídky, fakturaci, docházku, zaměstnance, dokumenty a firemní komunikaci. AI pomáhá s nabídkami, smlouvami a dodatky.";

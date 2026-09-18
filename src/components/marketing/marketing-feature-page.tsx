@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { MarketingBreadcrumbs } from "@/components/marketing/marketing-breadcrumbs";
+import { MARKETING_PAGE_FAQ } from "@/lib/marketing/marketing-page-faq";
 import type { MarketingContentBlock, MarketingPageDef } from "@/lib/marketing/public-pages-registry";
 import { getMarketingPageBySlug } from "@/lib/marketing/public-pages-registry";
 
@@ -24,12 +25,13 @@ export function MarketingFeaturePage({ page }: { page: MarketingPageDef }) {
   const related = (page.relatedSlugs ?? [])
     .map((s) => getMarketingPageBySlug(s))
     .filter(Boolean) as MarketingPageDef[];
+  const faq = MARKETING_PAGE_FAQ[page.slug];
 
   return (
     <article className="mx-auto max-w-3xl px-3 py-8 sm:px-4 sm:py-12 md:px-6">
       <MarketingBreadcrumbs
         items={[
-          { label: "RAJMONDATA", href: "/" },
+          { label: "Domů", href: "/" },
           { label: page.breadcrumbLabel || page.h1 },
         ]}
       />
@@ -42,6 +44,22 @@ export function MarketingFeaturePage({ page }: { page: MarketingPageDef }) {
           <RenderBlock key={i} block={b} />
         ))}
       </div>
+
+      {faq?.length ? (
+        <section className="mt-10 border-t border-white/10 pt-8" aria-labelledby="page-faq-heading">
+          <h2 id="page-faq-heading" className="text-lg font-semibold text-slate-100">
+            Časté otázky
+          </h2>
+          <dl className="mt-4 space-y-4">
+            {faq.map((item) => (
+              <div key={item.question} className="rounded-xl border border-white/10 bg-slate-950/40 p-4">
+                <dt className="font-medium text-slate-100">{item.question}</dt>
+                <dd className="mt-2 text-sm leading-relaxed text-slate-300 sm:text-base">{item.answer}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
 
       {related.length > 0 ? (
         <section className="mt-10 border-t border-white/10 pt-8">

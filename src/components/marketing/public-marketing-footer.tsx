@@ -2,18 +2,22 @@ import Link from "next/link";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
 const productLinks = [
-  { href: "/funkce", label: "Funkce" },
   { href: "/rizeni-zakazek", label: "Řízení zakázek" },
-  { href: "/evidence-dochazky", label: "Docházka" },
+  { href: "/poptavky-a-nabidky", label: "Poptávky a nabídky" },
   { href: "/ai-pro-firmy", label: "AI pro firmy" },
+  { href: "/evidence-dochazky", label: "Docházka" },
   { href: "/fakturace", label: "Fakturace" },
-  { href: "/#cenik", label: "Ceník" },
+  { href: "/sklad-a-vyroba", label: "Výroba a sklad" },
 ];
 
 const solutionLinks = [
   { href: "/pro-remeslniky", label: "Pro řemeslníky" },
   { href: "/pro-montazni-firmy", label: "Pro montážní firmy" },
-  { href: "/pro-stavebni-firmy", label: "Pro stavební firmy" },
+];
+
+const rajmondataLinks = [
+  { href: "/#kontakt", label: "Kontakt" },
+  { href: "/login", label: "Přihlášení" },
 ];
 
 const legalLinks = [
@@ -46,7 +50,7 @@ export function PublicMarketingFooter({ contactEmail }: { contactEmail?: string 
           </ul>
         </div>
         <div>
-          <p className="font-medium text-slate-200">Řešení</p>
+          <p className="font-medium text-slate-200">Pro firmy</p>
           <ul className="mt-3 space-y-2">
             {solutionLinks.map((l) => (
               <li key={l.href}>
@@ -58,7 +62,17 @@ export function PublicMarketingFooter({ contactEmail }: { contactEmail?: string 
           </ul>
         </div>
         <div>
-          <p className="font-medium text-slate-200">Právní</p>
+          <p className="font-medium text-slate-200">RAJMONDATA</p>
+          <ul className="mt-3 space-y-2">
+            {rajmondataLinks.map((l) => (
+              <li key={l.href}>
+                <Link href={l.href} className="hover:text-primary hover:underline underline-offset-2">
+                  {l.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 font-medium text-slate-200">Právní</p>
           <ul className="mt-3 space-y-2">
             {legalLinks.map((l) => (
               <li key={l.href}>

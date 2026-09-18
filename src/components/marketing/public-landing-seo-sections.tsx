@@ -8,11 +8,15 @@ function Section({
   title,
   children,
   altBg,
+  moreHref,
+  moreLabel,
 }: {
   id: string;
   title: string;
   children: ReactNode;
   altBg?: boolean;
+  moreHref?: string;
+  moreLabel?: string;
 }) {
   return (
     <section
@@ -23,6 +27,13 @@ function Section({
         <h2 className="text-xl font-bold tracking-tight text-slate-50 sm:text-2xl md:text-3xl">{title}</h2>
         <div className="mt-4 max-w-3xl space-y-4 text-sm leading-relaxed text-slate-300 sm:text-base">
           {children}
+          {moreHref ? (
+            <p className="pt-2">
+              <Link href={moreHref} className="font-medium text-primary hover:underline underline-offset-2">
+                {moreLabel ?? "Podrobnosti na samostatné stránce →"}
+              </Link>
+            </p>
+          ) : null}
         </div>
       </div>
     </section>
@@ -74,25 +85,31 @@ function WorkflowPipeline() {
 }
 
 function AudienceCards() {
-  const items = [
-    "Montážní firmy",
-    "Stavební firmy",
-    "Výrobní firmy",
-    "Řemeslníci",
-    "Firmy na pergoly a zimní zahrady",
-    "Montované domy a zasklení",
-    "Servisní firmy",
-    "Firmy s vlastní výrobní dílnou",
-    "Menší a střední firmy řídící zakázky",
+  const items: { label: string; href?: string }[] = [
+    { label: "Montážní firmy", href: "/pro-montazni-firmy" },
+    { label: "Stavební firmy", href: "/pro-stavebni-firmy" },
+    { label: "Výrobní firmy", href: "/sklad-a-vyroba" },
+    { label: "Řemeslníci", href: "/pro-remeslniky" },
+    { label: "Firmy na pergoly a zimní zahrady", href: "/pro-montazni-firmy" },
+    { label: "Montované domy a zasklení", href: "/pro-montazni-firmy" },
+    { label: "Servisní firmy", href: "/rizeni-zakazek" },
+    { label: "Firmy s vlastní výrobní dílnou", href: "/sklad-a-vyroba" },
+    { label: "Menší a střední firmy řídící zakázky", href: "/funkce" },
   ];
   return (
     <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {items.map((label) => (
+      {items.map(({ label, href }) => (
         <li
           key={label}
           className="rounded-xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200"
         >
-          {label}
+          {href ? (
+            <Link href={href} className="hover:text-primary hover:underline underline-offset-2">
+              {label}
+            </Link>
+          ) : (
+            label
+          )}
         </li>
       ))}
     </ul>
@@ -101,7 +118,10 @@ function AudienceCards() {
 
 function CtaBand() {
   return (
-    <section className="border-t border-white/10 bg-gradient-to-r from-primary/20 via-slate-900 to-slate-950 py-12 sm:py-16">
+    <section
+      id="kontakt"
+      className="border-t border-white/10 bg-gradient-to-r from-primary/20 via-slate-900 to-slate-950 py-12 sm:py-16"
+    >
       <div className="mx-auto max-w-6xl px-3 text-center sm:px-4 md:px-6">
         <h2 className="text-xl font-bold text-slate-50 sm:text-2xl">
           Chcete mít zakázky, zaměstnance, dokumenty a komunikaci v jednom systému?
@@ -130,7 +150,12 @@ function CtaBand() {
 export function PublicLandingSeoSections() {
   return (
     <>
-      <Section id="rizeni-zakazek" title="Řízení zakázek od první poptávky až po fakturu">
+      <Section
+        id="rizeni-zakazek"
+        title="Řízení zakázek od první poptávky až po fakturu"
+        moreHref="/rizeni-zakazek"
+        moreLabel="Řízení zakázek — kompletní přehled funkcí →"
+      >
         <p>
           RAJMONDATA je systém pro řízení zakázek a firemní portál, který pokrývá celý workflow — od
           první poptávky po fakturaci. Evidence zakázek, zákazníků a dokumentů zůstává na jednom místě,
@@ -152,7 +177,13 @@ export function PublicLandingSeoSections() {
         />
       </Section>
 
-      <Section id="poptavky" title="Poptávky z webu přímo do firemního portálu" altBg>
+      <Section
+        id="poptavky"
+        title="Poptávky z webu přímo do firemního portálu"
+        altBg
+        moreHref="/poptavky-a-nabidky"
+        moreLabel="Správa poptávek a tvorba nabídek →"
+      >
         <p>
           Poptávka se nemusí přepisovat z e-mailu do několika systémů. Integrace poptávkových
           formulářů z vašeho webu doručí leady do RAJMONDATA — s přehledem nových poptávek, přiřazením
@@ -164,7 +195,12 @@ export function PublicLandingSeoSections() {
         </p>
       </Section>
 
-      <Section id="ai-nabidky" title="AI nabídky připravené podle vašich pravidel">
+      <Section
+        id="ai-nabidky"
+        title="AI nabídky připravené podle vašich pravidel"
+        moreHref="/ai-pro-firmy"
+        moreLabel="AI pro firmy — nabídky, dokumenty a asistent →"
+      >
         <p>
           Software pro montážní firmy a řemeslníky často ztrácí čas ručním psaním nabídek. AI v
           RAJMONDATA využije údaje z poptávky, rozměry, firemní ceníky, pravidla, příklady nabídek a
@@ -215,7 +251,12 @@ export function PublicLandingSeoSections() {
         </p>
       </Section>
 
-      <Section id="dochazka" title="Docházka, práce a zaměstnanci na jednom místě">
+      <Section
+        id="dochazka"
+        title="Docházka, práce a zaměstnanci na jednom místě"
+        moreHref="/evidence-dochazky"
+        moreLabel="Docházkový systém pro firmy a tablet →"
+      >
         <p>
           Evidence zaměstnanců, rolí, docházky, práce a mezd, hodinových sazeb a výkazů v jednom
           podnikovém informačním systému.
@@ -249,7 +290,13 @@ export function PublicLandingSeoSections() {
         />
       </Section>
 
-      <Section id="zakaznicky-portal" title="Zákazník vidí průběh své zakázky" altBg>
+      <Section
+        id="zakaznicky-portal"
+        title="Zákazník vidí průběh své zakázky"
+        altBg
+        moreHref="/komunikace-se-zakazniky"
+        moreLabel="Zákaznický portál a komunikace →"
+      >
         <p>
           Zákaznický portál ukazuje průběh zakázky, procento dokončení, vybrané fotografie, dokumenty
           a komunikaci. Firma nemusí každému zákazníkovi opakovaně posílat stejné informace ručně.
@@ -270,7 +317,12 @@ export function PublicLandingSeoSections() {
         </p>
       </Section>
 
-      <Section id="fakturace" title="Rozpočty, vícepráce, zálohy a fakturace">
+      <Section
+        id="fakturace"
+        title="Rozpočty, vícepráce, zálohy a fakturace"
+        moreHref="/fakturace"
+        moreLabel="Fakturace, doklady a rozpočty zakázek →"
+      >
         <BulletList
           items={[
             "Položkový a základní rozpočet zakázky",
@@ -289,7 +341,12 @@ export function PublicLandingSeoSections() {
         </p>
       </Section>
 
-      <Section id="vyroba" title="Výroba a materiál propojené se zakázkou">
+      <Section
+        id="vyroba"
+        title="Výroba a materiál propojené se zakázkou"
+        moreHref="/sklad-a-vyroba"
+        moreLabel="Výroba a sklad u zakázky →"
+      >
         <p>
           Stav výroby, výrobní dílna, materiál, objednávky, sklad, spotřeba a dokumentace navázané na
           konkrétní zakázku — výroba a sklad jako součást řízení zakázek.

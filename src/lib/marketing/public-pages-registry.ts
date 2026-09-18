@@ -54,56 +54,68 @@ const pages: MarketingPageDef[] = [
   },
   {
     slug: "rizeni-zakazek",
-    title: "RAJMONDATA | Software pro řízení zakázek a CRM",
+    title: "Řízení zakázek pro firmy | RAJMONDATA",
     description:
-      "Evidence zakázek od poptávky po fakturu: termíny, úkoly, zaměření, rozpočet, vícepráce, dokumenty a komunikace v jednom systému.",
-    h1: "Řízení zakázek a evidence obchodních případů",
+      "Software na řízení zakázek: zákazník, termíny, úkoly, zaměření, fotodokumentace, rozpočty, vícepráce, zálohy, fakturace a zákaznický portál v jednom systému.",
+    h1: "Řízení zakázek od poptávky až po fakturaci",
     kind: "feature",
+    breadcrumbLabel: "Řízení zakázek",
     intro:
-      "Program pro zakázky v RAJMONDATA propojuje obchod, realizaci a administrativu. Každá zakázka je jeden ucelený záznam — bez přepisování mezi tabulkami.",
+      "Program pro zakázky v RAJMONDATA propojuje obchod, realizaci a administrativu. Každá zakázka je jeden ucelený záznam — od první poptávky po konečnou fakturu, bez přepisování mezi tabulkami a chaty.",
     blocks: [
-      { type: "h3", text: "Co u zakázky řešíte" },
+      { type: "h3", text: "Co u zakázky evidujete" },
       {
         type: "ul",
         items: [
-          "Stav, termíny a přiřazení pracovníků",
+          "Zákazníka, adresu realizace a kontakty",
+          "Termíny, stav a přiřazené pracovníky",
           "Úkoly a průběh realizace",
-          "Zaměření, fotografie a složky dokumentů",
+          "Zaměření v terénu a fotodokumentaci",
           "Položkový rozpočet, vícepráce a zálohy",
-          "Smlouvy, dodatky a fakturace",
-          "Výrobní kroky a skladové návaznosti",
-          "Chat se zákazníkem a interní komunikace",
+          "Smlouvy, dodatky a složky dokumentů",
+          "Fakturaci a historii komunikace",
+          "Výrobní kroky, materiál a skladové návaznosti",
+          "Zákaznický portál s průběhem pro investora",
         ],
+      },
+      { type: "h3", text: "Typický workflow ve firmě" },
+      {
+        type: "p",
+        text: "Poptávka nebo nabídka se převede na zakázku. Obchodník přiřadí montéry, v terénu proběhne zaměření s fotografiemi. Rozpočet se upravuje o vícepráce, vystaví se záloha a po dokončení konečná faktura. Zákazník vidí vybrané informace v portálu.",
       },
       {
         type: "p",
-        text: "CRM pro stavební firmy i montážní firmy v praxi znamená i rychlý přehled — kdo má zakázku na starosti, co zbývá dodat a jaká faktura navazuje na rozpočet.",
+        text: "CRM pro stavební i montážní firmy v praxi znamená rychlý přehled — kdo má zakázku na starosti, co zbývá dodat a jaká faktura navazuje na rozpočet.",
       },
     ],
     relatedSlugs: ["poptavky-a-nabidky", "fakturace", "komunikace-se-zakazniky"],
   },
   {
     slug: "evidence-dochazky",
-    title: "RAJMONDATA | Docházkový systém a evidence pracovní doby",
+    title: "Docházkový systém pro zaměstnance a tablet | RAJMONDATA",
     description:
-      "Evidence docházky zaměstnanců, externí docházkový terminál na tabletu, příchody a odchody navázané na zakázky a výkazy práce.",
-    h1: "Docházka zaměstnanců a externí terminál",
+      "Docházkový systém pro firmy: zaměstnanci, terminál na tabletu, PIN, příchod/odchod, přestávky, výkazy, ruční korekce, mzdy a oprávnění.",
+    h1: "Docházka zaměstnanců a terminál na tabletu",
     kind: "feature",
+    breadcrumbLabel: "Docházka",
     intro:
-      "Docházkový systém v portálu eviduje příchod, odchod a odpracovanou dobu. Data lze propojit s výkazy práce a zakázkami.",
+      "Evidence pracovní doby v portálu propojuje příchody a odchody s výkazy práce, zakázkami a podklady pro mzdy. Vhodné pro dílny, montážní firmy i provozy s více zaměstnanci.",
     blocks: [
-      { type: "h3", text: "Externí docházkový terminál" },
+      { type: "h3", text: "Terminál na externím tabletu" },
       {
         type: "p",
-        text: "Tablet u vstupu do firmy, dílny, skladu nebo provozovny může sloužit jako terminál — zaměstnanec se přihlásí PINem a zaznamená docházku bez plného administrativního přístupu do portálu.",
+        text: "Tablet u vstupu do firmy, dílny nebo skladu slouží jako docházkový terminál. Zaměstnanec zadá PIN, zaznamená příchod, odchod nebo přestávku — bez plného administrativního přístupu do portálu.",
       },
       { type: "h3", text: "Evidence v portálu" },
       {
         type: "ul",
         items: [
-          "Příchod a odchod podle období a zaměstnance",
-          "Návaznost na výkazy práce a zakázky",
-          "Přehled pro vedení a schvalování",
+          "Přehled zaměstnanců a docházky podle období",
+          "Příchod, odchod a přestávky z terminálu",
+          "Výkazy práce navázané na zakázky",
+          "Ruční korekce pro výplatu (audit zůstává u terminálu)",
+          "Hodinové sazby, tarify a podklady pro mzdy",
+          "Oprávnění — kdo vidí celou firmu a kdo jen sebe",
         ],
       },
     ],
@@ -133,58 +145,75 @@ const pages: MarketingPageDef[] = [
   },
   {
     slug: "poptavky-a-nabidky",
-    title: "RAJMONDATA | Správa poptávek a tvorba nabídek",
+    title: "Správa poptávek a AI nabídky | RAJMONDATA",
     description:
-      "Poptávky z webu firmy do portálu, evidence stavu a komunikace, tvorba nabídek s položkami, PDF a odesláním e-mailem.",
-    h1: "Poptávky a nabídky na jednom místě",
+      "Software na poptávky: přijetí z webu, odpověď z portálu, převod na nabídku, AI návrh, PDF, e-mail a převod do zakázky.",
+    h1: "Poptávky a nabídky od prvního kontaktu po zakázku",
     kind: "feature",
+    breadcrumbLabel: "Poptávky a nabídky",
     intro:
-      "Správa poptávek začíná u kontaktu a požadavku zákazníka. Formulář z vašeho webu může lead doručit přímo do RAJMONDATA.",
+      "Správa poptávek spojuje marketing, obchod a realizaci. Lead z webu nebo telefonát se eviduje v portálu — obchodník odpoví, připraví nabídku a po schválení převede obchodní případ na zakázku.",
     blocks: [
+      { type: "h3", text: "Od poptávky k nabídce" },
       {
         type: "ul",
         items: [
-          "Kontakt, požadavek, stav a přílohy",
-          "Historie komunikace a další kroky",
-          "Nabídka s položkami, cenami a PDF",
-          "Odeslání e-mailem z portálu",
-          "Návaznost na zákazníka, poptávku a zakázku",
+          "Přijetí poptávky z webového formuláře nebo ručně",
+          "Kontakt, požadavek, stav, přílohy a historie",
+          "Odpověď zákazníkovi přímo z portálu",
+          "Převod poptávky na nabídku s položkami a cenami",
+          "AI příprava návrhu nabídky z ceníků a pravidel firmy",
+          "Export PDF a odeslání e-mailem",
+          "Po akceptaci převod do zakázky se zákazníkem",
         ],
       },
       {
         type: "p",
-        text: "AI může pomoci připravit návrh nabídky podle pravidel organizace — výsledek vždy kontrolujete před odesláním zákazníkovi.",
+        text: "Hledáte software na poptávky a tvorbu nabídek bez přepisování do tabulek? RAJMONDATA drží celou historii u jednoho obchodního případu — AI urychlí návrh textu, finální nabídku vždy schvaluje uživatel.",
       },
     ],
     relatedSlugs: ["ai-pro-firmy", "rizeni-zakazek", "fakturace"],
   },
   {
     slug: "ai-pro-firmy",
-    title: "RAJMONDATA | AI pro firmy — nabídky, dokumenty a asistent",
+    title: "AI pro firemní zakázky, smlouvy a nabídky | RAJMONDATA",
     description:
-      "AI asistent v portálu, návrhy nabídek, kontrola dokumentů a orientace v systému. Výstupy jsou podpůrné — finální rozhodnutí má uživatel.",
-    h1: "Umělá inteligence jako podpora práce ve firmě",
+      "AI tvorba nabídek, návrhy smluv a dodatků, nápověda v portálu, vyhledávání v návodech a firemní znalostní báze — vždy s kontrolou uživatele.",
+    h1: "AI pro firmy — nabídky, smlouvy a firemní znalosti",
     kind: "feature",
+    breadcrumbLabel: "AI pro firmy",
     intro:
-      "AI funkce RAJMONDATA urychlují rutinní práci s texty a dokumenty. Nepředstavují právní, daňové ani účetní poradenství.",
+      "AI v RAJMONDATA urychluje rutinní práci s texty a dokumenty. Nepředstavuje právní, daňové ani účetní poradenství — jde o asistenci a návrhy, které schvaluje váš tým.",
     blocks: [
-      { type: "h3", text: "Firemní AI asistent" },
-      {
-        type: "p",
-        text: "Nápověda uvnitř portálu — hledání funkcí, orientace v menu a odpovědi nad firemními podklady, pokud je AI centrum nastaveno.",
-      },
-      { type: "h3", text: "AI nabídky a dokumenty" },
+      { type: "h3", text: "AI nabídky a obchod" },
       {
         type: "ul",
         items: [
-          "Návrh nabídky z poptávky a ceníků",
-          "Sumarizace a vyhledávání v nahrané dokumentaci",
-          "Kontrola podkladů před rozhodnutím",
+          "Návrh nabídky z poptávky, rozměrů a firemních ceníků",
+          "Práce s pravidly a šablonami organizace",
+        ],
+      },
+      { type: "h3", text: "Smlouvy a dodatky" },
+      {
+        type: "ul",
+        items: [
+          "Návrh smlouvy nebo dodatku navázaného na zakázku",
+          "Asistence při změně termínu, víceprací nebo ceny",
+          "Editace textu a export do PDF — finální kontrola uživatelem",
+        ],
+      },
+      { type: "h3", text: "Asistent a znalostní báze" },
+      {
+        type: "ul",
+        items: [
+          "AI nápověda v portálu — kde najdu funkci, jak postupovat",
+          "Vyhledávání v nahraných manuálech a interní dokumentaci",
+          "Firemní znalostní báze v AI centru (podle aktivní licence)",
         ],
       },
       {
         type: "p",
-        text: "Výstupy mohou obsahovat nepřesnosti. Před použitím je vždy zkontrolujte — zejména u finančních a smluvních dokumentů.",
+        text: "Výstupy AI mohou obsahovat nepřesnosti. Před odesláním zákazníkovi nebo podpisem dokumentu je vždy zkontrolujte — zejména u smluv a finančních údajů.",
       },
     ],
     relatedSlugs: ["ai-smlouvy-a-dodatky", "poptavky-a-nabidky"],
@@ -216,21 +245,24 @@ const pages: MarketingPageDef[] = [
   },
   {
     slug: "fakturace",
-    title: "RAJMONDATA | Fakturace, zálohové faktury a doklady",
+    title: "Fakturace, doklady a rozpočty zakázek | RAJMONDATA",
     description:
-      "Faktury a zálohové faktury navázané na zakázku, položky, DPH, PDF a odesílání z portálu. Uživatel kontroluje údaje před vystavením.",
-    h1: "Fakturace a doklady u zakázek",
+      "Položkový rozpočet, vícepráce, zálohové a konečné faktury, přijaté a vydané doklady, PDF a propojení se zakázkou v jednom portálu.",
+    h1: "Fakturace a doklady navázané na zakázku",
     kind: "feature",
+    breadcrumbLabel: "Fakturace",
     intro:
-      "Technické nástroje pro sestavení a evidenci faktur na základě údajů, které do systému vložíte, a nastavení organizace.",
+      "Fakturace v RAJMONDATA vychází z rozpočtu zakázky a provedených prací. Uživatel kontroluje odběratele, částky a DPH před vystavením — systém nenahrazuje účetní software firmy.",
     blocks: [
       {
         type: "ul",
         items: [
-          "Faktury a zálohové faktury s položkami a DPH",
-          "Návaznost na položkový rozpočet a vícepráce",
-          "PDF, splatnost a historie u zakázky",
+          "Položkový rozpočet a evidované vícepráce",
+          "Zálohové faktury a konečná faktura po dokončení",
+          "Přijaté a vydané doklady u zakázky",
+          "PDF, splatnost a historie odeslání",
           "Odeslání e-mailem z portálu",
+          "Přehled zbývající částky a DPH",
         ],
       },
       {
@@ -242,21 +274,24 @@ const pages: MarketingPageDef[] = [
   },
   {
     slug: "komunikace-se-zakazniky",
-    title: "RAJMONDATA | Komunikace se zákazníky a interní chat",
+    title: "Zákaznický portál a komunikace u zakázky | RAJMONDATA",
     description:
-      "Chat se zákazníkem u zakázky, zákaznický portál, interní zprávy a schůzky — historie u obchodního případu.",
-    h1: "Komunikace se zákazníky i v týmu",
+      "Zákaznický portál: průběh zakázky, fotografie, dokumenty, chat a procento dokončení. Interní komunikace týmu u stejného obchodního případu.",
+    h1: "Zákaznický portál a komunikace se zákazníkem",
     kind: "feature",
+    breadcrumbLabel: "Zákaznický portál",
     intro:
-      "Firemní komunikace patří k zakázce, ne do roztříštěných kanálů. RAJMONDATA ukládá konverzace a zprávy v kontextu obchodního případu.",
+      "Zákazník nemusí volat kvůli každému detailu. Ve zákaznickém portálu vidí průběh zakázky, vybrané fotografie a dokumenty — firma určí, co sdílí. Chat a interní zprávy zůstávají u zakázky, ne v soukromých aplikacích.",
     blocks: [
       {
         type: "ul",
         items: [
+          "Průběh zakázky a procento dokončení pro zákazníka",
+          "Fotografie a dokumenty ve sdílené složce",
           "Chat se zákazníkem navázaný na zakázku",
-          "Zákaznický portál s průběhem a dokumenty",
-          "Interní chat a zprávy zaměstnanců",
-          "Evidence schůzek a kontaktů u zákazníka",
+          "Informace pro investora bez opakovaného e-mailování",
+          "Interní chat a zprávy zaměstnanců u zakázky",
+          "Schůzky a kontakty u zákazníka",
         ],
       },
     ],
@@ -264,20 +299,31 @@ const pages: MarketingPageDef[] = [
   },
   {
     slug: "sklad-a-vyroba",
-    title: "RAJMONDATA | Výroba, sklad a materiál u zakázky",
+    title: "Výroba, sklad a materiál u zakázky | RAJMONDATA",
     description:
-      "Řízení výrobních kroků, evidence skladu a skladových pohybů propojené s konkrétní zakázkou — dle aktivních modulů licence.",
+      "Výrobní dílna, stav výroby, materiál, výdej ze skladu a dokumentace propojené s konkrétní zakázkou — podle aktivních modulů.",
     h1: "Výroba a sklad v návaznosti na zakázky",
     kind: "feature",
+    breadcrumbLabel: "Výroba a sklad",
     intro:
-      "Pro firmy s dílnou nebo skladem lze sledovat materiál, výrobní postupy a spotřebu v kontextu realizace.",
+      "Firmy s vlastní dílnou nebo skladem potřebují vědět, co se vyrábí, jaký materiál se spotřebuje a jak to souvisí s montáží u zákazníka. Moduly výroby a skladu v RAJMONDATA navazují na stejnou zakázku jako obchod a fakturace.",
     blocks: [
+      { type: "h3", text: "Výrobní dílna a stav" },
       {
         type: "ul",
         items: [
           "Výrobní kroky a stav zakázky ve výrobě",
-          "Skladové položky a pohyby podle implementace modulu",
-          "Materiál a dokumentace u zakázky",
+          "Přehled pro dílnu a vedení",
+          "Dokumentace k výrobě u zakázky",
+        ],
+      },
+      { type: "h3", text: "Sklad a materiál" },
+      {
+        type: "ul",
+        items: [
+          "Skladové položky a pohyby",
+          "Výdej materiálu k zakázce",
+          "Spotřeba a návaznost na rozpočet",
         ],
       },
     ],
@@ -285,21 +331,24 @@ const pages: MarketingPageDef[] = [
   },
   {
     slug: "pro-remeslniky",
-    title: "RAJMONDATA | CRM a software pro řemeslníky",
+    title: "Software pro řemeslníky a zakázky v terénu | RAJMONDATA",
     description:
-      "Program pro řemeslnické firmy: poptávky, nabídky, zakázky v terénu, zaměření, fotodokumentace a fakturace.",
-    h1: "RAJMONDATA pro řemeslnické firmy",
+      "Software pro řemeslníky: poptávky, AI nabídky, zaměření, fotografie, pracovníci, fakturace, docházka na tabletu a komunikace se zákazníkem.",
+    h1: "Software pro řemeslnické firmy",
     kind: "solution",
+    breadcrumbLabel: "Pro řemeslníky",
     intro:
-      "Řemeslníci potřebují rychlou reakci na poptávku a přehled o tom, kdo kde pracuje. Portál funguje v prohlížeči na telefonu i tabletu.",
+      "Malá řemeslnická firma potřebuje rychlou reakci na poptávku, přehled zakázek v terénu a fakturaci bez zbytečné administrativy. RAJMONDATA běží v prohlížeči na telefonu, tabletu i počítači.",
     blocks: [
       {
         type: "ul",
         items: [
-          "Poptávky a nabídky bez zbytečné administrativy",
+          "Poptávky z webu a tvorba nabídek včetně AI návrhu",
           "Zaměření s fotografiemi z místa realizace",
-          "Docházkový terminál v dílně",
-          "Fakturace a komunikace se zákazníkem",
+          "Přiřazení pracovníků a termíny montáže",
+          "Fotodokumentace a zákaznický portál",
+          "Docházkový terminál v dílně (PIN na tabletu)",
+          "Fakturace, vícepráce a chat se zákazníkem",
         ],
       },
     ],
@@ -307,17 +356,25 @@ const pages: MarketingPageDef[] = [
   },
   {
     slug: "pro-montazni-firmy",
-    title: "RAJMONDATA | Řízení montážní firmy a zakázek",
+    title: "Software pro montážní firmy | RAJMONDATA",
     description:
-      "Software pro montážní firmy — pergoly, zimní zahrady, zasklení: zakázky, montážníci, zaměření, výroba a fakturace.",
-    h1: "Pro montážní a realizační firmy",
+      "Software pro montážní firmy: obchod, zaměření, montáže, výroba, docházka montérů, AI nabídky, termíny a fakturace v jednom systému.",
+    h1: "Software pro montážní a realizační firmy",
     kind: "solution",
+    breadcrumbLabel: "Pro montážní firmy",
     intro:
-      "Řízení montážní firmy znamená sladit obchod, výrobu, montáže na stavbách a fakturaci. RAJMONDATA to spojuje v jednom tenantovi pro vaši organizaci.",
+      "Montážní firma sladí obchod, výrobu v dílně, montáže u zákazníků a fakturaci. RAJMONDATA drží celý proces u jedné zakázky — od poptávky po konečnou fakturu.",
     blocks: [
       {
-        type: "p",
-        text: "Typické scénáře: poptávka z webu, zaměření u zákazníka, zakázka s úkoly pro montéry, fotodokumentace, vícepráce a zálohová i konečná faktura.",
+        type: "ul",
+        items: [
+          "Poptávky z webu a nabídky včetně AI asistence",
+          "Zaměření v terénu, fotografie a termíny montáže",
+          "Úkoly pro montéry a docházka na tabletu",
+          "Výroba, sklad materiálu a stav ve dílně",
+          "Vícepráce, zálohy a fakturace",
+          "Komunikace se zákazníkem a zákaznický portál",
+        ],
       },
     ],
     relatedSlugs: ["sklad-a-vyroba", "komunikace-se-zakazniky"],
@@ -406,5 +463,5 @@ export function getIndexableMarketingPages(): MarketingPageDef[] {
   return MARKETING_PAGES.filter((p) => p.kind !== "legal" || p.legalKey !== "dpa");
 }
 
-/** DPA stránka je právní příloha — indexovat lze, ale není v hlavním menu. */
-export const PUBLIC_SITEMAP_SLUGS = MARKETING_PAGES.map((p) => p.slug);
+/** DPA stránka je právní příloha — ve sitemap ji neuvádíme. */
+export const PUBLIC_SITEMAP_SLUGS = getIndexableMarketingPages().map((p) => p.slug);

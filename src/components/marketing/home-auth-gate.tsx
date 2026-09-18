@@ -17,13 +17,6 @@ export default function HomeAuthGate({ children }: Props) {
     }
   }, [user, isUserLoading, router]);
 
-  if (isUserLoading || user) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
+  // Veřejný obsah vždy v HTML (SSR pro Googlebot). Přihlášení přesměrujeme až na klientovi.
   return children;
 }

@@ -1,9 +1,6 @@
-"use client";
-
 import Link from "next/link";
-import { Suspense } from "react";
-import { PublicAnalyticsBeacon, trackPublicEvent } from "@/components/marketing/public-analytics-beacon";
-import { Button } from "@/components/ui/button";
+import { PublicLandingAnalytics } from "@/components/marketing/public-landing-analytics";
+import { PublicLandingHeroCtas } from "@/components/marketing/public-landing-hero-ctas";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 import {
   HOME_H1,
@@ -13,17 +10,13 @@ import {
 import { PublicLandingSeoSections } from "@/components/marketing/public-landing-seo-sections";
 import { PublicLandingHeroMedia } from "@/components/marketing/public-landing-hero-media";
 import { PublicLandingPricing } from "@/components/marketing/public-landing-pricing";
-import { PublicLandingJsonLd } from "@/components/marketing/public-landing-json-ld";
 import { PublicMarketingFooter } from "@/components/marketing/public-marketing-footer";
 import { PublicMarketingHeader } from "@/components/marketing/public-marketing-header";
 
 export function PublicLandingPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
-      <PublicLandingJsonLd />
-      <Suspense fallback={null}>
-        <PublicAnalyticsBeacon />
-      </Suspense>
+      <PublicLandingAnalytics />
 
       <PublicMarketingHeader />
 
@@ -41,35 +34,24 @@ export function PublicLandingPage() {
             </p>
             <p className="mt-3 max-w-prose text-sm text-slate-400 sm:text-base">{HOME_HERO_AI}</p>
             <p className="mt-3 max-w-prose text-sm text-slate-400 sm:text-base">
-              Pro montážní a řemeslné firmy, které chtějí software pro řízení zakázek, správu
-              poptávek a přehled nad celým provozem — od první poptávky po fakturu.
+              Pro montážní a řemeslné firmy, které chtějí software pro řízení zakázek, správu poptávek
+              a přehled nad celým provozem — od první poptávky po fakturu. Podrobnosti najdete na
+              stránkách{" "}
+              <Link href="/rizeni-zakazek" className="text-primary hover:underline underline-offset-2">
+                řízení zakázek
+              </Link>
+              ,{" "}
+              <Link href="/poptavky-a-nabidky" className="text-primary hover:underline underline-offset-2">
+                poptávek a nabídek
+              </Link>{" "}
+              nebo{" "}
+              <Link href="/ai-pro-firmy" className="text-primary hover:underline underline-offset-2">
+                AI pro firmy
+              </Link>
+              .
             </p>
 
-            <div className="mt-6 flex w-full min-w-0 flex-col gap-2 sm:mt-8 sm:flex-row sm:flex-wrap sm:gap-3">
-              <Button size="default" className="h-11 w-full min-w-0 sm:h-10 sm:w-auto sm:px-6" asChild>
-                <Link href="/register" onClick={() => trackPublicEvent("funnel_cta_try")}>
-                  Vyzkoušet RAJMONDATA
-                </Link>
-              </Button>
-              <Button
-                size="default"
-                variant="outline"
-                className="h-11 w-full min-w-0 border-white/20 bg-white/5 text-slate-50 hover:bg-white/10 sm:h-10 sm:w-auto sm:px-6"
-                asChild
-              >
-                <Link href="/funkce" onClick={() => trackPublicEvent("click_features")}>
-                  Podívat se na funkce
-                </Link>
-              </Button>
-              <Button
-                size="default"
-                variant="ghost"
-                className="h-11 w-full text-slate-200 sm:h-10 sm:w-auto"
-                asChild
-              >
-                <Link href="/login">Přihlásit se</Link>
-              </Button>
-            </div>
+            <PublicLandingHeroCtas />
           </div>
 
           <div className="min-w-0 lg:pl-2">
