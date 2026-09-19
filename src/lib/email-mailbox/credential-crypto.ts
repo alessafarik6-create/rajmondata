@@ -3,6 +3,17 @@ import crypto from "node:crypto";
 const ALGO = "aes-256-gcm";
 const IV_LEN = 12;
 
+export function isEmailCredentialsEncryptionConfigured(): boolean {
+  const raw = String(process.env.EMAIL_CREDENTIALS_ENCRYPTION_KEY ?? "").trim();
+  if (!raw) return false;
+  try {
+    const buf = Buffer.from(raw, raw.length === 64 && /^[0-9a-f]+$/i.test(raw) ? "hex" : "base64");
+    return buf.length === 32;
+  } catch {
+    return false;
+  }
+}
+
 function getKey(): Buffer {
   const raw = String(process.env.EMAIL_CREDENTIALS_ENCRYPTION_KEY ?? "").trim();
   if (!raw) {

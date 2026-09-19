@@ -1,6 +1,12 @@
 export type EmailProviderKind = "SEZNAM" | "IMAP_SMTP" | "GOOGLE" | "MICROSOFT";
 
-export type EmailAccountStatus = "connected" | "error" | "disconnected" | "pending";
+export type EmailAccountStatus =
+  | "connected"
+  | "error"
+  | "disconnected"
+  | "pending"
+  | "syncing"
+  | "attention";
 
 export type EmailMessageDirection = "inbound" | "outbound";
 

@@ -8,7 +8,9 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { EMAIL_PROVIDER_PRESETS, SEZNAM_IMAP_SMTP } from "@/lib/email-mailbox/provider-presets";
 import type { EmailProviderKind } from "@/lib/email-mailbox/types";
+import { parseEmailApiResponse } from "@/lib/email-mailbox/client-fetch";
 import { Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 type Props = {
   companyId: string;
@@ -26,6 +28,7 @@ export function EmailConnectWizard({
   initialProvider = "SEZNAM",
 }: Props) {
   const { toast } = useToast();
+  const router = useRouter();
   const [step, setStep] = useState<"pick" | "form">(initialProvider ? "form" : "pick");
   const [provider, setProvider] = useState<EmailProviderKind>(initialProvider);
   const preset = useMemo(() => EMAIL_PROVIDER_PRESETS.find((p) => p.provider === provider), [provider]);
@@ -40,6 +43,7 @@ export function EmailConnectWizard({
   const [smtpPort, setSmtpPort] = useState(String(SEZNAM_IMAP_SMTP.smtpPort));
   const [smtpSecure, setSmtpSecure] = useState(true);
   const [testOk, setTestOk] = useState(false);
+  const [testLines, setTestLines] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   function applyPreset(p: EmailProviderKind) {
@@ -63,12 +67,13 @@ export function EmailConnectWizard({
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return res.json();
+    return parseEmailApiResponse(res);
   }
 
   async function runTest() {
     setBusy(true);
     setTestOk(false);
+    setTestLines([]);
     try {
       const data = await api("/api/company/email-mailbox/accounts/test", {
         provider,
@@ -83,11 +88,22 @@ export function EmailConnectWizard({
         smtpSecure,
       });
       if (!data.ok) {
-        toast({ variant: "destructive", title: "Test selhal", description: String(data.error ?? "") });
+        const t = data.test as { imapOk?: boolean; smtpOk?: boolean } | undefined;
+        const lines: string[] = [];
+        if (t?.imapOk === false) lines.push("✗ IMAP – přihlášení selhalo");
+        if (t?.smtpOk === false) lines.push("✗ SMTP – přihlášení selhalo");
+        if (lines.length === 0) lines.push(String(data.message ?? data.error ?? "Test selhal"));
+        setTestLines(lines);
+        toast({
+          variant: "destructive",
+          title: "Test selhal",
+          description: String(data.message ?? data.error ?? ""),
+        });
         return;
       }
       setTestOk(true);
-      toast({ title: "Připojení v pořádku", description: "IMAP i SMTP odpovídají." });
+      setTestLines(["✓ IMAP připojení úspěšné", "✓ SMTP připojení úspěšné"]);
+      toast({ title: "Připojení v pořádku", description: String(data.message ?? "IMAP i SMTP OK.") });
     } finally {
       setBusy(false);
     }
@@ -117,8 +133,13 @@ export function EmailConnectWizard({
         toast({ variant: "destructive", title: "Nepodařilo se připojit", description: String(data.error ?? "") });
         return;
       }
-      toast({ title: "Schránka připojena" });
+      toast({
+        title: "Schránka připojena",
+        description: String(data.message ?? "Probíhá synchronizace…"),
+      });
       onConnected();
+      const redirect = String((data as { redirectTo?: string }).redirectTo ?? "/portal/email");
+      router.push(redirect);
     } finally {
       setBusy(false);
     }
@@ -218,6 +239,13 @@ export function EmailConnectWizard({
           <span className="text-sm">SSL/TLS</span>
         </div>
       </div>
+      {testLines.length > 0 ? (
+        <ul className="text-sm space-y-1 rounded-md border p-3 bg-muted/30">
+          {testLines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" disabled={busy} onClick={() => void runTest()}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Otestovat připojení"}

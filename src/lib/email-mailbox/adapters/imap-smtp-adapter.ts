@@ -8,6 +8,7 @@ import type {
   OutboundEmailPayload,
 } from "@/lib/email-mailbox/adapters/types";
 import type { EmailAccountDoc, EmailCredentialsPlain } from "@/lib/email-mailbox/types";
+import { logEmailPhase } from "@/lib/email-mailbox/email-log";
 
 function mapConnectionError(err: unknown, phase: "imap" | "smtp"): ConnectionTestResult {
   const msg = err instanceof Error ? err.message : String(err);
@@ -20,8 +21,8 @@ function mapConnectionError(err: unknown, phase: "imap" | "smtp"): ConnectionTes
       errorCode: phase === "imap" ? "imap_auth" : "smtp_auth",
       message:
         phase === "imap"
-          ? "Přihlášení k příchozí poště selhalo."
-          : "SMTP přihlášení selhalo.",
+          ? "Nelze se přihlásit k IMAP. Zkontrolujte e-mail, heslo aplikace a nastavení Seznam.cz."
+          : "Nelze se přihlásit k SMTP. Zkontrolujte e-mail, heslo aplikace a nastavení Seznam.cz.",
     };
   }
   if (
@@ -100,14 +101,23 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
       return { ok: false, errorCode: "config", message: "Chybí adresa IMAP nebo SMTP serveru." };
     }
 
+    logEmailPhase("EMAIL_CONNECT_START", { email: account.email, host: account.imapHost });
     const client = buildImapClient(account, credentials);
     try {
       await client.connect();
       await client.mailboxOpen("INBOX");
+      logEmailPhase("EMAIL_IMAP_CONNECTED", { email: account.email });
       await client.logout();
     } catch (err) {
+      logEmailPhase("EMAIL_CONNECT_ERROR", { phase: "imap", email: account.email });
       const r = mapConnectionError(err, "imap");
-      return { ...r, imapOk: false, smtpOk: undefined };
+      return {
+        ...r,
+        imapOk: false,
+        smtpOk: undefined,
+        errorCode: "IMAP_AUTH_FAILED",
+        message: r.message,
+      };
     }
 
     try {
@@ -121,12 +131,25 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
         },
       });
       await transporter.verify();
+      logEmailPhase("EMAIL_SMTP_CONNECTED", { email: account.email });
     } catch (err) {
+      logEmailPhase("EMAIL_CONNECT_ERROR", { phase: "smtp", email: account.email });
       const r = mapConnectionError(err, "smtp");
-      return { ...r, imapOk: true, smtpOk: false };
+      return {
+        ...r,
+        imapOk: true,
+        smtpOk: false,
+        errorCode: "SMTP_AUTH_FAILED",
+        message: r.message,
+      };
     }
 
-    return { ok: true, imapOk: true, smtpOk: true };
+    return {
+      ok: true,
+      imapOk: true,
+      smtpOk: true,
+      message: "IMAP připojení úspěšné. SMTP připojení úspěšné.",
+    };
   }
 
   async syncInbound(
@@ -134,7 +157,7 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
     credentials: EmailCredentialsPlain,
     opts: { sinceUid?: number | null; maxMessages?: number }
   ): Promise<{ messages: InboundEmailPayload[]; lastUid: number | null; sentFolderPath: string | null }> {
-    const maxMessages = opts.maxMessages ?? 30;
+    const maxMessages = opts.maxMessages ?? 100;
     const client = buildImapClient(account, credentials);
     const out: InboundEmailPayload[] = [];
     let lastUid: number | null = opts.sinceUid ?? null;
@@ -148,15 +171,38 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
       const lock = await client.getMailboxLock("INBOX");
       try {
         const sinceUid = Math.max(0, Number(opts.sinceUid ?? 0));
-        const range = sinceUid > 0 ? `${sinceUid + 1}:*` : "1:*";
-        const fetched: { uid: number; source: Buffer }[] = [];
-        for await (const msg of client.fetch(range, { uid: true, source: true }, { uid: true })) {
-          if (!msg.uid || !msg.source) continue;
-          fetched.push({ uid: msg.uid, source: msg.source });
+        let uidList: number[] = [];
+        if (sinceUid > 0) {
+          for await (const msg of client.fetch(`${sinceUid + 1}:*`, { uid: true }, { uid: true })) {
+            if (msg.uid) uidList.push(msg.uid);
+          }
+        } else {
+          const searchResult = await client.search({ all: true }, { uid: true });
+          uidList = (searchResult ?? []).slice().sort((a, b) => a - b);
+          if (uidList.length > maxMessages) {
+            uidList = uidList.slice(-maxMessages);
+          }
         }
-        fetched.sort((a, b) => a.uid - b.uid);
-        const slice = fetched.slice(-maxMessages);
-        for (const row of slice) {
+        uidList.sort((a, b) => a - b);
+        if (uidList.length > maxMessages) {
+          uidList = uidList.slice(-maxMessages);
+        }
+
+        for (const uid of uidList) {
+          let source: Buffer | null = null;
+          let seen = false;
+          for await (const msg of client.fetch(
+            `${uid}`,
+            { uid: true, source: true, flags: true },
+            { uid: true }
+          )) {
+            if (msg.source) source = msg.source;
+            const flags = msg.flags;
+            if (flags instanceof Set) seen = flags.has("\\Seen");
+            else if (Array.isArray(flags)) seen = flags.includes("\\Seen");
+          }
+          if (!source) continue;
+          const row = { uid, source, seen };
           const parsed = await simpleParser(row.source);
           const refsRaw = parsed.references;
           const references = Array.isArray(refsRaw)
@@ -187,6 +233,8 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
             textBody: parsed.text ?? null,
             htmlBody: typeof parsed.html === "string" ? parsed.html : null,
             receivedAt: parsed.date ?? new Date(),
+            sentAt: parsed.date ?? null,
+            isRead: row.seen,
             attachments,
           });
           lastUid = Math.max(lastUid ?? 0, row.uid);

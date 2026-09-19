@@ -4,6 +4,7 @@ import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { EMAIL_ACCOUNTS_SUBCOLLECTION } from "@/lib/email-mailbox/types";
 import { syncEmailAccount } from "@/lib/email-mailbox/sync-service";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 

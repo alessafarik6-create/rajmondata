@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { requireOrgEmailAdmin } from "@/lib/email-mailbox/api-auth";
 import { emailAccountsCol, saveEmailCredentials } from "@/lib/email-mailbox/account-store";
-import { getEmailProviderAdapter } from "@/lib/email-mailbox/adapters";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
@@ -51,6 +51,7 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
   }
 
   if (body.password) {
+    const { getEmailProviderAdapter } = await import("@/lib/email-mailbox/adapters");
     const adapter = getEmailProviderAdapter(account.provider as never);
     if (adapter && body.test !== false) {
       const test = await adapter.testConnection(account as never, {

@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { EmailConnectWizard } from "@/components/portal/email-connect-wizard";
 import type { EmailMessageWorkflowView } from "@/lib/email-mailbox/types";
+import { parseEmailApiResponse } from "@/lib/email-mailbox/client-fetch";
 import { cn } from "@/lib/utils";
 import { Loader2, Mail, Plus, Sparkles, Search } from "lucide-react";
 
@@ -109,12 +110,15 @@ export function EmailPortalPage() {
         `/api/company/email-mailbox/accounts?companyId=${encodeURIComponent(companyId)}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      const data = await res.json();
+      const data = await parseEmailApiResponse<{ accounts?: AccountRow[] }>(res);
       if (data.ok) setAccounts(data.accounts ?? []);
+      else if (data.message || data.error) {
+        toast({ variant: "destructive", title: "Účty e-mailu", description: data.message ?? data.error });
+      }
     } finally {
       setLoadingAccounts(false);
     }
-  }, [user, companyId, access.canRead, getToken]);
+  }, [user, companyId, access.canRead, getToken, toast]);
 
   const loadMessages = useCallback(async () => {
     if (!user || !companyId || !access.canRead || accounts.length === 0) return;
@@ -125,7 +129,7 @@ export function EmailPortalPage() {
         `/api/company/email-mailbox/messages?companyId=${encodeURIComponent(companyId)}&view=${folder}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      const data = await res.json();
+      const data = await parseEmailApiResponse<{ messages?: MsgRow[] }>(res);
       if (data.ok) setMessages(data.messages ?? []);
     } finally {
       setLoadingList(false);
@@ -160,9 +164,9 @@ export function EmailPortalPage() {
         `/api/company/email-mailbox/messages/${id}?companyId=${encodeURIComponent(companyId)}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      const data = await res.json();
-      if (data.ok) {
-        setDetail(data.message as MsgDetail);
+      const data = await parseEmailApiResponse<{ message?: MsgDetail }>(res);
+      if (data.ok && data.message) {
+        setDetail(data.message);
         setReplyText(String(data.message?.aiDraftReply ?? ""));
         setAssignJobId(String(data.message?.jobId ?? ""));
         setAssignCustomerId(String(data.message?.customerId ?? ""));
@@ -181,19 +185,27 @@ export function EmailPortalPage() {
   async function syncNow() {
     if (!activeAccountId || !companyId) return;
     setBusy(true);
+    toast({ title: "Synchronizuji…", description: "Stahuji nové zprávy z IMAP." });
     try {
       const token = await getToken();
       const res = await fetch(`/api/company/email-mailbox/accounts/${activeAccountId}/sync`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ companyId }),
+        body: JSON.stringify({ companyId, maxMessages: 100 }),
       });
-      const data = await res.json();
+      const data = await parseEmailApiResponse<{ imported?: number }>(res);
       if (!data.ok) {
-        toast({ variant: "destructive", title: "Synchronizace selhala", description: data.error });
+        toast({
+          variant: "destructive",
+          title: "Synchronizace selhala",
+          description: data.message ?? data.error,
+        });
         return;
       }
-      toast({ title: "Synchronizace hotova", description: `Nových: ${data.imported ?? 0}` });
+      toast({
+        title: "Synchronizace dokončena",
+        description: data.message ?? `Synchronizováno – ${data.imported ?? 0} nových zpráv.`,
+      });
       await loadMessages();
       await loadAccounts();
     } finally {

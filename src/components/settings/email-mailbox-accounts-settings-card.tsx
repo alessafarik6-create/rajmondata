@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/firebase";
 import { EmailConnectWizard } from "@/components/portal/email-connect-wizard";
 import { Loader2, Mail, RefreshCw } from "lucide-react";
+import { parseEmailApiResponse } from "@/lib/email-mailbox/client-fetch";
 
 type AccountRow = {
   id: string;
@@ -35,12 +36,19 @@ export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: str
         `/api/company/email-mailbox/accounts?companyId=${encodeURIComponent(companyId)}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      const data = await res.json();
+      const data = await parseEmailApiResponse<{ accounts?: AccountRow[] }>(res);
       if (data.ok && Array.isArray(data.accounts)) setAccounts(data.accounts);
+      else if (!data.ok) {
+        toast({
+          variant: "destructive",
+          title: "E-mailové účty",
+          description: data.message ?? data.error ?? "Nepodařilo se načíst účty.",
+        });
+      }
     } finally {
       setLoading(false);
     }
-  }, [user, companyId]);
+  }, [user, companyId, toast]);
 
   useEffect(() => {
     void load();
@@ -56,12 +64,19 @@ export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: str
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ companyId }),
       });
-      const data = await res.json();
+      const data = await parseEmailApiResponse(res);
       if (!data.ok) {
-        toast({ variant: "destructive", title: "Sync selhal", description: data.error });
+        toast({
+          variant: "destructive",
+          title: "Sync selhal",
+          description: data.message ?? data.error,
+        });
         return;
       }
-      toast({ title: "Synchronizace dokončena" });
+      toast({
+        title: "Synchronizace dokončena",
+        description: data.message ?? `Synchronizováno – ${(data as { imported?: number }).imported ?? 0} nových zpráv.`,
+      });
       await load();
     } finally {
       setBusy(false);
@@ -124,8 +139,27 @@ export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: str
                 <p className="font-medium">{a.email}</p>
                 <p className="text-muted-foreground">
                   {a.provider === "SEZNAM" ? "Seznam.cz" : a.provider}{" "}
-                  <span className={a.status === "connected" ? "text-green-600" : "text-amber-600"}>
-                    ● {a.status === "connected" ? "Připojeno" : a.status}
+                  <span
+                    className={
+                      a.status === "connected"
+                        ? "text-green-600"
+                        : a.status === "syncing"
+                          ? "text-blue-600"
+                          : a.status === "error"
+                            ? "text-destructive"
+                            : "text-amber-600"
+                    }
+                  >
+                    ●{" "}
+                    {a.status === "connected"
+                      ? "Připojeno"
+                      : a.status === "syncing"
+                        ? "Synchronizuje se"
+                        : a.status === "error"
+                          ? "Chyba připojení"
+                          : a.status === "attention"
+                            ? "Vyžaduje pozornost"
+                            : a.status}
                   </span>
                 </p>
                 <p className="text-muted-foreground">

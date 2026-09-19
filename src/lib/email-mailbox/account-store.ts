@@ -69,6 +69,17 @@ export async function listEmailAccounts(
   db: Firestore,
   companyId: string
 ): Promise<(EmailAccountDoc & { id: string })[]> {
-  const snap = await emailAccountsCol(db, companyId).orderBy("createdAt", "desc").get();
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as EmailAccountDoc) }));
+  try {
+    const snap = await emailAccountsCol(db, companyId).orderBy("createdAt", "desc").get();
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as EmailAccountDoc) }));
+  } catch {
+    const snap = await emailAccountsCol(db, companyId).get();
+    const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as EmailAccountDoc) }));
+    rows.sort((a, b) => {
+      const ta = a.createdAt?.toMillis?.() ?? 0;
+      const tb = b.createdAt?.toMillis?.() ?? 0;
+      return tb - ta;
+    });
+    return rows;
+  }
 }

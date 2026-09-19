@@ -409,6 +409,32 @@
         { "fieldPath": "targetType", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "email_messages",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "receivedAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "email_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "emailAccountId", "order": "ASCENDING" },
+        { "fieldPath": "imapUid", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "email_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "emailAccountId", "order": "ASCENDING" },
+        { "fieldPath": "messageId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "email_accounts",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "createdAt", "order": "DESCENDING" }]
     }
   ],
   "fieldOverrides": []

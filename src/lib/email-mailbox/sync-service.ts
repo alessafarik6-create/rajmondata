@@ -2,18 +2,14 @@ import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import crypto from "node:crypto";
 import { getAdminStorageBucket } from "@/lib/firebase-admin";
-import { getEmailProviderAdapter } from "@/lib/email-mailbox/adapters";
 import { analyzeEmailMessageWithAi } from "@/lib/email-mailbox/ai-analyze-message";
 import {
   emailAccountsCol,
   loadEmailAccount,
   loadEmailCredentials,
 } from "@/lib/email-mailbox/account-store";
-import {
-  findMessageByImapUid,
-  findMessageByMessageId,
-  saveInboundMessage,
-} from "@/lib/email-mailbox/message-store";
+import { logEmailPhase } from "@/lib/email-mailbox/email-log";
+import { saveInboundMessage } from "@/lib/email-mailbox/message-store";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
 import {
   extractEmailAddress,
@@ -21,53 +17,63 @@ import {
   resolveJobHint,
 } from "@/lib/email-mailbox/contact-resolve";
 
+const DEFAULT_MAX_MESSAGES = 100;
+
 export async function syncEmailAccount(
   db: Firestore,
   companyId: string,
   accountId: string,
-  opts?: { maxMessages?: number }
-): Promise<{ imported: number; skipped: number; error?: string }> {
+  opts?: { maxMessages?: number; skipAi?: boolean }
+): Promise<{ imported: number; skipped: number; error?: string; errorCode?: string }> {
   const account = await loadEmailAccount(db, companyId, accountId);
-  if (!account) return { imported: 0, skipped: 0, error: "Účet nenalezen." };
-  const credentials = await loadEmailCredentials(db, companyId, accountId);
-  if (!credentials) return { imported: 0, skipped: 0, error: "Chybí přihlašovací údaje." };
+  if (!account) {
+    return { imported: 0, skipped: 0, error: "Účet nenalezen.", errorCode: "ACCOUNT_NOT_FOUND" };
+  }
+  if (account.organizationId && account.organizationId !== companyId) {
+    return { imported: 0, skipped: 0, error: "Neplatná organizace.", errorCode: "TENANT_MISMATCH" };
+  }
 
+  const credentials = await loadEmailCredentials(db, companyId, accountId);
+  if (!credentials) {
+    return {
+      imported: 0,
+      skipped: 0,
+      error: "Chybí přihlašovací údaje nebo nelze dešifrovat.",
+      errorCode: "CREDENTIALS_MISSING",
+    };
+  }
+
+  const { getEmailProviderAdapter } = await import("@/lib/email-mailbox/adapters");
   const adapter = getEmailProviderAdapter(account.provider);
   if (!adapter) {
-    return { imported: 0, skipped: 0, error: "Provider zatím není implementován." };
+    return { imported: 0, skipped: 0, error: "Provider zatím není implementován.", errorCode: "PROVIDER" };
   }
+
+  const maxMessages = opts?.maxMessages ?? DEFAULT_MAX_MESSAGES;
+  const isInitial = account.lastInboxUid == null || account.lastInboxUid === 0;
+
+  await emailAccountsCol(db, companyId).doc(accountId).update({
+    status: "syncing",
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  logEmailPhase("EMAIL_SYNC_START", { companyId, accountId, maxMessages, initial: isInitial });
 
   try {
     const result = await adapter.syncInbound(account, credentials, {
-      sinceUid: account.lastInboxUid ?? null,
-      maxMessages: opts?.maxMessages ?? 40,
+      sinceUid: isInitial ? null : account.lastInboxUid ?? null,
+      maxMessages,
     });
+
+    logEmailPhase("EMAIL_SYNC_MESSAGES_FOUND", { count: result.messages.length });
 
     let imported = 0;
     let skipped = 0;
     const bucket = getAdminStorageBucket();
+    const aiQueue: { messageId: string; payload: Parameters<typeof analyzeEmailMessageWithAi>[2] }[] =
+      [];
 
     for (const msg of result.messages) {
-      if (msg.imapUid) {
-        const existingUid = await findMessageByImapUid(db, companyId, accountId, msg.imapUid);
-        if (existingUid) {
-          skipped++;
-          continue;
-        }
-      }
-      if (msg.messageId) {
-        const existingMid = await findMessageByMessageId(
-          db,
-          companyId,
-          accountId,
-          msg.messageId
-        );
-        if (existingMid) {
-          skipped++;
-          continue;
-        }
-      }
-
       const attachmentsMeta: EmailMessageAttachmentMeta[] = [];
       for (const att of msg.attachments) {
         const id = crypto.randomUUID();
@@ -103,6 +109,7 @@ export async function syncEmailAccount(
         textBody: msg.textBody ?? null,
         htmlBody: msg.htmlBody ?? null,
         receivedAt: Timestamp.fromDate(msg.receivedAt),
+        sentAt: msg.sentAt ? Timestamp.fromDate(msg.sentAt) : null,
         direction: "inbound" as const,
         folder: msg.folder,
         attachments: attachmentsMeta,
@@ -118,9 +125,9 @@ export async function syncEmailAccount(
         jobHint = await resolveJobHint(db, companyId, customer.customerId);
       }
 
-      const messageId = await saveInboundMessage(db, companyId, {
+      const { id: savedId, created } = await saveInboundMessage(db, companyId, {
         ...base,
-        isRead: false,
+        isRead: Boolean(msg.isRead),
         customerId: customer?.customerId ?? null,
         customerName: customer?.customerName ?? null,
         suggestedCustomerId: customer?.customerId ?? null,
@@ -128,33 +135,24 @@ export async function syncEmailAccount(
         jobLabel: jobHint?.jobLabel ?? null,
         suggestedJobId: jobHint?.jobId ?? null,
       });
+
+      if (!created) {
+        skipped++;
+        continue;
+      }
       imported++;
 
-      const ai = await analyzeEmailMessageWithAi(db, companyId, {
-        subject: msg.subject,
-        textBody: msg.textBody,
-        htmlBody: msg.htmlBody,
-        from: msg.from,
-        attachments: attachmentsMeta,
-      });
-
-      if (ai) {
-        await db
-          .collection("companies")
-          .doc(companyId)
-          .collection("email_messages")
-          .doc(messageId)
-          .update({
-            aiSummary: ai.summary,
-            aiClassification: ai.category,
-            aiPriority: ai.priority,
-            needsReply: ai.needsReply,
-            suggestedActions: ai.suggestedActions,
-            inquiryDraft: ai.inquiryDraft ?? null,
-            aiReviewPending: Boolean(ai.inquiryDraft || ai.suggestedActions.length),
-            aiInsights: ai.insights ?? [],
-            updatedAt: FieldValue.serverTimestamp(),
-          });
+      if (!opts?.skipAi) {
+        aiQueue.push({
+          messageId: savedId,
+          payload: {
+            subject: msg.subject,
+            textBody: msg.textBody,
+            htmlBody: msg.htmlBody,
+            from: msg.from,
+            attachments: attachmentsMeta,
+          },
+        });
       }
     }
 
@@ -167,14 +165,57 @@ export async function syncEmailAccount(
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    logEmailPhase("EMAIL_SYNC_COMPLETED", { imported, skipped });
+
+    if (!opts?.skipAi && aiQueue.length > 0) {
+      void runAiAnalysisBatch(db, companyId, aiQueue).catch(() => {
+        /* AI nesmí shodit sync */
+      });
+    }
+
     return { imported, skipped };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    logEmailPhase("EMAIL_CONNECT_ERROR", { phase: "sync", accountId, detail: msg.slice(0, 200) });
     await emailAccountsCol(db, companyId).doc(accountId).update({
       status: "error",
       lastError: msg.slice(0, 500),
       updatedAt: FieldValue.serverTimestamp(),
     });
-    return { imported: 0, skipped: 0, error: msg };
+    const lower = msg.toLowerCase();
+    const errorCode =
+      lower.includes("auth") || lower.includes("login") || lower.includes("credentials")
+        ? "IMAP_AUTH_FAILED"
+        : lower.includes("timeout") || lower.includes("etimedout")
+          ? "IMAP_TIMEOUT"
+          : "SYNC_FAILED";
+    return { imported: 0, skipped: 0, error: msg, errorCode };
+  }
+}
+
+async function runAiAnalysisBatch(
+  db: Firestore,
+  companyId: string,
+  queue: { messageId: string; payload: Parameters<typeof analyzeEmailMessageWithAi>[2] }[]
+): Promise<void> {
+  for (const item of queue) {
+    const ai = await analyzeEmailMessageWithAi(db, companyId, item.payload);
+    if (!ai) continue;
+    await db
+      .collection("companies")
+      .doc(companyId)
+      .collection("email_messages")
+      .doc(item.messageId)
+      .update({
+        aiSummary: ai.summary,
+        aiClassification: ai.category,
+        aiPriority: ai.priority,
+        needsReply: ai.needsReply,
+        suggestedActions: ai.suggestedActions,
+        inquiryDraft: ai.inquiryDraft ?? null,
+        aiReviewPending: Boolean(ai.inquiryDraft || ai.suggestedActions.length),
+        aiInsights: ai.insights ?? [],
+        updatedAt: FieldValue.serverTimestamp(),
+      });
   }
 }

@@ -5,6 +5,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 

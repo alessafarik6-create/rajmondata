@@ -1,5 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { requireEmailMailboxRead } from "@/lib/email-mailbox/api-auth";
+import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
+import { emailJsonErr, emailJsonOk, emailRouteErrorResponse } from "@/lib/email-mailbox/api-json";
 import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
 import {
   buildMessageViewFilter,
@@ -7,47 +9,70 @@ import {
 } from "@/lib/email-mailbox/message-store";
 import type { EmailMessageDoc, EmailMessageWorkflowView } from "@/lib/email-mailbox/types";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const perm = await requireEmailMailboxRead(request);
-  if (!perm.ok) {
-    return NextResponse.json({ ok: false, error: perm.error }, { status: perm.status });
+  try {
+    const perm = await requireEmailMailboxRead(request);
+    if (!perm.ok) {
+      return emailJsonErr({
+        status: perm.status,
+        message: perm.error,
+        error: perm.error,
+      });
+    }
+
+    const companyId =
+      String(request.nextUrl.searchParams.get("companyId") ?? "").trim() || perm.caller.companyId;
+    if (!emailMailboxTenantOk(perm.caller, companyId)) {
+      return emailJsonErr({ status: 403, message: "Neplatná organizace.", errorCode: "TENANT_MISMATCH" });
+    }
+    const view = (request.nextUrl.searchParams.get("view") ??
+      "inbox") as EmailMessageWorkflowView;
+    const accountId = request.nextUrl.searchParams.get("accountId");
+
+    let snap;
+    try {
+      snap = await emailMessagesCol(perm.db, companyId)
+        .orderBy("receivedAt", "desc")
+        .limit(120)
+        .get();
+    } catch {
+      snap = await emailMessagesCol(perm.db, companyId).limit(200).get();
+    }
+    const filterFn = buildMessageViewFilter(view);
+    const messages = snap.docs
+      .map((d) => ({ id: d.id, ...(d.data() as EmailMessageDoc) }))
+      .filter((m) => (accountId ? m.emailAccountId === accountId : true))
+      .filter(filterFn)
+      .sort((a, b) => (b.receivedAt?.toMillis?.() ?? 0) - (a.receivedAt?.toMillis?.() ?? 0))
+      .slice(0, 120)
+      .map((m) => ({
+        id: m.id,
+        emailAccountId: m.emailAccountId,
+        from: m.from,
+        subject: m.subject,
+        receivedAt: m.receivedAt?.toDate?.()?.toISOString?.() ?? null,
+        needsReply: m.needsReply,
+        staleNeedsReply: messageIsStaleNeedsReply(m),
+        aiSummary: m.aiSummary ?? null,
+        aiClassification: m.aiClassification ?? null,
+        aiPriority: m.aiPriority ?? null,
+        customerId: m.customerId ?? null,
+        jobId: m.jobId ?? null,
+        inquiryId: m.inquiryId ?? null,
+        resolved: Boolean(m.resolved),
+        aiReviewPending: Boolean(m.aiReviewPending),
+        direction: m.direction,
+        isRead: Boolean(m.isRead),
+        customerName: m.customerName ?? null,
+        jobLabel: m.jobLabel ?? null,
+      }));
+
+    return emailJsonOk({ view, messages });
+  } catch (err) {
+    console.error("[email-mailbox/messages GET]", err instanceof Error ? err.message : err);
+    return emailRouteErrorResponse(err, "Nepodařilo se načíst zprávy.");
   }
-
-  const companyId =
-    String(request.nextUrl.searchParams.get("companyId") ?? "").trim() || perm.caller.companyId;
-  const view = (request.nextUrl.searchParams.get("view") ??
-    "inbox") as EmailMessageWorkflowView;
-  const accountId = request.nextUrl.searchParams.get("accountId");
-
-  const snap = await emailMessagesCol(perm.db, companyId).orderBy("receivedAt", "desc").limit(120).get();
-  const filterFn = buildMessageViewFilter(view);
-  const messages = snap.docs
-    .map((d) => ({ id: d.id, ...(d.data() as EmailMessageDoc) }))
-    .filter((m) => (accountId ? m.emailAccountId === accountId : true))
-    .filter(filterFn)
-    .map((m) => ({
-      id: m.id,
-      emailAccountId: m.emailAccountId,
-      from: m.from,
-      subject: m.subject,
-      receivedAt: m.receivedAt?.toDate?.()?.toISOString?.() ?? null,
-      needsReply: m.needsReply,
-      staleNeedsReply: messageIsStaleNeedsReply(m),
-      aiSummary: m.aiSummary ?? null,
-      aiClassification: m.aiClassification ?? null,
-      aiPriority: m.aiPriority ?? null,
-      customerId: m.customerId ?? null,
-      jobId: m.jobId ?? null,
-      inquiryId: m.inquiryId ?? null,
-      resolved: Boolean(m.resolved),
-      aiReviewPending: Boolean(m.aiReviewPending),
-      direction: m.direction,
-      isRead: Boolean(m.isRead),
-      customerName: m.customerName ?? null,
-      jobLabel: m.jobLabel ?? null,
-    }));
-
-  return NextResponse.json({ ok: true, view, messages });
 }

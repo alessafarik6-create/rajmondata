@@ -19,6 +19,8 @@ export type InboundEmailPayload = {
   textBody?: string | null;
   htmlBody?: string | null;
   receivedAt: Date;
+  sentAt?: Date | null;
+  isRead?: boolean;
   attachments: {
     filename: string;
     contentType: string;
@@ -45,7 +47,14 @@ export type ConnectionTestResult = {
   ok: boolean;
   imapOk?: boolean;
   smtpOk?: boolean;
-  errorCode?: "imap_auth" | "smtp_auth" | "network" | "config" | "unknown";
+  errorCode?:
+    | "imap_auth"
+    | "smtp_auth"
+    | "IMAP_AUTH_FAILED"
+    | "SMTP_AUTH_FAILED"
+    | "network"
+    | "config"
+    | "unknown";
   message?: string;
 };
 
