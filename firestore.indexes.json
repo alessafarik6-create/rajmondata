@@ -435,6 +435,30 @@
       "collectionGroup": "email_accounts",
       "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "fleet_trips",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "vehicleId", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "fleet_driver_assignments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "vehicleId", "order": "ASCENDING" },
+        { "fieldPath": "assignedFrom", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "fleet_trip_points",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tripId", "order": "ASCENDING" },
+        { "fieldPath": "recordedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

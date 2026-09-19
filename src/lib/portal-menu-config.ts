@@ -71,6 +71,7 @@ export const MODULE_MENU_MAP: Record<
   documents: { licenseKeys: ["doklady"], platformModuleCode: "invoicing" },
   sklad: { licenseKeys: ["sklad"], platformModuleCode: "sklad" },
   vyroba: { licenseKeys: ["vyroba"], platformModuleCode: "vyroba" },
+  fleet: { licenseKeys: ["vozovyPark"], platformModuleCode: null },
   reports: { licenseKeys: ["reporty"], platformModuleCode: "attendance_payroll" },
   billing: { licenseKeys: ["predplatne"], platformModuleCode: null },
 };
@@ -130,6 +131,16 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     roles: ["owner", "admin", "manager", "accountant", "employee"],
     licenseKeys: ["zakazky"],
     platformModuleCode: "jobs",
+  },
+  {
+    id: "fleet",
+    type: "module",
+    label: "Vozový park",
+    href: "/portal/fleet",
+    roles: ["owner", "admin", "manager", "accountant", "employee"],
+    licenseKeys: ["vozovyPark"],
+    mobileHomeVisible: true,
+    platformModuleCode: null,
   },
   {
     id: "leads",

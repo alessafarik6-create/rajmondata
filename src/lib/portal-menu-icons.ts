@@ -28,6 +28,7 @@ import {
   Stamp,
   UsersRound,
   FileStack,
+  Car,
 } from "lucide-react";
 
 /** Ikony položek portálu — sdílené sidebar + mobilní dlaždice. */
@@ -43,6 +44,7 @@ export const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
   customerChats: MessageSquare,
   emails: Mail,
   meetingRecords: CalendarClock,
+  fleet: Car,
   finance: Landmark,
   invoices: Receipt,
   documents: FileText,

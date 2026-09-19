@@ -14,6 +14,7 @@ export const CANONICAL_MODULE_KEYS = [
   "vyroba",
   "reporty",
   "predplatne",
+  "vozovyPark",
 ] as const;
 
 export type CanonicalModuleKey = (typeof CANONICAL_MODULE_KEYS)[number];
@@ -85,6 +86,11 @@ export const MODULE_DEFINITIONS: {
     label: "Předplatné / Fakturace",
     menuLabel: "Předplatné",
     aliases: ["billing", "subscriptions"],
+  },
+  vozovyPark: {
+    label: "Vozový park / GPS",
+    menuLabel: "Vozový park",
+    aliases: ["fleet", "gps", "vozovy_park", "ecofleet"],
   },
 };
 

@@ -33,6 +33,7 @@ const COVERED_SIDEBAR_IDS = new Set<string>([
   "sklad",
   "vyroba",
   "labor",
+  "fleet",
 ]);
 
 /**

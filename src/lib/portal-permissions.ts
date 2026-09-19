@@ -32,6 +32,7 @@ const SENSITIVE_MODULE_IDS = new Set<PortalModuleId>([
   "billing",
   "settings",
   "activity",
+  "fleet",
 ]);
 
 export const PORTAL_PERMISSION_MODULES: readonly PortalPermissionModuleMeta[] =
@@ -62,6 +63,7 @@ export function buildAccountantPermissionPreset(): Record<PortalModuleId, Portal
     "productCatalogs",
     "customerChats",
     "meetingRecords",
+    "fleet",
     "finance",
     "invoices",
     "documents",
