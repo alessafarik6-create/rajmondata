@@ -6,6 +6,7 @@ import { messageForCredentialError } from "@/lib/email-mailbox/credential-resolv
 import type { EmailCredentialErrorCode } from "@/lib/email-mailbox/credential-resolver";
 import { syncEmailAccount } from "@/lib/email-mailbox/sync-service";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { assertEmailAccountAccess } from "@/lib/email-mailbox/account-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +51,15 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       });
     }
     const { accountId } = await ctx.params;
+
+    const access = await assertEmailAccountAccess(db, companyId, accountId, perm.caller.uid, "write");
+    if (!access.ok) {
+      return emailJsonErr({
+        status: access.status,
+        message: access.error,
+        errorCode: access.errorCode,
+      });
+    }
 
     const result = await syncEmailAccount(db, companyId, accountId, {
       maxMessages: body.maxMessages ?? 100,

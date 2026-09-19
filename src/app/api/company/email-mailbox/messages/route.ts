@@ -2,6 +2,10 @@ import { NextRequest } from "next/server";
 import { requireEmailMailboxRead } from "@/lib/email-mailbox/api-auth";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
 import { emailJsonErr, emailJsonOk, emailRouteErrorResponse } from "@/lib/email-mailbox/api-json";
+import {
+  loadAccessibleAccountIdSet,
+  messageBelongsToUser,
+} from "@/lib/email-mailbox/account-access";
 import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
 import {
   buildMessageViewFilter,
@@ -32,6 +36,19 @@ export async function GET(request: NextRequest) {
       "inbox") as EmailMessageWorkflowView;
     const accountId = request.nextUrl.searchParams.get("accountId");
 
+    const accessibleIds = await loadAccessibleAccountIdSet(perm.db, companyId, perm.caller.uid);
+    if (accessibleIds.size === 0) {
+      return emailJsonOk({ view, messages: [] });
+    }
+
+    if (accountId && !accessibleIds.has(accountId)) {
+      return emailJsonErr({
+        status: 403,
+        message: "Nemáte přístup k této schránce.",
+        errorCode: "MAILBOX_FORBIDDEN",
+      });
+    }
+
     let snap;
     try {
       snap = await emailMessagesCol(perm.db, companyId)
@@ -44,6 +61,7 @@ export async function GET(request: NextRequest) {
     const filterFn = buildMessageViewFilter(view);
     const messages = snap.docs
       .map((d) => ({ id: d.id, ...(d.data() as EmailMessageDoc) }))
+      .filter((m) => messageBelongsToUser(m, perm.caller.uid, accessibleIds))
       .filter((m) => (accountId ? m.emailAccountId === accountId : true))
       .filter(filterFn)
       .sort((a, b) => (b.receivedAt?.toMillis?.() ?? 0) - (a.receivedAt?.toMillis?.() ?? 0))

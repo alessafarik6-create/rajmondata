@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireEmailMailboxRead } from "@/lib/email-mailbox/api-auth";
+import {
+  loadAccessibleAccountIdSet,
+  messageBelongsToUser,
+} from "@/lib/email-mailbox/account-access";
 import { emailMessagesCol, messageIsStaleNeedsReply } from "@/lib/email-mailbox/message-store";
 import type { EmailMessageDoc } from "@/lib/email-mailbox/types";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
@@ -17,8 +21,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
+  const accessibleIds = await loadAccessibleAccountIdSet(perm.db, companyId, perm.caller.uid);
+  if (accessibleIds.size === 0) {
+    return NextResponse.json({
+      ok: true,
+      waitingReply: 0,
+      assignedToJobs: 0,
+      aiImportant: 0,
+    });
+  }
+
   const snap = await emailMessagesCol(perm.db, companyId).orderBy("receivedAt", "desc").limit(150).get();
-  const rows = snap.docs.map((d) => d.data() as EmailMessageDoc);
+  const rows = snap.docs
+    .map((d) => d.data() as EmailMessageDoc)
+    .filter((m) => messageBelongsToUser(m, perm.caller.uid, accessibleIds));
 
   let waitingReply = 0;
   let assignedToJobs = 0;

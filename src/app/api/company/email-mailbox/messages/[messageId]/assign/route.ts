@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { requireEmailMailboxWrite } from "@/lib/email-mailbox/api-auth";
+import { assertMessageAccess } from "@/lib/email-mailbox/account-access";
 import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
@@ -21,6 +22,8 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     jobId?: string | null;
     inquiryId?: string | null;
     resolved?: boolean;
+    /** Explicitní souhlas se zveřejněním obsahu u zakázky. */
+    shareWithJob?: boolean;
   };
   try {
     body = await request.json();
@@ -34,6 +37,14 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   }
   const { messageId } = await ctx.params;
 
+  const access = await assertMessageAccess(perm.db, companyId, messageId, perm.caller.uid, "write");
+  if (!access.ok) {
+    return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
+  }
+
+  const jobVisibility =
+    body.shareWithJob === true && body.jobId ? ("shared" as const) : ("private" as const);
+
   await emailMessagesCol(perm.db, companyId)
     .doc(messageId)
     .update({
@@ -41,6 +52,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       jobId: body.jobId ?? null,
       inquiryId: body.inquiryId ?? null,
       resolved: body.resolved ?? false,
+      jobVisibility,
       aiReviewPending: false,
       updatedAt: FieldValue.serverTimestamp(),
     });
@@ -53,8 +65,9 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     metadata: {
       customerId: body.customerId ?? null,
       jobId: body.jobId ?? null,
+      jobVisibility,
     },
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, jobVisibility });
 }

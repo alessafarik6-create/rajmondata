@@ -4,9 +4,9 @@ import { FieldValue } from "firebase-admin/firestore";
 import crypto from "node:crypto";
 import {
   emailAccountsCol,
-  listEmailAccounts,
   saveEmailCredentials,
 } from "@/lib/email-mailbox/account-store";
+import { listEmailAccountsAccessibleToUser } from "@/lib/email-mailbox/account-access";
 import {
   accountStatusFromCredentialResult,
   accountStatusLabel,
@@ -15,7 +15,7 @@ import {
 import {
   emailMailboxTenantOk,
   requireEmailMailboxRead,
-  requireOrgEmailAdmin,
+  requireEmailMailboxWrite,
 } from "@/lib/email-mailbox/api-auth";
 import { emailJsonErr, emailJsonOk, emailRouteErrorResponse } from "@/lib/email-mailbox/api-json";
 import { isEmailCredentialsEncryptionConfigured } from "@/lib/email-mailbox/credential-crypto";
@@ -23,15 +23,13 @@ import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 import { logEmailPhase } from "@/lib/email-mailbox/email-log";
 import { presetForProvider } from "@/lib/email-mailbox/provider-presets";
 import { syncEmailAccount } from "@/lib/email-mailbox/sync-service";
-import type { EmailProviderKind } from "@/lib/email-mailbox/types";
+import type { EmailAccountDoc, EmailProviderKind } from "@/lib/email-mailbox/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-function formatAccountSafe(
-  row: Awaited<ReturnType<typeof listEmailAccounts>>[number]
-) {
+function formatAccountSafe(row: EmailAccountDoc & { id: string }) {
   const { id, ...a } = row;
   let lastSyncAt: string | null = null;
   try {
@@ -50,6 +48,7 @@ function formatAccountSafe(
     email: a.email,
     displayName: a.displayName ?? null,
     status: a.status,
+    accountType: a.accountType ?? "PERSONAL",
     lastSyncAt,
     lastError: a.lastError ?? null,
     imapHost: a.imapHost,
@@ -59,26 +58,18 @@ function formatAccountSafe(
 
 export async function GET(request: NextRequest) {
   try {
-    let db: Firestore;
-    let caller: { companyId: string; uid: string };
-
     const perm = await requireEmailMailboxRead(request);
-    if (perm.ok) {
-      db = perm.db;
-      caller = perm.caller;
-    } else {
-      const admin = await requireOrgEmailAdmin(request);
-      if (!admin.ok) {
-        return emailJsonErr({
-          status: perm.status,
-          message: perm.error,
-          error: perm.error,
-          errorCode: perm.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN",
-        });
-      }
-      db = admin.db;
-      caller = admin.caller;
+    if (!perm.ok) {
+      return emailJsonErr({
+        status: perm.status,
+        message: perm.error,
+        error: perm.error,
+        errorCode: perm.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN",
+      });
     }
+
+    const db: Firestore = perm.db;
+    const caller = perm.caller;
 
     const companyId =
       String(request.nextUrl.searchParams.get("companyId") ?? "").trim() || caller.companyId;
@@ -89,7 +80,7 @@ export async function GET(request: NextRequest) {
         errorCode: "TENANT_MISMATCH",
       });
     }
-    const accounts = await listEmailAccounts(db, companyId);
+    const accounts = await listEmailAccountsAccessibleToUser(db, companyId, caller.uid, "read");
     const enriched = await Promise.all(
       accounts.map(async (row) => {
         const base = formatAccountSafe(row);
@@ -124,7 +115,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireOrgEmailAdmin(request);
+    const auth = await requireEmailMailboxWrite(request);
     if (!auth.ok) {
       return emailJsonErr({
         status: auth.status,
@@ -157,6 +148,7 @@ export async function POST(request: NextRequest) {
       smtpPort?: number;
       smtpSecure?: boolean;
       skipTest?: boolean;
+      accountType?: "PERSONAL" | "SHARED";
     };
     try {
       body = await request.json();
@@ -184,6 +176,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const accountType = body.accountType === "SHARED" ? "SHARED" : "PERSONAL";
+
     const preset = presetForProvider(provider);
     if (!preset?.implemented) {
       return emailJsonErr({
@@ -195,6 +189,8 @@ export async function POST(request: NextRequest) {
 
     const accountDraft = {
       organizationId: companyId,
+      userId: auth.caller.uid,
+      accountType,
       provider,
       email,
       displayName: body.displayName?.trim() || null,
@@ -226,7 +222,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!body.skipTest) {
-      logEmailPhase("EMAIL_CONNECT_START", { companyId, email });
+      logEmailPhase("EMAIL_CONNECT_START", { companyId, email, userId: auth.caller.uid });
       const test = await adapter.testConnection(accountDraft, { username, password });
       if (!test.ok) {
         return emailJsonErr({
@@ -255,7 +251,7 @@ export async function POST(request: NextRequest) {
       userId: auth.caller.uid,
       entityId: accountId,
       details: email,
-      metadata: { provider },
+      metadata: { provider, accountType },
     });
 
     const sync = await syncEmailAccount(auth.db, companyId, accountId, {

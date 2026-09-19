@@ -62,6 +62,7 @@ export async function saveEmailCredentials(
     });
 }
 
+/** Všechny účty organizace (pouze server — admin status / cron). */
 export async function listEmailAccounts(
   db: Firestore,
   companyId: string

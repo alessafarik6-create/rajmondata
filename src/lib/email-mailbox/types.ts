@@ -27,10 +27,21 @@ export type EmailMessageWorkflowView =
 
 export type EmailMailboxFolder = "inbox" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
+/** Osobní schránka uživatele vs. sdílená firemní schránka (info@…). */
+export type EmailAccountType = "PERSONAL" | "SHARED";
+
+export type EmailMailboxMemberPermission = "READ" | "WRITE";
+
+/** Viditelnost těla e-mailu u zakázky — výchozí je soukromé. */
+export type EmailJobVisibility = "private" | "shared";
+
 import type { Timestamp } from "firebase-admin/firestore";
 
 export type EmailAccountDoc = {
   organizationId: string;
+  /** Vlastník schránky (Firebase Auth uid). */
+  userId?: string | null;
+  accountType?: EmailAccountType | null;
   provider: EmailProviderKind;
   email: string;
   displayName?: string | null;
@@ -76,6 +87,8 @@ export type EmailMessageAiFields = {
 export type EmailMessageDoc = {
   organizationId: string;
   emailAccountId: string;
+  /** Vlastník komunikace (uid vlastníka schránky v době sync/odeslání). */
+  ownerUserId?: string | null;
   providerMessageId?: string | null;
   imapUid?: number | null;
   messageId?: string | null;
@@ -95,6 +108,8 @@ export type EmailMessageDoc = {
   inquiryId?: string | null;
   offerId?: string | null;
   jobId?: string | null;
+  /** Zda je obsah zprávy viditelný u přiřazené zakázky pro ostatní. */
+  jobVisibility?: EmailJobVisibility | null;
   resolved?: boolean;
   isRead?: boolean;
   isDraft?: boolean;
@@ -117,3 +132,11 @@ export type EmailCredentialsPlain = {
 export const EMAIL_ACCOUNTS_SUBCOLLECTION = "email_accounts";
 export const EMAIL_MESSAGES_SUBCOLLECTION = "email_messages";
 export const EMAIL_ACCOUNT_CREDENTIALS_DOC = "credentials";
+export const EMAIL_MAILBOX_MEMBERS_SUBCOLLECTION = "members";
+
+export type EmailMailboxMemberDoc = {
+  userId: string;
+  permission: EmailMailboxMemberPermission;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+};

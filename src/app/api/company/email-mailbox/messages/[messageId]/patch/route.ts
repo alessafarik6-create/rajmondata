@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { requireEmailMailboxWrite } from "@/lib/email-mailbox/api-auth";
+import { assertMessageAccess } from "@/lib/email-mailbox/account-access";
 import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
@@ -33,6 +34,11 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
   }
 
   const { messageId } = await ctx.params;
+  const access = await assertMessageAccess(perm.db, companyId, messageId, perm.caller.uid, "write");
+  if (!access.ok) {
+    return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
+  }
+
   const ref = emailMessagesCol(perm.db, companyId).doc(messageId);
   const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (typeof body.isRead === "boolean") patch.isRead = body.isRead;

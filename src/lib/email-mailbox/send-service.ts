@@ -5,6 +5,10 @@ import {
   loadEmailAccount,
   loadEmailCredentials,
 } from "@/lib/email-mailbox/account-store";
+import {
+  migrateLegacyEmailAccountIfNeeded,
+  resolveAccountOwnerUserId,
+} from "@/lib/email-mailbox/account-access";
 import { saveOutboundMessage } from "@/lib/email-mailbox/message-store";
 import type { EmailMessageDoc } from "@/lib/email-mailbox/types";
 
@@ -24,8 +28,10 @@ export async function sendEmailFromAccount(
     attachments?: { filename: string; contentType: string; content: Buffer }[];
   }
 ): Promise<{ messageDocId: string; messageId: string | null }> {
-  const account = await loadEmailAccount(db, companyId, accountId);
-  if (!account) throw new Error("E-mailový účet nenalezen.");
+  const loaded = await loadEmailAccount(db, companyId, accountId);
+  if (!loaded) throw new Error("E-mailový účet nenalezen.");
+  const account = await migrateLegacyEmailAccountIfNeeded(db, companyId, loaded);
+  const ownerUserId = resolveAccountOwnerUserId(account);
   const credentials = await loadEmailCredentials(db, companyId, accountId);
   if (!credentials) throw new Error("Chybí přihlašovací údaje.");
 
@@ -58,6 +64,7 @@ export async function sendEmailFromAccount(
   const messageDocId = await saveOutboundMessage(db, companyId, {
     organizationId: companyId,
     emailAccountId: accountId,
+    ownerUserId: ownerUserId || null,
     messageId: sent.messageId,
     inReplyTo,
     references,

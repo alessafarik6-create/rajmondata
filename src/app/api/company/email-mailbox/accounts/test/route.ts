@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { requireOrgEmailAdmin } from "@/lib/email-mailbox/api-auth";
+import { requireEmailMailboxWrite } from "@/lib/email-mailbox/api-auth";
 import { emailJsonErr, emailJsonOk, emailRouteErrorResponse } from "@/lib/email-mailbox/api-json";
 import { presetForProvider } from "@/lib/email-mailbox/provider-presets";
 import type { EmailProviderKind } from "@/lib/email-mailbox/types";
@@ -10,7 +10,7 @@ export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireOrgEmailAdmin(request);
+    const auth = await requireEmailMailboxWrite(request);
     if (!auth.ok) {
       return emailJsonErr({
         status: auth.status,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireEmailMailboxWrite } from "@/lib/email-mailbox/api-auth";
+import { assertEmailAccountAccess, assertMessageAccess } from "@/lib/email-mailbox/account-access";
 import { sendEmailFromAccount } from "@/lib/email-mailbox/send-service";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
@@ -45,22 +46,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Vyplňte účet, příjemce, předmět a text." }, { status: 400 });
   }
 
+  const accountAccess = await assertEmailAccountAccess(db, companyId, accountId, perm.caller.uid, "write");
+  if (!accountAccess.ok) {
+    return NextResponse.json({ ok: false, error: accountAccess.error }, { status: accountAccess.status });
+  }
+
   let replyToMessage = null;
   if (body.replyToMessageId) {
-    const snap = await db
-      .collection("companies")
-      .doc(companyId)
-      .collection("email_messages")
-      .doc(body.replyToMessageId)
-      .get();
-    if (snap.exists) {
-      const d = snap.data() as { messageId?: string; references?: string[]; subject?: string };
-      replyToMessage = {
-        messageId: d.messageId ?? null,
-        references: d.references ?? [],
-        subject: d.subject ?? "",
-      };
+    const msgAccess = await assertMessageAccess(
+      db,
+      companyId,
+      body.replyToMessageId,
+      perm.caller.uid,
+      "read"
+    );
+    if (!msgAccess.ok) {
+      return NextResponse.json({ ok: false, error: msgAccess.error }, { status: msgAccess.status });
     }
+    const d = msgAccess.message;
+    replyToMessage = {
+      messageId: d.messageId ?? null,
+      references: d.references ?? [],
+      subject: d.subject ?? "",
+    };
   }
 
   try {
@@ -77,7 +85,7 @@ export async function POST(request: NextRequest) {
       actionLabel: "Odeslán e-mail",
       userId: perm.caller.uid,
       entityId: sent.messageDocId,
-      metadata: { to, subject },
+      metadata: { to, subject, accountId },
     });
     return NextResponse.json({ ok: true, ...sent });
   } catch (err) {

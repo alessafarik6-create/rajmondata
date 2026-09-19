@@ -27,6 +27,7 @@ import { OrganizationSignatureSettingsCard } from "@/components/settings/organiz
 import { DocumentEmailOutboundSettingsCard } from "@/components/settings/document-email-outbound-settings-card";
 import { InquiryEmailIdentitySettingsCard } from "@/components/settings/inquiry-email-identity-settings-card";
 import { EmailMailboxAccountsSettingsCard } from "@/components/settings/email-mailbox-accounts-settings-card";
+import { EmailMyMailboxSettingsCard } from "@/components/settings/email-my-mailbox-settings-card";
 import { InquiryOfferTemplatesSettingsCard } from "@/components/settings/inquiry-offer-templates-settings-card";
 import { InquiryOfferLibrarySettingsCard } from "@/components/settings/inquiry-offer-library-settings-card";
 import { AiAssistantSettingsCard } from "@/components/settings/ai-assistant-settings-card";
@@ -477,7 +478,7 @@ export default function SettingsPage() {
           )}
           {isAdmin && (
             <TabsTrigger value="email-mailbox" className="gap-2 min-h-[44px] sm:min-h-0">
-              <Mail className="w-4 h-4 shrink-0" /> E-mailové účty
+              <Mail className="w-4 h-4 shrink-0" /> E-mailová komunikace
             </TabsTrigger>
           )}
           {isAdmin && (
@@ -517,6 +518,11 @@ export default function SettingsPage() {
               <Button className="w-fit">Uložit změny</Button>
             </CardContent>
           </Card>
+          {companyId ? (
+            <div className="mt-6">
+              <EmailMyMailboxSettingsCard companyId={companyId} />
+            </div>
+          ) : null}
         </TabsContent>
 
         {isAdmin && (

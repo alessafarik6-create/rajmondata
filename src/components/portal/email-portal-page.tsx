@@ -14,6 +14,14 @@ import { EmailConnectWizard } from "@/components/portal/email-connect-wizard";
 import type { EmailMessageWorkflowView } from "@/lib/email-mailbox/types";
 import { parseEmailApiResponse } from "@/lib/email-mailbox/client-fetch";
 import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Mail, Plus, Sparkles, Search } from "lucide-react";
 
 type AccountRow = {
@@ -93,8 +101,10 @@ export function EmailPortalPage() {
   const [replyText, setReplyText] = useState("");
   const [assignJobId, setAssignJobId] = useState("");
   const [assignCustomerId, setAssignCustomerId] = useState("");
+  const [shareWithJob, setShareWithJob] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
 
-  const activeAccountId = accounts[0]?.id ?? "";
+  const activeAccountId = selectedAccountId || accounts[0]?.id || "";
 
   const getToken = useCallback(async () => {
     if (!user) throw new Error("Nepřihlášen");
@@ -111,7 +121,14 @@ export function EmailPortalPage() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = await parseEmailApiResponse<{ accounts?: AccountRow[] }>(res);
-      if (data.ok) setAccounts(data.accounts ?? []);
+      if (data.ok) {
+        const list = data.accounts ?? [];
+        setAccounts(list);
+        setSelectedAccountId((prev) => {
+          if (prev && list.some((a) => a.id === prev)) return prev;
+          return list[0]?.id ?? "";
+        });
+      }
       else if (data.message || data.error) {
         toast({ variant: "destructive", title: "Účty e-mailu", description: data.message ?? data.error });
       }
@@ -121,12 +138,12 @@ export function EmailPortalPage() {
   }, [user, companyId, access.canRead, getToken, toast]);
 
   const loadMessages = useCallback(async () => {
-    if (!user || !companyId || !access.canRead || accounts.length === 0) return;
+    if (!user || !companyId || !access.canRead || accounts.length === 0 || !activeAccountId) return;
     setLoadingList(true);
     try {
       const token = await getToken();
       const res = await fetch(
-        `/api/company/email-mailbox/messages?companyId=${encodeURIComponent(companyId)}&view=${folder}`,
+        `/api/company/email-mailbox/messages?companyId=${encodeURIComponent(companyId)}&view=${folder}&accountId=${encodeURIComponent(activeAccountId)}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = await parseEmailApiResponse<{ messages?: MsgRow[] }>(res);
@@ -134,7 +151,7 @@ export function EmailPortalPage() {
     } finally {
       setLoadingList(false);
     }
-  }, [user, companyId, folder, access.canRead, accounts.length, getToken]);
+  }, [user, companyId, folder, access.canRead, accounts.length, activeAccountId, getToken]);
 
   useEffect(() => {
     void loadAccounts();
@@ -281,6 +298,7 @@ export function EmailPortalPage() {
           companyId,
           jobId: assignJobId.trim() || null,
           customerId: assignCustomerId.trim() || null,
+          shareWithJob: shareWithJob && Boolean(assignJobId.trim()),
         }),
       });
       toast({ title: "Přiřazení uloženo" });
@@ -315,9 +333,9 @@ export function EmailPortalPage() {
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <Mail className="h-6 w-6" />
               </div>
-              <CardTitle className="text-2xl">E-mail v RAJMONDATA</CardTitle>
+              <CardTitle className="text-2xl">Moje pošta</CardTitle>
               <p className="text-muted-foreground">
-                Připojte firemní e-mail a spravujte komunikaci se zákazníky přímo u zakázek.
+                Připojte svůj pracovní e-mail a spravujte vlastní komunikaci se zákazníky přímo u zakázek.
               </p>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -327,7 +345,7 @@ export function EmailPortalPage() {
                 </Button>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Připojení schránky může provést administrátor organizace v Nastavení → E-mailové účty.
+                  Nemáte oprávnění připojit schránku. Požádejte administrátora o přístup k modulu E-mail.
                 </p>
               )}
               <ul className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
@@ -339,7 +357,7 @@ export function EmailPortalPage() {
                 ))}
               </ul>
               <Button variant="link" className="px-0" asChild>
-                <Link href="/portal/settings">Nastavení → E-mailové účty</Link>
+                <Link href="/portal/settings">Nastavení → Profil → Můj e-mail</Link>
               </Button>
             </CardContent>
           </Card>
@@ -370,6 +388,23 @@ export function EmailPortalPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
       <aside className="w-full shrink-0 border-b lg:w-52 lg:border-b-0 lg:border-r p-3">
+        <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Moje pošta</p>
+        {accounts.length > 1 ? (
+          <Select value={activeAccountId} onValueChange={setSelectedAccountId}>
+            <SelectTrigger className="mb-3 w-full">
+              <SelectValue placeholder="Schránka" />
+            </SelectTrigger>
+            <SelectContent>
+              {accounts.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.email}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <p className="mb-3 truncate text-sm font-medium">{accounts[0]?.email}</p>
+        )}
         <Button className="mb-3 w-full gap-2" disabled={!access.canWrite} onClick={() => setComposeOpen(true)}>
           <Plus className="h-4 w-4" /> Nový e-mail
         </Button>
@@ -537,6 +572,14 @@ export function EmailPortalPage() {
                       onChange={(e) => setAssignCustomerId(e.target.value)}
                     />
                     <Input placeholder="ID zakázky" value={assignJobId} onChange={(e) => setAssignJobId(e.target.value)} />
+                    <label className="flex items-center gap-2 text-sm col-span-full">
+                      <Checkbox
+                        checked={shareWithJob}
+                        onCheckedChange={(v) => setShareWithJob(Boolean(v))}
+                        disabled={!assignJobId.trim()}
+                      />
+                      Zveřejnit obsah komunikace u zakázky (jinak zůstane soukromá)
+                    </label>
                     <Button size="sm" variant="secondary" disabled={busy} onClick={() => void assignLinks()}>
                       Přiřadit
                     </Button>

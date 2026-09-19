@@ -8,6 +8,10 @@ import {
   loadEmailAccount,
 } from "@/lib/email-mailbox/account-store";
 import {
+  migrateLegacyEmailAccountIfNeeded,
+  resolveAccountOwnerUserId,
+} from "@/lib/email-mailbox/account-access";
+import {
   accountStatusFromCredentialResult,
   resolveEmailCredentials,
 } from "@/lib/email-mailbox/credential-resolver";
@@ -28,10 +32,12 @@ export async function syncEmailAccount(
   accountId: string,
   opts?: { maxMessages?: number; skipAi?: boolean }
 ): Promise<{ imported: number; skipped: number; error?: string; errorCode?: string }> {
-  const account = await loadEmailAccount(db, companyId, accountId);
-  if (!account) {
+  const loaded = await loadEmailAccount(db, companyId, accountId);
+  if (!loaded) {
     return { imported: 0, skipped: 0, error: "Účet nenalezen.", errorCode: "ACCOUNT_NOT_FOUND" };
   }
+  const account = await migrateLegacyEmailAccountIfNeeded(db, companyId, loaded);
+  const ownerUserId = resolveAccountOwnerUserId(account);
   if (account.organizationId && account.organizationId !== companyId) {
     return { imported: 0, skipped: 0, error: "Neplatná organizace.", errorCode: "TENANT_MISMATCH" };
   }
@@ -111,6 +117,7 @@ export async function syncEmailAccount(
       const base = {
         organizationId: companyId,
         emailAccountId: accountId,
+        ownerUserId: ownerUserId || null,
         providerMessageId: msg.messageId ?? null,
         imapUid: msg.imapUid,
         messageId: msg.messageId ?? null,

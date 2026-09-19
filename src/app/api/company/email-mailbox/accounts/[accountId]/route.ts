@@ -1,6 +1,10 @@
 import { NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
-import { requireOrgEmailAdmin } from "@/lib/email-mailbox/api-auth";
+import { assertEmailAccountAccess } from "@/lib/email-mailbox/account-access";
+import {
+  emailMailboxTenantOk,
+  requireEmailMailboxWrite,
+} from "@/lib/email-mailbox/api-auth";
 import {
   deleteEmailCredentials,
   emailAccountsCol,
@@ -21,7 +25,7 @@ type Ctx = { params: Promise<{ accountId: string }> };
 
 export async function DELETE(request: NextRequest, ctx: Ctx) {
   try {
-    const auth = await requireOrgEmailAdmin(request);
+    const auth = await requireEmailMailboxWrite(request);
     if (!auth.ok) {
       return emailJsonErr({ status: auth.status, message: auth.error, errorCode: "FORBIDDEN" });
     }
@@ -29,6 +33,18 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
     const { accountId } = await ctx.params;
     if (!companyId) {
       return emailJsonErr({ status: 400, message: "Chybí companyId.", errorCode: "VALIDATION" });
+    }
+    if (!emailMailboxTenantOk(auth.caller, companyId)) {
+      return emailJsonErr({ status: 403, message: "Neplatná organizace.", errorCode: "TENANT_MISMATCH" });
+    }
+
+    const access = await assertEmailAccountAccess(auth.db, companyId, accountId, auth.caller.uid, "manage");
+    if (!access.ok) {
+      return emailJsonErr({
+        status: access.status,
+        message: access.error,
+        errorCode: access.errorCode,
+      });
     }
 
     await deleteEmailCredentials(auth.db, companyId, accountId);
@@ -47,7 +63,7 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
 
 export async function PATCH(request: NextRequest, ctx: Ctx) {
   try {
-    const auth = await requireOrgEmailAdmin(request);
+    const auth = await requireEmailMailboxWrite(request);
     if (!auth.ok) {
       return emailJsonErr({ status: auth.status, message: auth.error, errorCode: "FORBIDDEN" });
     }
@@ -70,13 +86,20 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     if (!companyId) {
       return emailJsonErr({ status: 400, message: "Chybí companyId.", errorCode: "VALIDATION" });
     }
-
-    const ref = emailAccountsCol(auth.db, companyId).doc(accountId);
-    const snap = await ref.get();
-    if (!snap.exists) {
-      return emailJsonErr({ status: 404, message: "Účet nenalezen.", errorCode: "ACCOUNT_NOT_FOUND" });
+    if (!emailMailboxTenantOk(auth.caller, companyId)) {
+      return emailJsonErr({ status: 403, message: "Neplatná organizace.", errorCode: "TENANT_MISMATCH" });
     }
-    const account = snap.data()!;
+
+    const access = await assertEmailAccountAccess(auth.db, companyId, accountId, auth.caller.uid, "write");
+    if (!access.ok) {
+      return emailJsonErr({
+        status: access.status,
+        message: access.error,
+        errorCode: access.errorCode,
+      });
+    }
+    const account = access.account;
+    const ref = emailAccountsCol(auth.db, companyId).doc(accountId);
 
     if (body.displayName != null) {
       await ref.update({ displayName: body.displayName.trim(), updatedAt: FieldValue.serverTimestamp() });

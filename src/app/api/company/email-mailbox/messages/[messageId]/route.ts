@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireEmailMailboxRead } from "@/lib/email-mailbox/api-auth";
-import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
-import type { EmailMessageDoc } from "@/lib/email-mailbox/types";
+import { assertMessageAccess } from "@/lib/email-mailbox/account-access";
+import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -14,24 +14,29 @@ export async function GET(request: NextRequest, ctx: Ctx) {
   }
   const companyId =
     String(request.nextUrl.searchParams.get("companyId") ?? "").trim() || perm.caller.companyId;
-  const { messageId } = await ctx.params;
-  const snap = await emailMessagesCol(perm.db, companyId).doc(messageId).get();
-  if (!snap.exists) {
-    return NextResponse.json({ ok: false, error: "Zpráva nenalezena." }, { status: 404 });
+  if (!emailMailboxTenantOk(perm.caller, companyId)) {
+    return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
-  const m = snap.data() as EmailMessageDoc;
+  const { messageId } = await ctx.params;
+
+  const access = await assertMessageAccess(perm.db, companyId, messageId, perm.caller.uid, "read");
+  if (!access.ok) {
+    return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
+  }
+  const { id, ...mRest } = access.message;
   return NextResponse.json({
     ok: true,
     message: {
-      id: messageId,
-      ...m,
-      receivedAt: m.receivedAt?.toDate?.()?.toISOString?.() ?? null,
-      sentAt: m.sentAt?.toDate?.()?.toISOString?.() ?? null,
-      textBody: m.textBody,
-      htmlBody: m.htmlBody,
-      aiDraftReply: m.aiDraftReply ?? null,
-      inquiryDraft: m.inquiryDraft ?? null,
-      suggestedActions: m.suggestedActions ?? [],
+      id: id ?? messageId,
+      ...mRest,
+      receivedAt: mRest.receivedAt?.toDate?.()?.toISOString?.() ?? null,
+      sentAt: mRest.sentAt?.toDate?.()?.toISOString?.() ?? null,
+      textBody: mRest.textBody,
+      htmlBody: mRest.htmlBody,
+      aiDraftReply: mRest.aiDraftReply ?? null,
+      inquiryDraft: mRest.inquiryDraft ?? null,
+      suggestedActions: mRest.suggestedActions ?? [],
+      jobVisibility: mRest.jobVisibility ?? "private",
     },
   });
 }

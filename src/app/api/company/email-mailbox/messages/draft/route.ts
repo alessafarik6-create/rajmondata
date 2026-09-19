@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { requireEmailMailboxWrite } from "@/lib/email-mailbox/api-auth";
+import {
+  assertEmailAccountAccess,
+  resolveAccountOwnerUserId,
+} from "@/lib/email-mailbox/account-access";
+import { loadEmailAccount } from "@/lib/email-mailbox/account-store";
 import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
@@ -37,9 +42,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Chybí účet." }, { status: 400 });
   }
 
+  const access = await assertEmailAccountAccess(perm.db, companyId, accountId, perm.caller.uid, "write");
+  if (!access.ok) {
+    return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
+  }
+  const account = await loadEmailAccount(perm.db, companyId, accountId);
+  const ownerUserId = account ? resolveAccountOwnerUserId(account) : perm.caller.uid;
+
   const payload = {
     organizationId: companyId,
     emailAccountId: accountId,
+    ownerUserId: ownerUserId || perm.caller.uid,
     from: "",
     to: body.to ?? [],
     subject: String(body.subject ?? ""),
