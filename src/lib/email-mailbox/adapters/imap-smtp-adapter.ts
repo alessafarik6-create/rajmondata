@@ -177,7 +177,9 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
     let lastUid: number | null = opts.sinceUid ?? null;
     let sentFolderPath: string | null = account.sentFolderPath ?? null;
 
+    logEmailPhase("EMAIL_IMAP_CONNECT_START", { host: account.imapHost, email: account.email });
     await client.connect();
+    logEmailPhase("EMAIL_IMAP_CONNECTED", { email: account.email });
     try {
       if (!sentFolderPath) {
         sentFolderPath = await findSentFolder(client);

@@ -1,10 +1,8 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
-import {
-  decryptCredentialSecret,
-  encryptCredentialSecret,
-} from "@/lib/email-mailbox/credential-crypto";
+import { encryptCredentialSecret } from "@/lib/email-mailbox/credential-crypto";
+import { resolveEmailCredentials } from "@/lib/email-mailbox/credential-resolver";
 import {
   EMAIL_ACCOUNT_CREDENTIALS_DOC,
   EMAIL_ACCOUNTS_SUBCOLLECTION,
@@ -31,21 +29,20 @@ export async function loadEmailCredentials(
   companyId: string,
   accountId: string
 ): Promise<EmailCredentialsPlain | null> {
-  const snap = await emailAccountsCol(db, companyId)
+  const resolved = await resolveEmailCredentials(db, companyId, accountId);
+  return resolved.ok ? resolved.credentials : null;
+}
+
+export async function deleteEmailCredentials(
+  db: Firestore,
+  companyId: string,
+  accountId: string
+): Promise<void> {
+  await emailAccountsCol(db, companyId)
     .doc(accountId)
     .collection("private")
     .doc(EMAIL_ACCOUNT_CREDENTIALS_DOC)
-    .get();
-  if (!snap.exists) return null;
-  const data = snap.data() as { encryptedPassword?: string; encryptedUsername?: string };
-  if (!data.encryptedPassword) return null;
-  const account = await loadEmailAccount(db, companyId, accountId);
-  if (!account) return null;
-  const password = decryptCredentialSecret(data.encryptedPassword);
-  const username = data.encryptedUsername
-    ? decryptCredentialSecret(data.encryptedUsername)
-    : account.email;
-  return { username, password };
+    .delete();
 }
 
 export async function saveEmailCredentials(

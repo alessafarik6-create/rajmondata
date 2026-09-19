@@ -6,7 +6,9 @@ export type EmailAccountStatus =
   | "disconnected"
   | "pending"
   | "syncing"
-  | "attention";
+  | "attention"
+  | "credentials_missing"
+  | "credentials_decrypt_failed";
 
 export type EmailMessageDirection = "inbound" | "outbound";
 

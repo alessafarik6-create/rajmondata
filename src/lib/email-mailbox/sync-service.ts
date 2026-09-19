@@ -6,8 +6,11 @@ import { analyzeEmailMessageWithAi } from "@/lib/email-mailbox/ai-analyze-messag
 import {
   emailAccountsCol,
   loadEmailAccount,
-  loadEmailCredentials,
 } from "@/lib/email-mailbox/account-store";
+import {
+  accountStatusFromCredentialResult,
+  resolveEmailCredentials,
+} from "@/lib/email-mailbox/credential-resolver";
 import { logEmailPhase } from "@/lib/email-mailbox/email-log";
 import { saveInboundMessage } from "@/lib/email-mailbox/message-store";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
@@ -33,15 +36,24 @@ export async function syncEmailAccount(
     return { imported: 0, skipped: 0, error: "Neplatná organizace.", errorCode: "TENANT_MISMATCH" };
   }
 
-  const credentials = await loadEmailCredentials(db, companyId, accountId);
-  if (!credentials) {
+  logEmailPhase("EMAIL_SYNC_START", { companyId, accountId });
+
+  const credResult = await resolveEmailCredentials(db, companyId, accountId);
+  if (!credResult.ok) {
+    const status = accountStatusFromCredentialResult(account.status, credResult);
+    await emailAccountsCol(db, companyId).doc(accountId).update({
+      status,
+      lastError: credResult.message.slice(0, 500),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
     return {
       imported: 0,
       skipped: 0,
-      error: "Chybí přihlašovací údaje nebo nelze dešifrovat.",
-      errorCode: "CREDENTIALS_MISSING",
+      error: credResult.message,
+      errorCode: credResult.errorCode,
     };
   }
+  const credentials = credResult.credentials;
 
   const { getEmailProviderAdapter } = await import("@/lib/email-mailbox/adapters");
   const adapter = getEmailProviderAdapter(account.provider);
@@ -57,7 +69,7 @@ export async function syncEmailAccount(
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  logEmailPhase("EMAIL_SYNC_START", { companyId, accountId, maxMessages, initial: isInitial });
+  logEmailPhase("EMAIL_IMAP_CONNECT_START", { accountId, host: account.imapHost });
 
   try {
     const result = await adapter.syncInbound(account, credentials, {
@@ -66,6 +78,8 @@ export async function syncEmailAccount(
     });
 
     logEmailPhase("EMAIL_SYNC_MESSAGES_FOUND", { count: result.messages.length });
+    logEmailPhase("EMAIL_MESSAGES_FOUND", { count: result.messages.length });
+    logEmailPhase("EMAIL_MESSAGES_FOUND", { count: result.messages.length });
 
     let imported = 0;
     let skipped = 0;
@@ -183,12 +197,15 @@ export async function syncEmailAccount(
       updatedAt: FieldValue.serverTimestamp(),
     });
     const lower = msg.toLowerCase();
-    const errorCode =
-      lower.includes("auth") || lower.includes("login") || lower.includes("credentials")
-        ? "IMAP_AUTH_FAILED"
-        : lower.includes("timeout") || lower.includes("etimedout")
-          ? "IMAP_TIMEOUT"
-          : "SYNC_FAILED";
+    const isAuth =
+      lower.includes("auth") || lower.includes("login") || lower.includes("credentials");
+    const errorCode = isAuth
+      ? "EMAIL_IMAP_AUTH_FAILED"
+      : lower.includes("timeout") || lower.includes("etimedout")
+        ? "EMAIL_IMAP_CONNECTION_FAILED"
+        : "SYNC_FAILED";
+    if (isAuth) logEmailPhase("EMAIL_IMAP_AUTH_FAILED", { accountId });
+    else logEmailPhase("EMAIL_IMAP_CONNECTION_FAILED", { accountId });
     return { imported: 0, skipped: 0, error: msg, errorCode };
   }
 }

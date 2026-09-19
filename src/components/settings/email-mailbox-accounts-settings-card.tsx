@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/firebase";
 import { EmailConnectWizard } from "@/components/portal/email-connect-wizard";
@@ -15,9 +17,26 @@ type AccountRow = {
   provider: string;
   email: string;
   status: string;
+  statusLabel?: string | null;
+  credentialReady?: boolean;
+  credentialErrorCode?: string | null;
   lastSyncAt: string | null;
   lastError: string | null;
 };
+
+function statusColor(status: string): string {
+  if (status === "connected") return "text-green-600";
+  if (status === "syncing") return "text-blue-600";
+  if (
+    status === "credentials_missing" ||
+    status === "credentials_decrypt_failed" ||
+    status === "error"
+  ) {
+    return "text-destructive";
+  }
+  if (status === "attention") return "text-amber-600";
+  return "text-amber-600";
+}
 
 export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: string | null }) {
   const { user } = useUser();
@@ -26,6 +45,8 @@ export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: str
   const [loading, setLoading] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [reauthId, setReauthId] = useState<string | null>(null);
+  const [reauthPassword, setReauthPassword] = useState("");
 
   const load = useCallback(async () => {
     if (!user || !companyId) return;
@@ -77,6 +98,45 @@ export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: str
         title: "Synchronizace dokončena",
         description: data.message ?? `Synchronizováno – ${(data as { imported?: number }).imported ?? 0} nových zpráv.`,
       });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePasswordAgain(account: AccountRow) {
+    if (!user || !companyId || !reauthPassword.trim()) {
+      toast({ variant: "destructive", title: "Zadejte heslo schránky" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/company/email-mailbox/accounts/${account.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          username: account.email,
+          password: reauthPassword,
+          runSync: true,
+        }),
+      });
+      const data = await parseEmailApiResponse(res);
+      if (!data.ok) {
+        toast({
+          variant: "destructive",
+          title: "Uložení hesla selhalo",
+          description: data.message ?? data.error,
+        });
+        return;
+      }
+      toast({
+        title: "Heslo uloženo",
+        description: String(data.message ?? "Synchronizace proběhla."),
+      });
+      setReauthId(null);
+      setReauthPassword("");
       await load();
     } finally {
       setBusy(false);
@@ -139,41 +199,63 @@ export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: str
                 <p className="font-medium">{a.email}</p>
                 <p className="text-muted-foreground">
                   {a.provider === "SEZNAM" ? "Seznam.cz" : a.provider}{" "}
-                  <span
-                    className={
-                      a.status === "connected"
-                        ? "text-green-600"
-                        : a.status === "syncing"
-                          ? "text-blue-600"
-                          : a.status === "error"
-                            ? "text-destructive"
-                            : "text-amber-600"
-                    }
-                  >
-                    ●{" "}
-                    {a.status === "connected"
-                      ? "Připojeno"
-                      : a.status === "syncing"
-                        ? "Synchronizuje se"
-                        : a.status === "error"
-                          ? "Chyba připojení"
-                          : a.status === "attention"
-                            ? "Vyžaduje pozornost"
-                            : a.status}
+                  <span className={statusColor(a.status)}>
+                    ● {a.statusLabel ?? a.status}
                   </span>
                 </p>
+                {a.credentialReady === false ? (
+                  <p className="text-destructive text-xs mt-1">
+                    {a.lastError ??
+                      "Přihlašovací údaje e-mailového účtu je potřeba zadat znovu."}
+                  </p>
+                ) : null}
                 <p className="text-muted-foreground">
                   Poslední synchronizace:{" "}
                   {a.lastSyncAt ? new Date(a.lastSyncAt).toLocaleString("cs-CZ") : "—"}
                 </p>
-                {a.lastError ? <p className="text-destructive text-xs">Chyba: {a.lastError}</p> : null}
+                {a.lastError && a.credentialReady !== false ? (
+                  <p className="text-destructive text-xs">Chyba: {a.lastError}</p>
+                ) : null}
+                {reauthId === a.id ? (
+                  <div className="mt-3 space-y-2 rounded-md border p-3 bg-muted/20">
+                    <Label>Heslo / heslo aplikace (Seznam.cz)</Label>
+                    <Input
+                      type="password"
+                      value={reauthPassword}
+                      onChange={(e) => setReauthPassword(e.target.value)}
+                      autoComplete="new-password"
+                      placeholder="Zadejte heslo znovu"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" disabled={busy} onClick={() => void savePasswordAgain(a)}>
+                        Uložit a synchronizovat
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setReauthId(null);
+                          setReauthPassword("");
+                        }}
+                      >
+                        Zrušit
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Button size="sm" variant="secondary" disabled={busy} onClick={() => void syncNow(a.id)}>
                     Synchronizovat
                   </Button>
-                  <Button size="sm" variant="outline" disabled={busy} onClick={() => setShowWizard(true)}>
-                    Nastavení
-                  </Button>
+                  {a.credentialReady === false ? (
+                    <Button size="sm" variant="default" disabled={busy} onClick={() => setReauthId(a.id)}>
+                      Zadat heslo znovu
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => setReauthId(a.id)}>
+                      Změnit heslo
+                    </Button>
+                  )}
                   <Button size="sm" variant="outline" disabled={busy} onClick={() => void disconnect(a.id)}>
                     Odpojit
                   </Button>

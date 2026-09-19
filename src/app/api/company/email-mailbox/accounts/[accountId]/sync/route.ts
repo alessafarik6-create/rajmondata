@@ -2,6 +2,8 @@ import { NextRequest } from "next/server";
 import { requireEmailMailboxWrite } from "@/lib/email-mailbox/api-auth";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
 import { emailJsonErr, emailJsonOk, emailRouteErrorResponse } from "@/lib/email-mailbox/api-json";
+import { messageForCredentialError } from "@/lib/email-mailbox/credential-resolver";
+import type { EmailCredentialErrorCode } from "@/lib/email-mailbox/credential-resolver";
 import { syncEmailAccount } from "@/lib/email-mailbox/sync-service";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 
@@ -54,13 +56,21 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     });
 
     if (result.error) {
+      const code = result.errorCode ?? "SYNC_FAILED";
+      const credentialCodes: EmailCredentialErrorCode[] = [
+        "EMAIL_ENCRYPTION_KEY_MISSING",
+        "EMAIL_CREDENTIAL_MISSING",
+        "EMAIL_CREDENTIAL_DECRYPT_FAILED",
+      ];
+      const message = credentialCodes.includes(code as EmailCredentialErrorCode)
+        ? messageForCredentialError(code as EmailCredentialErrorCode)
+        : code === "EMAIL_IMAP_AUTH_FAILED" || code === "IMAP_AUTH_FAILED"
+          ? "Nelze se přihlásit k IMAP. Zkontrolujte e-mail, heslo aplikace a nastavení Seznam.cz."
+          : result.error;
       return emailJsonErr({
         status: 400,
-        message:
-          result.errorCode === "IMAP_AUTH_FAILED"
-            ? "Nelze se přihlásit k IMAP. Zkontrolujte e-mail, heslo aplikace a nastavení Seznam.cz."
-            : result.error,
-        errorCode: result.errorCode ?? "SYNC_FAILED",
+        message,
+        errorCode: code,
         extra: { imported: result.imported, skipped: result.skipped },
       });
     }

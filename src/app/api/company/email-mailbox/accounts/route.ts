@@ -8,6 +8,11 @@ import {
   saveEmailCredentials,
 } from "@/lib/email-mailbox/account-store";
 import {
+  accountStatusFromCredentialResult,
+  accountStatusLabel,
+  resolveEmailCredentials,
+} from "@/lib/email-mailbox/credential-resolver";
+import {
   emailMailboxTenantOk,
   requireEmailMailboxRead,
   requireOrgEmailAdmin,
@@ -85,7 +90,32 @@ export async function GET(request: NextRequest) {
       });
     }
     const accounts = await listEmailAccounts(db, companyId);
-    return emailJsonOk({ accounts: accounts.map(formatAccountSafe) });
+    const enriched = await Promise.all(
+      accounts.map(async (row) => {
+        const base = formatAccountSafe(row);
+        const cred = await resolveEmailCredentials(db, companyId, row.id);
+        const displayStatus = accountStatusFromCredentialResult(row.status, cred);
+        if (!cred.ok && (row.status === "connected" || row.status === "syncing")) {
+          await emailAccountsCol(db, companyId)
+            .doc(row.id)
+            .update({
+              status: displayStatus,
+              lastError: cred.message.slice(0, 500),
+              updatedAt: FieldValue.serverTimestamp(),
+            })
+            .catch(() => undefined);
+        }
+        return {
+          ...base,
+          status: displayStatus,
+          statusLabel: accountStatusLabel(displayStatus),
+          credentialReady: cred.ok,
+          credentialErrorCode: cred.ok ? null : cred.errorCode,
+          lastError: cred.ok ? base.lastError : cred.message,
+        };
+      })
+    );
+    return emailJsonOk({ accounts: enriched });
   } catch (err) {
     console.error("[email-mailbox/accounts GET]", err instanceof Error ? err.message : err);
     return emailRouteErrorResponse(err, "Nepodařilo se načíst e-mailové účty.");
