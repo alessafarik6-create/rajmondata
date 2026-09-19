@@ -30,12 +30,11 @@ export async function GET(request: NextRequest) {
   let errors = 0;
 
   for (const companyDoc of companiesSnap.docs) {
-    const accSnap = await companyDoc.ref
-      .collection(EMAIL_ACCOUNTS_SUBCOLLECTION)
-      .where("status", "==", "connected")
-      .limit(10)
-      .get();
+    const accSnap = await companyDoc.ref.collection(EMAIL_ACCOUNTS_SUBCOLLECTION).limit(50).get();
     for (const acc of accSnap.docs) {
+      const data = acc.data() as { status?: string; isActive?: boolean };
+      if (data.status !== "connected") continue;
+      if (data.isActive === false) continue;
       accounts++;
       const r = await syncEmailAccount(db, companyDoc.id, acc.id, { maxMessages: 25 });
       imported += r.imported;

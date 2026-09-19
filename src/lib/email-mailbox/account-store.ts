@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { encryptCredentialSecret } from "@/lib/email-mailbox/credential-crypto";
 import { resolveEmailCredentials } from "@/lib/email-mailbox/credential-resolver";
+import { normalizeMailboxEmail } from "@/lib/email-mailbox/account-default";
 import {
   EMAIL_ACCOUNT_CREDENTIALS_DOC,
   EMAIL_ACCOUNTS_SUBCOLLECTION,
@@ -60,6 +61,29 @@ export async function saveEmailCredentials(
       encryptedUsername: encryptCredentialSecret(credentials.username),
       updatedAt: FieldValue.serverTimestamp(),
     });
+}
+
+export async function findActivePersonalAccountByNormalizedEmail(
+  db: Firestore,
+  companyId: string,
+  userId: string,
+  normalizedEmail: string
+): Promise<(EmailAccountDoc & { id: string }) | null> {
+  const snap = await emailAccountsCol(db, companyId)
+    .where("userId", "==", userId)
+    .where("normalizedEmail", "==", normalizedEmail)
+    .limit(5)
+    .get()
+    .catch(async () => emailAccountsCol(db, companyId).where("userId", "==", userId).limit(50).get());
+
+  for (const d of snap.docs) {
+    const row = d.data() as EmailAccountDoc;
+    if (row.accountType === "SHARED") continue;
+    if (row.isActive === false || row.status === "disconnected") continue;
+    const ne = row.normalizedEmail ?? normalizeMailboxEmail(row.email);
+    if (ne === normalizedEmail) return { id: d.id, ...row };
+  }
+  return null;
 }
 
 /** Všechny účty organizace (pouze server — admin status / cron). */

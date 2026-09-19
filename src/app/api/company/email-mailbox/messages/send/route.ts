@@ -50,6 +50,13 @@ export async function POST(request: NextRequest) {
   if (!accountAccess.ok) {
     return NextResponse.json({ ok: false, error: accountAccess.error }, { status: accountAccess.status });
   }
+  const { isEmailAccountSyncable } = await import("@/lib/email-mailbox/account-default");
+  if (!isEmailAccountSyncable(accountAccess.account)) {
+    return NextResponse.json(
+      { ok: false, error: "Z této schránky nelze odesílat — účet je odpojený." },
+      { status: 400 }
+    );
+  }
 
   let replyToMessage = null;
   if (body.replyToMessageId) {

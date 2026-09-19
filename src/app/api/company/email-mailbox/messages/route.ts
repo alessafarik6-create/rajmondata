@@ -4,8 +4,10 @@ import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
 import { emailJsonErr, emailJsonOk, emailRouteErrorResponse } from "@/lib/email-mailbox/api-json";
 import {
   loadAccessibleAccountIdSet,
+  listEmailAccountsAccessibleToUser,
   messageBelongsToUser,
 } from "@/lib/email-mailbox/account-access";
+import { EMAIL_ACCOUNT_ALL_MAILBOXES } from "@/lib/email-mailbox/account-default";
 import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
 import {
   buildMessageViewFilter,
@@ -34,14 +36,26 @@ export async function GET(request: NextRequest) {
     }
     const view = (request.nextUrl.searchParams.get("view") ??
       "inbox") as EmailMessageWorkflowView;
-    const accountId = request.nextUrl.searchParams.get("accountId");
+    const accountIdParam = request.nextUrl.searchParams.get("accountId");
+    const allMailboxes =
+      !accountIdParam ||
+      accountIdParam === EMAIL_ACCOUNT_ALL_MAILBOXES ||
+      accountIdParam === "all";
 
     const accessibleIds = await loadAccessibleAccountIdSet(perm.db, companyId, perm.caller.uid);
     if (accessibleIds.size === 0) {
       return emailJsonOk({ view, messages: [] });
     }
 
-    if (accountId && !accessibleIds.has(accountId)) {
+    const accountRows = await listEmailAccountsAccessibleToUser(
+      perm.db,
+      companyId,
+      perm.caller.uid,
+      "read"
+    );
+    const emailByAccountId = new Map(accountRows.map((a) => [a.id, a.email]));
+
+    if (!allMailboxes && accountIdParam && !accessibleIds.has(accountIdParam)) {
       return emailJsonErr({
         status: 403,
         message: "Nemáte přístup k této schránce.",
@@ -62,13 +76,16 @@ export async function GET(request: NextRequest) {
     const messages = snap.docs
       .map((d) => ({ id: d.id, ...(d.data() as EmailMessageDoc) }))
       .filter((m) => messageBelongsToUser(m, perm.caller.uid, accessibleIds))
-      .filter((m) => (accountId ? m.emailAccountId === accountId : true))
+      .filter((m) =>
+        allMailboxes || !accountIdParam ? true : m.emailAccountId === accountIdParam
+      )
       .filter(filterFn)
       .sort((a, b) => (b.receivedAt?.toMillis?.() ?? 0) - (a.receivedAt?.toMillis?.() ?? 0))
       .slice(0, 120)
       .map((m) => ({
         id: m.id,
         emailAccountId: m.emailAccountId,
+        mailboxEmail: emailByAccountId.get(m.emailAccountId) ?? null,
         from: m.from,
         subject: m.subject,
         receivedAt: m.receivedAt?.toDate?.()?.toISOString?.() ?? null,

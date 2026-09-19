@@ -8,12 +8,33 @@ import { useUser } from "@/firebase";
 import { Loader2, Mail, RefreshCw } from "lucide-react";
 import { parseEmailApiResponse } from "@/lib/email-mailbox/client-fetch";
 
+type OrgMailboxRow = {
+  email: string;
+  status: string;
+  statusLabel: string;
+  accountType: string;
+  provider: string;
+  lastSyncAt: string | null;
+  isActive: boolean;
+};
+
 type OrgMemberRow = {
   userId: string;
   displayName: string;
   connected: boolean;
-  mailboxes: { email: string; status: string; statusLabel: string; accountType: string }[];
+  connectedAccountCount: number;
+  totalAccountCount: number;
+  mailboxes: OrgMailboxRow[];
 };
+
+function formatLastSync(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("cs-CZ");
+  } catch {
+    return "—";
+  }
+}
 
 export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: string | null }) {
   const { user } = useUser();
@@ -57,8 +78,8 @@ export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: str
           <Mail className="h-5 w-5" /> E-mailová komunikace (organizace)
         </CardTitle>
         <CardDescription>
-          Přehled připojení schránek v týmu. Obsah osobních e-mailů zde nevidíte — každý uživatel spravuje
-          schránku v Profil → Můj e-mail.
+          Přehled připojení schránek v týmu — pouze metadata (e-mail, provider, stav, sync). Obsah zpráv admin
+          nevidí. Každý uživatel spravuje účty v Profil → Moje e-mailové účty.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -69,18 +90,37 @@ export function EmailMailboxAccountsSettingsCard({ companyId }: { companyId: str
         {members.length === 0 ? (
           <p className="text-sm text-muted-foreground">Zatím není připojena žádná schránka v týmu.</p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-3">
             {members.map((m) => (
-              <li
-                key={m.userId}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm"
-              >
-                <span className="font-medium">{m.displayName}</span>
-                <span className={m.connected ? "text-green-600" : "text-muted-foreground"}>
-                  {m.connected
-                    ? m.mailboxes.map((b) => `${b.email} (${b.statusLabel})`).join(", ")
-                    : "Nepřipojeno"}
-                </span>
+              <li key={m.userId} className="rounded-lg border px-3 py-3 text-sm space-y-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="font-medium">{m.displayName}</span>
+                  <span className={m.connected ? "text-green-600" : "text-muted-foreground"}>
+                    {m.connected
+                      ? `${m.connectedAccountCount} ${m.connectedAccountCount === 1 ? "účet" : m.connectedAccountCount < 5 ? "účty" : "účtů"} připojeno`
+                      : m.totalAccountCount > 0
+                        ? `${m.totalAccountCount} účtů (vše odpojeno)`
+                        : "Nepřipojeno"}
+                  </span>
+                </div>
+                {m.mailboxes.length > 0 ? (
+                  <ul className="space-y-1.5 pl-0 border-t pt-2">
+                    {m.mailboxes.map((b) => (
+                      <li
+                        key={`${m.userId}-${b.email}`}
+                        className="flex flex-col gap-0.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between text-muted-foreground"
+                      >
+                        <span className="font-mono text-xs sm:text-sm text-foreground break-all">{b.email}</span>
+                        <span className="text-xs">
+                          {b.provider} · {b.statusLabel}
+                          {!b.isActive ? " · odpojeno" : ""}
+                          {" · sync "}
+                          {formatLastSync(b.lastSyncAt)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </li>
             ))}
           </ul>

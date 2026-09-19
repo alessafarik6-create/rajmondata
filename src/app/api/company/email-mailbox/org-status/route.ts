@@ -35,7 +35,15 @@ export async function GET(request: NextRequest) {
     const accountsRaw = await listEmailAccounts(auth.db, companyId);
     const accountsByUser = new Map<
       string,
-      { email: string; status: string; statusLabel: string; accountType: string }[]
+      {
+        email: string;
+        status: string;
+        statusLabel: string;
+        accountType: string;
+        provider: string;
+        lastSyncAt: string | null;
+        isActive: boolean;
+      }[]
     >();
 
     for (const row of accountsRaw) {
@@ -43,11 +51,25 @@ export async function GET(request: NextRequest) {
       const uid = resolveAccountOwnerUserId(account);
       if (!uid) continue;
       const list = accountsByUser.get(uid) ?? [];
+      let lastSync: string | null = null;
+      try {
+        const v = account.lastSyncAt as { toDate?: () => Date } | string | null | undefined;
+        if (v && typeof v === "object" && typeof v.toDate === "function") {
+          lastSync = v.toDate().toISOString();
+        } else if (typeof v === "string") {
+          lastSync = v;
+        }
+      } catch {
+        lastSync = null;
+      }
       list.push({
         email: account.email,
         status: account.status,
         statusLabel: accountStatusLabel(account.status),
         accountType: account.accountType ?? "PERSONAL",
+        provider: String(account.provider ?? "imap"),
+        lastSyncAt: lastSync,
+        isActive: account.isActive !== false && account.status !== "disconnected",
       });
       accountsByUser.set(uid, list);
     }
@@ -63,7 +85,17 @@ export async function GET(request: NextRequest) {
       userId: string;
       displayName: string;
       connected: boolean;
-      mailboxes: { email: string; status: string; statusLabel: string; accountType: string }[];
+      connectedAccountCount: number;
+      totalAccountCount: number;
+      mailboxes: {
+        email: string;
+        status: string;
+        statusLabel: string;
+        accountType: string;
+        provider: string;
+        lastSyncAt: string | null;
+        isActive: boolean;
+      }[];
     }[] = [];
 
     const seen = new Set<string>();
@@ -78,20 +110,26 @@ export async function GET(request: NextRequest) {
         [data.firstName, data.lastName].filter(Boolean).join(" ").trim() ||
         uid.slice(0, 8);
       const mailboxes = accountsByUser.get(uid) ?? [];
+      const connectedAccountCount = mailboxes.filter((b) => b.isActive).length;
       members.push({
         userId: uid,
         displayName,
-        connected: mailboxes.length > 0,
+        connected: connectedAccountCount > 0,
+        connectedAccountCount,
+        totalAccountCount: mailboxes.length,
         mailboxes,
       });
     }
 
     for (const [uid, mailboxes] of accountsByUser) {
       if (seen.has(uid)) continue;
+      const connectedAccountCount = mailboxes.filter((b) => b.isActive).length;
       members.push({
         userId: uid,
         displayName: mailboxes[0]?.email ?? uid.slice(0, 8),
-        connected: true,
+        connected: connectedAccountCount > 0,
+        connectedAccountCount,
+        totalAccountCount: mailboxes.length,
         mailboxes,
       });
     }

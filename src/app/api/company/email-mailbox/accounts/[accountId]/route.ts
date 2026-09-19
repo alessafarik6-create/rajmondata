@@ -1,12 +1,15 @@
 import { NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
-import { assertEmailAccountAccess } from "@/lib/email-mailbox/account-access";
+import {
+  assertEmailAccountAccess,
+  disconnectEmailAccountSoft,
+  setDefaultEmailAccountForUser,
+} from "@/lib/email-mailbox/account-access";
 import {
   emailMailboxTenantOk,
   requireEmailMailboxWrite,
 } from "@/lib/email-mailbox/api-auth";
 import {
-  deleteEmailCredentials,
   emailAccountsCol,
   saveEmailCredentials,
 } from "@/lib/email-mailbox/account-store";
@@ -16,6 +19,7 @@ import { EMAIL_CREDENTIALS_ENCRYPTION_KEY_ENV } from "@/lib/email-mailbox/creden
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 import { logEmailPhase } from "@/lib/email-mailbox/email-log";
 import { syncEmailAccount } from "@/lib/email-mailbox/sync-service";
+import { isEmailAccountSyncable } from "@/lib/email-mailbox/account-default";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,24 +42,24 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
       return emailJsonErr({ status: 403, message: "Neplatná organizace.", errorCode: "TENANT_MISMATCH" });
     }
 
-    const access = await assertEmailAccountAccess(auth.db, companyId, accountId, auth.caller.uid, "manage");
-    if (!access.ok) {
+    const disconnected = await disconnectEmailAccountSoft(auth.db, companyId, accountId, auth.caller.uid);
+    if (!disconnected.ok) {
       return emailJsonErr({
-        status: access.status,
-        message: access.error,
-        errorCode: access.errorCode,
+        status: disconnected.status,
+        message: disconnected.error,
+        errorCode: disconnected.errorCode,
       });
     }
 
-    await deleteEmailCredentials(auth.db, companyId, accountId);
-    await emailAccountsCol(auth.db, companyId).doc(accountId).delete();
     await logEmailMailboxAudit(auth.db, companyId, {
       actionType: "email_account_disconnected",
-      actionLabel: "Odpojena e-mailová schránka",
+      actionLabel: "Odpojena e-mailová schránka (soft)",
       userId: auth.caller.uid,
       entityId: accountId,
     });
-    return emailJsonOk({});
+    return emailJsonOk({
+      message: "Účet je odpojený. Historická komunikace zůstala zachována.",
+    });
   } catch (err) {
     return emailRouteErrorResponse(err, "Nepodařilo se odpojit účet.");
   }
@@ -76,6 +80,7 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
       username?: string;
       test?: boolean;
       runSync?: boolean;
+      setDefault?: boolean;
     };
     try {
       body = await request.json();
@@ -101,11 +106,26 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     const account = access.account;
     const ref = emailAccountsCol(auth.db, companyId).doc(accountId);
 
+    if (body.setDefault === true) {
+      const r = await setDefaultEmailAccountForUser(auth.db, companyId, auth.caller.uid, accountId);
+      if (!r.ok) {
+        return emailJsonErr({ status: 400, message: r.error, errorCode: "SET_DEFAULT_FAILED" });
+      }
+      return emailJsonOk({ message: "Výchozí schránka byla nastavena." });
+    }
+
     if (body.displayName != null) {
       await ref.update({ displayName: body.displayName.trim(), updatedAt: FieldValue.serverTimestamp() });
     }
 
     if (body.password) {
+      if (!isEmailAccountSyncable(account)) {
+        return emailJsonErr({
+          status: 400,
+          message: "Odpojený účet — nejdříve připojte nový účet se stejnou adresou.",
+          errorCode: "ACCOUNT_DISCONNECTED",
+        });
+      }
       if (!isEmailCredentialsEncryptionConfigured()) {
         return emailJsonErr({
           status: 503,
@@ -139,6 +159,7 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
       });
       await ref.update({
         status: "connected",
+        isActive: true,
         lastError: null,
         updatedAt: FieldValue.serverTimestamp(),
       });

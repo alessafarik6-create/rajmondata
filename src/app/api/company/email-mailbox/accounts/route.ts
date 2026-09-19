@@ -4,9 +4,14 @@ import { FieldValue } from "firebase-admin/firestore";
 import crypto from "node:crypto";
 import {
   emailAccountsCol,
+  findActivePersonalAccountByNormalizedEmail,
   saveEmailCredentials,
 } from "@/lib/email-mailbox/account-store";
-import { listEmailAccountsAccessibleToUser } from "@/lib/email-mailbox/account-access";
+import {
+  ensureUserDefaultAccountMigrated,
+  listEmailAccountsAccessibleToUser,
+} from "@/lib/email-mailbox/account-access";
+import { normalizeMailboxEmail } from "@/lib/email-mailbox/account-default";
 import {
   accountStatusFromCredentialResult,
   accountStatusLabel,
@@ -53,6 +58,9 @@ function formatAccountSafe(row: EmailAccountDoc & { id: string }) {
     lastError: a.lastError ?? null,
     imapHost: a.imapHost,
     smtpHost: a.smtpHost,
+    isDefault: Boolean(a.isDefault),
+    isActive: a.isActive !== false,
+    disconnected: a.status === "disconnected" || a.isActive === false,
   };
 }
 
@@ -80,6 +88,7 @@ export async function GET(request: NextRequest) {
         errorCode: "TENANT_MISMATCH",
       });
     }
+    await ensureUserDefaultAccountMigrated(db, companyId, caller.uid);
     const accounts = await listEmailAccountsAccessibleToUser(db, companyId, caller.uid, "read");
     const enriched = await Promise.all(
       accounts.map(async (row) => {
@@ -177,6 +186,34 @@ export async function POST(request: NextRequest) {
     }
 
     const accountType = body.accountType === "SHARED" ? "SHARED" : "PERSONAL";
+    const normalizedEmail = normalizeMailboxEmail(email);
+
+    if (accountType === "PERSONAL") {
+      const dup = await findActivePersonalAccountByNormalizedEmail(
+        auth.db,
+        companyId,
+        auth.caller.uid,
+        normalizedEmail
+      );
+      if (dup) {
+        return emailJsonErr({
+          status: 409,
+          message: "Tuto e-mailovou adresu už máte připojenou jako aktivní účet.",
+          errorCode: "DUPLICATE_MAILBOX",
+        });
+      }
+    }
+
+    const existingUserAccounts = await listEmailAccountsAccessibleToUser(
+      auth.db,
+      companyId,
+      auth.caller.uid,
+      "read"
+    );
+    const activeCount = existingUserAccounts.filter(
+      (a) => a.status !== "disconnected" && a.isActive !== false
+    ).length;
+    const makeDefault = activeCount === 0;
 
     const preset = presetForProvider(provider);
     if (!preset?.implemented) {
@@ -237,6 +274,9 @@ export async function POST(request: NextRequest) {
     const accountId = crypto.randomUUID();
     await emailAccountsCol(auth.db, companyId).doc(accountId).set({
       ...accountDraft,
+      normalizedEmail,
+      isDefault: makeDefault,
+      isActive: true,
       status: "connected",
       lastError: null,
       createdByUserId: auth.caller.uid,

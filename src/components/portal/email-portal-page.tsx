@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Mail, Plus, Sparkles, Search } from "lucide-react";
+import { EMAIL_ACCOUNT_ALL_MAILBOXES } from "@/lib/email-mailbox/account-default";
 
 type AccountRow = {
   id: string;
@@ -30,6 +31,8 @@ type AccountRow = {
   provider: string;
   status: string;
   lastSyncAt: string | null;
+  isDefault?: boolean;
+  disconnected?: boolean;
 };
 
 type MsgRow = {
@@ -43,6 +46,7 @@ type MsgRow = {
   customerName?: string | null;
   jobLabel?: string | null;
   emailAccountId: string;
+  mailboxEmail?: string | null;
 };
 
 type MsgDetail = MsgRow & {
@@ -102,9 +106,23 @@ export function EmailPortalPage() {
   const [assignJobId, setAssignJobId] = useState("");
   const [assignCustomerId, setAssignCustomerId] = useState("");
   const [shareWithJob, setShareWithJob] = useState(false);
-  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(EMAIL_ACCOUNT_ALL_MAILBOXES);
+  const [composeFromAccountId, setComposeFromAccountId] = useState<string>("");
 
-  const activeAccountId = selectedAccountId || accounts[0]?.id || "";
+  const connectedAccounts = useMemo(
+    () => accounts.filter((a) => !a.disconnected && a.status !== "disconnected"),
+    [accounts]
+  );
+
+  const defaultAccountId =
+    connectedAccounts.find((a) => a.isDefault)?.id ?? connectedAccounts[0]?.id ?? "";
+
+  const activeAccountId =
+    selectedAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES
+      ? EMAIL_ACCOUNT_ALL_MAILBOXES
+      : selectedAccountId || defaultAccountId || EMAIL_ACCOUNT_ALL_MAILBOXES;
+
+  const composeAccountId = composeFromAccountId || defaultAccountId;
 
   const getToken = useCallback(async () => {
     if (!user) throw new Error("Nepřihlášen");
@@ -124,10 +142,16 @@ export function EmailPortalPage() {
       if (data.ok) {
         const list = data.accounts ?? [];
         setAccounts(list);
+        const connected = list.filter((a) => !a.disconnected && a.status !== "disconnected");
+        const fromUrl = searchParams.get("account");
         setSelectedAccountId((prev) => {
-          if (prev && list.some((a) => a.id === prev)) return prev;
-          return list[0]?.id ?? "";
+          if (fromUrl && list.some((a) => a.id === fromUrl)) return fromUrl;
+          if (prev && (prev === EMAIL_ACCOUNT_ALL_MAILBOXES || list.some((a) => a.id === prev))) return prev;
+          if (connected.length > 1) return EMAIL_ACCOUNT_ALL_MAILBOXES;
+          return connected[0]?.id ?? EMAIL_ACCOUNT_ALL_MAILBOXES;
         });
+        const def = connected.find((a) => a.isDefault)?.id ?? connected[0]?.id ?? "";
+        setComposeFromAccountId((p) => p || def);
       }
       else if (data.message || data.error) {
         toast({ variant: "destructive", title: "Účty e-mailu", description: data.message ?? data.error });
@@ -135,15 +159,21 @@ export function EmailPortalPage() {
     } finally {
       setLoadingAccounts(false);
     }
-  }, [user, companyId, access.canRead, getToken, toast]);
+  }, [user, companyId, access.canRead, getToken, toast, searchParams]);
 
   const loadMessages = useCallback(async () => {
-    if (!user || !companyId || !access.canRead || accounts.length === 0 || !activeAccountId) return;
+    if (!user || !companyId || !access.canRead || accounts.length === 0) return;
     setLoadingList(true);
     try {
       const token = await getToken();
+      const accountQuery =
+        activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES
+          ? `accountId=${encodeURIComponent(EMAIL_ACCOUNT_ALL_MAILBOXES)}`
+          : activeAccountId
+            ? `accountId=${encodeURIComponent(activeAccountId)}`
+            : "";
       const res = await fetch(
-        `/api/company/email-mailbox/messages?companyId=${encodeURIComponent(companyId)}&view=${folder}&accountId=${encodeURIComponent(activeAccountId)}`,
+        `/api/company/email-mailbox/messages?companyId=${encodeURIComponent(companyId)}&view=${folder}&${accountQuery}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = await parseEmailApiResponse<{ messages?: MsgRow[] }>(res);
@@ -200,29 +230,39 @@ export function EmailPortalPage() {
   );
 
   async function syncNow() {
-    if (!activeAccountId || !companyId) return;
+    if (!companyId) return;
     setBusy(true);
     toast({ title: "Synchronizuji…", description: "Stahuji nové zprávy z IMAP." });
     try {
       const token = await getToken();
-      const res = await fetch(`/api/company/email-mailbox/accounts/${activeAccountId}/sync`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ companyId, maxMessages: 100 }),
-      });
-      const data = await parseEmailApiResponse<{ imported?: number }>(res);
-      if (!data.ok) {
-        toast({
-          variant: "destructive",
-          title: "Synchronizace selhala",
-          description: data.message ?? data.error,
+      if (activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES) {
+        const res = await fetch("/api/company/email-mailbox/accounts/sync-all", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId, maxMessages: 100 }),
         });
-        return;
+        const data = await parseEmailApiResponse(res);
+        if (!data.ok) {
+          toast({ variant: "destructive", title: "Synchronizace selhala", description: data.message ?? data.error });
+          return;
+        }
+        toast({ title: "Synchronizace dokončena", description: data.message });
+      } else if (activeAccountId) {
+        const res = await fetch(`/api/company/email-mailbox/accounts/${activeAccountId}/sync`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId, maxMessages: 100 }),
+        });
+        const data = await parseEmailApiResponse<{ imported?: number }>(res);
+        if (!data.ok) {
+          toast({ variant: "destructive", title: "Synchronizace selhala", description: data.message ?? data.error });
+          return;
+        }
+        toast({
+          title: "Synchronizace dokončena",
+          description: data.message ?? `Synchronizováno – ${data.imported ?? 0} nových zpráv.`,
+        });
       }
-      toast({
-        title: "Synchronizace dokončena",
-        description: data.message ?? `Synchronizováno – ${data.imported ?? 0} nových zpráv.`,
-      });
       await loadMessages();
       await loadAccounts();
     } finally {
@@ -251,7 +291,14 @@ export function EmailPortalPage() {
   }
 
   async function sendMail(opts: { reply?: boolean; forward?: boolean }) {
-    if (!companyId || !activeAccountId || !access.canWrite) return;
+    if (!companyId || !access.canWrite) return;
+    const sendAccountId = opts.reply && detail?.emailAccountId
+      ? detail.emailAccountId
+      : composeAccountId;
+    if (!sendAccountId) {
+      toast({ variant: "destructive", title: "Vyberte odesílací schránku" });
+      return;
+    }
     const to = opts.reply && detail
       ? [detail.from.replace(/.*<([^>]+)>.*/, "$1").trim() || detail.from]
       : composeTo.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
@@ -266,7 +313,7 @@ export function EmailPortalPage() {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId,
-          accountId: detail?.emailAccountId ?? activeAccountId,
+          accountId: sendAccountId,
           to,
           subject,
           textBody: text,
@@ -324,7 +371,7 @@ export function EmailPortalPage() {
     );
   }
 
-  if (accounts.length === 0 || wizardOpen) {
+  if (accounts.length === 0 || (wizardOpen && connectedAccounts.length === 0)) {
     return (
       <div className="mx-auto max-w-3xl p-4 sm:p-8">
         {!wizardOpen ? (
@@ -386,16 +433,29 @@ export function EmailPortalPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {connectedAccounts.length === 0 && accounts.length > 0 ? (
+        <div className="mx-3 mt-3 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+          Všechny účty jsou odpojené. Historii zpráv stále vidíte níže. Nový e-mail připojte v{" "}
+          <Link href="/portal/settings" className="text-primary underline">
+            Profil → Moje e-mailové účty
+          </Link>
+          .
+        </div>
+      ) : null}
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
       <aside className="w-full shrink-0 border-b lg:w-52 lg:border-b-0 lg:border-r p-3">
-        <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Moje pošta</p>
-        {accounts.length > 1 ? (
+        <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Moje schránka</p>
+        {connectedAccounts.length >= 1 ? (
           <Select value={activeAccountId} onValueChange={setSelectedAccountId}>
-            <SelectTrigger className="mb-3 w-full">
+            <SelectTrigger className="mb-3 w-full min-h-[44px]">
               <SelectValue placeholder="Schránka" />
             </SelectTrigger>
             <SelectContent>
-              {accounts.map((a) => (
+              {connectedAccounts.length > 1 ? (
+                <SelectItem value={EMAIL_ACCOUNT_ALL_MAILBOXES}>Všechny moje schránky</SelectItem>
+              ) : null}
+              {connectedAccounts.map((a) => (
                 <SelectItem key={a.id} value={a.id}>
                   {a.email}
                 </SelectItem>
@@ -403,9 +463,16 @@ export function EmailPortalPage() {
             </SelectContent>
           </Select>
         ) : (
-          <p className="mb-3 truncate text-sm font-medium">{accounts[0]?.email}</p>
+          <p className="mb-3 truncate text-sm font-medium text-muted-foreground">—</p>
         )}
-        <Button className="mb-3 w-full gap-2" disabled={!access.canWrite} onClick={() => setComposeOpen(true)}>
+        <Button
+          className="mb-3 w-full gap-2 min-h-[44px]"
+          disabled={!access.canWrite || connectedAccounts.length === 0}
+          onClick={() => {
+            setComposeFromAccountId(defaultAccountId);
+            setComposeOpen(true);
+          }}
+        >
           <Plus className="h-4 w-4" /> Nový e-mail
         </Button>
         <nav className="flex flex-row flex-wrap gap-1 lg:flex-col">
@@ -421,9 +488,20 @@ export function EmailPortalPage() {
             </Button>
           ))}
         </nav>
-        <Button variant="outline" size="sm" className="mt-4 w-full" disabled={busy} onClick={() => void syncNow()}>
-          Synchronizovat
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-4 w-full min-h-[44px]"
+          disabled={busy || connectedAccounts.length === 0}
+          onClick={() => void syncNow()}
+        >
+          {activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES ? "Sync všechny" : "Synchronizovat"}
         </Button>
+        {access.canWrite && connectedAccounts.length > 0 ? (
+          <Button variant="link" size="sm" className="mt-2 w-full" asChild>
+            <Link href="/portal/settings">+ Další e-mail</Link>
+          </Button>
+        ) : null}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col lg:flex-row">
@@ -465,6 +543,9 @@ export function EmailPortalPage() {
                 >
                   <p className="truncate">{m.subject}</p>
                   <p className="truncate text-xs text-muted-foreground">{m.from}</p>
+                  {activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES && m.mailboxEmail ? (
+                    <p className="truncate text-xs text-primary/80">Schránka: {m.mailboxEmail}</p>
+                  ) : null}
                   {m.staleNeedsReply ? (
                     <p className="text-xs text-amber-600">Čeká na odpověď</p>
                   ) : null}
@@ -478,6 +559,25 @@ export function EmailPortalPage() {
           {composeOpen ? (
             <div className="space-y-3 max-w-xl">
               <h2 className="font-semibold">Nový e-mail</h2>
+              {connectedAccounts.length > 1 ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">Od:</p>
+                  <Select value={composeAccountId} onValueChange={setComposeFromAccountId}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {connectedAccounts.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Od: {connectedAccounts[0]?.email ?? "—"}</p>
+              )}
               <Input placeholder="Komu" value={composeTo} onChange={(e) => setComposeTo(e.target.value)} />
               <Input placeholder="Předmět" value={composeSubject} onChange={(e) => setComposeSubject(e.target.value)} />
               <Textarea rows={8} value={composeBody} onChange={(e) => setComposeBody(e.target.value)} />
@@ -559,6 +659,7 @@ export function EmailPortalPage() {
                         setComposeTo("");
                         setComposeSubject(`Fwd: ${detail.subject}`);
                         setComposeBody(`\n\n---------- Přeposlaná zpráva ----------\n${detail.textBody ?? ""}`);
+                        setComposeFromAccountId(detail.emailAccountId || defaultAccountId);
                         setComposeOpen(true);
                       }}
                     >
@@ -592,6 +693,7 @@ export function EmailPortalPage() {
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

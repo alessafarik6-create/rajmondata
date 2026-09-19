@@ -60,6 +60,14 @@ export async function POST(request: NextRequest, ctx: Ctx) {
         errorCode: access.errorCode,
       });
     }
+    const { isEmailAccountSyncable } = await import("@/lib/email-mailbox/account-default");
+    if (!isEmailAccountSyncable(access.account)) {
+      return emailJsonErr({
+        status: 400,
+        message: "Odpojený účet nelze synchronizovat.",
+        errorCode: "ACCOUNT_DISCONNECTED",
+      });
+    }
 
     const result = await syncEmailAccount(db, companyId, accountId, {
       maxMessages: body.maxMessages ?? 100,

@@ -46,6 +46,12 @@ export type EmailAccountDoc = {
   email: string;
   displayName?: string | null;
   status: EmailAccountStatus;
+  /** Normalizovaná adresa pro deduplikaci (lowercase). */
+  normalizedEmail?: string | null;
+  /** Výchozí schránka uživatele pro odesílání / nové e-maily. */
+  isDefault?: boolean | null;
+  /** false = odpojeno, sync vypnut; záznam a historie zůstávají. */
+  isActive?: boolean | null;
   imapHost: string;
   imapPort: number;
   imapSecure: boolean;
