@@ -58,6 +58,20 @@ function addressesFromField(field: AddressObject | AddressObject[] | undefined):
   return (obj.value ?? []).map((v) => v.address).filter(Boolean) as string[];
 }
 
+/** ImapFlow.search() vrací `false | number[]` — false není nullish. */
+function uidsFromSearchResult(result: false | number[] | undefined | null): number[] {
+  if (!Array.isArray(result)) return [];
+  return [...result].sort((a, b) => a - b);
+}
+
+function imapFlagsIncludeSeen(flags: unknown): boolean {
+  if (flags instanceof Set) return flags.has("\\Seen");
+  if (Array.isArray(flags)) {
+    return flags.some((f) => f === "\\Seen");
+  }
+  return false;
+}
+
 function buildImapClient(
   account: Pick<EmailAccountDoc, "email" | "imapHost" | "imapPort" | "imapSecure">,
   credentials: EmailCredentialsPlain
@@ -178,12 +192,8 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
           }
         } else {
           const searchResult = await client.search({ all: true }, { uid: true });
-          uidList = (searchResult ?? []).slice().sort((a, b) => a - b);
-          if (uidList.length > maxMessages) {
-            uidList = uidList.slice(-maxMessages);
-          }
+          uidList = uidsFromSearchResult(searchResult);
         }
-        uidList.sort((a, b) => a - b);
         if (uidList.length > maxMessages) {
           uidList = uidList.slice(-maxMessages);
         }
@@ -196,10 +206,9 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
             { uid: true, source: true, flags: true },
             { uid: true }
           )) {
-            if (msg.source) source = msg.source;
-            const flags = msg.flags;
-            if (flags instanceof Set) seen = flags.has("\\Seen");
-            else if (Array.isArray(flags)) seen = flags.includes("\\Seen");
+            if (msg.source instanceof Buffer) source = msg.source;
+            else if (typeof msg.source === "string") source = Buffer.from(msg.source);
+            seen = imapFlagsIncludeSeen(msg.flags);
           }
           if (!source) continue;
           const row = { uid, source, seen };

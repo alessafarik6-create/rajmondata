@@ -1,26 +1,43 @@
 /** Bezpečné parsování odpovědi e-mail API (i prázdné tělo / HTML chyba). */
+export type EmailApiClientBase = {
+  ok?: boolean;
+  success?: boolean;
+  message?: string;
+  error?: string;
+};
+
+export type EmailApiParsed<T> = EmailApiClientBase & T;
+
+function emailApiFailure(message: string, error: string): EmailApiClientBase {
+  return {
+    ok: false,
+    success: false,
+    error,
+    message,
+  };
+}
+
 export async function parseEmailApiResponse<T = Record<string, unknown>>(
   res: Response
-): Promise<T & { ok?: boolean; success?: boolean; message?: string; error?: string }> {
+): Promise<EmailApiParsed<T>> {
   const text = await res.text();
   if (!text.trim()) {
     return {
-      ok: false,
-      success: false,
-      error: res.ok ? "Prázdná odpověď serveru." : `HTTP ${res.status}`,
-      message: res.ok
-        ? "Server vrátil prázdnou odpověď."
-        : `Požadavek selhal (HTTP ${res.status}).`,
-    } as T & { ok: false; error: string; message: string };
+      ...emailApiFailure(
+        res.ok ? "Server vrátil prázdnou odpověď." : `Požadavek selhal (HTTP ${res.status}).`,
+        res.ok ? "Prázdná odpověď serveru." : `HTTP ${res.status}`
+      ),
+    } as EmailApiParsed<T>;
   }
   try {
-    return JSON.parse(text) as T & { ok?: boolean; success?: boolean };
+    const parsed = JSON.parse(text) as EmailApiParsed<T>;
+    return parsed;
   } catch {
     return {
-      ok: false,
-      success: false,
-      error: "INVALID_JSON",
-      message: `Neplatná odpověď serveru (HTTP ${res.status}).`,
-    } as T & { ok: false; error: string; message: string };
+      ...emailApiFailure(
+        `Neplatná odpověď serveru (HTTP ${res.status}).`,
+        "INVALID_JSON"
+      ),
+    } as EmailApiParsed<T>;
   }
 }
