@@ -133,16 +133,6 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     platformModuleCode: "jobs",
   },
   {
-    id: "fleet",
-    type: "module",
-    label: "Vozový park",
-    href: "/portal/fleet",
-    roles: ["owner", "admin", "manager", "accountant", "employee"],
-    licenseKeys: ["vozovyPark"],
-    mobileHomeVisible: true,
-    platformModuleCode: null,
-  },
-  {
     id: "leads",
     type: "child",
     label: "Poptávky",
@@ -240,6 +230,16 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     roles: ["owner", "admin", "manager", "accountant", "employee"],
     licenseKeys: ["vyroba"],
     platformModuleCode: "vyroba",
+  },
+  {
+    id: "fleet",
+    type: "module",
+    label: "Vozový park",
+    href: "/portal/fleet",
+    roles: ["owner", "admin", "manager", "accountant", "employee"],
+    licenseKeys: ["vozovyPark"],
+    mobileHomeVisible: true,
+    platformModuleCode: null,
   },
   {
     id: "reports",

@@ -4,6 +4,7 @@ import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import { defaultPlatformCatalogMap } from "@/lib/platform-module-catalog";
 import {
   CANONICAL_MODULE_KEYS,
+  isCanonicalModuleExplicitInCompany,
   normalizeModuleKey,
   normalizeModules,
 } from "@/lib/license-modules";
@@ -146,7 +147,20 @@ export function getEffectiveModulesMerged(
     if (!c || typeof v !== "boolean") continue;
     overlaid[c] = v;
   }
-  return normalizeModules(overlaid);
+  const merged = normalizeModules(overlaid);
+  /**
+   * Nový modul vozovyPark: existující organizace nemají klíč v licenci — default zapnuto,
+   * dokud admin modul výslovně nevypne (`vozovyPark: false` v modules / license.modules).
+   */
+  if (!isCanonicalModuleExplicitInCompany(company, "vozovyPark")) {
+    const anyOtherEnabled = CANONICAL_MODULE_KEYS.some(
+      (k) => k !== "vozovyPark" && merged[k]
+    );
+    if (anyOtherEnabled) {
+      merged.vozovyPark = true;
+    }
+  }
+  return merged;
 }
 
 /** Je u organizace zapnutý daný platformní modul (po sloučení licence + top-level modules)? */

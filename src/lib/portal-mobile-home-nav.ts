@@ -134,6 +134,12 @@ function legacyMobileTiles(role: string): MobileHomeTile[] {
       href: "/portal/vyroba",
       Icon: portalMenuIcon("vyroba"),
     },
+    {
+      key: "fleet",
+      title: "Vozový park",
+      href: "/portal/fleet",
+      Icon: portalMenuIcon("fleet"),
+    },
   ];
 }
 
@@ -194,6 +200,10 @@ export function buildMobileHomeTiles(input: {
       const vy = PORTAL_SIDEBAR_MENU_DEFS.find((d) => d.id === "vyroba");
       if (vy && !isPortalMenuItemVisible(vy, menuCtx)) return false;
       if (vy && !canAccessPortalModule(portalPermissions, "vyroba", "read")) return false;
+    } else if (tile.key === "fleet") {
+      const fl = PORTAL_SIDEBAR_MENU_DEFS.find((d) => d.id === "fleet");
+      if (fl && !isPortalMenuItemVisible(fl, menuCtx)) return false;
+      if (fl && !canAccessPortalModule(portalPermissions, "fleet", "read")) return false;
     }
     return true;
   });

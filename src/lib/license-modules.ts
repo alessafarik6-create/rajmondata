@@ -258,6 +258,29 @@ export function isModuleKeyEnabled(
   return Boolean(effectiveModules?.[c]);
 }
 
+/** Je kanonický modul explicitně zapsán v `modules` nebo `license.modules` organizace? */
+export function isCanonicalModuleExplicitInCompany(
+  company:
+    | {
+        modules?: Record<string, boolean | undefined> | null;
+        license?: { modules?: Record<string, boolean | undefined> | null } | null;
+      }
+    | null
+    | undefined,
+  canon: CanonicalModuleKey
+): boolean {
+  if (!company) return false;
+  const layers = [company.modules, company.license?.modules];
+  for (const layer of layers) {
+    if (!layer || typeof layer !== "object") continue;
+    for (const [k, v] of Object.entries(layer)) {
+      if (typeof v !== "boolean") continue;
+      if (normalizeModuleKey(k) === canon) return true;
+    }
+  }
+  return false;
+}
+
 /** Interní klíč modulu = kanonický klíč (kompatibilita se starým názvem typu). */
 export type ModuleKey = CanonicalModuleKey;
 
@@ -310,5 +333,5 @@ export const DEFAULT_LICENSE: LicenseConfig = {
   status: "active",
   expirationDate: null,
   maxUsers: 10,
-  enabledModules: ["zakazky", "dochazka", "faktury", "doklady"],
+  enabledModules: ["zakazky", "dochazka", "faktury", "doklady", "vozovyPark"],
 };
