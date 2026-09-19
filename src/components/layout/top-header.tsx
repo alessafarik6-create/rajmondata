@@ -116,7 +116,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   return (
     <header
       className={cn(
-        "print:hidden h-14 sm:h-16 sticky top-0 z-40 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 sm:px-6 lg:px-8 backdrop-blur-sm border-b sm:grid-cols-[auto_auto_minmax(380px,520px)_1fr_auto]",
+        "print:hidden h-14 sm:h-16 sticky top-0 z-[100] lg:z-40 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 sm:px-6 lg:px-8 backdrop-blur-sm border-b sm:grid-cols-[auto_auto_minmax(380px,520px)_1fr_auto]",
         dashboardDark
           ? "border-white/10 bg-slate-950/95 text-slate-50"
           : "border-slate-200 bg-white/90 text-slate-900"
@@ -128,13 +128,17 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
             variant="ghost"
             size="icon"
             className={cn(
-              "shrink-0 lg:hidden h-10 w-10",
+              "relative z-[101] shrink-0 lg:hidden h-10 w-10 touch-manipulation",
               dashboardDark
                 ? "text-slate-100 hover:bg-white/10"
                 : "text-slate-700 hover:bg-slate-200"
             )}
-            onClick={onOpenMobileMenu}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenMobileMenu();
+            }}
             aria-label="Otevřít menu"
+            aria-expanded={undefined}
           >
             <Menu className="h-5 w-5" />
           </Button>

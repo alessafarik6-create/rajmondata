@@ -33,6 +33,11 @@ export type PortalSidebarMenuDef = {
   href: string;
   roles: readonly string[];
   /**
+   * Mobilní tmavé dlaždice na /portal/dashboard doplňují položky z tohoto seznamu
+   * (viz `buildMobileHomeTiles` v portal-mobile-home-nav.ts).
+   */
+  mobileHomeVisible?: boolean;
+  /**
    * Pro `module`: alespoň jeden klíč musí být true v `effectiveModules`.
    * `terminal` sem nikdy nepatří — není v sidebaru.
    */

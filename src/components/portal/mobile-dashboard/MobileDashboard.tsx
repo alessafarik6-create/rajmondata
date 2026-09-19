@@ -121,8 +121,6 @@ export function MobileDashboard(props: {
 
       <div className="mt-6 space-y-6">
         <MobileModuleGrid
-          company={props.company}
-          platformCatalog={props.platformCatalog}
           role={props.role}
           onOpenSchedule={props.onOpenScheduleModal}
           moduleBadgeCounts={moduleBadgeCounts}

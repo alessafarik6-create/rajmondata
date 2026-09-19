@@ -13,7 +13,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
+import {
+  releaseDocumentModalLocks,
+  releaseDocumentModalLocksAfterTransition,
+} from "@/lib/release-modal-locks";
 import {
   canAccessCompanyModule,
   getCompanyLicenseModules,
@@ -673,6 +676,17 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     return spinner("Otevírám klientský portál…");
   }
 
+  const openMobileMenu = () => {
+    releaseDocumentModalLocks();
+    setMobileMenuOpen(true);
+  };
+
+  const closeMobileMenu = () => {
+    setMobileMenuOpen(false);
+    releaseDocumentModalLocks();
+    releaseDocumentModalLocksAfterTransition(350);
+  };
+
   const renderSidebar = (mobileClose?: () => void) =>
     isPortalEmployeeOnly ? (
       <EmployeePortalSidebar
@@ -723,26 +737,24 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         {renderSidebar()}
       </aside>
 
-      {mobileMenuOpen ? (
+      {belowLg ? (
         <Sheet
-          open
+          open={mobileMenuOpen}
           onOpenChange={(open) => {
+            setMobileMenuOpen(open);
             if (!open) {
-              setMobileMenuOpen(false);
               releaseDocumentModalLocks();
+              releaseDocumentModalLocksAfterTransition(350);
             }
           }}
           modal
         >
           <SheetContent
             side="left"
-            className="w-[min(280px,85vw)] max-w-full p-0 bg-sidebar border-sidebar-border rounded-r-lg [&>button]:text-sidebar-foreground [&>button]:hover:bg-sidebar-accent [&>button]:hover:text-sidebar-primary"
+            className="w-[min(280px,85vw)] max-w-full p-0 bg-sidebar border-sidebar-border rounded-r-lg z-[100] [&>button]:text-sidebar-foreground [&>button]:hover:bg-sidebar-accent [&>button]:hover:text-sidebar-primary"
           >
-            <div className="flex flex-col h-full overflow-y-auto">
-              {renderSidebar(() => {
-                setMobileMenuOpen(false);
-                releaseDocumentModalLocks();
-              })}
+            <div className="flex flex-col h-full overflow-y-auto overscroll-contain">
+              {renderSidebar(closeMobileMenu)}
             </div>
           </SheetContent>
         </Sheet>
@@ -754,7 +766,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       >
         <PwaInstallBanner />
         {!hideMobileTopChrome ? (
-          <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
+          <TopHeader onOpenMobileMenu={openMobileMenu} />
         ) : null}
         <main
           className={cn(

@@ -7,55 +7,33 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Building2,
-  Users,
   Briefcase,
-  Inbox,
-  Wallet,
-  MessageSquare,
   FileText,
   ShieldCheck,
   Settings,
   CreditCard,
-  UserCircle,
   CreditCard as PaymentIcon,
   BarChart3,
   Tags,
-  Activity,
-  Package,
-  Factory,
-  Landmark,
-  Banknote,
-  Receipt,
-  CalendarClock,
-  Mail,
   CircleHelp,
   LifeBuoy,
   Sparkles,
   ShieldAlert,
+  Landmark,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
 import { useUser, useDoc, useFirestore, useMemoFirebase, useCompany } from '@/firebase';
 import { doc } from 'firebase/firestore';
 import { normalizeModules } from '@/lib/license-modules';
-import {
-  canAccessCompanyModule,
-  getEffectiveModulesMerged,
-  isLicenseExplicitlyRevokedForPortal,
-  type CompanyPlatformFields,
-} from '@/lib/platform-access';
-import {
-  userCanAccessProductionPortal,
-  userCanAccessWarehousePortal,
-} from '@/lib/warehouse-production-access';
+import { getEffectiveModulesMerged } from '@/lib/platform-access';
 import { useMergedPlatformModuleCatalog } from '@/contexts/platform-module-catalog-context';
 import {
   hiddenBecauseNotSidebarModule,
-  licenseKeysSatisfied,
-  parentLicenseKeysSatisfied,
   PORTAL_SIDEBAR_MENU_DEFS,
-  type PortalSidebarMenuDef,
 } from '@/lib/portal-menu-config';
+import { PORTAL_MENU_ICONS } from '@/lib/portal-menu-icons';
+import { isPortalMenuItemVisible } from '@/lib/portal-menu-visibility';
 import {
   canAccessPortalModule,
   resolveEffectivePortalPermissions,
@@ -81,110 +59,6 @@ const adminLinksStatic: PortalNavLink[] = [
   { label: 'Nápověda portálu', href: '/admin/help-content', icon: CircleHelp },
   { label: 'Průvodce portálem', href: '/admin/onboarding', icon: Sparkles },
 ];
-
-const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
-  overview: LayoutDashboard,
-  employees: Users,
-  labor: Wallet,
-  customers: UserCircle,
-  jobs: Briefcase,
-  leads: Inbox,
-  productCatalogs: Package,
-  customerChats: MessageSquare,
-  emails: Mail,
-  meetingRecords: CalendarClock,
-  finance: Landmark,
-  invoices: Receipt,
-  documents: FileText,
-  sklad: Package,
-  vyroba: Factory,
-  reports: BarChart3,
-  activity: Activity,
-  billing: PaymentIcon,
-  vyuctovani: Banknote,
-  chat: MessageSquare,
-  help: CircleHelp,
-  settings: Settings,
-};
-
-function isPortalMenuItemVisible(
-  def: PortalSidebarMenuDef,
-  ctx: {
-    role: string;
-    globalRoles: string[] | undefined;
-    company: CompanyPlatformFields | null | undefined;
-    effectiveModules: Record<string, boolean>;
-    platformCatalog: ReturnType<typeof useMergedPlatformModuleCatalog>;
-    employeeRow: Record<string, unknown> | null;
-  }
-): boolean {
-  const { role, globalRoles, company, effectiveModules, platformCatalog, employeeRow } = ctx;
-
-  if (!def.roles.includes(role)) return false;
-
-  if (def.id === 'activity') {
-    const elevated =
-      role === 'owner' ||
-      role === 'admin' ||
-      role === 'accountant' ||
-      (Array.isArray(globalRoles) && globalRoles.includes('super_admin'));
-    if (!elevated) return false;
-  }
-
-  if (def.id === 'meetingRecords') {
-    if (Array.isArray(globalRoles) && globalRoles.includes('super_admin')) {
-      // super admin vidí položku bez ohledu na příznak zaměstnance
-    } else if (role === 'employee') {
-      const row = employeeRow as { canAccessMeetingNotes?: boolean } | null;
-      if (row?.canAccessMeetingNotes !== true) return false;
-    }
-  }
-
-  if (def.type === 'system') return true;
-
-  if (!company) return false;
-
-  if (isLicenseExplicitlyRevokedForPortal(company)) return false;
-
-  if (def.type === 'child') {
-    if (!parentLicenseKeysSatisfied(def.parentLicenseKeys, effectiveModules)) return false;
-  }
-
-  if (def.type === 'module' || def.type === 'child') {
-    if (def.type === 'module' && !licenseKeysSatisfied(def.licenseKeys, effectiveModules)) {
-      return false;
-    }
-    if (
-      def.type === 'child' &&
-      def.licenseKeys?.length &&
-      !licenseKeysSatisfied(def.licenseKeys, effectiveModules)
-    ) {
-      return false;
-    }
-  }
-
-  if (def.platformModuleCode) {
-    if (!canAccessCompanyModule(company, def.platformModuleCode, platformCatalog)) {
-      return false;
-    }
-    if (def.platformModuleCode === 'sklad') {
-      return userCanAccessWarehousePortal({
-        role,
-        globalRoles,
-        employeeRow: employeeRow as { canAccessWarehouse?: boolean } | null,
-      });
-    }
-    if (def.platformModuleCode === 'vyroba') {
-      return userCanAccessProductionPortal({
-        role,
-        globalRoles,
-        employeeRow: employeeRow as { canAccessProduction?: boolean } | null,
-      });
-    }
-  }
-
-  return true;
-}
 
 export type BizForgeSidebarProps = {
   /**
