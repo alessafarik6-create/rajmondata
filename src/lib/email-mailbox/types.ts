@@ -11,7 +11,14 @@ export type EmailAccountStatus =
   | "credentials_missing"
   | "credentials_decrypt_failed";
 
-export type EmailLastSyncStatus = "SUCCESS" | "AUTH_ERROR" | "SYNC_ERROR" | "CREDENTIAL_ERROR";
+export type EmailLastSyncStatus =
+  | "SUCCESS"
+  | "SYNC_PARTIAL"
+  | "AUTH_ERROR"
+  | "SYNC_ERROR"
+  | "CREDENTIAL_ERROR"
+  | "DECRYPT_ERROR"
+  | "CONNECTION_ERROR";
 
 export type EmailMessageDirection = "inbound" | "outbound";
 
@@ -69,6 +76,12 @@ export type EmailAccountDoc = {
   lastSyncAt?: Timestamp | null;
   lastSyncStatus?: EmailLastSyncStatus | null;
   lastError?: string | null;
+  /** Spodní hranice bootstrap okna (posledních N zpráv při prvním připojení). */
+  inboxBackfillFloorUid?: number | null;
+  /** Horní hranice bootstrap okna. */
+  inboxBackfillCeilingUid?: number | null;
+  /** Kurzor backfillu směrem ke starším UID. */
+  inboxBackfillCursorUid?: number | null;
   createdByUserId?: string | null;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;

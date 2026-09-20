@@ -10,6 +10,11 @@ import type {
 import type { EmailAccountDoc, EmailCredentialsPlain } from "@/lib/email-mailbox/types";
 import { logEmailPhase } from "@/lib/email-mailbox/email-log";
 import { EMAIL_IMAP_SYNC_TIMEOUT_MS } from "@/lib/email-mailbox/sync-timeout";
+import {
+  EMAIL_ATTACHMENT_MAX_BYTES,
+  EMAIL_BOOTSTRAP_WINDOW,
+  EMAIL_SYNC_BATCH_SIZE,
+} from "@/lib/email-mailbox/message-content-limits";
 
 function mapConnectionError(err: unknown, phase: "imap" | "smtp"): ConnectionTestResult {
   const msg = err instanceof Error ? err.message : String(err);
@@ -201,7 +206,11 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
     credentials: EmailCredentialsPlain,
     opts: {
       sinceUid?: number | null;
-      maxMessages?: number;
+      batchSize?: number;
+      bootstrapWindow?: number;
+      syncPhase?: "incremental" | "bootstrap_newest" | "bootstrap_backfill";
+      backfillFloorUid?: number | null;
+      backfillCursorUid?: number | null;
       storedUidValidity?: number | null;
     }
   ): Promise<{
@@ -211,8 +220,14 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
     inboxUidValidity: number | null;
     uidNext: number | null;
     mailboxExists: number | null;
+    hasMore: boolean;
+    remainingEstimate: number;
+    bootstrapWindow?: { floorUid: number; ceilingUid: number } | null;
+    nextBackfillCursorUid?: number | null;
   }> {
-    const maxMessages = opts.maxMessages ?? 100;
+    const batchSize = opts.batchSize ?? EMAIL_SYNC_BATCH_SIZE;
+    const bootstrapWindow = opts.bootstrapWindow ?? EMAIL_BOOTSTRAP_WINDOW;
+    const syncPhase = opts.syncPhase ?? "incremental";
     const client = buildImapClient(account, credentials);
     const out: InboundEmailPayload[] = [];
     let lastUid: number | null = opts.sinceUid ?? null;
@@ -259,26 +274,65 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
           lastUid = null;
         }
 
-        let uidList: number[] = [];
-        if (sinceUid > 0) {
+        let uidBatch: number[] = [];
+        let hasMore = false;
+        let remainingEstimate = 0;
+        let bootstrapWindowMeta: { floorUid: number; ceilingUid: number } | null = null;
+        let nextBackfillCursorUid: number | null = null;
+
+        if (syncPhase === "incremental" && sinceUid > 0) {
           const searchResult = await client.search({ uid: `${sinceUid + 1}:*` }, { uid: true });
-          uidList = uidsFromSearchResult(searchResult).filter((u) => u > sinceUid);
+          const pending = uidsFromSearchResult(searchResult)
+            .filter((u) => u > sinceUid)
+            .sort((a, b) => a - b);
+          uidBatch = pending.slice(0, batchSize);
+          remainingEstimate = Math.max(0, pending.length - uidBatch.length);
+          hasMore = remainingEstimate > 0;
+        } else if (syncPhase === "bootstrap_backfill") {
+          const floor = Number(opts.backfillFloorUid ?? 0);
+          const cursor = Number(opts.backfillCursorUid ?? 0);
+          if (floor > 0 && cursor > floor) {
+            const searchResult = await client.search({ uid: `${floor}:${cursor - 1}` }, { uid: true });
+            const pending = uidsFromSearchResult(searchResult)
+              .filter((u) => u >= floor && u < cursor)
+              .sort((a, b) => b - a);
+            uidBatch = pending.slice(0, batchSize);
+            remainingEstimate = Math.max(0, pending.length - uidBatch.length);
+            hasMore = remainingEstimate > 0 || uidBatch.length > 0;
+            if (uidBatch.length > 0) {
+              nextBackfillCursorUid = Math.min(...uidBatch);
+            }
+          }
         } else {
           const searchResult = await client.search({ all: true }, { uid: true });
-          uidList = uidsFromSearchResult(searchResult);
+          const all = uidsFromSearchResult(searchResult);
+          const window = all.length > bootstrapWindow ? all.slice(-bootstrapWindow) : all;
+          if (window.length > 0) {
+            bootstrapWindowMeta = {
+              floorUid: window[0]!,
+              ceilingUid: window[window.length - 1]!,
+            };
+          }
+          uidBatch = window.slice(-batchSize);
+          const olderInWindow = window.length - uidBatch.length;
+          remainingEstimate = olderInWindow;
+          hasMore = olderInWindow > 0;
+          if (bootstrapWindowMeta && uidBatch.length > 0) {
+            nextBackfillCursorUid = Math.min(...uidBatch);
+          }
         }
-        if (uidList.length > maxMessages) {
-          uidList = uidList.slice(-maxMessages);
-        }
-        logEmailPhase("EMAIL_NEW_UIDS_COUNT", { count: uidList.length });
-        if (uidList.length > 0) {
+
+        logEmailPhase("EMAIL_SYNC_BATCH_START", { phase: syncPhase, size: uidBatch.length });
+        logEmailPhase("EMAIL_SYNC_BATCH_SIZE", { batchSize: uidBatch.length, remainingEstimate });
+        logEmailPhase("EMAIL_NEW_UIDS_COUNT", { count: uidBatch.length });
+        if (uidBatch.length > 0) {
           logEmailPhase("EMAIL_NEW_UID_RANGE", {
-            from: uidList[0] ?? null,
-            to: uidList[uidList.length - 1] ?? null,
+            from: uidBatch[0] ?? null,
+            to: uidBatch[uidBatch.length - 1] ?? null,
           });
         }
 
-        for (const uid of uidList) {
+        for (const uid of uidBatch) {
           let source: Buffer | null = null;
           let seen = false;
           for await (const msg of client.fetch(
@@ -302,7 +356,7 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
           const attachments: InboundEmailPayload["attachments"] = [];
           for (const att of parsed.attachments ?? []) {
             if (!att.content || !att.filename) continue;
-            if (att.size > 8 * 1024 * 1024) continue;
+            if (att.size > EMAIL_ATTACHMENT_MAX_BYTES) continue;
             attachments.push({
               filename: att.filename,
               contentType: att.contentType || "application/octet-stream",
@@ -329,6 +383,20 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
           lastUid = Math.max(lastUid ?? 0, row.uid);
         }
         logEmailPhase("EMAIL_MESSAGES_FETCHED", { count: out.length });
+        logEmailPhase("EMAIL_SYNC_BATCH_DONE", { fetched: out.length, hasMore, remainingEstimate });
+
+        return {
+          messages: out,
+          lastUid,
+          sentFolderPath,
+          inboxUidValidity,
+          uidNext,
+          mailboxExists,
+          hasMore,
+          remainingEstimate,
+          bootstrapWindow: bootstrapWindowMeta,
+          nextBackfillCursorUid,
+        };
       } finally {
         lock.release();
       }
@@ -345,6 +413,10 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
       inboxUidValidity,
       uidNext,
       mailboxExists,
+      hasMore: false,
+      remainingEstimate: 0,
+      bootstrapWindow: null,
+      nextBackfillCursorUid: null,
     };
   }
 

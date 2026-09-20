@@ -72,7 +72,11 @@ export interface EmailProviderAdapter {
     credentials: EmailCredentialsPlain,
     opts: {
       sinceUid?: number | null;
-      maxMessages?: number;
+      batchSize?: number;
+      bootstrapWindow?: number;
+      syncPhase?: "incremental" | "bootstrap_newest" | "bootstrap_backfill";
+      backfillFloorUid?: number | null;
+      backfillCursorUid?: number | null;
       storedUidValidity?: number | null;
     }
   ): Promise<{
@@ -82,6 +86,10 @@ export interface EmailProviderAdapter {
     inboxUidValidity: number | null;
     uidNext: number | null;
     mailboxExists: number | null;
+    hasMore: boolean;
+    remainingEstimate: number;
+    bootstrapWindow?: { floorUid: number; ceilingUid: number } | null;
+    nextBackfillCursorUid?: number | null;
   }>;
 
   sendMessage(

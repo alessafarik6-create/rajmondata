@@ -301,7 +301,7 @@ export async function POST(request: NextRequest) {
     });
 
     const sync = await syncEmailAccount(auth.db, companyId, accountId, {
-      maxMessages: 200,
+      batchSize: 25,
       skipAi: false,
     });
 

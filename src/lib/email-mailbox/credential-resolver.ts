@@ -155,7 +155,7 @@ export function accountStatusLabel(status: string): string {
     case "credentials_missing":
       return "Chybí credentials";
     case "credentials_decrypt_failed":
-      return "Credentials nelze dešifrovat";
+      return "Chyba dešifrování — zadejte heslo znovu";
     case "attention":
       return "Vyžaduje pozornost";
     case "auth_error":

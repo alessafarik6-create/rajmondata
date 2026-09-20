@@ -166,7 +166,7 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
 
       let sync: Awaited<ReturnType<typeof syncEmailAccount>> | undefined;
       if (body.runSync !== false) {
-        sync = await syncEmailAccount(auth.db, companyId, accountId, { maxMessages: 100 });
+        sync = await syncEmailAccount(auth.db, companyId, accountId, { batchSize: 25 });
       }
 
       return emailJsonOk({

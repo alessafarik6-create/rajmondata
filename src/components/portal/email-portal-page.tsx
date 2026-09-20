@@ -200,11 +200,15 @@ export function EmailPortalPage() {
     void (async () => {
       try {
         const token = await getToken();
-        await fetch("/api/company/email-mailbox/accounts/sync-all", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ companyId, maxMessages: 80 }),
-        });
+        for (let round = 0; round < 6; round++) {
+          const res = await fetch("/api/company/email-mailbox/accounts/sync-all", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ companyId, maxMessages: 25 }),
+          });
+          const data = await parseEmailApiResponse<{ hasMore?: boolean }>(res);
+          if (!data.ok || !data.hasMore) break;
+        }
         await loadMessages();
         await loadAccounts();
       } catch {

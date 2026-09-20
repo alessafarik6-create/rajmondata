@@ -1,6 +1,5 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
-import crypto from "node:crypto";
 import { getAdminStorageBucket } from "@/lib/firebase-admin";
 import { analyzeEmailMessageWithAi } from "@/lib/email-mailbox/ai-analyze-message";
 import {
@@ -12,15 +11,15 @@ import {
   resolveAccountOwnerUserId,
 } from "@/lib/email-mailbox/account-access";
 import {
-  accountStatusFromCredentialResult,
   resolveEmailCredentials,
+  type EmailCredentialErrorCode,
 } from "@/lib/email-mailbox/credential-resolver";
 import { logEmailPhase } from "@/lib/email-mailbox/email-log";
 import { saveInboundMessage } from "@/lib/email-mailbox/message-store";
 import type {
+  EmailAccountDoc,
   EmailAccountStatus,
   EmailLastSyncStatus,
-  EmailMessageAttachmentMeta,
 } from "@/lib/email-mailbox/types";
 import {
   extractEmailAddress,
@@ -32,18 +31,44 @@ import {
   isEmailSyncStateStale,
   withEmailSyncTimeout,
 } from "@/lib/email-mailbox/sync-timeout";
-
-const DEFAULT_MAX_MESSAGES = 100;
+import {
+  EMAIL_BOOTSTRAP_WINDOW,
+  EMAIL_SYNC_BATCH_SIZE,
+  prepareHtmlBodyForFirestore,
+  prepareTextBodyForFirestore,
+} from "@/lib/email-mailbox/message-content-limits";
+import { uploadEmailAttachments } from "@/lib/email-mailbox/attachment-upload";
 
 export type SyncEmailAccountResult = {
   success: boolean;
   imported: number;
   skipped: number;
+  processed: number;
+  remaining: number;
+  hasMore: boolean;
   accountId?: string;
   lastSyncAt?: string | null;
+  lastSyncedUid?: number | null;
   error?: string;
   errorCode?: string;
 };
+
+function credentialToSyncError(code: EmailCredentialErrorCode): {
+  status: EmailAccountStatus;
+  lastSyncStatus: EmailLastSyncStatus;
+  errorCode: string;
+} {
+  switch (code) {
+    case "EMAIL_CREDENTIAL_DECRYPT_FAILED":
+      return { status: "credentials_decrypt_failed", lastSyncStatus: "DECRYPT_ERROR", errorCode: "DECRYPT_ERROR" };
+    case "EMAIL_CREDENTIAL_MISSING":
+      return { status: "credentials_missing", lastSyncStatus: "CREDENTIAL_ERROR", errorCode: "CREDENTIAL_ERROR" };
+    case "EMAIL_ENCRYPTION_KEY_MISSING":
+      return { status: "attention", lastSyncStatus: "CREDENTIAL_ERROR", errorCode: "CONNECTION_ERROR" };
+    default:
+      return { status: "error", lastSyncStatus: "CREDENTIAL_ERROR", errorCode: "CREDENTIAL_ERROR" };
+  }
+}
 
 function mapSyncFailure(err: unknown): {
   status: EmailAccountStatus;
@@ -54,26 +79,41 @@ function mapSyncFailure(err: unknown): {
   const msg = err instanceof Error ? err.message : String(err);
   const code = (err as Error & { code?: string }).code;
   const lower = msg.toLowerCase();
-  const auth =
-    code === "IMAP_AUTH_FAILED" ||
-    lower.includes("auth") ||
-    lower.includes("login") ||
-    lower.includes("credentials") ||
-    lower.includes("heslo");
-  if (err instanceof EmailSyncTimeoutError || code === "IMAP_TIMEOUT" || lower.includes("timeout")) {
+  if (lower.includes("invalid_argument") && lower.includes("payload size")) {
     return {
       status: "error",
       lastSyncStatus: "SYNC_ERROR",
+      message: "Zpráva byla příliš velká pro uložení. Sync pokračuje po dávkách s omezením těla.",
+      errorCode: "DOCUMENT_TOO_LARGE",
+    };
+  }
+  const auth =
+    code === "IMAP_AUTH_FAILED" ||
+    (lower.includes("auth") && !lower.includes("decrypt")) ||
+    lower.includes("login") ||
+    lower.includes("invalid password");
+  if (err instanceof EmailSyncTimeoutError || code === "IMAP_TIMEOUT" || lower.includes("timeout")) {
+    return {
+      status: "error",
+      lastSyncStatus: "CONNECTION_ERROR",
       message: "Synchronizace překročila časový limit. Zkuste to znovu.",
       errorCode: "IMAP_TIMEOUT",
+    };
+  }
+  if (lower.includes("econnrefused") || lower.includes("enotfound") || lower.includes("network")) {
+    return {
+      status: "error",
+      lastSyncStatus: "CONNECTION_ERROR",
+      message: "Server e-mailu není dostupný.",
+      errorCode: "CONNECTION_ERROR",
     };
   }
   if (auth) {
     return {
       status: "auth_error",
       lastSyncStatus: "AUTH_ERROR",
-      message: "Přihlášení k e-mailu selhalo. Zkontrolujte heslo / heslo aplikace.",
-      errorCode: "IMAP_AUTH_FAILED",
+      message: "Přihlášení k e-mailu selhalo. Zkontrolujte e-mail, heslo / heslo aplikace.",
+      errorCode: "AUTH_ERROR",
     };
   }
   return {
@@ -84,18 +124,48 @@ function mapSyncFailure(err: unknown): {
   };
 }
 
+function backfillPending(account: EmailAccountDoc): boolean {
+  const floor = account.inboxBackfillFloorUid ?? 0;
+  const cursor = account.inboxBackfillCursorUid ?? 0;
+  return floor > 0 && cursor > floor;
+}
+
+function resolveSyncPhase(
+  account: EmailAccountDoc,
+  preferBackfill: boolean
+): {
+  syncPhase: "incremental" | "bootstrap_newest" | "bootstrap_backfill";
+  sinceUid: number;
+} {
+  const last = account.lastInboxUid ?? 0;
+  if (preferBackfill && backfillPending(account)) {
+    return { syncPhase: "bootstrap_backfill", sinceUid: last };
+  }
+  if (last > 0) {
+    return { syncPhase: "incremental", sinceUid: last };
+  }
+  if (backfillPending(account)) {
+    return { syncPhase: "bootstrap_backfill", sinceUid: 0 };
+  }
+  return { syncPhase: "bootstrap_newest", sinceUid: 0 };
+}
+
 export async function syncEmailAccount(
   db: Firestore,
   companyId: string,
   accountId: string,
-  opts?: { maxMessages?: number; skipAi?: boolean }
+  opts?: { batchSize?: number; skipAi?: boolean }
 ): Promise<SyncEmailAccountResult> {
+  const batchSize = opts?.batchSize ?? EMAIL_SYNC_BATCH_SIZE;
   const loaded = await loadEmailAccount(db, companyId, accountId);
   if (!loaded) {
     return {
       success: false,
       imported: 0,
       skipped: 0,
+      processed: 0,
+      remaining: 0,
+      hasMore: false,
       accountId,
       error: "Účet nenalezen.",
       errorCode: "ACCOUNT_NOT_FOUND",
@@ -108,6 +178,9 @@ export async function syncEmailAccount(
       success: false,
       imported: 0,
       skipped: 0,
+      processed: 0,
+      remaining: 0,
+      hasMore: false,
       accountId,
       error: "Neplatná organizace.",
       errorCode: "TENANT_MISMATCH",
@@ -115,7 +188,6 @@ export async function syncEmailAccount(
   }
 
   if (account.status === "syncing" && isEmailSyncStateStale(account.updatedAt)) {
-    logEmailPhase("EMAIL_SYNC_ERROR", { accountId, reason: "stale_syncing_reset" });
     await emailAccountsCol(db, companyId)
       .doc(accountId)
       .update({
@@ -133,10 +205,15 @@ export async function syncEmailAccount(
 
   const credResult = await resolveEmailCredentials(db, companyId, accountId);
   if (!credResult.ok) {
-    const status = accountStatusFromCredentialResult(account.status, credResult) as EmailAccountStatus;
+    const mapped = credentialToSyncError(credResult.errorCode);
+    if (credResult.errorCode === "EMAIL_CREDENTIAL_DECRYPT_FAILED") {
+      logEmailPhase("EMAIL_AUTH_ERROR", { accountId, kind: "DECRYPT_ERROR" });
+    } else if (credResult.errorCode === "EMAIL_CREDENTIAL_MISSING") {
+      logEmailPhase("EMAIL_AUTH_ERROR", { accountId, kind: "CREDENTIAL_MISSING" });
+    }
     await emailAccountsCol(db, companyId).doc(accountId).update({
-      status,
-      lastSyncStatus: "CREDENTIAL_ERROR",
+      status: mapped.status,
+      lastSyncStatus: mapped.lastSyncStatus,
       lastError: credResult.message.slice(0, 500),
       updatedAt: FieldValue.serverTimestamp(),
     });
@@ -144,9 +221,12 @@ export async function syncEmailAccount(
       success: false,
       imported: 0,
       skipped: 0,
+      processed: 0,
+      remaining: 0,
+      hasMore: false,
       accountId,
       error: credResult.message,
-      errorCode: credResult.errorCode,
+      errorCode: mapped.errorCode,
     };
   }
   const credentials = credResult.credentials;
@@ -158,19 +238,21 @@ export async function syncEmailAccount(
       success: false,
       imported: 0,
       skipped: 0,
+      processed: 0,
+      remaining: 0,
+      hasMore: false,
       accountId,
       error: "Provider zatím není implementován.",
       errorCode: "PROVIDER",
     };
   }
 
-  const maxMessages = opts?.maxMessages ?? DEFAULT_MAX_MESSAGES;
-  const isInitial = account.lastInboxUid == null || account.lastInboxUid === 0;
   const accountRef = emailAccountsCol(db, companyId).doc(accountId);
 
   let syncStarted = false;
   let imported = 0;
   let skipped = 0;
+  let processed = 0;
   let outcomeStatus: EmailAccountStatus = "connected";
   let lastSyncStatus: EmailLastSyncStatus = "SUCCESS";
   let lastError: string | null = null;
@@ -178,7 +260,12 @@ export async function syncEmailAccount(
   let lastInboxUid = account.lastInboxUid ?? null;
   let inboxUidValidity = account.inboxUidValidity ?? null;
   let sentFolderPath = account.sentFolderPath ?? null;
+  let inboxBackfillFloorUid = account.inboxBackfillFloorUid ?? null;
+  let inboxBackfillCeilingUid = account.inboxBackfillCeilingUid ?? null;
+  let inboxBackfillCursorUid = account.inboxBackfillCursorUid ?? null;
   let syncSucceeded = false;
+  let hasMore = false;
+  let remaining = 0;
 
   await accountRef.update({
     status: "syncing",
@@ -187,14 +274,36 @@ export async function syncEmailAccount(
   syncStarted = true;
 
   try {
-    const result = await withEmailSyncTimeout(
+    let { syncPhase, sinceUid } = resolveSyncPhase(account, false);
+    let result = await withEmailSyncTimeout(
       adapter.syncInbound(account, credentials, {
-        sinceUid: isInitial ? null : account.lastInboxUid ?? null,
-        maxMessages,
+        sinceUid,
+        batchSize,
+        bootstrapWindow: EMAIL_BOOTSTRAP_WINDOW,
+        syncPhase,
+        backfillFloorUid: inboxBackfillFloorUid,
+        backfillCursorUid: inboxBackfillCursorUid,
         storedUidValidity: account.inboxUidValidity ?? null,
       })
     );
 
+    if (result.messages.length === 0 && backfillPending(account)) {
+      ({ syncPhase, sinceUid } = resolveSyncPhase(account, true));
+      result = await withEmailSyncTimeout(
+        adapter.syncInbound(account, credentials, {
+          sinceUid,
+          batchSize,
+          bootstrapWindow: EMAIL_BOOTSTRAP_WINDOW,
+          syncPhase,
+          backfillFloorUid: inboxBackfillFloorUid,
+          backfillCursorUid: inboxBackfillCursorUid,
+          storedUidValidity: account.inboxUidValidity ?? null,
+        })
+      );
+    }
+
+    hasMore = result.hasMore || backfillPending(account);
+    remaining = result.remainingEstimate;
     logEmailPhase("EMAIL_SYNC_MESSAGES_FOUND", { count: result.messages.length });
 
     const bucket = getAdminStorageBucket();
@@ -202,112 +311,137 @@ export async function syncEmailAccount(
       [];
 
     for (const msg of result.messages) {
-      const attachmentsMeta: EmailMessageAttachmentMeta[] = [];
-      for (const att of msg.attachments) {
-        const id = crypto.randomUUID();
-        let storagePath: string | null = null;
-        if (bucket) {
-          storagePath = `companies/${companyId}/email_attachments/${accountId}/${id}_${att.filename}`;
-          await bucket.file(storagePath).save(att.content, {
-            contentType: att.contentType,
-            resumable: false,
-          });
+      processed++;
+      try {
+        const attachmentsMeta = await uploadEmailAttachments({
+          bucket,
+          companyId,
+          accountId,
+          attachments: msg.attachments,
+        });
+
+        const textPrep = prepareTextBodyForFirestore(msg.textBody);
+        const htmlPrep = prepareHtmlBodyForFirestore(msg.htmlBody);
+
+        const base = {
+          organizationId: companyId,
+          emailAccountId: accountId,
+          ownerUserId: ownerUserId || null,
+          providerMessageId: msg.messageId ?? null,
+          imapUid: msg.imapUid,
+          messageId: msg.messageId ?? null,
+          inReplyTo: msg.inReplyTo ?? null,
+          references: msg.references ?? [],
+          from: msg.from,
+          to: msg.to,
+          cc: msg.cc ?? [],
+          subject: (msg.subject ?? "(bez předmětu)").slice(0, 2000),
+          textBody: textPrep.text,
+          htmlBody: htmlPrep.html,
+          receivedAt: Timestamp.fromDate(msg.receivedAt),
+          sentAt: msg.sentAt ? Timestamp.fromDate(msg.sentAt) : null,
+          direction: "inbound" as const,
+          folder: msg.folder,
+          attachments: attachmentsMeta,
+          resolved: false,
+          needsReply: false,
+          aiReviewPending: false,
+        };
+
+        const fromEmail = extractEmailAddress(msg.from);
+        const customer = await resolveCustomerByEmail(db, companyId, fromEmail);
+        let jobHint: { jobId: string; jobLabel: string } | null = null;
+        if (customer) {
+          jobHint = await resolveJobHint(db, companyId, customer.customerId);
         }
-        attachmentsMeta.push({
-          id,
-          filename: att.filename,
-          contentType: att.contentType,
-          size: att.content.length,
-          storagePath,
+
+        const { id: savedId, created } = await saveInboundMessage(db, companyId, {
+          ...base,
+          isRead: Boolean(msg.isRead),
+          customerId: customer?.customerId ?? null,
+          customerName: customer?.customerName ?? null,
+          suggestedCustomerId: customer?.customerId ?? null,
+          jobId: jobHint?.jobId ?? null,
+          jobLabel: jobHint?.jobLabel ?? null,
+          suggestedJobId: jobHint?.jobId ?? null,
         });
-      }
 
-      const base = {
-        organizationId: companyId,
-        emailAccountId: accountId,
-        ownerUserId: ownerUserId || null,
-        providerMessageId: msg.messageId ?? null,
-        imapUid: msg.imapUid,
-        messageId: msg.messageId ?? null,
-        inReplyTo: msg.inReplyTo ?? null,
-        references: msg.references ?? [],
-        from: msg.from,
-        to: msg.to,
-        cc: msg.cc ?? [],
-        subject: msg.subject,
-        textBody: msg.textBody ?? null,
-        htmlBody: msg.htmlBody ?? null,
-        receivedAt: Timestamp.fromDate(msg.receivedAt),
-        sentAt: msg.sentAt ? Timestamp.fromDate(msg.sentAt) : null,
-        direction: "inbound" as const,
-        folder: msg.folder,
-        attachments: attachmentsMeta,
-        resolved: false,
-        needsReply: false,
-        aiReviewPending: false,
-      };
+        if (!created) {
+          skipped++;
+        } else {
+          imported++;
+          logEmailPhase("EMAIL_SYNC_MESSAGE_SAVED", { messageId: savedId, uid: msg.imapUid });
+          if (!opts?.skipAi) {
+            aiQueue.push({
+              messageId: savedId,
+              payload: {
+                subject: msg.subject,
+                textBody: textPrep.text,
+                htmlBody: htmlPrep.html,
+                from: msg.from,
+                attachments: attachmentsMeta,
+              },
+            });
+          }
+        }
 
-      const fromEmail = extractEmailAddress(msg.from);
-      const customer = await resolveCustomerByEmail(db, companyId, fromEmail);
-      let jobHint: { jobId: string; jobLabel: string } | null = null;
-      if (customer) {
-        jobHint = await resolveJobHint(db, companyId, customer.customerId);
-      }
-
-      const { id: savedId, created } = await saveInboundMessage(db, companyId, {
-        ...base,
-        isRead: Boolean(msg.isRead),
-        customerId: customer?.customerId ?? null,
-        customerName: customer?.customerName ?? null,
-        suggestedCustomerId: customer?.customerId ?? null,
-        jobId: jobHint?.jobId ?? null,
-        jobLabel: jobHint?.jobLabel ?? null,
-        suggestedJobId: jobHint?.jobId ?? null,
-      });
-
-      if (!created) {
+        if (msg.imapUid != null) {
+          lastInboxUid = Math.max(lastInboxUid ?? 0, msg.imapUid);
+          await accountRef
+            .update({
+              lastInboxUid,
+              updatedAt: FieldValue.serverTimestamp(),
+            })
+            .catch(() => undefined);
+        }
+      } catch (saveErr) {
+        const s = saveErr instanceof Error ? saveErr.message : String(saveErr);
+        logEmailPhase("EMAIL_SYNC_ERROR", { accountId, phase: "save_message", detail: s.slice(0, 120) });
         skipped++;
-        continue;
-      }
-      imported++;
-
-      if (!opts?.skipAi) {
-        aiQueue.push({
-          messageId: savedId,
-          payload: {
-            subject: msg.subject,
-            textBody: msg.textBody,
-            htmlBody: msg.htmlBody,
-            from: msg.from,
-            attachments: attachmentsMeta,
-          },
-        });
       }
     }
 
-    lastInboxUid = result.lastUid ?? lastInboxUid;
     inboxUidValidity = result.inboxUidValidity ?? inboxUidValidity;
     sentFolderPath = result.sentFolderPath ?? sentFolderPath;
+
+    if (result.bootstrapWindow) {
+      inboxBackfillFloorUid = result.bootstrapWindow.floorUid;
+      inboxBackfillCeilingUid = result.bootstrapWindow.ceilingUid;
+      inboxBackfillCursorUid = result.nextBackfillCursorUid ?? inboxBackfillCursorUid;
+    } else if (result.nextBackfillCursorUid != null) {
+      inboxBackfillCursorUid = result.nextBackfillCursorUid;
+    }
+
+    if (syncPhase === "bootstrap_backfill" && !hasMore && inboxBackfillFloorUid) {
+      inboxBackfillCursorUid = inboxBackfillFloorUid;
+    }
+
     outcomeStatus = "connected";
-    lastSyncStatus = "SUCCESS";
+    lastSyncStatus = hasMore ? "SYNC_PARTIAL" : "SUCCESS";
     lastError = null;
     syncSucceeded = true;
 
-    logEmailPhase("EMAIL_MESSAGES_SAVED", { imported, skipped });
-    logEmailPhase("EMAIL_SYNC_COMPLETED", { imported, skipped, accountId });
+    logEmailPhase("EMAIL_SYNC_PROGRESS", { imported, skipped, remaining, hasMore });
+    logEmailPhase(hasMore ? "EMAIL_SYNC_PARTIAL" : "EMAIL_SYNC_COMPLETE", {
+      imported,
+      skipped,
+      accountId,
+    });
 
     if (!opts?.skipAi && aiQueue.length > 0) {
-      void runAiAnalysisBatch(db, companyId, aiQueue).catch(() => {
-        /* AI nesmí shodit sync */
-      });
+      void runAiAnalysisBatch(db, companyId, aiQueue).catch(() => undefined);
     }
 
     return {
       success: true,
       imported,
       skipped,
+      processed,
+      remaining,
+      hasMore,
       accountId,
       lastSyncAt: new Date().toISOString(),
+      lastSyncedUid: lastInboxUid,
     };
   } catch (err) {
     const mapped = mapSyncFailure(err);
@@ -316,13 +450,17 @@ export async function syncEmailAccount(
     lastError = mapped.message;
     errorCode = mapped.errorCode;
     logEmailPhase("EMAIL_SYNC_ERROR", { accountId, errorCode });
-    if (mapped.errorCode === "IMAP_AUTH_FAILED") {
+    if (mapped.errorCode === "AUTH_ERROR") {
+      logEmailPhase("EMAIL_AUTH_ERROR", { accountId });
       logEmailPhase("EMAIL_IMAP_AUTH_FAILED", { accountId });
     }
     return {
       success: false,
-      imported: 0,
-      skipped: 0,
+      imported,
+      skipped,
+      processed,
+      remaining: 0,
+      hasMore: false,
       accountId,
       error: mapped.message,
       errorCode: mapped.errorCode,
@@ -340,6 +478,9 @@ export async function syncEmailAccount(
         patch.lastInboxUid = lastInboxUid;
         patch.inboxUidValidity = inboxUidValidity;
         patch.sentFolderPath = sentFolderPath;
+        patch.inboxBackfillFloorUid = inboxBackfillFloorUid;
+        patch.inboxBackfillCeilingUid = inboxBackfillCeilingUid;
+        patch.inboxBackfillCursorUid = inboxBackfillCursorUid;
       }
       await accountRef.update(patch).catch((e) => {
         console.error("[email-mailbox] sync finally update failed", e);

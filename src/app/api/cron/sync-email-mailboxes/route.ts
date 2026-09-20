@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
 
       accounts++;
       const r = await syncEmailAccount(db, companyDoc.id, acc.id, {
-        maxMessages: 40,
+        batchSize: 25,
         skipAi: true,
       });
       imported += r.imported;

@@ -35,26 +35,32 @@ export async function POST(request: NextRequest) {
     const syncable = accounts.filter((a) => isEmailAccountSyncable(a));
     let imported = 0;
     let errors = 0;
+    let hasMore = false;
     const results: {
       accountId: string;
       email: string;
       success: boolean;
       newMessages: number;
+      hasMore?: boolean;
+      remaining?: number;
       error?: string;
       errorCode?: string;
     }[] = [];
 
     for (const acc of syncable) {
       const r = await syncEmailAccount(perm.db, companyId, acc.id, {
-        maxMessages: body.maxMessages ?? 50,
+        batchSize: body.maxMessages ?? 25,
       });
       imported += r.imported;
       if (!r.success) errors++;
+      if (r.hasMore) hasMore = true;
       results.push({
         accountId: acc.id,
         email: acc.email,
         success: r.success,
         newMessages: r.imported,
+        hasMore: r.hasMore,
+        remaining: r.remaining,
         error: r.error,
         errorCode: r.errorCode,
       });
@@ -70,6 +76,7 @@ export async function POST(request: NextRequest) {
       accounts: syncable.length,
       imported,
       errors,
+      hasMore,
       results,
       message:
         summaryParts.length > 0

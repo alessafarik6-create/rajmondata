@@ -34,7 +34,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       });
     }
 
-    let body: { companyId?: string; maxMessages?: number };
+    let body: { companyId?: string; maxMessages?: number; batchSize?: number };
     try {
       body = await request.json();
     } catch {
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     }
 
     const result = await syncEmailAccount(db, companyId, accountId, {
-      maxMessages: body.maxMessages ?? 100,
+      batchSize: body.batchSize ?? body.maxMessages ?? 25,
     });
 
     if (!result.success || result.error) {
@@ -82,9 +82,11 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       ];
       const message = credentialCodes.includes(code as EmailCredentialErrorCode)
         ? messageForCredentialError(code as EmailCredentialErrorCode)
-        : code === "EMAIL_IMAP_AUTH_FAILED" || code === "IMAP_AUTH_FAILED"
-          ? "Přihlášení k e-mailové schránce selhalo."
-          : result.error ?? "Synchronizace selhala.";
+        : code === "AUTH_ERROR" || code === "EMAIL_IMAP_AUTH_FAILED" || code === "IMAP_AUTH_FAILED"
+          ? "Přihlášení k e-mailové schránce selhalo. Zkontrolujte heslo / heslo aplikace."
+          : code === "DECRYPT_ERROR"
+            ? "Uložené přihlašovací údaje nelze načíst. Zadejte heslo schránky znovu v nastavení."
+            : result.error ?? "Synchronizace selhala.";
       return emailJsonErr({
         status: 400,
         message,
@@ -99,14 +101,21 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       });
     }
 
+    const partial = result.hasMore;
     return emailJsonOk({
       success: true,
       newMessages: result.imported,
       accountId,
       lastSyncAt: result.lastSyncAt ?? new Date().toISOString(),
+      lastSyncedUid: result.lastSyncedUid ?? null,
+      processed: result.processed,
+      remaining: result.remaining,
+      hasMore: result.hasMore,
       imported: result.imported,
       skipped: result.skipped,
-      message: `Synchronizováno – ${result.imported} nových zpráv.`,
+      message: partial
+        ? `Staženo ${result.imported} zpráv v této dávce. Zbývá cca ${result.remaining} — synchronizace bude pokračovat při dalším sync.`
+        : `Synchronizováno – ${result.imported} nových zpráv.`,
     });
   } catch (err) {
     console.error("[email-mailbox/sync]", err instanceof Error ? err.message : err);
