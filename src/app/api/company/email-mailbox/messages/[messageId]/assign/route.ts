@@ -5,6 +5,7 @@ import { assertMessageAccess } from "@/lib/email-mailbox/account-access";
 import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
+import { assertJobBelongsToCompany } from "@/lib/email-mailbox/job-access-server";
 
 export const dynamic = "force-dynamic";
 
@@ -42,14 +43,30 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   }
 
+  const jobId = body.jobId ? String(body.jobId).trim() : null;
+  let jobLabel: string | null = null;
+  let jobNumber: string | null = null;
+  let jobName: string | null = null;
+
+  if (jobId) {
+    const jobCheck = await assertJobBelongsToCompany(perm.db, companyId, jobId);
+    if (!jobCheck.ok) {
+      return NextResponse.json({ ok: false, error: jobCheck.error }, { status: jobCheck.status });
+    }
+    jobLabel = jobCheck.jobLabel;
+    jobNumber = jobCheck.jobNumber;
+    jobName = jobCheck.jobName;
+  }
+
   const jobVisibility =
-    body.shareWithJob === true && body.jobId ? ("shared" as const) : ("private" as const);
+    body.shareWithJob === true && jobId ? ("shared" as const) : ("private" as const);
 
   await emailMessagesCol(perm.db, companyId)
     .doc(messageId)
     .update({
       customerId: body.customerId ?? null,
-      jobId: body.jobId ?? null,
+      jobId: jobId ?? null,
+      jobLabel: jobId ? jobLabel : null,
       inquiryId: body.inquiryId ?? null,
       resolved: body.resolved ?? false,
       jobVisibility,
@@ -64,10 +81,19 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     entityId: messageId,
     metadata: {
       customerId: body.customerId ?? null,
-      jobId: body.jobId ?? null,
+      jobId: jobId ?? null,
+      jobLabel,
       jobVisibility,
     },
   });
 
-  return NextResponse.json({ ok: true, jobVisibility });
+  return NextResponse.json({
+    ok: true,
+    success: true,
+    jobVisibility,
+    jobId,
+    jobNumber,
+    jobName,
+    jobLabel,
+  });
 }

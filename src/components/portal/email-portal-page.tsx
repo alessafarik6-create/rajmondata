@@ -38,6 +38,7 @@ import {
 } from "@/components/portal/email-reply-attachments";
 import type { JobDocumentEmailAttachmentRef } from "@/lib/job-document-email-attachments";
 import { EMAIL_ACCOUNT_ALL_MAILBOXES } from "@/lib/email-mailbox/account-default";
+import { EmailAssignMessageJobDialog } from "@/components/portal/email-assign-message-job-dialog";
 
 type AccountRow = {
   id: string;
@@ -113,6 +114,7 @@ export function EmailPortalPage() {
   const [composeBody, setComposeBody] = useState("");
   const [replyText, setReplyText] = useState("");
   const [assignJobId, setAssignJobId] = useState("");
+  const [emailJobDialogOpen, setEmailJobDialogOpen] = useState(false);
   const [assignCustomerId, setAssignCustomerId] = useState("");
   const [shareWithJob, setShareWithJob] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string>(EMAIL_ACCOUNT_ALL_MAILBOXES);
@@ -560,7 +562,7 @@ export function EmailPortalPage() {
     setBusy(true);
     try {
       const token = await getToken();
-      await fetch(`/api/company/email-mailbox/messages/${selectedId}/assign`, {
+      const res = await fetch(`/api/company/email-mailbox/messages/${selectedId}/assign`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -569,7 +571,42 @@ export function EmailPortalPage() {
           customerId: detail.suggestedCustomerId ?? null,
         }),
       });
-      toast({ title: "Zakázka přiřazena" });
+      const data = await res.json();
+      toast({
+        title: "E-mail přiřazen k zakázce",
+        description: data.jobLabel ?? detail?.suggestedJobLabel ?? detail.suggestedJobId ?? undefined,
+      });
+      await loadDetail(selectedId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function assignEmailToJob(jobId: string) {
+    if (!selectedId || !companyId) return;
+    setBusy(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`/api/company/email-mailbox/messages/${selectedId}/assign`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          jobId,
+          customerId: assignCustomerId.trim() || detail?.customerId || null,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        toast({ variant: "destructive", title: "Přiřazení selhalo", description: data.error });
+        return;
+      }
+      setAssignJobId(jobId);
+      toast({
+        title: "E-mail přiřazen k zakázce",
+        description: data.jobLabel ?? jobId,
+      });
+      setEmailJobDialogOpen(false);
       await loadDetail(selectedId);
     } finally {
       setBusy(false);
@@ -581,7 +618,7 @@ export function EmailPortalPage() {
     setBusy(true);
     try {
       const token = await getToken();
-      await fetch(`/api/company/email-mailbox/messages/${selectedId}/assign`, {
+      const res = await fetch(`/api/company/email-mailbox/messages/${selectedId}/assign`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -591,7 +628,15 @@ export function EmailPortalPage() {
           shareWithJob: shareWithJob && Boolean(assignJobId.trim()),
         }),
       });
-      toast({ title: "Přiřazení uloženo" });
+      const data = await res.json();
+      if (!data.ok) {
+        toast({ variant: "destructive", title: "Přiřazení selhalo", description: data.error });
+        return;
+      }
+      toast({
+        title: "Přiřazení uloženo",
+        description: data.jobLabel ?? (assignJobId.trim() || undefined),
+      });
       await loadDetail(selectedId);
     } finally {
       setBusy(false);
@@ -932,6 +977,7 @@ export function EmailPortalPage() {
               }}
               onResolve={() => void markResolved()}
               onAssignLinks={() => void assignLinks()}
+              onAssignEmailToJob={() => setEmailJobDialogOpen(true)}
               onAssignEmployee={() => void assignEmployeeInternal()}
               onReminder={(p) => void setReminder(p)}
               onApplySuggestedJob={() => void applySuggestedJob()}
@@ -950,6 +996,17 @@ export function EmailPortalPage() {
         </div>
       </div>
       </div>
+
+      {companyId ? (
+        <EmailAssignMessageJobDialog
+          open={emailJobDialogOpen}
+          onOpenChange={setEmailJobDialogOpen}
+          companyId={companyId}
+          getToken={getToken}
+          busy={busy}
+          onConfirm={assignEmailToJob}
+        />
+      ) : null}
     </div>
   );
 }

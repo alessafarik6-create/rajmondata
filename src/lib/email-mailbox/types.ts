@@ -90,6 +90,7 @@ export type EmailMessageAttachmentMeta = {
   hidden?: boolean;
   /** Propojení na companies/{org}/documents */
   linkedJobId?: string | null;
+  linkedJobLabel?: string | null;
   linkedDocumentId?: string | null;
   documentCategory?: string | null;
   aiSummary?: string | null;

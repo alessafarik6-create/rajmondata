@@ -18,20 +18,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmailAttachmentCard } from "@/components/portal/email-attachment-card";
+import { EmailPdfViewerDialog } from "@/components/portal/email-pdf-viewer-dialog";
 import {
   EMAIL_ATTACHMENT_JOB_CATEGORIES,
   EMAIL_ATTACHMENT_JOB_CATEGORY_LABELS,
   userVisibleAttachments,
+  isPreviewablePdf,
 } from "@/lib/email-mailbox/attachment-meta";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
 import { useToast } from "@/hooks/use-toast";
-
-type JobRow = {
-  id: string;
-  orderNumber: string;
-  title: string;
-  customerName: string;
-};
+import { useEmailJobSearch } from "@/hooks/use-email-job-search";
+import { Loader2 } from "lucide-react";
 
 type Props = {
   companyId: string;
@@ -53,11 +50,22 @@ export function EmailAttachmentsSection(props: Props) {
   const [assignAll, setAssignAll] = useState(false);
   const [selectedAttId, setSelectedAttId] = useState<string | null>(null);
   const [jobQuery, setJobQuery] = useState("");
-  const [jobs, setJobs] = useState<JobRow[]>([]);
   const [selectedJobId, setSelectedJobId] = useState("");
   const [category, setCategory] = useState("document");
-  const [viewerUrl, setViewerUrl] = useState<string | null>(null);
+  const [assignSubmitting, setAssignSubmitting] = useState(false);
+
+  const [viewerBlobUrl, setViewerBlobUrl] = useState<string | null>(null);
   const [viewerTitle, setViewerTitle] = useState("");
+  const [viewerIsPdf, setViewerIsPdf] = useState(false);
+  const [viewerAtt, setViewerAtt] = useState<EmailMessageAttachmentMeta | null>(null);
+  const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
+
+  const { jobs, loading: jobsLoading, error: jobsError } = useEmailJobSearch({
+    companyId: props.companyId,
+    enabled: assignOpen,
+    query: jobQuery,
+    getToken: props.getToken,
+  });
 
   const apiBase = useCallback(
     (attachmentId: string, inline?: boolean) =>
@@ -76,6 +84,11 @@ export function EmailAttachmentsSection(props: Props) {
       return URL.createObjectURL(blob);
     },
     [apiBase, props]
+  );
+
+  const getPdfBlobUrlFor = useCallback(
+    (attachmentId: string) => fetchBlobUrl(attachmentId, true),
+    [fetchBlobUrl]
   );
 
   const downloadAttachment = useCallback(
@@ -99,10 +112,16 @@ export function EmailAttachmentsSection(props: Props) {
       try {
         const url = await fetchBlobUrl(att.id, true);
         setViewerTitle(att.filename);
-        setViewerUrl((prev) => {
+        setViewerAtt(att);
+        const pdf = isPreviewablePdf(att.contentType, att.filename);
+        setViewerIsPdf(pdf);
+        setViewerBlobUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
           return url;
         });
+        if (pdf) {
+          setPdfViewerOpen(true);
+        }
       } catch {
         toast({ variant: "destructive", title: "Náhled selhal" });
       }
@@ -112,29 +131,17 @@ export function EmailAttachmentsSection(props: Props) {
 
   useEffect(() => {
     return () => {
-      if (viewerUrl) URL.revokeObjectURL(viewerUrl);
+      if (viewerBlobUrl) URL.revokeObjectURL(viewerBlobUrl);
     };
-  }, [viewerUrl]);
+  }, [viewerBlobUrl]);
 
-  useEffect(() => {
-    if (!assignOpen || jobQuery.trim().length < 2) {
-      setJobs([]);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const token = await props.getToken();
-      const res = await fetch(
-        `/api/company/email-mailbox/jobs-search?companyId=${encodeURIComponent(props.companyId)}&q=${encodeURIComponent(jobQuery)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      const data = await res.json();
-      if (!cancelled && data.ok) setJobs(data.jobs ?? []);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [assignOpen, jobQuery, props]);
+  function openAssignModal(all: boolean, attId: string | null) {
+    setAssignAll(all);
+    setSelectedAttId(attId);
+    setJobQuery("");
+    setSelectedJobId("");
+    setAssignOpen(true);
+  }
 
   async function submitAssign() {
     if (!selectedJobId) return;
@@ -144,6 +151,9 @@ export function EmailAttachmentsSection(props: Props) {
         ? [selectedAttId]
         : [];
     if (!ids.length) return;
+
+    const selectedJob = jobs.find((j) => j.id === selectedJobId);
+    setAssignSubmitting(true);
     try {
       const token = await props.getToken();
       const res = await fetch(
@@ -159,6 +169,7 @@ export function EmailAttachmentsSection(props: Props) {
             jobId: selectedJobId,
             attachmentIds: ids,
             category,
+            jobDisplayName: selectedJob?.label ?? null,
           }),
         }
       );
@@ -167,13 +178,41 @@ export function EmailAttachmentsSection(props: Props) {
         toast({ variant: "destructive", title: "Přiřazení selhalo", description: data.error });
         return;
       }
-      toast({ title: assignAll ? "Všechny přílohy přiřazeny" : "Příloha přiřazena k zakázce" });
+
+      const label = data.jobLabel ?? selectedJob?.label ?? selectedJobId;
+      const assigned = Number(data.attachmentsAssigned ?? 0);
+      const dupes = Number(data.skippedDuplicates ?? 0);
+
+      if (assigned === 0 && dupes > 0) {
+        toast({
+          title: "Tento dokument už je k zakázce přiřazen.",
+          description: label,
+        });
+      } else if (assignAll && assigned > 0) {
+        toast({
+          title: `Přiřazeno ${assigned} příloh k zakázce ${label}.`,
+          description: dupes > 0 ? `${dupes} už bylo přiřazeno dříve.` : undefined,
+        });
+      } else if (assigned > 0) {
+        toast({ title: `Příloha přiřazena k zakázce ${label}.` });
+      } else {
+        toast({ title: "Přiřazení dokončeno", description: label });
+      }
+
       setAssignOpen(false);
       props.onLinked?.();
     } catch {
       toast({ variant: "destructive", title: "Přiřazení selhalo" });
+    } finally {
+      setAssignSubmitting(false);
     }
   }
+
+  const assignDialogTitle = assignAll
+    ? "Přiřadit všechny přílohy"
+    : selectedAttId
+      ? `Přiřadit přílohu k zakázce`
+      : "Přiřadit k zakázce";
 
   if (!visible.length) return null;
 
@@ -188,11 +227,7 @@ export function EmailAttachmentsSection(props: Props) {
             size="sm"
             variant="outline"
             disabled={props.busy}
-            onClick={() => {
-              setAssignAll(true);
-              setSelectedAttId(null);
-              setAssignOpen(true);
-            }}
+            onClick={() => openAssignModal(true, null)}
           >
             Přiřadit všechny k zakázce
           </Button>
@@ -204,33 +239,27 @@ export function EmailAttachmentsSection(props: Props) {
             key={att.id}
             attachment={att}
             canWrite={props.canWrite}
-            busy={props.busy}
+            busy={props.busy || assignSubmitting}
             onDownload={() => void downloadAttachment(att)}
             onOpen={() => void openAttachment(att)}
+            getPdfBlobUrl={
+              isPreviewablePdf(att.contentType, att.filename) && att.storagePath
+                ? () => getPdfBlobUrlFor(att.id)
+                : undefined
+            }
             onAssign={
               props.canWrite
-                ? () => {
-                    setAssignAll(false);
-                    setSelectedAttId(att.id);
-                    setAssignOpen(true);
-                  }
+                ? () => openAssignModal(false, att.id)
                 : undefined
             }
           />
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {visible.map((att) => (
-          <Button key={`dl-${att.id}`} size="sm" variant="ghost" onClick={() => void downloadAttachment(att)}>
-            Stáhnout {att.filename}
-          </Button>
         ))}
       </div>
 
       <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{assignAll ? "Přiřadit všechny přílohy" : "Přiřadit k zakázce"}</DialogTitle>
+            <DialogTitle>{assignDialogTitle}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <Input
@@ -238,6 +267,17 @@ export function EmailAttachmentsSection(props: Props) {
               value={jobQuery}
               onChange={(e) => setJobQuery(e.target.value)}
             />
+            {jobsError ? (
+              <p className="text-sm text-destructive">{jobsError}</p>
+            ) : jobsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Načítám zakázky…
+              </div>
+            ) : jobs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {jobQuery.trim() ? "Žádná zakázka neodpovídá hledání." : "Žádné zakázky k zobrazení."}
+              </p>
+            ) : null}
             <Select value={selectedJobId} onValueChange={setSelectedJobId}>
               <SelectTrigger>
                 <SelectValue placeholder="Vyberte zakázku" />
@@ -245,7 +285,7 @@ export function EmailAttachmentsSection(props: Props) {
               <SelectContent>
                 {jobs.map((j) => (
                   <SelectItem key={j.id} value={j.id}>
-                    {[j.orderNumber, j.title, j.customerName].filter(Boolean).join(" · ") || j.id}
+                    {j.label || j.id}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -267,25 +307,50 @@ export function EmailAttachmentsSection(props: Props) {
             <Button variant="outline" onClick={() => setAssignOpen(false)}>
               Zrušit
             </Button>
-            <Button disabled={!selectedJobId || props.busy} onClick={() => void submitAssign()}>
-              Přiřadit
+            <Button
+              disabled={!selectedJobId || props.busy || assignSubmitting}
+              onClick={() => void submitAssign()}
+            >
+              {assignSubmitting ? "Ukládám…" : "Přiřadit"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(viewerUrl)} onOpenChange={(o) => !o && setViewerUrl(null)}>
+      <EmailPdfViewerDialog
+        open={pdfViewerOpen}
+        onOpenChange={(o) => {
+          setPdfViewerOpen(o);
+          if (!o) {
+            setViewerBlobUrl((prev) => {
+              if (prev) URL.revokeObjectURL(prev);
+              return null;
+            });
+          }
+        }}
+        title={viewerTitle}
+        pdfBlobUrl={viewerBlobUrl}
+        onDownload={viewerAtt ? () => void downloadAttachment(viewerAtt) : undefined}
+      />
+
+      <Dialog
+        open={Boolean(viewerBlobUrl) && !viewerIsPdf}
+        onOpenChange={(o) => {
+          if (!o) {
+            setViewerBlobUrl((prev) => {
+              if (prev) URL.revokeObjectURL(prev);
+              return null;
+            });
+          }
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh]">
           <DialogHeader>
             <DialogTitle className="truncate">{viewerTitle}</DialogTitle>
           </DialogHeader>
-          {viewerUrl ? (
-            viewerTitle.toLowerCase().endsWith(".pdf") ? (
-              <iframe title={viewerTitle} src={viewerUrl} className="w-full h-[70vh] rounded border" />
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={viewerUrl} alt="" className="max-h-[70vh] w-full object-contain" />
-            )
+          {viewerBlobUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={viewerBlobUrl} alt="" className="max-h-[70vh] w-full object-contain" />
           ) : null}
         </DialogContent>
       </Dialog>

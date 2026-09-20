@@ -12,6 +12,7 @@ import {
 import { linkEmailAttachmentToJob } from "@/lib/email-mailbox/attachment-job-link-server";
 import { appendEmailMessageTimeline } from "@/lib/email-mailbox/message-timeline";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
+import { assertJobBelongsToCompany } from "@/lib/email-mailbox/job-access-server";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,11 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
+  const jobMeta = await assertJobBelongsToCompany(db, companyId, jobId);
+  if (!jobMeta.ok) {
+    return NextResponse.json({ ok: false, error: jobMeta.error }, { status: jobMeta.status });
+  }
+
   const { messageId } = await ctx.params;
   const access = await assertMessageAccess(db, companyId, messageId, perm.caller.uid, "write");
   if (!access.ok) {
@@ -63,12 +69,25 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   }
 
   const attachments = access.message.attachments ?? [];
-  const results: { attachmentId: string; documentId: string }[] = [];
+  const results: { attachmentId: string; documentId: string; duplicate?: boolean }[] = [];
   const updatedAttachments: EmailMessageAttachmentMeta[] = attachments.map((a) => ({ ...a }));
+  let attachmentsAssigned = 0;
+  let skippedDuplicates = 0;
 
   for (const attId of attachmentIds) {
     const att = attachments.find((a) => a.id === attId);
     if (!att || !att.storagePath) continue;
+
+    if (att.linkedJobId === jobId && att.linkedDocumentId) {
+      skippedDuplicates += 1;
+      results.push({
+        attachmentId: attId,
+        documentId: att.linkedDocumentId,
+        duplicate: true,
+      });
+      continue;
+    }
+
     const linked = await linkEmailAttachmentToJob({
       db,
       companyId,
@@ -78,14 +97,27 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       attachment: att,
       category,
       createdByUserId: perm.caller.uid,
-      jobDisplayName: body.jobDisplayName ?? null,
+      jobDisplayName: body.jobDisplayName ?? jobMeta.jobLabel,
     });
-    results.push({ attachmentId: attId, documentId: linked.documentId });
+
+    results.push({
+      attachmentId: attId,
+      documentId: linked.documentId,
+      duplicate: linked.duplicate,
+    });
+
+    if (linked.duplicate) {
+      skippedDuplicates += 1;
+    } else {
+      attachmentsAssigned += 1;
+    }
+
     const idx = updatedAttachments.findIndex((a) => a.id === attId);
     if (idx >= 0) {
       updatedAttachments[idx] = {
         ...updatedAttachments[idx]!,
         linkedJobId: jobId,
+        linkedJobLabel: linked.jobLabel,
         linkedDocumentId: linked.documentId,
         documentCategory: category,
       };
@@ -101,12 +133,24 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  await appendEmailMessageTimeline(db, companyId, messageId, {
-    kind: "attachment_linked_job",
-    label: `Příloha přiřazena k zakázce (${results.length}×)`,
-    userId: perm.caller.uid,
-    metadata: { jobId, attachmentIds, category },
-  });
+  if (attachmentsAssigned > 0) {
+    await appendEmailMessageTimeline(db, companyId, messageId, {
+      kind: "attachment_linked_job",
+      label: `Příloha přiřazena k zakázce ${jobMeta.jobLabel} (${attachmentsAssigned}×)`,
+      userId: perm.caller.uid,
+      metadata: { jobId, attachmentIds, category, attachmentsAssigned },
+    });
+  }
 
-  return NextResponse.json({ ok: true, results });
+  return NextResponse.json({
+    ok: true,
+    success: true,
+    jobId,
+    jobNumber: jobMeta.jobNumber,
+    jobName: jobMeta.jobName,
+    jobLabel: jobMeta.jobLabel,
+    attachmentsAssigned,
+    skippedDuplicates,
+    results,
+  });
 }

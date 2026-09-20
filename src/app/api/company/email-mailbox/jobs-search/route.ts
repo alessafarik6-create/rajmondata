@@ -3,6 +3,10 @@ import { requireEmailMailboxRead } from "@/lib/email-mailbox/api-auth";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
+import {
+  jobSearchHaystackFromJobData,
+  mapFirestoreJobToPickerRow,
+} from "@/lib/email-mailbox/job-picker-label";
 
 export const dynamic = "force-dynamic";
 
@@ -23,37 +27,40 @@ export async function GET(request: NextRequest) {
   const q = String(request.nextUrl.searchParams.get("q") ?? "")
     .trim()
     .toLowerCase();
-  if (q.length < 2) {
-    return NextResponse.json({ ok: true, jobs: [] });
+
+  try {
+    const snap = await db
+      .collection(COMPANIES_COLLECTION)
+      .doc(companyId)
+      .collection("jobs")
+      .limit(200)
+      .get();
+
+    let rows = snap.docs
+      .map((d) => {
+        const data = d.data() as Record<string, unknown>;
+        const org = String(data.organizationId ?? data.companyId ?? "").trim();
+        if (org && org !== companyId) return null;
+        const row = mapFirestoreJobToPickerRow(d.id, data);
+        const hay = jobSearchHaystackFromJobData(d.id, data);
+        return { ...row, hay };
+      })
+      .filter(Boolean) as (ReturnType<typeof mapFirestoreJobToPickerRow> & { hay: string })[];
+
+    rows.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+
+    if (q.length >= 1) {
+      rows = rows.filter((j) => j.hay.includes(q));
+    }
+
+    const jobs = rows.slice(0, 30).map(({ hay: _h, updatedAtMs: _u, ...rest }) => rest);
+
+    return NextResponse.json({ ok: true, jobs });
+  } catch (e) {
+    console.error("[email-mailbox/jobs-search]", e);
+    return NextResponse.json(
+      { ok: false, error: "Nepodařilo se načíst zakázky." },
+      { status: 500 }
+    );
   }
-
-  const snap = await db
-    .collection(COMPANIES_COLLECTION)
-    .doc(companyId)
-    .collection("jobs")
-    .limit(80)
-    .get();
-
-  const jobs = snap.docs
-    .map((d) => {
-      const data = d.data() as Record<string, unknown>;
-      const orderNumber = String(data.orderNumber ?? data.jobNumber ?? "").trim();
-      const title = String(data.title ?? data.name ?? "").trim();
-      const customerName = String(data.customerName ?? data.clientName ?? "").trim();
-      const address = String(data.address ?? data.siteAddress ?? "").trim();
-      const hay = `${orderNumber} ${title} ${customerName} ${address} ${d.id}`.toLowerCase();
-      return {
-        id: d.id,
-        orderNumber,
-        title,
-        customerName,
-        address,
-        hay,
-      };
-    })
-    .filter((j) => j.hay.includes(q))
-    .slice(0, 20)
-    .map(({ hay: _h, ...rest }) => rest);
-
-  return NextResponse.json({ ok: true, jobs });
 }

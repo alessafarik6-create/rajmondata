@@ -8,6 +8,7 @@ import {
   EMAIL_ATTACHMENT_JOB_CATEGORIES,
   type EmailAttachmentJobCategory,
 } from "@/lib/email-mailbox/attachment-meta";
+import { assertJobBelongsToCompany } from "@/lib/email-mailbox/job-access-server";
 
 export const EMAIL_ATTACHMENT_JOB_LINKS_SUBCOLLECTION = "email_attachment_job_links";
 
@@ -28,13 +29,21 @@ export async function linkEmailAttachmentToJob(params: {
   category: EmailAttachmentJobCategory;
   createdByUserId: string;
   jobDisplayName?: string | null;
-}): Promise<{ documentId: string; linkId: string }> {
+}): Promise<
+  | { documentId: string; linkId: string; duplicate: false; jobLabel: string }
+  | { documentId: string; linkId: string | null; duplicate: true; jobLabel: string }
+> {
   const category = EMAIL_ATTACHMENT_JOB_CATEGORIES.includes(params.category)
     ? params.category
     : "other";
 
   if (!params.attachment.storagePath) {
     throw new Error("Příloha nemá uložený soubor ve storage.");
+  }
+
+  const jobCheck = await assertJobBelongsToCompany(params.db, params.companyId, params.jobId);
+  if (!jobCheck.ok) {
+    throw new Error(jobCheck.error);
   }
 
   const documentId = companyDocumentIdForEmailAttachment(params.messageId, params.attachment.id);
@@ -44,17 +53,21 @@ export async function linkEmailAttachmentToJob(params: {
     .collection("documents")
     .doc(documentId);
 
-  const jobSnap = await params.db
-    .collection(COMPANIES_COLLECTION)
-    .doc(params.companyId)
-    .collection("jobs")
-    .doc(params.jobId)
-    .get();
-  const jobData = jobSnap.exists ? (jobSnap.data() as Record<string, unknown>) : {};
-  const jobName =
-    params.jobDisplayName?.trim() ||
-    String(jobData.title ?? jobData.name ?? "").trim() ||
-    params.jobId;
+  const existingDoc = await docRef.get();
+  if (existingDoc.exists) {
+    const ex = existingDoc.data() as Record<string, unknown>;
+    const exJob = String(ex.jobId ?? "").trim();
+    if (exJob === params.jobId) {
+      return {
+        documentId,
+        linkId: null,
+        duplicate: true,
+        jobLabel: jobCheck.jobLabel,
+      };
+    }
+  }
+
+  const jobName = params.jobDisplayName?.trim() || jobCheck.jobName;
 
   const ts = FieldValue.serverTimestamp();
   const dateIso = new Date().toISOString().slice(0, 10);
@@ -107,5 +120,5 @@ export async function linkEmailAttachmentToJob(params: {
       createdAt: ts,
     });
 
-  return { documentId, linkId: linkRef.id };
+  return { documentId, linkId: linkRef.id, duplicate: false, jobLabel: jobCheck.jobLabel };
 }

@@ -104,6 +104,7 @@ type Props = {
   onForward: () => void;
   onResolve: () => void;
   onAssignLinks: () => void;
+  onAssignEmailToJob: () => void;
   onAssignEmployee: () => void;
   onReminder: (preset: string) => void;
   onApplySuggestedJob: () => void;
@@ -159,7 +160,7 @@ export function EmailPortalDetailPanel(props: Props) {
               <SelectItem value="3d">Za 3 dny</SelectItem>
             </SelectContent>
           </Select>
-          <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onAssignLinks}>
+          <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onAssignEmailToJob}>
             <Briefcase className="h-3.5 w-3.5 mr-1" /> Zakázka
           </Button>
           <Button size="sm" variant="default" disabled={props.busy} onClick={props.onResolve}>
@@ -180,6 +181,22 @@ export function EmailPortalDetailPanel(props: Props) {
             ? ` · ${EMAIL_WORKFLOW_STATE_LABELS[d.workflowState as keyof typeof EMAIL_WORKFLOW_STATE_LABELS] ?? d.workflowState}`
             : ""}
         </p>
+        {d.jobId ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+            <span>
+              <span className="text-muted-foreground">Zakázka: </span>
+              <span className="font-medium">{d.jobLabel ?? d.jobId}</span>
+            </span>
+            <Button size="sm" variant="outline" asChild>
+              <Link href={`/portal/jobs/${encodeURIComponent(d.jobId)}`}>Otevřít zakázku</Link>
+            </Button>
+            {props.canWrite ? (
+              <Button size="sm" variant="ghost" disabled={props.busy} onClick={props.onAssignEmailToJob}>
+                Změnit
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-2">
