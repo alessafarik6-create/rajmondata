@@ -8,6 +8,7 @@ import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { EMAIL_SUBCOLLECTION_ASSIGNMENTS } from "@/lib/email-mailbox/intelligence-types";
 import { appendEmailMessageTimeline } from "@/lib/email-mailbox/message-timeline";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
+import { createNotification } from "@/lib/notification-service/notification-service";
 
 export const dynamic = "force-dynamic";
 
@@ -94,6 +95,24 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     entityId: messageId,
     metadata: { assigneeUserId },
   });
+
+  if (assigneeUserId !== perm.caller.uid) {
+    const subject = String(m.subject ?? "E-mail").trim() || "E-mail";
+    await createNotification({
+      organizationId: companyId,
+      recipientUserId: assigneeUserId,
+      type: "EMAIL_ASSIGNED",
+      title: "Přiřazen e-mail",
+      body: subject.slice(0, 240),
+      url: `/portal/email?messageId=${encodeURIComponent(messageId)}`,
+      entityType: "email",
+      entityId: messageId,
+      priority: "HIGH",
+      eventId: `email-assigned:${companyId}:${messageId}:${assigneeUserId}`,
+      source: "email-mailbox/assign-employee",
+      category: "message",
+    }).catch((e) => console.warn("[assign-employee] push", e));
+  }
 
   return NextResponse.json({ ok: true });
 }

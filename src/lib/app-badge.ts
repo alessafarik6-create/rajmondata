@@ -10,13 +10,9 @@ export function applyAppBadgeCount(count: number): void {
     clearAppBadge?: () => Promise<void>;
   };
   if (typeof nav.setAppBadge !== "function") {
-    if (process.env.NODE_ENV === "development") {
-      console.log("Applying app badge count", { count, supported: false });
-    }
     return;
   }
   const n = Math.max(0, Math.min(99999, Math.floor(Number(count) || 0)));
-  console.log("Applying app badge count", { count: n, supported: true });
   if (n <= 0) {
     void nav.clearAppBadge?.().catch(() => {});
     return;

@@ -126,11 +126,13 @@ export async function POST(request: NextRequest) {
           emitPortalNotification({
             targetUserId: uid,
             companyId,
-            category: "system",
+            category: "job",
+            type: "JOB_CUSTOMER_MESSAGE",
             title,
             body: bodyText,
             linkUrl: linkPath,
             source: "api/jobs/comments/notify",
+            eventId: `job-chat:${companyId}:${jobId}:${targetType}:${uid}:${Date.now()}`,
           })
         )
       );
@@ -157,11 +159,13 @@ export async function POST(request: NextRequest) {
           emitPortalNotification({
             targetUserId: uid,
             companyId,
-            category: "system",
+            category: "job",
+            type: "JOB_CUSTOMER_MESSAGE",
             title,
             body: bodyText,
             linkUrl: linkPath,
             source: "api/jobs/comments/notify",
+            eventId: `job-chat:${companyId}:${jobId}:${targetType}:${uid}:${Date.now()}`,
           })
         )
       );

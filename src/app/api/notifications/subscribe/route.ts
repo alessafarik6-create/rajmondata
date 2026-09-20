@@ -44,20 +44,41 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Neplatná push subscription." }, { status: 400 });
   }
 
+  const userSnap = await db.collection("users").doc(uid).get();
+  const organizationId = String(userSnap.data()?.companyId ?? userSnap.data()?.organizationId ?? "").trim();
+  const ua = request.headers.get("user-agent") ?? "";
+  const platform =
+    request.headers.get("sec-ch-ua-platform")?.replace(/"/g, "") ||
+    (ua.includes("Android") ? "Android" : ua.includes("iPhone") ? "iOS" : "Web");
+
+  let deviceName = "Prohlížeč";
+  if (ua.includes("Edg/")) deviceName = "Edge";
+  else if (ua.includes("Chrome/")) deviceName = "Chrome";
+  else if (ua.includes("Firefox/")) deviceName = "Firefox";
+  else if (ua.includes("Safari/") && !ua.includes("Chrome")) deviceName = "Safari";
+
   const docId = pushSubscriptionStorageDocId(endpoint);
   const ref = db.collection("users").doc(uid).collection("pushSubscriptions").doc(docId);
   const existing = await ref.get();
   await ref.set(
     {
+      organizationId: organizationId || null,
+      userId: uid,
       endpoint,
       keys: { p256dh, auth: authKey },
+      deviceName,
+      userAgent: ua.slice(0, 500),
+      platform,
+      isActive: true,
+      failedCount: 0,
+      lastUsedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
       ...(!existing.exists ? { createdAt: FieldValue.serverTimestamp() } : {}),
     },
     { merge: true }
   );
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, subscriptionId: docId });
 }
 
 export async function DELETE(request: NextRequest) {

@@ -33,6 +33,7 @@ import { InquiryOfferTemplatesSettingsCard } from "@/components/settings/inquiry
 import { InquiryOfferLibrarySettingsCard } from "@/components/settings/inquiry-offer-library-settings-card";
 import { AiAssistantSettingsCard } from "@/components/settings/ai-assistant-settings-card";
 import { EmployeeDocumentTemplatesSettingsCard } from "@/components/settings/EmployeeDocumentTemplatesSettingsCard";
+import { PortalNotificationPreferencesSettings } from "@/components/settings/portal-notification-preferences-settings";
 import { useToast } from '@/hooks/use-toast';
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
 import { getFirebaseStorage } from '@/firebase/storage';
@@ -1272,26 +1273,7 @@ export default function SettingsPage() {
         )}
 
         <TabsContent value="notifications" className="mt-6">
-          <Card className="bg-surface border-border">
-            <CardHeader>
-              <CardTitle>Předvolby oznámení</CardTitle>
-              <CardDescription>Vyberte si, jak chcete být upozorňováni na aktivitu.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label>Emailová oznámení</Label>
-                <Switch defaultChecked />
-              </div>
-              <div className="flex items-center justify-between">
-                <Label>Upozornění na nové zprávy</Label>
-                <Switch defaultChecked />
-              </div>
-              <div className="flex items-center justify-between">
-                <Label>Připomenutí docházky</Label>
-                <Switch />
-              </div>
-            </CardContent>
-          </Card>
+          <PortalNotificationPreferencesSettings />
         </TabsContent>
       </Tabs>
     </div>

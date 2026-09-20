@@ -4,6 +4,7 @@ import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-
 import { parseLeadImportPayload, type LeadImportRow } from "@/lib/lead-import-parse";
 import { syncImportLeadsToFirestoreAdmin } from "@/lib/import-lead-sync-firestore";
 import { sendModuleNotification } from "@/lib/email-notifications/module-notify";
+import { createNotification } from "@/lib/notification-service/notification-service";
 
 export const dynamic = "force-dynamic";
 
@@ -283,6 +284,31 @@ export async function GET(request: NextRequest) {
           ],
           actionPath: "/portal/leads",
         });
+        const title = `Nové poptávky (${sync.created})`;
+        const admins = await db
+          .collection("users")
+          .where("companyId", "==", companyId)
+          .where("role", "in", ["owner", "admin", "manager"])
+          .get()
+          .catch(() => null);
+        if (admins) {
+          await Promise.allSettled(
+            admins.docs.map((u) =>
+              createNotification({
+                organizationId: companyId,
+                recipientUserId: u.id,
+                type: "INQUIRY_CREATED",
+                title,
+                body: `Import přidal ${sync.created} poptávek.`,
+                url: "/portal/leads",
+                entityType: "inquiry",
+                entityId: companyId,
+                eventId: `inquiry-import:${companyId}:${sync.created}:${Math.floor(Date.now() / 300_000)}`,
+                source: "import-leads",
+              })
+            )
+          );
+        }
       }
     } catch (notifyErr) {
       console.warn("[import-leads] email notification skipped", notifyErr);

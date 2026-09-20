@@ -20,6 +20,8 @@ import {
   photoDocUnreadEmailEnabled,
 } from "@/lib/job-photo-comment-email-settings";
 import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
+import { createNotification } from "@/lib/notification-service/notification-service";
+import type { NotificationEventType } from "@/lib/notification-service/types";
 
 export type JobActivityNotifyEvent =
   | "file_upload"
@@ -437,6 +439,46 @@ export async function dispatchJobActivityNotifications(
       await writeHistory(db, input, recipient, "failed", sendResult.error ?? null);
     }
   }
+
+  const pushTitle = subject.slice(0, 120);
+  const pushBody =
+    preview ||
+    `${activity}${fileLine ? ` — ${fileLine}` : ""}`.slice(0, 240) ||
+    jobTitle;
+
+  function mapJobEventType(): NotificationEventType {
+    if (input.eventType === "customer_job_chat" || input.eventType === "job_chat" || input.eventType === "file_chat") {
+      return "JOB_CUSTOMER_MESSAGE";
+    }
+    if (input.eventType === "drawing_approved" || input.eventType === "drawing_rejected") {
+      return "DOCUMENT_APPROVED";
+    }
+    return "JOB_UPDATED";
+  }
+
+  const notifType = mapJobEventType();
+  const entityKey = input.entityId ?? input.fileId ?? input.folderId ?? input.jobId;
+
+  await Promise.allSettled(
+    recipients
+      .filter((r) => r.uid && r.uid !== input.actorUid)
+      .map((recipient) =>
+        createNotification({
+          organizationId: input.companyId,
+          recipientUserId: recipient.uid!,
+          type: notifType,
+          title: pushTitle,
+          body: pushBody,
+          url: portalPathForRecipient(recipient.role, input.jobId),
+          entityType: "job",
+          entityId: input.jobId,
+          priority: input.eventType === "customer_drawing_reminder" ? "HIGH" : "NORMAL",
+          eventId: `job-activity:${input.companyId}:${input.jobId}:${input.eventType}:${entityKey}:${recipient.uid}`,
+          source: "job-activity-notify",
+          category: "job",
+        })
+      )
+  );
 
   return { ok: true, sent, skipped, failed };
 }

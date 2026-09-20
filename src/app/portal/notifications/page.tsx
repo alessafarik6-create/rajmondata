@@ -1,34 +1,70 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
-import { Bell, CheckCheck, Loader2 } from "lucide-react";
+import { Bell, CheckCheck, Loader2, Send, Smartphone } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { usePortalNotifications } from "@/components/portal/portal-notifications-context";
 import { formatMediaDate } from "@/lib/job-media-types";
+import { useToast } from "@/hooks/use-toast";
 
 export default function PortalNotificationsPage() {
+  const { toast } = useToast();
+  const [pushBusy, setPushBusy] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
   const {
     items,
     isLoading,
     unreadCount,
     markAsRead,
     markAllRead,
-    clearOsBadge,
     registerWebPush,
+    sendTestPush,
     pushSupported,
+    pushDiagnostics,
+    refreshPushDiagnostics,
   } = usePortalNotifications();
 
-  useEffect(() => {
-    if (isLoading) return;
-    if (unreadCount === 0) {
-      clearOsBadge();
-      return;
+  const pushActive =
+    pushDiagnostics.subscriptionActive &&
+    pushDiagnostics.permission === "granted" &&
+    pushDiagnostics.vapidConfigured;
+
+  const onEnablePush = async () => {
+    setPushBusy(true);
+    try {
+      const r = await registerWebPush();
+      toast({
+        title: r.ok ? "Push aktivní" : "Push",
+        description: r.message,
+        variant: r.ok ? "default" : "destructive",
+      });
+      if (r.ok) {
+        const test = await sendTestPush();
+        if (test.ok) {
+          toast({ title: "Test", description: test.message });
+        }
+      }
+    } finally {
+      setPushBusy(false);
     }
-    void markAllRead();
-    clearOsBadge();
-  }, [isLoading, unreadCount, markAllRead, clearOsBadge]);
+  };
+
+  const onTestPush = async () => {
+    setTestBusy(true);
+    try {
+      const r = await sendTestPush();
+      toast({
+        title: r.ok ? "Test odeslán" : "Test selhal",
+        description: r.message,
+        variant: r.ok ? "default" : "destructive",
+      });
+    } finally {
+      setTestBusy(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -39,16 +75,10 @@ export default function PortalNotificationsPage() {
             Oznámení
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Změny u vašeho účtu, zakázek a zpráv. Po otevření této stránky se oznámení označí jako přečtená a
-            odznak na ikoně aplikace se smaže (pokud ho prohlížeč podporuje).
+            In-app zvoněk a Web Push pro nainstalovanou PWA. Nepřečtených: {unreadCount}.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {pushSupported ? (
-            <Button type="button" variant="outline" size="sm" onClick={() => void registerWebPush()}>
-              Povolit push
-            </Button>
-          ) : null}
           <Button
             type="button"
             variant="secondary"
@@ -64,13 +94,68 @@ export default function PortalNotificationsPage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Seznam</CardTitle>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Smartphone className="h-4 w-4" />
+            Push na tomto zařízení
+          </CardTitle>
           <CardDescription>
-            Nepřečtených: {unreadCount}
             {pushSupported
-              ? " · Push vyžaduje povolení v prohlížeči a nakonfigurované VAPID klíče na serveru."
-              : null}
+              ? pushActive
+                ? "Push oznámení: Aktivní"
+                : pushDiagnostics.vapidConfigured
+                  ? "Push: Nepovoleno — povolte tlačítkem níže."
+                  : "Administrátorská konfigurace push oznámení není dokončena (VAPID klíče)."
+              : "Web Push není v tomto prohlížeči podporován."}
           </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>Stav:</span>
+            {pushActive ? (
+              <Badge className="bg-green-600">● Aktivní</Badge>
+            ) : (
+              <Badge variant="outline">○ Nepovoleno</Badge>
+            )}
+            <span className="text-muted-foreground">Zařízení: {pushDiagnostics.deviceLabel}</span>
+          </div>
+          {pushDiagnostics.iosHomeScreenHint ? (
+            <p className="text-amber-700 dark:text-amber-400 text-xs">
+              iOS: přidejte Rajmondata na Domovskou obrazovku a povolte oznámení (iOS 16.4+).
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {pushSupported && !pushActive ? (
+              <Button type="button" size="sm" disabled={pushBusy} onClick={() => void onEnablePush()}>
+                {pushBusy ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                Povolit push
+              </Button>
+            ) : null}
+            {pushSupported && pushDiagnostics.vapidConfigured ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={testBusy}
+                onClick={() => void onTestPush()}
+              >
+                {testBusy ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-4 w-4 mr-1" />}
+                Poslat testovací oznámení
+              </Button>
+            ) : null}
+            <Button type="button" variant="ghost" size="sm" onClick={() => void refreshPushDiagnostics()}>
+              Obnovit stav
+            </Button>
+          </div>
+          {pushDiagnostics.lastPushError ? (
+            <p className="text-xs text-destructive">Poslední chyba push: {pushDiagnostics.lastPushError}</p>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Seznam</CardTitle>
+          <CardDescription>Důležité události podle vašich oprávnění a předvoleb v Nastavení.</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -98,10 +183,7 @@ export default function PortalNotificationsPage() {
                     <div className="flex shrink-0 gap-2 sm:flex-col sm:items-end">
                       {row.linkUrl ? (
                         <Button variant="outline" size="sm" className="h-8" asChild>
-                          <Link
-                            href={row.linkUrl}
-                            onClick={() => void markAsRead(row.id)}
-                          >
+                          <Link href={row.linkUrl} onClick={() => void markAsRead(row.id)}>
                             Otevřít
                           </Link>
                         </Button>
