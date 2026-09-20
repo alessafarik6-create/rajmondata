@@ -236,14 +236,7 @@ export async function loadAccessibleAccountIdSet(
   return new Set(rows.map((r) => r.id));
 }
 
-/** Zpráva je viditelná, pokud patří ke schránce, ke které má uživatel přístup. */
-export function messageBelongsToUser(
-  message: EmailMessageDoc,
-  _callerUid: string,
-  accessibleAccountIds: Set<string>
-): boolean {
-  return accessibleAccountIds.has(message.emailAccountId);
-}
+export { messageBelongsToUser, messageVisibleToUser } from "@/lib/email-mailbox/message-access";
 
 export async function assertMessageAccess(
   db: Firestore,
@@ -260,15 +253,32 @@ export async function assertMessageAccess(
     return { ok: false, status: 404, error: "Zpráva nenalezena.", errorCode: "MESSAGE_NOT_FOUND" };
   }
   const message = { id: snap.id, ...(snap.data() as EmailMessageDoc) };
-  const accountCheck = await assertEmailAccountAccess(
-    db,
-    companyId,
-    message.emailAccountId,
-    callerUid,
-    mode
-  );
-  if (!accountCheck.ok) {
-    return { ok: false, status: accountCheck.status, error: accountCheck.error, errorCode: accountCheck.errorCode };
+  const accessibleIds = await loadAccessibleAccountIdSet(db, companyId, callerUid);
+  const { messageVisibleToUser } = await import("@/lib/email-mailbox/message-access");
+  if (!messageVisibleToUser(message, callerUid, accessibleIds)) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Nemáte přístup k této zprávě.",
+      errorCode: "MESSAGE_FORBIDDEN",
+    };
+  }
+  if (mode !== "read") {
+    const accountCheck = await assertEmailAccountAccess(
+      db,
+      companyId,
+      message.emailAccountId,
+      callerUid,
+      mode
+    );
+    if (!accountCheck.ok && message.assignedToUserId !== callerUid) {
+      return {
+        ok: false,
+        status: accountCheck.status,
+        error: accountCheck.error,
+        errorCode: accountCheck.errorCode,
+      };
+    }
   }
   return { ok: true, message };
 }

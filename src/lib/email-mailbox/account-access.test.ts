@@ -79,6 +79,13 @@ function testSharedReadMemberSeesMessagesOnSharedAccount() {
     folder: "inbox",
   };
   assert.equal(messageBelongsToUser(msg, "member-user", sharedIds), true);
+
+  const assignedMsg = {
+    ...msg,
+    emailAccountId: "acc-a",
+    assignedToUserId: "user-b",
+  };
+  assert.equal(messageBelongsToUser(assignedMsg, "user-b", new Set(["acc-x"])), true);
 }
 
 function run() {

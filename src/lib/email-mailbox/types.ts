@@ -22,18 +22,7 @@ export type EmailLastSyncStatus =
 
 export type EmailMessageDirection = "inbound" | "outbound";
 
-export type EmailMessageWorkflowView =
-  | "inbox"
-  | "sent"
-  | "drafts"
-  | "archive"
-  | "spam"
-  | "trash"
-  | "waiting_reply"
-  | "ai_review"
-  | "assigned"
-  | "unassigned"
-  | "resolved";
+export type { EmailMessageWorkflowView } from "@/lib/email-mailbox/intelligence-types";
 
 export type EmailMailboxFolder = "inbox" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
@@ -96,17 +85,38 @@ export type EmailMessageAttachmentMeta = {
   aiSuggestedAction?: string | null;
 };
 
+import type {
+  EmailAiCategory,
+  EmailAiPriority,
+  EmailWorkflowState,
+} from "@/lib/email-mailbox/intelligence-types";
+
 export type EmailMessageAiFields = {
   aiSummary?: string | null;
   aiClassification?: string | null;
-  aiPriority?: "low" | "normal" | "high" | null;
+  aiCategory?: EmailAiCategory | null;
+  aiPriority?: EmailAiPriority | "low" | "normal" | "high" | null;
   needsReply?: boolean;
+  requiresAction?: boolean;
   suggestedCustomerId?: string | null;
   suggestedJobId?: string | null;
   suggestedInquiryId?: string | null;
+  suggestedCustomerName?: string | null;
+  suggestedJobLabel?: string | null;
+  jobMatchConfidence?: "low" | "medium" | "high" | null;
   suggestedActions?: string[] | null;
   aiReviewPending?: boolean;
   inquiryDraft?: Record<string, unknown> | null;
+  workflowState?: EmailWorkflowState | null;
+  threadId?: string | null;
+  assignedToUserId?: string | null;
+  assignedByUserId?: string | null;
+  assignedToEmployeeId?: string | null;
+  assignmentNote?: string | null;
+  assignmentDueAt?: Timestamp | null;
+  assignmentStatus?: "pending" | "in_progress" | "done" | "cancelled" | null;
+  reminderAt?: Timestamp | null;
+  userMarkedSpam?: boolean;
 };
 
 export type EmailMessageDoc = {

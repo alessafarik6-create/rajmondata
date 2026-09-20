@@ -2,6 +2,9 @@ import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminStorageBucket } from "@/lib/firebase-admin";
 import { analyzeEmailMessageWithAi } from "@/lib/email-mailbox/ai-analyze-message";
+import { computeEmailThreadId } from "@/lib/email-mailbox/threading";
+import { appendEmailMessageTimeline } from "@/lib/email-mailbox/message-timeline";
+import { runEmailAutomationForMessage } from "@/lib/email-mailbox/automation-engine";
 import {
   emailAccountsCol,
   loadEmailAccount,
@@ -20,6 +23,7 @@ import type {
   EmailAccountDoc,
   EmailAccountStatus,
   EmailLastSyncStatus,
+  EmailMessageDoc,
 } from "@/lib/email-mailbox/types";
 import {
   extractEmailAddress,
@@ -345,6 +349,14 @@ export async function syncEmailAccount(
           attachments: attachmentsMeta,
           resolved: false,
           needsReply: false,
+          requiresAction: false,
+          workflowState: "new" as const,
+          threadId: computeEmailThreadId(accountId, {
+            messageId: msg.messageId ?? null,
+            inReplyTo: msg.inReplyTo ?? null,
+            references: msg.references ?? [],
+            subject: (msg.subject ?? "").slice(0, 2000),
+          }),
           aiReviewPending: false,
         };
 
@@ -371,6 +383,11 @@ export async function syncEmailAccount(
         } else {
           imported++;
           logEmailPhase("EMAIL_SYNC_MESSAGE_SAVED", { messageId: savedId, uid: msg.imapUid });
+          void appendEmailMessageTimeline(db, companyId, savedId, {
+            kind: "received",
+            label: "Přijat e-mail",
+            userId: ownerUserId || null,
+          });
           if (!opts?.skipAi) {
             aiQueue.push({
               messageId: savedId,
@@ -497,21 +514,46 @@ async function runAiAnalysisBatch(
   for (const item of queue) {
     const ai = await analyzeEmailMessageWithAi(db, companyId, item.payload);
     if (!ai) continue;
-    await db
-      .collection("companies")
-      .doc(companyId)
-      .collection("email_messages")
-      .doc(item.messageId)
-      .update({
-        aiSummary: ai.summary,
-        aiClassification: ai.category,
-        aiPriority: ai.priority,
-        needsReply: ai.needsReply,
-        suggestedActions: ai.suggestedActions,
-        inquiryDraft: ai.inquiryDraft ?? null,
-        aiReviewPending: Boolean(ai.inquiryDraft || ai.suggestedActions.length),
-        aiInsights: ai.insights ?? [],
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+    const ref = db.collection("companies").doc(companyId).collection("email_messages").doc(item.messageId);
+    const snap = await ref.get();
+    const prev = snap.data() as EmailMessageDoc | undefined;
+    const workflowState =
+      ai.needsReply && !prev?.workflowState
+        ? "waiting_reply"
+        : ai.requiresAction
+          ? "pending_action"
+          : prev?.workflowState ?? "new";
+
+    await ref.update({
+      aiSummary: ai.summary,
+      aiClassification: ai.category,
+      aiCategory: ai.category,
+      aiPriority: ai.priority,
+      needsReply: ai.needsReply,
+      requiresAction: ai.requiresAction,
+      suggestedCustomerId: ai.suggestedCustomerId ?? null,
+      suggestedJobId: ai.suggestedJobId ?? null,
+      suggestedCustomerName: ai.suggestedCustomerName ?? null,
+      suggestedJobLabel: ai.suggestedJobLabel ?? null,
+      jobMatchConfidence: ai.jobMatchConfidence ?? null,
+      suggestedActions: ai.suggestedActions,
+      inquiryDraft: ai.inquiryDraft ?? null,
+      aiReviewPending: Boolean(ai.inquiryDraft || ai.suggestedActions.length),
+      aiInsights: ai.insights ?? [],
+      workflowState,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    void appendEmailMessageTimeline(db, companyId, item.messageId, {
+      kind: "ai_classified",
+      label: `AI: ${ai.category}`,
+      metadata: { priority: ai.priority, needsReply: ai.needsReply },
+    });
+
+    if (prev) {
+      void runEmailAutomationForMessage(db, companyId, {
+        message: { ...prev, ...ai, aiCategory: ai.category } as EmailMessageDoc,
+      }).catch(() => undefined);
+    }
   }
 }

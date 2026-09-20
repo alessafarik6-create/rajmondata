@@ -6,11 +6,16 @@ import { useUser } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Mail } from "lucide-react";
 
+type Stats = {
+  waitingReply: number;
+  overdue: number;
+  assignedToMe: number;
+  urgent: number;
+};
+
 export function DashboardEmailAttentionWidget({ companyId }: { companyId: string | null }) {
   const { user } = useUser();
-  const [stats, setStats] = useState<{ waitingReply: number; assignedToJobs: number; aiImportant: number } | null>(
-    null
-  );
+  const [stats, setStats] = useState<Stats | null>(null);
 
   useEffect(() => {
     if (!user || !companyId) return;
@@ -26,8 +31,9 @@ export function DashboardEmailAttentionWidget({ companyId }: { companyId: string
         if (!cancelled && data.ok) {
           setStats({
             waitingReply: data.waitingReply ?? 0,
-            assignedToJobs: data.assignedToJobs ?? 0,
-            aiImportant: data.aiImportant ?? 0,
+            overdue: data.overdue ?? 0,
+            assignedToMe: data.assignedToMe ?? 0,
+            urgent: data.urgent ?? 0,
           });
         }
       } catch {
@@ -39,7 +45,7 @@ export function DashboardEmailAttentionWidget({ companyId }: { companyId: string
     };
   }, [user, companyId]);
 
-  if (!stats || (stats.waitingReply === 0 && stats.assignedToJobs === 0 && stats.aiImportant === 0)) {
+  if (!stats || (stats.waitingReply === 0 && stats.overdue === 0 && stats.assignedToMe === 0 && stats.urgent === 0)) {
     return null;
   }
 
@@ -47,28 +53,35 @@ export function DashboardEmailAttentionWidget({ companyId }: { companyId: string
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base flex items-center gap-2">
-          <Mail className="h-4 w-4" /> E-mail vyžaduje pozornost
+          <Mail className="h-4 w-4" /> E-maily k vyřízení
         </CardTitle>
       </CardHeader>
       <CardContent className="text-sm space-y-1">
         {stats.waitingReply > 0 ? (
           <p>
-            <Link href="/portal/email" className="text-primary hover:underline">
-              {stats.waitingReply} zpráv čeká na odpověď
+            <Link href="/portal/email?view=waiting_reply" className="text-primary hover:underline">
+              Čeká na odpověď: {stats.waitingReply}
             </Link>
           </p>
         ) : null}
-        {stats.assignedToJobs > 0 ? (
+        {stats.overdue > 0 ? (
           <p>
-            <Link href="/portal/email" className="text-primary hover:underline">
-              {stats.assignedToJobs} nových zpráv k zakázkám
+            <Link href="/portal/email?view=waiting_reply" className="text-primary hover:underline">
+              Po termínu: {stats.overdue}
             </Link>
           </p>
         ) : null}
-        {stats.aiImportant > 0 ? (
+        {stats.assignedToMe > 0 ? (
+          <p>
+            <Link href="/portal/email?view=assigned_to_me" className="text-primary hover:underline">
+              Přiřazené mně: {stats.assignedToMe}
+            </Link>
+          </p>
+        ) : null}
+        {stats.urgent > 0 ? (
           <p>
             <Link href="/portal/email" className="text-primary hover:underline">
-              {stats.aiImportant} důležitých upozornění od AI
+              Urgentní: {stats.urgent}
             </Link>
           </p>
         ) : null}

@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
     } catch {
       snap = await emailMessagesCol(perm.db, companyId).limit(200).get();
     }
-    const filterFn = buildMessageViewFilter(view);
+    const filterFn = buildMessageViewFilter(view, perm.caller.uid);
     const messages = snap.docs
       .map((d) => ({ id: d.id, ...(d.data() as EmailMessageDoc) }))
       .filter((m) => messageBelongsToUser(m, perm.caller.uid, accessibleIds))
@@ -94,6 +94,10 @@ export async function GET(request: NextRequest) {
         aiSummary: m.aiSummary ?? null,
         aiClassification: m.aiClassification ?? null,
         aiPriority: m.aiPriority ?? null,
+        aiCategory: m.aiCategory ?? null,
+        workflowState: m.workflowState ?? null,
+        requiresAction: Boolean(m.requiresAction),
+        assignedToUserId: m.assignedToUserId ?? null,
         customerId: m.customerId ?? null,
         jobId: m.jobId ?? null,
         inquiryId: m.inquiryId ?? null,

@@ -5,8 +5,13 @@ import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import {
   EMAIL_MESSAGES_SUBCOLLECTION,
   type EmailMessageDoc,
-  type EmailMessageWorkflowView,
 } from "@/lib/email-mailbox/types";
+export {
+  buildMessageViewFilter,
+  messageIsStaleNeedsReply,
+  computeFolderCounts,
+  computeDashboardEmailStats,
+} from "@/lib/email-mailbox/workflow-views";
 
 export function emailMessagesCol(db: Firestore, companyId: string) {
   return db.collection(COMPANIES_COLLECTION).doc(companyId).collection(EMAIL_MESSAGES_SUBCOLLECTION);
@@ -38,53 +43,6 @@ export async function findMessageByMessageId(
     .limit(1)
     .get();
   return snap.empty ? null : snap.docs[0]!.id;
-}
-
-export function buildMessageViewFilter(view: EmailMessageWorkflowView) {
-  const now = Date.now();
-  const staleMs = 48 * 60 * 60 * 1000;
-  switch (view) {
-    case "waiting_reply":
-      return (m: EmailMessageDoc) =>
-        Boolean(m.needsReply) && !m.resolved && m.direction === "inbound";
-    case "ai_review":
-      return (m: EmailMessageDoc) => Boolean(m.aiReviewPending);
-    case "assigned":
-      return (m: EmailMessageDoc) =>
-        Boolean(m.customerId || m.jobId || m.inquiryId) && !m.resolved;
-    case "unassigned":
-      return (m: EmailMessageDoc) =>
-        m.direction === "inbound" && !m.customerId && !m.jobId && !m.inquiryId && !m.resolved;
-    case "resolved":
-      return (m: EmailMessageDoc) => Boolean(m.resolved);
-    case "sent":
-      return (m: EmailMessageDoc) =>
-        m.direction === "outbound" && !m.isDraft && !m.deleted;
-    case "drafts":
-      return (m: EmailMessageDoc) => Boolean(m.isDraft) && !m.deleted;
-    case "archive":
-      return (m: EmailMessageDoc) => Boolean(m.resolved) && !m.deleted;
-    case "spam":
-      return (m: EmailMessageDoc) =>
-        String(m.aiClassification ?? "").toLowerCase() === "spam" && !m.deleted;
-    case "trash":
-      return (m: EmailMessageDoc) => Boolean(m.deleted);
-    case "inbox":
-    default:
-      return (m: EmailMessageDoc) =>
-        m.direction === "inbound" &&
-        !m.deleted &&
-        !m.isDraft &&
-        !m.resolved &&
-        String(m.aiClassification ?? "").toLowerCase() !== "spam";
-  }
-}
-
-export function messageIsStaleNeedsReply(m: EmailMessageDoc): boolean {
-  if (!m.needsReply || m.resolved || m.repliedAt) return false;
-  const ts = m.receivedAt?.toMillis?.() ?? 0;
-  if (!ts) return false;
-  return Date.now() - ts > 48 * 60 * 60 * 1000;
 }
 
 export function inboundMessageDocId(

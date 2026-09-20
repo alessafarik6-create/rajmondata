@@ -28,8 +28,34 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   if (!access.ok) {
     return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   }
+  let toneBody: { tone?: "default" | "shorter" | "formal" | "friendly" } = {};
+  try {
+    toneBody = await request.json();
+  } catch {
+    toneBody = {};
+  }
+
   const m = access.message;
-  const draft = await suggestEmailReplyDraft(m);
+  const threadRes = await perm.db
+    .collection("companies")
+    .doc(companyId)
+    .collection("email_messages")
+    .where("threadId", "==", m.threadId ?? "__none__")
+    .limit(15)
+    .get()
+    .catch(() => null);
+  const threadContext =
+    threadRes && !threadRes.empty
+      ? threadRes.docs
+          .map((d) => d.data() as { from?: string; textBody?: string })
+          .map((row) => `${row.from ?? "?"}: ${String(row.textBody ?? "").slice(0, 400)}`)
+          .join("\n---\n")
+      : undefined;
+
+  const draft = await suggestEmailReplyDraft(m, {
+    tone: toneBody.tone,
+    threadContext,
+  });
   if (!draft) {
     return NextResponse.json({ ok: false, error: "AI návrh není k dispozici." }, { status: 503 });
   }
@@ -43,6 +69,13 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       aiDraftReply: draft,
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+  const { appendEmailMessageTimeline } = await import("@/lib/email-mailbox/message-timeline");
+  await appendEmailMessageTimeline(perm.db, companyId, messageId, {
+    kind: "ai_draft",
+    label: "AI vytvořila návrh odpovědi",
+    userId: perm.caller.uid,
+  });
 
   await logEmailMailboxAudit(perm.db, companyId, {
     actionType: "email_ai_draft",

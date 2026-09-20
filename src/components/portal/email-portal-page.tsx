@@ -12,7 +12,16 @@ import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { EmailConnectWizard } from "@/components/portal/email-connect-wizard";
 import type { EmailMessageWorkflowView } from "@/lib/email-mailbox/types";
+import { EMAIL_PORTAL_FOLDERS } from "@/lib/email-mailbox/intelligence-types";
+import { priorityEmoji } from "@/lib/email-mailbox/intelligence-types";
 import { parseEmailApiResponse } from "@/lib/email-mailbox/client-fetch";
+import {
+  EmailPortalDetailPanel,
+  type AssignableEmployee,
+  type EmailDetailModel,
+  type ThreadMessage,
+  type TimelineEvent,
+} from "@/components/portal/email-portal-detail-panel";
 import { cn } from "@/lib/utils";
 import {
   Select,
@@ -21,8 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Mail, Plus, Sparkles, Search } from "lucide-react";
+import { Loader2, Mail, Plus, Search } from "lucide-react";
 import { EMAIL_ACCOUNT_ALL_MAILBOXES } from "@/lib/email-mailbox/account-default";
 
 type AccountRow = {
@@ -47,27 +55,16 @@ type MsgRow = {
   jobLabel?: string | null;
   emailAccountId: string;
   mailboxEmail?: string | null;
+  aiPriority?: string | null;
+  aiCategory?: string | null;
 };
 
-type MsgDetail = MsgRow & {
+type MsgDetail = EmailDetailModel & {
   to?: string[];
-  textBody?: string | null;
-  aiSummary?: string | null;
-  aiInsights?: string[] | null;
-  aiDraftReply?: string | null;
-  customerId?: string | null;
-  jobId?: string | null;
   inquiryDraft?: Record<string, unknown> | null;
 };
 
-const FOLDERS: { id: EmailMessageWorkflowView; label: string }[] = [
-  { id: "inbox", label: "Doručené" },
-  { id: "sent", label: "Odeslané" },
-  { id: "drafts", label: "Koncepty" },
-  { id: "archive", label: "Archiv" },
-  { id: "spam", label: "Spam" },
-  { id: "trash", label: "Koš" },
-];
+type MobilePane = "folders" | "list" | "detail";
 
 const ONBOARDING_BULLETS = [
   "příchozí a odeslané e-maily v RAJMONDATA",
@@ -91,7 +88,10 @@ export function EmailPortalPage() {
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(searchParams.get("setup") === "1");
-  const [folder, setFolder] = useState<EmailMessageWorkflowView>("inbox");
+  const initialView = (searchParams.get("view") ?? "inbox") as EmailMessageWorkflowView;
+  const [folder, setFolder] = useState<EmailMessageWorkflowView>(
+    EMAIL_PORTAL_FOLDERS.some((f) => f.id === initialView) ? initialView : "inbox"
+  );
   const [messages, setMessages] = useState<MsgRow[]>([]);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -108,6 +108,14 @@ export function EmailPortalPage() {
   const [shareWithJob, setShareWithJob] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string>(EMAIL_ACCOUNT_ALL_MAILBOXES);
   const [composeFromAccountId, setComposeFromAccountId] = useState<string>("");
+  const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
+  const [mobilePane, setMobilePane] = useState<MobilePane>("list");
+  const [employees, setEmployees] = useState<AssignableEmployee[]>([]);
+  const [thread, setThread] = useState<ThreadMessage[]>([]);
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [assigneeUserId, setAssigneeUserId] = useState("");
+  const [assignNote, setAssignNote] = useState("");
+  const [assignDue, setAssignDue] = useState("");
 
   const connectedAccounts = useMemo(
     () => accounts.filter((a) => !a.disconnected && a.status !== "disconnected"),
@@ -183,6 +191,36 @@ export function EmailPortalPage() {
     }
   }, [user, companyId, folder, access.canRead, accounts.length, activeAccountId, getToken]);
 
+  const loadFolderCounts = useCallback(async () => {
+    if (!user || !companyId || !access.canRead) return;
+    try {
+      const token = await getToken();
+      const res = await fetch(
+        `/api/company/email-mailbox/folder-stats?companyId=${encodeURIComponent(companyId)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data = await parseEmailApiResponse<{ counts?: Record<string, number> }>(res);
+      if (data.ok) setFolderCounts(data.counts ?? {});
+    } catch {
+      /* ignore */
+    }
+  }, [user, companyId, access.canRead, getToken]);
+
+  const loadEmployees = useCallback(async () => {
+    if (!user || !companyId || !access.canRead) return;
+    try {
+      const token = await getToken();
+      const res = await fetch(
+        `/api/company/email-mailbox/assignable-employees?companyId=${encodeURIComponent(companyId)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data = await parseEmailApiResponse<{ employees?: AssignableEmployee[] }>(res);
+      if (data.ok) setEmployees(data.employees ?? []);
+    } catch {
+      /* ignore */
+    }
+  }, [user, companyId, access.canRead, getToken]);
+
   const backgroundSyncStarted = useRef(false);
 
   useEffect(() => {
@@ -191,7 +229,12 @@ export function EmailPortalPage() {
 
   useEffect(() => {
     void loadMessages();
-  }, [loadMessages]);
+    void loadFolderCounts();
+  }, [loadMessages, loadFolderCounts]);
+
+  useEffect(() => {
+    void loadEmployees();
+  }, [loadEmployees]);
 
   useEffect(() => {
     if (!user || !companyId || !access.canWrite || connectedAccounts.length === 0) return;
@@ -232,6 +275,7 @@ export function EmailPortalPage() {
     async (id: string) => {
       if (!user || !companyId) return;
       setSelectedId(id);
+      setMobilePane("detail");
       const token = await getToken();
       const res = await fetch(
         `/api/company/email-mailbox/messages/${id}?companyId=${encodeURIComponent(companyId)}`,
@@ -241,8 +285,22 @@ export function EmailPortalPage() {
       if (data.ok && data.message) {
         setDetail(data.message);
         setReplyText(String(data.message?.aiDraftReply ?? ""));
-        setAssignJobId(String(data.message?.jobId ?? ""));
-        setAssignCustomerId(String(data.message?.customerId ?? ""));
+        setAssignJobId(String(data.message?.jobId ?? data.message?.suggestedJobId ?? ""));
+        setAssignCustomerId(String(data.message?.customerId ?? data.message?.suggestedCustomerId ?? ""));
+        const [threadRes, timelineRes] = await Promise.all([
+          fetch(
+            `/api/company/email-mailbox/messages/${id}/thread?companyId=${encodeURIComponent(companyId)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          ),
+          fetch(
+            `/api/company/email-mailbox/messages/${id}/timeline?companyId=${encodeURIComponent(companyId)}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          ),
+        ]);
+        const threadData = await threadRes.json();
+        const timelineData = await timelineRes.json();
+        setThread(threadData.ok ? (threadData.thread ?? []) : []);
+        setTimeline(timelineData.ok ? (timelineData.events ?? []) : []);
         if (access.canWrite) {
           await fetch(`/api/company/email-mailbox/messages/${id}/patch`, {
             method: "PATCH",
@@ -296,14 +354,18 @@ export function EmailPortalPage() {
     }
   }
 
-  async function aiDraft() {
+  async function aiDraft(tone?: "default" | "shorter" | "formal" | "friendly") {
     if (!selectedId || !companyId) return;
     setBusy(true);
     try {
       const token = await getToken();
       const res = await fetch(
         `/api/company/email-mailbox/messages/${selectedId}/ai-draft?companyId=${encodeURIComponent(companyId)}`,
-        { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ tone: tone ?? "default" }),
+        }
       );
       const data = await res.json();
       if (!data.ok) {
@@ -354,6 +416,101 @@ export function EmailPortalPage() {
       toast({ title: "E-mail odeslán" });
       setComposeOpen(false);
       await loadMessages();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markResolved() {
+    if (!selectedId || !companyId) return;
+    setBusy(true);
+    try {
+      const token = await getToken();
+      await fetch(
+        `/api/company/email-mailbox/messages/${selectedId}/workflow?companyId=${encodeURIComponent(companyId)}`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId, resolved: true }),
+        }
+      );
+      toast({ title: "Vyřešeno" });
+      await loadMessages();
+      await loadFolderCounts();
+      setSelectedId(null);
+      setDetail(null);
+      setMobilePane("list");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setReminder(preset: string) {
+    if (!selectedId || !companyId) return;
+    setBusy(true);
+    try {
+      const token = await getToken();
+      await fetch(
+        `/api/company/email-mailbox/messages/${selectedId}/reminder?companyId=${encodeURIComponent(companyId)}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId, preset }),
+        }
+      );
+      toast({ title: "Připomenutí nastaveno" });
+      await loadDetail(selectedId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function assignEmployeeInternal() {
+    if (!selectedId || !companyId || !assigneeUserId) return;
+    setBusy(true);
+    try {
+      const token = await getToken();
+      const emp = employees.find((e) => e.userId === assigneeUserId);
+      await fetch(
+        `/api/company/email-mailbox/messages/${selectedId}/assign-employee?companyId=${encodeURIComponent(companyId)}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            companyId,
+            assigneeUserId,
+            assigneeEmployeeId: emp?.employeeId ?? null,
+            note: assignNote || null,
+            dueAt: assignDue ? new Date(assignDue).toISOString() : null,
+          }),
+        }
+      );
+      toast({ title: "Předáno pracovníkovi" });
+      await loadDetail(selectedId);
+      await loadFolderCounts();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applySuggestedJob() {
+    if (!detail?.suggestedJobId || !selectedId || !companyId) return;
+    setAssignJobId(detail.suggestedJobId);
+    setAssignCustomerId(detail.suggestedCustomerId ?? assignCustomerId);
+    setBusy(true);
+    try {
+      const token = await getToken();
+      await fetch(`/api/company/email-mailbox/messages/${selectedId}/assign`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          jobId: detail.suggestedJobId,
+          customerId: detail.suggestedCustomerId ?? null,
+        }),
+      });
+      toast({ title: "Zakázka přiřazena" });
+      await loadDetail(selectedId);
     } finally {
       setBusy(false);
     }
@@ -470,7 +627,12 @@ export function EmailPortalPage() {
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-      <aside className="w-full shrink-0 border-b lg:w-52 lg:border-b-0 lg:border-r p-3">
+      <aside
+        className={cn(
+          "w-full shrink-0 border-b lg:w-56 lg:border-b-0 lg:border-r p-3",
+          mobilePane !== "folders" && "hidden lg:block"
+        )}
+      >
         <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Moje schránka</p>
         {connectedAccounts.length >= 1 ? (
           <Select value={activeAccountId} onValueChange={setSelectedAccountId}>
@@ -501,18 +663,29 @@ export function EmailPortalPage() {
         >
           <Plus className="h-4 w-4" /> Nový e-mail
         </Button>
-        <nav className="flex flex-row flex-wrap gap-1 lg:flex-col">
-          {FOLDERS.map((f) => (
-            <Button
-              key={f.id}
-              variant={folder === f.id ? "secondary" : "ghost"}
-              size="sm"
-              className="justify-start"
-              onClick={() => setFolder(f.id)}
-            >
-              {f.label}
-            </Button>
-          ))}
+        <nav className="flex flex-col gap-0.5 max-h-[50vh] lg:max-h-none overflow-y-auto">
+          {EMAIL_PORTAL_FOLDERS.map((f) => {
+            const count = f.countActive ? folderCounts[f.id] : undefined;
+            return (
+              <Button
+                key={f.id}
+                variant={folder === f.id ? "secondary" : "ghost"}
+                size="sm"
+                className="justify-between gap-2 min-h-[36px]"
+                onClick={() => {
+                  setFolder(f.id);
+                  setMobilePane("list");
+                }}
+              >
+                <span className="truncate text-left">{f.label}</span>
+                {typeof count === "number" && count > 0 ? (
+                  <span className="shrink-0 rounded-full bg-primary/15 px-1.5 text-xs font-medium text-primary">
+                    {count}
+                  </span>
+                ) : null}
+              </Button>
+            );
+          })}
         </nav>
         <Button
           variant="outline"
@@ -531,10 +704,19 @@ export function EmailPortalPage() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col lg:flex-row">
+        <div className="flex gap-2 border-b p-2 lg:hidden">
+          <Button size="sm" variant={mobilePane === "folders" ? "secondary" : "outline"} onClick={() => setMobilePane("folders")}>
+            Složky
+          </Button>
+          <Button size="sm" variant={mobilePane === "list" ? "secondary" : "outline"} onClick={() => setMobilePane("list")}>
+            Seznam
+          </Button>
+        </div>
         <div
           className={cn(
             "min-w-0 border-b lg:w-[min(100%,22rem)] lg:border-b-0 lg:border-r flex flex-col",
-            selectedId && "hidden lg:flex"
+            mobilePane === "detail" && "hidden lg:flex",
+            mobilePane === "folders" && "hidden lg:flex"
           )}
         >
           <div className="p-2 border-b">
@@ -567,7 +749,10 @@ export function EmailPortalPage() {
                   )}
                   onClick={() => void loadDetail(m.id)}
                 >
-                  <p className="truncate">{m.subject}</p>
+                  <p className="truncate flex items-center gap-1">
+                    <span>{priorityEmoji(String(m.aiPriority ?? "NORMAL") as "NORMAL")}</span>
+                    <span className="truncate">{m.subject}</span>
+                  </p>
                   <p className="truncate text-xs text-muted-foreground">{m.from}</p>
                   {activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES && m.mailboxEmail ? (
                     <p className="truncate text-xs text-primary/80">Schránka: {m.mailboxEmail}</p>
@@ -581,7 +766,7 @@ export function EmailPortalPage() {
           </div>
         </div>
 
-        <div className={cn("min-w-0 flex-1 p-3 sm:p-4", !selectedId && "hidden lg:block")}>
+        <div className={cn("min-w-0 flex-1 p-3 sm:p-4", mobilePane !== "detail" && "max-lg:hidden")}>
           {composeOpen ? (
             <div className="space-y-3 max-w-xl">
               <h2 className="font-semibold">Nový e-mail</h2>
@@ -619,104 +804,47 @@ export function EmailPortalPage() {
           ) : !detail ? (
             <p className="text-muted-foreground text-sm">Vyberte zprávu v seznamu.</p>
           ) : (
-            <div className="space-y-4 max-w-3xl">
-              <Button variant="ghost" size="sm" className="lg:hidden -ml-2" onClick={() => setSelectedId(null)}>
-                ← Zpět
-              </Button>
-              <div>
-                <h1 className="text-lg font-semibold break-words">{detail.subject}</h1>
-                <p className="text-sm text-muted-foreground break-all">Od: {detail.from}</p>
-                <p className="text-xs text-muted-foreground">
-                  {detail.receivedAt ? new Date(detail.receivedAt).toLocaleString("cs-CZ") : ""}
-                </p>
-              </div>
-              {detail.customerName || detail.customerId ? (
-                <div className="rounded-md border p-3 text-sm">
-                  <p>
-                    <span className="text-muted-foreground">Zákazník: </span>
-                    {detail.customerName ?? detail.customerId}
-                  </p>
-                  {detail.customerId ? (
-                    <Button size="sm" variant="link" className="px-0 h-auto" asChild>
-                      <Link href={`/portal/customers/${detail.customerId}`}>Otevřít zákazníka</Link>
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-              {detail.jobLabel || detail.jobId ? (
-                <div className="rounded-md border p-3 text-sm">
-                  <p>
-                    <span className="text-muted-foreground">Zakázka: </span>
-                    {detail.jobLabel ?? detail.jobId}
-                  </p>
-                  {detail.jobId ? (
-                    <Button size="sm" variant="link" className="px-0 h-auto" asChild>
-                      <Link href={`/portal/jobs/${detail.jobId}`}>Otevřít zakázku</Link>
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-              {detail.aiSummary ? (
-                <p className="rounded-md bg-muted p-3 text-sm">{detail.aiSummary}</p>
-              ) : null}
-              {(detail.aiInsights ?? []).map((line) => (
-                <p key={line} className="text-sm text-amber-800 dark:text-amber-200">
-                  {line}
-                </p>
-              ))}
-              <div className="whitespace-pre-wrap break-words text-sm border rounded-md p-3 max-h-[40vh] overflow-y-auto">
-                {detail.textBody}
-              </div>
-              {access.canWrite ? (
-                <>
-                  <Textarea rows={5} value={replyText} onChange={(e) => setReplyText(e.target.value)} />
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => void aiDraft()}>
-                      <Sparkles className="h-4 w-4 mr-1" /> Navrhnout odpověď pomocí AI
-                    </Button>
-                    <Button size="sm" disabled={busy} onClick={() => void sendMail({ reply: true })}>
-                      Odpovědět
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => {
-                        setComposeTo("");
-                        setComposeSubject(`Fwd: ${detail.subject}`);
-                        setComposeBody(`\n\n---------- Přeposlaná zpráva ----------\n${detail.textBody ?? ""}`);
-                        setComposeFromAccountId(detail.emailAccountId || defaultAccountId);
-                        setComposeOpen(true);
-                      }}
-                    >
-                      Přeposlat
-                    </Button>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2 border-t pt-4">
-                    <Input
-                      placeholder="ID zákazníka"
-                      value={assignCustomerId}
-                      onChange={(e) => setAssignCustomerId(e.target.value)}
-                    />
-                    <Input placeholder="ID zakázky" value={assignJobId} onChange={(e) => setAssignJobId(e.target.value)} />
-                    <label className="flex items-center gap-2 text-sm col-span-full">
-                      <Checkbox
-                        checked={shareWithJob}
-                        onCheckedChange={(v) => setShareWithJob(Boolean(v))}
-                        disabled={!assignJobId.trim()}
-                      />
-                      Zveřejnit obsah komunikace u zakázky (jinak zůstane soukromá)
-                    </label>
-                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => void assignLinks()}>
-                      Přiřadit
-                    </Button>
-                    <Button size="sm" variant="outline" asChild>
-                      <Link href="/portal/leads">Vytvořit poptávku</Link>
-                    </Button>
-                  </div>
-                </>
-              ) : null}
-            </div>
+            <EmailPortalDetailPanel
+              detail={detail}
+              canWrite={access.canWrite}
+              busy={busy}
+              replyText={replyText}
+              onReplyText={setReplyText}
+              assignCustomerId={assignCustomerId}
+              assignJobId={assignJobId}
+              shareWithJob={shareWithJob}
+              onAssignCustomerId={setAssignCustomerId}
+              onAssignJobId={setAssignJobId}
+              onShareWithJob={setShareWithJob}
+              employees={employees}
+              assigneeUserId={assigneeUserId}
+              onAssigneeUserId={setAssigneeUserId}
+              assignNote={assignNote}
+              onAssignNote={setAssignNote}
+              assignDue={assignDue}
+              onAssignDue={setAssignDue}
+              thread={thread}
+              timeline={timeline}
+              onBack={() => {
+                setSelectedId(null);
+                setDetail(null);
+                setMobilePane("list");
+              }}
+              onAiDraft={(t) => void aiDraft(t)}
+              onReply={() => void sendMail({ reply: true })}
+              onForward={() => {
+                setComposeTo("");
+                setComposeSubject(`Fwd: ${detail.subject}`);
+                setComposeBody(`\n\n---------- Přeposlaná zpráva ----------\n${detail.textBody ?? ""}`);
+                setComposeFromAccountId(detail.emailAccountId || defaultAccountId);
+                setComposeOpen(true);
+              }}
+              onResolve={() => void markResolved()}
+              onAssignLinks={() => void assignLinks()}
+              onAssignEmployee={() => void assignEmployeeInternal()}
+              onReminder={(p) => void setReminder(p)}
+              onApplySuggestedJob={() => void applySuggestedJob()}
+            />
           )}
         </div>
       </div>
