@@ -297,7 +297,18 @@ export function applyExpiredLicenseStatus(license: CompanyLicenseDoc): CompanyLi
   const t = Date.parse(license.expiresAt);
   if (Number.isNaN(t) || t > Date.now()) return license;
   if (license.status === "expired") return license;
-  return { ...license, status: "expired", active: false };
+  const sub =
+    license.subscriptionStatus === "TRIAL"
+      ? "EXPIRED"
+      : license.subscriptionStatus === "ACTIVE"
+        ? "EXPIRED"
+        : license.subscriptionStatus;
+  return {
+    ...license,
+    status: "expired",
+    active: false,
+    subscriptionStatus: sub ?? "EXPIRED",
+  };
 }
 
 /** Odhad měsíčního poplatku podle aktivních modulů a docházky (základ z DEFAULT_PLATFORM_MODULES). */

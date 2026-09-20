@@ -30,6 +30,7 @@ import {
   userCanAccessWarehousePortal,
 } from "@/lib/warehouse-production-access";
 import { ActivitySessionBridge } from "@/components/portal/activity-session-bridge";
+import { PortalTrialStatusBanner } from "@/components/portal/portal-trial-status-banner";
 import {
   PlatformModuleCatalogProvider,
   useMergedPlatformModuleCatalog,
@@ -730,6 +731,21 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     return null;
   })();
 
+  const trialBanner =
+    !isPortalEmployeeOnly && !isPortalCustomerOnly && company && isCompanyLicenseActive(company) ? (
+      <PortalTrialStatusBanner
+        trialEndsAt={
+          (company as { trialEndsAt?: string | null }).trialEndsAt ??
+          (company.platformLicense as { trialEndsAt?: string | null } | undefined)?.trialEndsAt
+        }
+        subscriptionStatus={
+          (company as { subscriptionStatus?: string | null }).subscriptionStatus ??
+          (company.platformLicense as { subscriptionStatus?: string | null } | undefined)
+            ?.subscriptionStatus
+        }
+      />
+    ) : null;
+
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       {user && companyId ? <ActivitySessionBridge /> : null}
@@ -776,6 +792,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
               : "px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8"
           )}
         >
+          {trialBanner}
           {licenseNotice}
           {profile?.role ? (
             <PortalPermissionsProvider

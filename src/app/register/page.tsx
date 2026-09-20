@@ -349,7 +349,24 @@ export default function RegisterPage() {
 
       trackPublicEvent("funnel_register_success", "/register");
 
-      console.info("[Platform]", "Company registered with inactive license", { companyId });
+      let trialApplied = false;
+      try {
+        const idToken = await user.getIdToken();
+        const trialRes = await fetch("/api/platform/apply-registration-trial", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ companyId }),
+        });
+        const trialJson = await trialRes.json().catch(() => ({}));
+        trialApplied = Boolean(trialRes.ok && trialJson.applied);
+      } catch (trialErr) {
+        console.warn("[register] apply trial failed", trialErr);
+      }
+
+      console.info("[Platform]", "Company registered", { companyId, trialApplied });
 
       try {
         const idToken = await user.getIdToken();
@@ -372,7 +389,9 @@ export default function RegisterPage() {
 
       toast({
         title: "Registrace úspěšná",
-        description: `Účet byl vytvořen. Licence čeká na aktivaci administrátorem platformy — poté budou dostupné placené moduly. Vítejte v ${PLATFORM_NAME}!`,
+        description: trialApplied
+          ? `Vítejte v ${PLATFORM_NAME}! Máte aktivní zkušební období — po jeho skončení přejdete na standardní placenou licenci.`
+          : `Účet byl vytvořen. Licence čeká na aktivaci administrátorem platformy — poté budou dostupné placené moduly. Vítejte v ${PLATFORM_NAME}!`,
       });
 
       router.push('/portal/dashboard');

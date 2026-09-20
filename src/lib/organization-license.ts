@@ -103,7 +103,13 @@ export function isCompanyLicenseActive(
     if (s === "pending" || s === "suspended" || s === "expired" || s === "inactive") {
       return false;
     }
-    if (s === "active") {
+    if (s === "active" || s === "trial") {
+      return !licenseExpirationIsPast(lic.expirationDate ?? lic.licenseExpiresAt);
+    }
+    const sub = String((lic as { subscriptionStatus?: string }).subscriptionStatus ?? "")
+      .trim()
+      .toUpperCase();
+    if (sub === "TRIAL" || sub === "ACTIVE") {
       return !licenseExpirationIsPast(lic.expirationDate ?? lic.licenseExpiresAt);
     }
   }
@@ -111,6 +117,15 @@ export function isCompanyLicenseActive(
   const pl = company?.platformLicense;
   if (pl && typeof pl === "object") {
     const ps = String(pl.status ?? "").trim().toLowerCase();
+    if (ps === "trial") {
+      return !licenseExpirationIsPast(pl.expiresAt);
+    }
+    const pSub = String((pl as { subscriptionStatus?: string }).subscriptionStatus ?? "")
+      .trim()
+      .toUpperCase();
+    if (pSub === "TRIAL" || pSub === "ACTIVE") {
+      return !licenseExpirationIsPast(pl.expiresAt);
+    }
     if (ps === "pending" || ps === "expired" || ps === "suspended") return false;
     if (pl.active === false) return false;
     if (ps === "active" || pl.active === true) {

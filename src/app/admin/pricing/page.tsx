@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 
 export default function AdminPricingPage() {
@@ -21,6 +22,9 @@ export default function AdminPricingPage() {
   const [defaultVatPercent, setDefaultVatPercent] = useState(21);
   const [automationDefaultIntervalDays, setAutomationDefaultIntervalDays] = useState(30);
   const [automationDefaultDueDays, setAutomationDefaultDueDays] = useState(14);
+  const [trialEnabled, setTrialEnabled] = useState(true);
+  const [trialDays, setTrialDays] = useState(30);
+  const [trialPriceCzk, setTrialPriceCzk] = useState(0);
 
   const load = async () => {
     setLoading(true);
@@ -64,6 +68,9 @@ export default function AdminPricingPage() {
       if (typeof data.automationDefaultDueDays === "number") {
         setAutomationDefaultDueDays(data.automationDefaultDueDays);
       }
+      if (typeof data.trialEnabled === "boolean") setTrialEnabled(data.trialEnabled);
+      if (typeof data.trialDays === "number") setTrialDays(data.trialDays);
+      if (typeof data.trialPriceCzk === "number") setTrialPriceCzk(data.trialPriceCzk);
     } finally {
       setLoadingPricing(false);
     }
@@ -116,6 +123,9 @@ export default function AdminPricingPage() {
           defaultVatPercent,
           automationDefaultIntervalDays,
           automationDefaultDueDays,
+          trialEnabled,
+          trialDays,
+          trialPriceCzk,
         }),
       });
       const errJson = await res.json().catch(() => ({}));
@@ -173,6 +183,60 @@ export default function AdminPricingPage() {
               <div className="space-y-1">
                 <Label>Poznámka k cenám (veřejná stránka)</Label>
                 <Input value={promoNote} onChange={(e) => setPromoNote(e.target.value)} />
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <div>
+            <CardTitle>Zkušební období platformy</CardTitle>
+            <CardDescription className="text-slate-700">
+              Globální nastavení pro nové organizace a texty na veřejném webu (délka trialu není natvrdo v kódu).
+            </CardDescription>
+          </div>
+          <Button type="button" onClick={savePricing} disabled={savingPricing || loadingPricing}>
+            {savingPricing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4 max-w-lg">
+          {loadingPricing ? (
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="trial-enabled"
+                  checked={trialEnabled}
+                  onCheckedChange={(v) => setTrialEnabled(Boolean(v))}
+                />
+                <Label htmlFor="trial-enabled">Povolit zkušební období</Label>
+              </div>
+              <div className="space-y-1">
+                <Label>Délka zkušebního období (dny)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={trialDays}
+                  onChange={(e) => setTrialDays(Math.max(1, parseInt(e.target.value, 10) || 30))}
+                  disabled={!trialEnabled}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Cena během zkušebního období (Kč)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={trialPriceCzk}
+                  onChange={(e) => setTrialPriceCzk(Number(e.target.value) || 0)}
+                  disabled={!trialEnabled}
+                />
+                <p className="text-xs text-slate-800">
+                  Po skončení trialu organizace přejde na standardní placenou licenci (fakturace platformy).
+                </p>
               </div>
             </>
           )}

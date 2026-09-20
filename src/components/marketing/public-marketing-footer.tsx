@@ -3,11 +3,14 @@ import { PLATFORM_NAME } from "@/lib/platform-brand";
 
 const productLinks = [
   { href: "/rizeni-zakazek", label: "Řízení zakázek" },
-  { href: "/poptavky-a-nabidky", label: "Poptávky a nabídky" },
   { href: "/ai-pro-firmy", label: "AI pro firmy" },
-  { href: "/evidence-dochazky", label: "Docházka" },
-  { href: "/fakturace", label: "Fakturace" },
-  { href: "/sklad-a-vyroba", label: "Výroba a sklad" },
+  { href: "/dochazka-zamestnancu", label: "Docházka" },
+  { href: "/poptavky-a-nabidky", label: "Poptávky a nabídky" },
+  { href: "/email-pro-firmy", label: "E-mail" },
+  { href: "/fakturace-a-doklady", label: "Fakturace" },
+  { href: "/rizeni-vyroby", label: "Výroba" },
+  { href: "/skladove-hospodarstvi", label: "Sklad" },
+  { href: "/vozovy-park", label: "Vozový park" },
 ];
 
 const solutionLinks = [
@@ -16,8 +19,10 @@ const solutionLinks = [
 ];
 
 const rajmondataLinks = [
+  { href: "/funkce", label: "Ceník a funkce" },
   { href: "/#kontakt", label: "Kontakt" },
   { href: "/login", label: "Přihlášení" },
+  { href: "/register", label: "Vyzkoušet zdarma" },
 ];
 
 const legalLinks = [

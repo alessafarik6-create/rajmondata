@@ -28,6 +28,9 @@ export type PlatformPricingDoc = {
   defaultVatPercent: number;
   automationDefaultIntervalDays: number;
   automationDefaultDueDays: number;
+  trialEnabled: boolean;
+  trialDays: number;
+  trialPriceCzk: number;
 };
 
 const DEFAULT_PRICING: PlatformPricingDoc = {
@@ -35,6 +38,9 @@ const DEFAULT_PRICING: PlatformPricingDoc = {
   defaultVatPercent: 21,
   automationDefaultIntervalDays: 30,
   automationDefaultDueDays: 14,
+  trialEnabled: true,
+  trialDays: 30,
+  trialPriceCzk: 0,
 };
 
 export async function loadPlatformPricingDoc(db: Firestore): Promise<PlatformPricingDoc> {
@@ -55,6 +61,9 @@ export async function loadPlatformPricingDoc(db: Firestore): Promise<PlatformPri
       1,
       Math.round(num(d.automationDefaultDueDays, DEFAULT_PRICING.automationDefaultDueDays))
     ),
+    trialEnabled: d.trialEnabled !== false,
+    trialDays: Math.max(1, Math.min(365, Math.round(num(d.trialDays, DEFAULT_PRICING.trialDays)))),
+    trialPriceCzk: Math.max(0, num(d.trialPriceCzk, DEFAULT_PRICING.trialPriceCzk)),
   };
 }
 

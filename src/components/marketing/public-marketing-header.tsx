@@ -6,8 +6,9 @@ const nav = [
   { href: "/rizeni-zakazek", label: "Zakázky" },
   { href: "/poptavky-a-nabidky", label: "Poptávky" },
   { href: "/ai-pro-firmy", label: "AI" },
-  { href: "/evidence-dochazky", label: "Docházka" },
-  { href: "/fakturace", label: "Fakturace" },
+  { href: "/dochazka-zamestnancu", label: "Docházka" },
+  { href: "/email-pro-firmy", label: "E-mail" },
+  { href: "/fakturace-a-doklady", label: "Fakturace" },
 ];
 
 export function PublicMarketingHeader() {

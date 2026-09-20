@@ -53,6 +53,15 @@ export async function PUT(request: NextRequest) {
     if (body.automationDefaultDueDays !== undefined) {
       patch.automationDefaultDueDays = Math.max(1, Math.round(num(body.automationDefaultDueDays, 14)));
     }
+    if (body.trialEnabled !== undefined) {
+      patch.trialEnabled = Boolean(body.trialEnabled);
+    }
+    if (body.trialDays !== undefined) {
+      patch.trialDays = Math.max(1, Math.min(365, Math.round(num(body.trialDays, 30))));
+    }
+    if (body.trialPriceCzk !== undefined) {
+      patch.trialPriceCzk = Math.max(0, num(body.trialPriceCzk, 0));
+    }
     await ref.set(patch, { merge: true });
     return NextResponse.json({ ok: true });
   } catch (e) {

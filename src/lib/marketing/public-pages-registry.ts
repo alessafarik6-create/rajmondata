@@ -5,6 +5,7 @@ import {
   LEGAL_TERMS,
   LEGAL_DPA_SLUG,
 } from "@/lib/marketing/legal-versions";
+import { SEO_EXTRA_PRODUCT_PAGES } from "@/lib/marketing/seo-extra-product-pages";
 
 export type MarketingContentBlock =
   | { type: "p"; text: string }
@@ -50,7 +51,7 @@ const pages: MarketingPageDef[] = [
         ],
       },
     ],
-    relatedSlugs: ["rizeni-zakazek", "poptavky-a-nabidky", "evidence-dochazky", "ai-pro-firmy"],
+    relatedSlugs: ["rizeni-zakazek", "poptavky-a-nabidky", "dochazka-zamestnancu", "ai-pro-firmy"],
   },
   {
     slug: "rizeni-zakazek",
@@ -88,10 +89,10 @@ const pages: MarketingPageDef[] = [
         text: "CRM pro stavební i montážní firmy v praxi znamená rychlý přehled — kdo má zakázku na starosti, co zbývá dodat a jaká faktura navazuje na rozpočet.",
       },
     ],
-    relatedSlugs: ["poptavky-a-nabidky", "fakturace", "komunikace-se-zakazniky"],
+    relatedSlugs: ["poptavky-a-nabidky", "fakturace-a-doklady", "komunikace-se-zakazniky"],
   },
   {
-    slug: "evidence-dochazky",
+    slug: "dochazka-zamestnancu",
     title: "Docházkový systém pro zaměstnance a tablet | RAJMONDATA",
     description:
       "Docházkový systém pro firmy: zaměstnanci, terminál na tabletu, PIN, příchod/odchod, přestávky, výkazy, ruční korekce, mzdy a oprávnění.",
@@ -141,7 +142,7 @@ const pages: MarketingPageDef[] = [
         ],
       },
     ],
-    relatedSlugs: ["evidence-dochazky", "rizeni-zakazek"],
+    relatedSlugs: ["dochazka-zamestnancu", "rizeni-zakazek"],
   },
   {
     slug: "poptavky-a-nabidky",
@@ -172,7 +173,7 @@ const pages: MarketingPageDef[] = [
         text: "Hledáte software na poptávky a tvorbu nabídek bez přepisování do tabulek? RAJMONDATA drží celou historii u jednoho obchodního případu — AI urychlí návrh textu, finální nabídku vždy schvaluje uživatel.",
       },
     ],
-    relatedSlugs: ["ai-pro-firmy", "rizeni-zakazek", "fakturace"],
+    relatedSlugs: ["ai-pro-firmy", "rizeni-zakazek", "fakturace-a-doklady"],
   },
   {
     slug: "ai-pro-firmy",
@@ -202,13 +203,15 @@ const pages: MarketingPageDef[] = [
           "Editace textu a export do PDF — finální kontrola uživatelem",
         ],
       },
-      { type: "h3", text: "Asistent a znalostní báze" },
+      { type: "h3", text: "Asistent, e-mail a znalostní báze" },
       {
         type: "ul",
         items: [
           "AI nápověda v portálu — kde najdu funkci, jak postupovat",
+          "AI návrhy odpovědí na firemní e-mail (podle modulu e-mail)",
           "Vyhledávání v nahraných manuálech a interní dokumentaci",
           "Firemní znalostní báze v AI centru (podle aktivní licence)",
+          "AI asistence u zakázek — shrnutí a práce s podklady",
         ],
       },
       {
@@ -244,7 +247,7 @@ const pages: MarketingPageDef[] = [
     relatedSlugs: ["ai-pro-firmy", "rizeni-zakazek", "obchodni-podminky"],
   },
   {
-    slug: "fakturace",
+    slug: "fakturace-a-doklady",
     title: "Fakturace, doklady a rozpočty zakázek | RAJMONDATA",
     description:
       "Položkový rozpočet, vícepráce, zálohové a konečné faktury, přijaté a vydané doklady, PDF a propojení se zakázkou v jednom portálu.",
@@ -327,8 +330,9 @@ const pages: MarketingPageDef[] = [
         ],
       },
     ],
-    relatedSlugs: ["rizeni-zakazek", "pro-montazni-firmy"],
+    relatedSlugs: ["rizeni-zakazek", "pro-montazni-firmy", "rizeni-vyroby", "skladove-hospodarstvi"],
   },
+  ...(SEO_EXTRA_PRODUCT_PAGES as MarketingPageDef[]),
   {
     slug: "pro-remeslniky",
     title: "Software pro řemeslníky a zakázky v terénu | RAJMONDATA",
@@ -352,7 +356,7 @@ const pages: MarketingPageDef[] = [
         ],
       },
     ],
-    relatedSlugs: ["poptavky-a-nabidky", "evidence-dochazky", "rizeni-zakazek"],
+    relatedSlugs: ["poptavky-a-nabidky", "dochazka-zamestnancu", "rizeni-zakazek"],
   },
   {
     slug: "pro-montazni-firmy",
@@ -399,7 +403,7 @@ const pages: MarketingPageDef[] = [
         ],
       },
     ],
-    relatedSlugs: ["fakturace", "rizeni-zakazek"],
+    relatedSlugs: ["fakturace-a-doklady", "rizeni-zakazek"],
   },
   {
     slug: LEGAL_TERMS.slug,

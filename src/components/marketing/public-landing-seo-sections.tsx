@@ -147,9 +147,50 @@ function CtaBand() {
   );
 }
 
+function ProductModuleLinks() {
+  const links = [
+    { href: "/rizeni-zakazek", label: "Řízení zakázek" },
+    { href: "/ai-pro-firmy", label: "AI pro firmy" },
+    { href: "/dochazka-zamestnancu", label: "Docházka zaměstnanců" },
+    { href: "/poptavky-a-nabidky", label: "Poptávky a nabídky" },
+    { href: "/email-pro-firmy", label: "E-mail pro firmy" },
+    { href: "/fakturace-a-doklady", label: "Fakturace a doklady" },
+    { href: "/rizeni-vyroby", label: "Řízení výroby" },
+    { href: "/skladove-hospodarstvi", label: "Skladové hospodářství" },
+    { href: "/vozovy-park", label: "Vozový park" },
+    { href: "/firemni-portal", label: "Firemní portál" },
+  ];
+  return (
+    <section id="co-umime" className="scroll-mt-20 border-t border-white/10 py-10 sm:py-14">
+      <div className="mx-auto max-w-6xl px-3 sm:px-4 md:px-6">
+        <h2 className="text-xl font-bold tracking-tight text-slate-50 sm:text-2xl md:text-3xl">
+          Co RAJMONDATA umí
+        </h2>
+        <p className="mt-3 max-w-3xl text-sm text-slate-300 sm:text-base">
+          Podnikový portál pro montážní, stavební, výrobní a řemeslné firmy — každá oblast má vlastní
+          popis funkcí a praktického použití.
+        </p>
+        <ul className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {links.map((l) => (
+            <li key={l.href}>
+              <Link
+                href={l.href}
+                className="block rounded-lg border border-white/10 bg-slate-950/40 px-4 py-3 text-sm font-medium text-slate-100 hover:border-primary/40 hover:bg-slate-900/60"
+              >
+                {l.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 export function PublicLandingSeoSections() {
   return (
     <>
+      <ProductModuleLinks />
       <Section
         id="rizeni-zakazek"
         title="Řízení zakázek od první poptávky až po fakturu"
@@ -254,7 +295,7 @@ export function PublicLandingSeoSections() {
       <Section
         id="dochazka"
         title="Docházka, práce a zaměstnanci na jednom místě"
-        moreHref="/evidence-dochazky"
+        moreHref="/dochazka-zamestnancu"
         moreLabel="Docházkový systém pro firmy a tablet →"
       >
         <p>
@@ -320,7 +361,7 @@ export function PublicLandingSeoSections() {
       <Section
         id="fakturace"
         title="Rozpočty, vícepráce, zálohy a fakturace"
-        moreHref="/fakturace"
+        moreHref="/fakturace-a-doklady"
         moreLabel="Fakturace, doklady a rozpočty zakázek →"
       >
         <BulletList

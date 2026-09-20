@@ -95,29 +95,39 @@ export function companyDocPlatformFields(license: CompanyLicenseDoc) {
         ? "expired"
         : license.status === "suspended"
           ? "suspended"
-          : license.active
+          : license.status === "trial" || license.subscriptionStatus === "TRIAL"
             ? "active"
-            : "inactive";
+            : license.active
+              ? "active"
+              : "inactive";
   const modulesFlat = buildCanonicalModulesMapFromEnabled(canonicalEnabled);
   return {
     platformLicense: {
       active: license.active,
       status: license.status,
+      subscriptionStatus: license.subscriptionStatus ?? null,
+      trialStartedAt: license.trialStartedAt ?? null,
+      trialEndsAt: license.trialEndsAt ?? null,
       expiresAt: license.expiresAt,
       activatedAt: license.activatedAt,
       activatedBy: license.activatedBy,
     },
+    trialConsumed: Boolean(license.trialConsumed),
     moduleEntitlements: entitlements,
     enabledModuleIds: canonicalEnabled,
     modules: modulesFlat,
     license: {
       licenseType: "starter",
       status: licenseStatusForPortal,
+      subscriptionStatus: license.subscriptionStatus ?? null,
       expirationDate: license.expiresAt,
       maxUsers: null,
       enabledModules: canonicalEnabled,
       modules: modulesFlat,
     },
+    subscriptionStatus: license.subscriptionStatus ?? null,
+    trialStartedAt: license.trialStartedAt ?? null,
+    trialEndsAt: license.trialEndsAt ?? null,
   };
 }
 

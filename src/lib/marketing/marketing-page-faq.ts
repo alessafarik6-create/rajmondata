@@ -30,6 +30,32 @@ export const MARKETING_PAGE_FAQ: Record<string, HomeFaqItem[]> = {
         "Ano. AI připraví návrh nabídky z poptávky a ceníků. Text a ceny vždy kontrolujete před odesláním zákazníkovi.",
     },
   ],
+  "email-pro-firmy": [
+    {
+      question: "Kolik firemních schránek lze připojit?",
+      answer:
+        "Podle nastavení organizace a modulu e-mail — typicky více IMAP/SMTP účtů s oprávněními pro jednotlivé uživatele.",
+    },
+    {
+      question: "Lze e-mail přiřadit ke zakázce?",
+      answer:
+        "Ano. Zprávu i přílohy lze navázat na konkrétní zakázku, aby tým viděl historii u obchodního případu.",
+    },
+  ],
+  "fakturace-a-doklady": [
+    {
+      question: "Nahrazuje RAJMONDATA účetní program?",
+      answer:
+        "Ne. Slouží k fakturaci a dokladům v návaznosti na zakázku; export a účetní agendu řeší váš účetní software.",
+    },
+  ],
+  "firemni-portal": [
+    {
+      question: "Je RAJMONDATA jen webová aplikace?",
+      answer:
+        "Ano. Portál běží v prohlížeči na PC, tabletu i mobilu — není nutná instalace na každé stanici.",
+    },
+  ],
   "ai-pro-firmy": [
     {
       question: "Nahrazuje AI právníka nebo účetního?",
@@ -42,7 +68,7 @@ export const MARKETING_PAGE_FAQ: Record<string, HomeFaqItem[]> = {
         "Nahrané manuály a dokumenty lze prohledávat v portálu — asistent odpovídá podle firemních podkladů, pokud je modul aktivní.",
     },
   ],
-  "evidence-dochazky": [
+  "dochazka-zamestnancu": [
     {
       question: "Jak funguje docházka na tabletu?",
       answer:

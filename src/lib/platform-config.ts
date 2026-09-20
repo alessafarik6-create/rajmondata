@@ -24,7 +24,19 @@ export const PLATFORM_MODULE_CODES = [
 
 export type PlatformModuleCode = (typeof PLATFORM_MODULE_CODES)[number];
 
-export type CompanyLicenseStatus = "pending" | "active" | "suspended" | "expired";
+export type CompanyLicenseStatus =
+  | "pending"
+  | "active"
+  | "trial"
+  | "suspended"
+  | "expired";
+
+export type PlatformSubscriptionStatus =
+  | "TRIAL"
+  | "ACTIVE"
+  | "PAST_DUE"
+  | "EXPIRED"
+  | "CANCELLED";
 
 export type PlatformModuleDef = {
   code: PlatformModuleCode;
@@ -141,6 +153,12 @@ export type CompanyLicenseDoc = {
   companyId: string;
   active: boolean;
   status: CompanyLicenseStatus;
+  /** Obchodní stav předplatného (trial / placená licence). */
+  subscriptionStatus?: PlatformSubscriptionStatus | null;
+  trialStartedAt?: string | null;
+  trialEndsAt?: string | null;
+  /** Organizace už čerpala jednorázové zkušební období. */
+  trialConsumed?: boolean;
   activatedAt: string | null;
   expiresAt: string | null;
   activatedBy: string | null;

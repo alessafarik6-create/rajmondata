@@ -63,6 +63,7 @@ import {
   type CanonicalModuleKey,
 } from "@/lib/license-modules";
 import type { LicenseConfig, ModuleKey } from "@/lib/license-modules";
+import { AdminOrgTrialPanel } from "@/components/admin/admin-org-trial-panel";
 
 type Company = {
   id: string;
@@ -1159,6 +1160,7 @@ export default function AdminCompaniesPage() {
               Nastavte typ licence, stav a povolené moduly pro tuto organizaci.
             </DialogDescription>
           </DialogHeader>
+          <AdminOrgTrialPanel companyId={editing?.id ?? null} />
           {editForm && editModuleMap && (
             <div className="space-y-4 py-4">
               <div className="grid grid-cols-2 gap-4">

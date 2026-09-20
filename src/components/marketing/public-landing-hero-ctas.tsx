@@ -3,15 +3,33 @@
 import Link from "next/link";
 import { trackPublicEvent } from "@/components/marketing/public-analytics-beacon";
 import { Button } from "@/components/ui/button";
+import { usePublicLandingConfig } from "@/lib/use-public-landing-config";
+import { publicTrialCtaLabel } from "@/lib/platform-subscription";
 
 export function PublicLandingHeroCtas() {
+  const { data } = usePublicLandingConfig();
+  const trialEnabled = data?.trial?.trialEnabled !== false;
+  const trialDays = data?.trial?.trialDays ?? 30;
+  const ctaLabel = publicTrialCtaLabel(trialDays, trialEnabled);
+
   return (
     <div className="mt-6 flex w-full min-w-0 flex-col gap-2 sm:mt-8 sm:flex-row sm:flex-wrap sm:gap-3">
       <Button size="default" className="h-11 w-full min-w-0 sm:h-10 sm:w-auto sm:px-6" asChild>
-        <Link href="/register" onClick={() => trackPublicEvent("funnel_cta_try")}>
-          Vyzkoušet RAJMONDATA
+        <Link
+          href="/register"
+          onClick={() => {
+            trackPublicEvent("funnel_cta_try");
+            trackPublicEvent("funnel_cta_trial");
+          }}
+        >
+          {ctaLabel}
         </Link>
       </Button>
+      {trialEnabled ? (
+        <p className="w-full text-xs text-slate-300 sm:text-sm">
+          {trialDays} dní zdarma · bez závazku · bez platební karty
+        </p>
+      ) : null}
       <Button
         size="default"
         variant="outline"

@@ -62,6 +62,9 @@ export async function ensurePlatformPricingDoc(db: Firestore): Promise<void> {
     defaultVatPercent: 21,
     automationDefaultIntervalDays: 30,
     automationDefaultDueDays: 14,
+    trialEnabled: true,
+    trialDays: 30,
+    trialPriceCzk: 0,
     updatedAt: FieldValue.serverTimestamp(),
   });
 }

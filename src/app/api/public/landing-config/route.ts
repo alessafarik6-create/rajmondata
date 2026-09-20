@@ -5,7 +5,7 @@ import {
   PLATFORM_SEO_COLLECTION,
   PLATFORM_MODULES_COLLECTION,
 } from "@/lib/firestore-collections";
-import { PLATFORM_SETTINGS_DOC, PLATFORM_SEO_DOC } from "@/lib/platform-config";
+import { PLATFORM_PRICING_DOC, PLATFORM_SETTINGS_DOC, PLATFORM_SEO_DOC } from "@/lib/platform-config";
 import { ensureAllPlatformData } from "@/lib/superadmin-platform-seed";
 
 /**
@@ -27,16 +27,30 @@ export async function GET() {
 
   try {
     await ensureAllPlatformData(db);
-    const [settingsSnap, seoSnap, modulesSnap] = await Promise.all([
+    const [settingsSnap, seoSnap, modulesSnap, pricingSnap] = await Promise.all([
       db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_SETTINGS_DOC).get(),
       db.collection(PLATFORM_SEO_COLLECTION).doc(PLATFORM_SEO_DOC).get(),
       db.collection(PLATFORM_MODULES_COLLECTION).get(),
+      db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_PRICING_DOC).get(),
     ]);
+
+    const pricingRaw = (pricingSnap.data() ?? {}) as Record<string, unknown>;
+    const trialEnabled = pricingRaw.trialEnabled !== false;
+    const trialDays =
+      typeof pricingRaw.trialDays === "number" && pricingRaw.trialDays > 0
+        ? Math.round(pricingRaw.trialDays)
+        : 30;
 
     return NextResponse.json({
       settings: settingsSnap.data() ?? {},
       seo: seoSnap.data() ?? {},
       modules: modulesSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      trial: {
+        trialEnabled,
+        trialDays,
+        trialPriceCzk:
+          typeof pricingRaw.trialPriceCzk === "number" ? pricingRaw.trialPriceCzk : 0,
+      },
     });
   } catch (e) {
     console.error("[public landing-config]", e);

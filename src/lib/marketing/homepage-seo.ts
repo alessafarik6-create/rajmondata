@@ -4,7 +4,7 @@ export const HOME_SEO_TITLE =
   "Řízení zakázek, docházka, fakturace a AI pro firmy | RAJMONDATA";
 
 export const HOME_SEO_DESCRIPTION =
-  "RAJMONDATA spojuje zakázky, poptávky, nabídky, fakturaci, docházku, zaměstnance, dokumenty a firemní komunikaci. AI pomáhá s nabídkami, smlouvami a dodatky.";
+  "RAJMONDATA je podnikový portál pro řízení zakázek, zaměstnanců, docházky, e-mailů, poptávek, nabídek, dokumentů, výroby, fakturace a firemních procesů s podporou AI.";
 
 export const HOME_H1 =
   "Firemní portál pro řízení zakázek, zaměstnanců a celé firmy s podporou AI";

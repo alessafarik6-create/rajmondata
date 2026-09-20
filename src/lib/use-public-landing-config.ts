@@ -47,6 +47,11 @@ export type PublicLandingConfig = {
     priceMonthly?: number;
     billingType?: string;
   }>;
+  trial?: {
+    trialEnabled?: boolean;
+    trialDays?: number;
+    trialPriceCzk?: number;
+  };
   error?: string;
 };
 
