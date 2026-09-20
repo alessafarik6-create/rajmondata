@@ -2,11 +2,11 @@
 
 import React, { useMemo } from "react";
 import Link from "next/link";
-import { collection, limit, query } from "firebase/firestore";
-import { useCollection, useMemoFirebase } from "@/firebase";
+import { collection, doc, limit, query } from "firebase/firestore";
+import { useCollection, useMemoFirebase, useUser, useDoc } from "@/firebase";
+import { DashboardCompactCalendar } from "@/components/portal/dashboard-compact-calendar";
 import {
   Briefcase,
-  CalendarClock,
   Car,
   Factory,
   FileText,
@@ -65,6 +65,7 @@ export type PortalDashboardCompactGridProps = {
   pendingDocumentsCount: number;
   fleetConnected: boolean;
   scheduleTodayCount?: number;
+  restrictScheduleForEmployee?: boolean;
 };
 
 function leadTs(
@@ -84,6 +85,15 @@ function leadTs(
 
 export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProps) {
   const firestore = useFirestore();
+  const { user } = useUser();
+  const userRef = useMemoFirebase(
+    () => (firestore && user ? doc(firestore, "users", user.uid) : null),
+    [firestore, user]
+  );
+  const { data: userProfile } = useDoc(userRef);
+  const viewerEmployeeId = String(
+    (userProfile as { employeeId?: string } | null)?.employeeId ?? ""
+  ).trim();
   const emailAccess = usePortalModuleAccess("emails");
   const jobsAccess = usePortalModuleAccess("jobs");
   const leadsAccess = usePortalModuleAccess("leads");
@@ -179,13 +189,13 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
   return (
     <div className={gridClass}>
       {emailAccess.canRead ? (
-        <div className="order-1 xl:order-none min-w-0">
+        <div className="order-1 min-w-0">
           <DashboardEmailAttentionWidget companyId={props.companyId} />
         </div>
       ) : null}
 
       {jobsAccess.canRead ? (
-        <div className="order-3 xl:order-none min-w-0">
+        <div className="order-2 min-w-0">
           <DashboardCompactCard
             title="Zakázky"
             icon={<Briefcase className="h-4 w-4 text-orange-600" />}
@@ -235,7 +245,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
       ) : null}
 
       {leadsAccess.canRead ? (
-        <div className="order-4 xl:order-none min-w-0">
+        <div className="order-3 min-w-0">
           <DashboardCompactCard
             title="Poptávky"
             icon={<Inbox className="h-4 w-4 text-violet-600" />}
@@ -279,7 +289,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
       ) : null}
 
       {documentsAccess.canRead ? (
-        <div className="order-7 xl:order-none min-w-0">
+        <div className="order-4 min-w-0">
           <DashboardDocumentsToPayWidget
             companyId={props.companyId}
             todayIso={props.todayIso}
@@ -288,8 +298,25 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
         </div>
       ) : null}
 
+      {(meetingsAccess.canRead || jobsAccess.canRead) ? (
+        <div className="order-5 min-w-0 md:col-span-2 xl:col-span-2">
+          <DashboardCompactCalendar
+            companyId={props.companyId}
+            todayIso={props.todayIso}
+            jobs={props.jobs}
+            tasks={mergedTasks}
+            canMeetings={meetingsAccess.canRead || leadsAccess.canRead}
+            canJobs={jobsAccess.canRead}
+            canTasks={jobsAccess.canRead}
+            restrictEmployeeEvents={Boolean(props.restrictScheduleForEmployee)}
+            viewerUid={user?.uid ?? ""}
+            viewerEmployeeId={viewerEmployeeId}
+          />
+        </div>
+      ) : null}
+
       {jobsAccess.canRead ? (
-        <div className="order-2 xl:order-none min-w-0">
+        <div className="order-6 min-w-0">
           <DashboardCompactCard
             title="Úkoly"
             icon={<ListTodo className="h-4 w-4 text-amber-600" />}
@@ -320,7 +347,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
       ) : null}
 
       {laborAccess.canRead ? (
-        <div className="order-6 xl:order-none min-w-0 [&_article]:min-h-[240px]">
+        <div className="order-7 min-w-0 [&_article]:min-h-[240px]">
           <DashboardTerminalActiveWidget
             employees={props.employees}
             attendanceTodayRows={props.attendanceTodayRows}
@@ -331,25 +358,8 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
         </div>
       ) : null}
 
-      {meetingsAccess.canRead ? (
-        <div className="order-5 xl:order-none min-w-0">
-          <DashboardCompactCard
-            title="Dnešní schůzky"
-            icon={<CalendarClock className="h-4 w-4 text-indigo-600" />}
-            accentClass="border-l-indigo-500"
-            href="/portal/meeting-records"
-            footerLabel="Kalendář"
-          >
-            <p className="text-2xl font-bold tabular-nums">{props.scheduleTodayCount ?? "—"}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Montáže a schůzky — detail v kalendáři organizace.
-            </p>
-          </DashboardCompactCard>
-        </div>
-      ) : null}
-
       {offersAccess.canRead ? (
-        <div className="order-8 xl:order-none min-w-0">
+        <div className="order-8 min-w-0">
           <DashboardCompactCard
             title="Nabídky"
             icon={<FileText className="h-4 w-4 text-blue-600" />}

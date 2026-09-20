@@ -1207,6 +1207,7 @@ export default function CompanyDashboard() {
                     "configured"
                 )}
                 scheduleTodayCount={installationCalendarBadge}
+                restrictScheduleForEmployee={isEmployee && !isManagement && !isAccountant}
               />
               <DashboardUnassignedMeasurementPhotos
                 firestore={firestore}
