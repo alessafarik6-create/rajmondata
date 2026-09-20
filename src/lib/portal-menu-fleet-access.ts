@@ -30,12 +30,14 @@ export function isFleetMenuLicensed(
     effectiveModules: Record<string, boolean>;
   }
 ): boolean {
-  if (isFleetLicensedForOrganization(ctx.effectiveModules)) return true;
-
   const r = normalizeCompanyRole(ctx.role);
   const superAdmin = Array.isArray(ctx.globalRoles) && ctx.globalRoles.includes("super_admin");
-  const elevated = superAdmin || r === "owner" || r === "admin";
+  /** Majitel / super admin vždy vidí položku menu (route může být dostupná i při vypnuté licenci pro ostatní). */
+  if (superAdmin || r === "owner") return true;
 
+  if (isFleetLicensedForOrganization(ctx.effectiveModules)) return true;
+
+  const elevated = r === "admin";
   if (!elevated || !ctx.company) return false;
 
   if (isCanonicalModuleExplicitInCompany(ctx.company, FLEET_LICENSE_KEY)) {
@@ -61,7 +63,9 @@ export function explainFleetMenuHiddenReason(ctx: {
   rolesAllowed: readonly string[];
   licenseRevoked: boolean;
 }): FleetMenuHiddenReason {
-  if (!ctx.rolesAllowed.includes(ctx.role)) return "role";
+  const r = normalizeCompanyRole(ctx.role);
+  const roleOk = ctx.rolesAllowed.some((allowed) => normalizeCompanyRole(allowed) === r);
+  if (!roleOk) return "role";
   if (!ctx.company) return "no_company";
   if (ctx.licenseRevoked) return "license_revoked";
   if (!isFleetMenuLicensed(ctx)) return "license_vozovyPark";

@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
 import { useUser, useDoc, useFirestore, useMemoFirebase, useCompany } from '@/firebase';
 import { doc } from 'firebase/firestore';
+import { normalizeCompanyRole } from '@/lib/company-privilege';
 import { normalizeModules } from '@/lib/license-modules';
 import { getEffectiveModulesMerged } from '@/lib/platform-access';
 import { useMergedPlatformModuleCatalog } from '@/contexts/platform-module-catalog-context';
@@ -88,7 +89,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   const isSuperAdmin = userProfile?.globalRoles?.includes('super_admin');
   const isAdminArea = pathname.startsWith('/admin');
 
-  const role = userProfile?.role || 'employee';
+  const role = normalizeCompanyRole(userProfile?.role || 'employee');
 
   const employeeRowRef = useMemoFirebase(
     () =>
@@ -236,6 +237,9 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     }
     if (href === "/portal/vyroba") {
       return pathname.startsWith("/portal/vyroba");
+    }
+    if (href === "/portal/fleet") {
+      return pathname === href || pathname.startsWith(`${href}/`);
     }
     if (href === "/portal/meeting-records") {
       return pathname === href || pathname.startsWith(`${href}/`);

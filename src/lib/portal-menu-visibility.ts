@@ -14,11 +14,17 @@ import {
   parentLicenseKeysSatisfied,
   type PortalSidebarMenuDef,
 } from "@/lib/portal-menu-config";
+import { normalizeCompanyRole } from "@/lib/company-privilege";
 import {
   explainFleetMenuHiddenReason,
   FLEET_PORTAL_MODULE_ID,
   isFleetMenuLicensed,
 } from "@/lib/portal-menu-fleet-access";
+
+function portalMenuRoleAllowed(def: PortalSidebarMenuDef, role: string): boolean {
+  const r = normalizeCompanyRole(role);
+  return def.roles.some((allowed) => normalizeCompanyRole(allowed) === r);
+}
 
 export type PortalMenuVisibilityCtx = {
   role: string;
@@ -35,13 +41,15 @@ export function isPortalMenuItemVisible(
 ): boolean {
   const { role, globalRoles, company, effectiveModules, platformCatalog, employeeRow } = ctx;
 
-  if (!def.roles.includes(role)) return false;
+  if (!portalMenuRoleAllowed(def, role)) return false;
+
+  const normalizedRole = normalizeCompanyRole(role);
 
   if (def.id === "activity") {
     const elevated =
-      role === "owner" ||
-      role === "admin" ||
-      role === "accountant" ||
+      normalizedRole === "owner" ||
+      normalizedRole === "admin" ||
+      normalizedRole === "accountant" ||
       (Array.isArray(globalRoles) && globalRoles.includes("super_admin"));
     if (!elevated) return false;
   }
@@ -49,7 +57,7 @@ export function isPortalMenuItemVisible(
   if (def.id === "meetingRecords") {
     if (Array.isArray(globalRoles) && globalRoles.includes("super_admin")) {
       // super admin vidí položku bez ohledu na příznak zaměstnance
-    } else if (role === "employee") {
+    } else if (normalizedRole === "employee") {
       const row = employeeRow as { canAccessMeetingNotes?: boolean } | null;
       if (row?.canAccessMeetingNotes !== true) return false;
     }
