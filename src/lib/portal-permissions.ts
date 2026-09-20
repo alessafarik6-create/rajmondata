@@ -57,6 +57,7 @@ export function buildAccountantPermissionPreset(): Record<PortalModuleId, Portal
     "labor",
     "customers",
     "jobs",
+    "schedule",
     "leads",
     "emails",
     "offers",
@@ -122,6 +123,7 @@ function legacyEmployeeModuleCoarseAllowed(
 ): boolean {
   const zakazkyIds: PortalModuleId[] = [
     "jobs",
+    "schedule",
     "leads",
     "customers",
     "offers",

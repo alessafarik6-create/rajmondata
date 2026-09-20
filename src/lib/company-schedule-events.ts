@@ -40,6 +40,8 @@ export type CompanyScheduleCalendarEvent = {
   /** Pro montáže — kdo montáž uvidí a může měnit stav. */
   assignedEmployeeIds?: string[];
   assignedEmployeeNames?: string[];
+  /** Minuty před začátkem pro serverové připomenutí (push / e-mail fronta). */
+  reminderOffsetsMinutes?: number[];
 };
 
 function isMeasurementDeleted(m: { deletedAt?: unknown }): boolean {
@@ -225,6 +227,12 @@ export function buildCompanyScheduleEvents(
         ? raw.customerId.trim()
         : undefined;
 
+    const reminderOffsetsMinutes = Array.isArray(raw?.reminderOffsetsMinutes)
+      ? (raw.reminderOffsetsMinutes as unknown[])
+          .map((x) => Number(x))
+          .filter((n) => Number.isFinite(n) && n > 0)
+      : undefined;
+
     if (isInstallation) {
       const stRaw = String(raw.status ?? "").trim();
       const instSt = parseInstallationStatus(stRaw);
@@ -257,6 +265,7 @@ export function buildCompanyScheduleEvents(
         customerId,
         assignedEmployeeIds,
         assignedEmployeeNames,
+        reminderOffsetsMinutes,
       });
       continue;
     }
@@ -290,6 +299,7 @@ export function buildCompanyScheduleEvents(
       notificationType: nt,
       notificationMessage,
       titleClass: v.titleClass,
+      reminderOffsetsMinutes,
     });
   }
 

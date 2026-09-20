@@ -7,6 +7,7 @@ export type DashboardCalendarFilter = "all" | "meetings" | "jobs" | "tasks";
 
 export type DashboardCalendarEventKind =
   | "meeting"
+  | "installation"
   | "task"
   | "job_deadline"
   | "reminder"
@@ -24,6 +25,9 @@ export type DashboardCalendarEvent = {
   tooltipTitle: string;
   tooltipLines: string[];
   overdue: boolean;
+  /** `lead_meetings` document id pro schůzku / montáž */
+  sourceId?: string;
+  scheduleEventKind?: "meeting" | "installation" | "measurement";
 };
 
 function dayKeyFromDate(d: Date): string {
@@ -73,9 +77,12 @@ export function filterScheduleEventsForDashboardViewer(
 }
 
 function scheduleEventHref(ev: CompanyScheduleCalendarEvent): string {
-  if (ev.jobId) return `/portal/jobs/${encodeURIComponent(ev.jobId)}`;
   if (ev.kind === "measurement") return "/portal/jobs/measurements";
-  return "/portal/leads";
+  if (ev.sourceId && (ev.kind === "meeting" || ev.kind === "installation")) {
+    return `/portal/schedule?event=${encodeURIComponent(ev.sourceId)}`;
+  }
+  if (ev.jobId) return `/portal/jobs/${encodeURIComponent(ev.jobId)}`;
+  return "/portal/schedule";
 }
 
 function scheduleToDashboard(
@@ -93,7 +100,7 @@ function scheduleToDashboard(
   let kind: DashboardCalendarEventKind = "meeting";
   if (ev.kind === "measurement") kind = "reminder";
   else if (ev.kind === "installation" && ev.status === "done") kind = "confirmed";
-  else if (ev.kind === "installation") kind = "meeting";
+  else if (ev.kind === "installation") kind = "installation";
 
   const tooltipLines = [
     ev.kind === "installation" ? "Montáž / schůzka" : ev.kind === "measurement" ? "Zaměření" : "Schůzka",
@@ -114,6 +121,13 @@ function scheduleToDashboard(
     tooltipTitle: headline,
     tooltipLines,
     overdue: false,
+    sourceId: ev.sourceId,
+    scheduleEventKind:
+      ev.kind === "installation"
+        ? "installation"
+        : ev.kind === "measurement"
+          ? "measurement"
+          : "meeting",
   };
 }
 
@@ -227,7 +241,11 @@ export function filterDashboardCalendarEvents(
   if (filter === "all") return events;
   if (filter === "meetings") {
     return events.filter(
-      (e) => e.kind === "meeting" || e.kind === "reminder" || e.kind === "confirmed"
+      (e) =>
+        e.kind === "meeting" ||
+        e.kind === "installation" ||
+        e.kind === "reminder" ||
+        e.kind === "confirmed"
     );
   }
   if (filter === "jobs") return events.filter((e) => e.kind === "job_deadline");
@@ -240,6 +258,8 @@ export function kindDotClass(kind: DashboardCalendarEventKind, overdue: boolean)
   switch (kind) {
     case "meeting":
       return "bg-sky-500";
+    case "installation":
+      return "bg-emerald-500";
     case "task":
       return "bg-orange-500";
     case "reminder":

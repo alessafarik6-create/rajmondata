@@ -307,6 +307,10 @@ export async function deleteCalendarReminderQueueForEvent(
   for (const offset of ALL_REMINDER_OFFSET_PRESETS) {
     batch.delete(col.doc(calendarReminderQueueDocId(eventId, offset)));
   }
+  const byPayload = await col.where("payload.eventId", "==", eventId).limit(50).get();
+  for (const d of byPayload.docs) {
+    batch.delete(d.ref);
+  }
   await batch.commit();
 }
 
@@ -317,29 +321,53 @@ export async function syncCalendarRemindersForEvent(
     eventId: string;
     eventStartsAtIso: string;
     title: string;
-    calendarKind: "meeting" | "measurement";
+    calendarKind: "meeting" | "measurement" | "installation";
+    /** Přepíše globální offsety organizace (minuty před začátkem). */
+    reminderOffsetsMinutes?: number[];
+    /** Zrušená / dokončená událost — žádné budoucí připomenutí. */
+    skipReminders?: boolean;
   }
 ): Promise<void> {
+  if (input.skipReminders) {
+    await deleteCalendarReminderQueueForEvent(db, input.eventId);
+    return;
+  }
+
   const loaded = await loadCompanyEmailSettings(db, companyId);
-  if (!loaded) return;
-  const settings = loaded;
-  const cal = settings.modules.calendar;
-  if (!settings.enabled || !cal.enabled || !cal.reminderEnabled) {
+  const cal = loaded?.modules.calendar;
+  const orgRemindersOk =
+    loaded?.enabled && cal?.enabled && cal.reminderEnabled && !input.reminderOffsetsMinutes?.length;
+
+  const customOffsets = (input.reminderOffsetsMinutes ?? [])
+    .map((n) => Math.round(Number(n)))
+    .filter((n) => Number.isFinite(n) && n > 0);
+
+  if (!customOffsets.length && !orgRemindersOk) {
     await deleteCalendarReminderQueueForEvent(db, input.eventId);
     return;
   }
-  if (cal.reminderMeetingsOnly && input.calendarKind !== "meeting") {
+
+  if (
+    !customOffsets.length &&
+    cal?.reminderMeetingsOnly &&
+    input.calendarKind !== "meeting"
+  ) {
     await deleteCalendarReminderQueueForEvent(db, input.eventId);
     return;
   }
+
   await deleteCalendarReminderQueueForEvent(db, input.eventId);
-  for (const offset of cal.reminderOffsetsMinutes) {
+  const offsets = customOffsets.length
+    ? customOffsets
+    : (cal?.reminderOffsetsMinutes ?? []);
+  for (const offset of offsets) {
     await enqueueCalendarReminder(db, {
       companyId,
       eventId: input.eventId,
       eventStartsAt: input.eventStartsAtIso,
       title: input.title,
-      calendarKind: input.calendarKind,
+      calendarKind:
+        input.calendarKind === "measurement" ? "measurement" : "meeting",
       offsetMinutes: offset,
     });
   }

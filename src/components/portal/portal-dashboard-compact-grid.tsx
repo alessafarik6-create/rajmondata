@@ -311,6 +311,9 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
             restrictEmployeeEvents={Boolean(props.restrictScheduleForEmployee)}
             viewerUid={user?.uid ?? ""}
             viewerEmployeeId={viewerEmployeeId}
+            canPlanEvents={
+              leadsAccess.canWrite && !props.restrictScheduleForEmployee
+            }
           />
         </div>
       ) : null}

@@ -60,7 +60,8 @@ export async function syncCalendarEmailRemindersFromBrowser(input: {
   eventId: string;
   eventStartsAtIso: string;
   title: string;
-  calendarKind: "meeting" | "measurement";
+  calendarKind: "meeting" | "measurement" | "installation";
+  reminderOffsetsMinutes?: number[];
   cancel?: boolean;
 }): Promise<void> {
   try {

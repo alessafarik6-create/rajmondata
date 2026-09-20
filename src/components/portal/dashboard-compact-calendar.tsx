@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   addMonths,
   eachDayOfInterval,
@@ -58,6 +59,8 @@ export type DashboardCompactCalendarProps = {
   restrictEmployeeEvents: boolean;
   viewerUid: string;
   viewerEmployeeId: string;
+  /** Vedení / účetní — může plánovat schůzky a montáže */
+  canPlanEvents?: boolean;
 };
 
 const WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
@@ -79,6 +82,7 @@ function parseISOSafe(iso: string): Date {
 }
 
 export function DashboardCompactCalendar(props: DashboardCompactCalendarProps) {
+  const router = useRouter();
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [filter, setFilter] = useState<DashboardCalendarFilter>("all");
   const [dayDialogKey, setDayDialogKey] = useState<string | null>(null);
@@ -328,6 +332,9 @@ export function DashboardCompactCalendar(props: DashboardCompactCalendarProps) {
               <span className="h-1.5 w-1.5 rounded-full bg-sky-500" /> Schůzka
             </span>
             <span className="inline-flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Montáž
+            </span>
+            <span className="inline-flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-orange-500" /> Úkol
             </span>
             <span className="inline-flex items-center gap-1">
@@ -372,10 +379,10 @@ export function DashboardCompactCalendar(props: DashboardCompactCalendarProps) {
 
       <footer className="border-t border-border/60 px-3 py-2">
         <Link
-          href="/portal/leads"
+          href="/portal/schedule"
           className="text-xs font-medium text-primary hover:underline"
         >
-          Otevřít kalendář schůzek →
+          Otevřít celý kalendář →
         </Link>
       </footer>
 
@@ -388,6 +395,37 @@ export function DashboardCompactCalendar(props: DashboardCompactCalendarProps) {
                 : ""}
             </DialogTitle>
           </DialogHeader>
+          {props.canPlanEvents && dayDialogKey ? (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                size="sm"
+                className="gap-1"
+                onClick={() => {
+                  setDayDialogKey(null);
+                  router.push(
+                    `/portal/schedule?day=${encodeURIComponent(dayDialogKey)}&create=lead_meeting`
+                  );
+                }}
+              >
+                + Naplánovat schůzku
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="gap-1"
+                onClick={() => {
+                  setDayDialogKey(null);
+                  router.push(
+                    `/portal/schedule?day=${encodeURIComponent(dayDialogKey)}&create=installation`
+                  );
+                }}
+              >
+                + Naplánovat montáž
+              </Button>
+            </div>
+          ) : null}
           <ul className="max-h-[50vh] space-y-2 overflow-y-auto text-sm">
             {dayDialogEvents.length === 0 ? (
               <li className="text-muted-foreground">Žádné události v tento den.</li>
@@ -397,6 +435,7 @@ export function DashboardCompactCalendar(props: DashboardCompactCalendarProps) {
                   <Link
                     href={ev.href}
                     className="block rounded-md border border-border/60 px-2 py-1.5 hover:bg-muted/40"
+                    onClick={() => setDayDialogKey(null)}
                   >
                     <span className="font-medium">
                       {ev.timeLabel !== "—" ? `${ev.timeLabel} – ` : ""}
@@ -407,9 +446,18 @@ export function DashboardCompactCalendar(props: DashboardCompactCalendarProps) {
               ))
             )}
           </ul>
-          <DialogFooter>
-            <Button variant="secondary" asChild>
-              <Link href="/portal/leads">Otevřít kalendář</Link>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
+            <Button variant="outline" asChild>
+              <Link
+                href={
+                  dayDialogKey
+                    ? `/portal/schedule?day=${encodeURIComponent(dayDialogKey)}`
+                    : "/portal/schedule"
+                }
+                onClick={() => setDayDialogKey(null)}
+              >
+                Otevřít celý kalendář
+              </Link>
             </Button>
           </DialogFooter>
         </DialogContent>

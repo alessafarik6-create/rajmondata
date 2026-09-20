@@ -107,6 +107,41 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 
 const WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
 
+const REMINDER_PRESET_OPTIONS = [
+  { value: "5", label: "5 minut předem" },
+  { value: "15", label: "15 minut předem" },
+  { value: "30", label: "30 minut předem" },
+  { value: "60", label: "1 hodinu předem" },
+  { value: "1440", label: "1 den předem" },
+  { value: "custom", label: "Vlastní čas" },
+] as const;
+
+export type ScheduleCalendarPendingAction =
+  | { type: "create"; dayKey: string; kind: "lead_meeting" | "installation" }
+  | { type: "edit"; sourceId: string };
+
+function parseDayKeyLocal(dayKey: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey.trim());
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0, 0);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function applyReminderPresetFromOffsets(
+  offsets: number[] | undefined,
+  isInstallation: boolean
+): { preset: string; custom: string } {
+  const first = offsets?.[0];
+  if (first == null) {
+    return { preset: isInstallation ? "1440" : "30", custom: "30" };
+  }
+  const s = String(first);
+  if (REMINDER_PRESET_OPTIONS.some((o) => o.value === s)) {
+    return { preset: s, custom: String(first) };
+  }
+  return { preset: "custom", custom: String(first) };
+}
+
 /** Řádek zakázky pro výběr montáže — mapováno z `companies/.../jobs`. */
 type InstallationJobPickRow = {
   id: string;
@@ -418,6 +453,8 @@ export function CompanyScheduleCalendar({
   readOnly = false,
   restrictEmployeeEvents = false,
   scheduleFilter = "all",
+  pendingAction = null,
+  onPendingActionConsumed,
 }: {
   companyId: string;
   /** `compact` = vždy mobilní rozhraní (např. mobilní dashboard pod breakpointem lg). */
@@ -433,6 +470,9 @@ export function CompanyScheduleCalendar({
   restrictEmployeeEvents?: boolean;
   /** `installationsOnly` = jen montáže (např. sekce „Moje montáže“). */
   scheduleFilter?: "all" | "installationsOnly";
+  /** Otevření z dashboardu / URL query — po zpracování zavolá `onPendingActionConsumed`. */
+  pendingAction?: ScheduleCalendarPendingAction | null;
+  onPendingActionConsumed?: () => void;
 }) {
   const firestore = useFirestore();
   const router = useRouter();
@@ -544,6 +584,9 @@ export function CompanyScheduleCalendar({
   const [notifyInstallAssignees, setNotifyInstallAssignees] = useState(true);
   const [installJobPickerOpen, setInstallJobPickerOpen] = useState(false);
   const [installJobSearch, setInstallJobSearch] = useState("");
+  const [reminderPreset, setReminderPreset] = useState<string>("30");
+  const [customReminderMinutes, setCustomReminderMinutes] = useState("30");
+  const pendingActionHandledRef = React.useRef<string | null>(null);
 
   const filteredInstallationJobs = useMemo(() => {
     const q = installJobSearch.trim().toLowerCase();
@@ -682,6 +725,15 @@ export function CompanyScheduleCalendar({
 
   const loading = meetingsMeasurementsLoading;
 
+  const resolveReminderOffsetsMinutes = React.useCallback((): number[] => {
+    if (reminderPreset === "custom") {
+      const n = Math.round(Number(customReminderMinutes));
+      return Number.isFinite(n) && n > 0 ? [n] : [30];
+    }
+    const n = Math.round(Number(reminderPreset));
+    return Number.isFinite(n) && n > 0 ? [n] : [30];
+  }, [reminderPreset, customReminderMinutes]);
+
   const openCreateForDay = (
     day: Date,
     presetKind: "lead_meeting" | "installation" = "lead_meeting"
@@ -716,6 +768,9 @@ export function CompanyScheduleCalendar({
     setNotificationText("");
     setInstallJobSearch("");
     setInstallJobPickerOpen(false);
+    const rem = applyReminderPresetFromOffsets(undefined, presetKind === "installation");
+    setReminderPreset(rem.preset);
+    setCustomReminderMinutes(rem.custom);
     setFormOpen(true);
   };
 
@@ -760,8 +815,48 @@ export function CompanyScheduleCalendar({
     setNotificationText(ev.notificationMessage ?? "");
     setInstallJobSearch("");
     setInstallJobPickerOpen(false);
+    const rem = applyReminderPresetFromOffsets(
+      ev.reminderOffsetsMinutes,
+      ev.kind === "installation" || ev.calendarEventType === "installation"
+    );
+    setReminderPreset(rem.preset);
+    setCustomReminderMinutes(rem.custom);
     setFormOpen(true);
   };
+
+  React.useEffect(() => {
+    if (!pendingAction || loading) return;
+    const key = JSON.stringify(pendingAction);
+    if (pendingActionHandledRef.current === key) return;
+
+    if (pendingAction.type === "create") {
+      const day = parseDayKeyLocal(pendingAction.dayKey);
+      if (!day) return;
+      if (!isSameMonth(day, visibleMonth)) {
+        setVisibleMonth(startOfMonth(day));
+      }
+      setMobileSelectedDay(startOfDay(day));
+      openCreateForDay(day, pendingAction.kind);
+      pendingActionHandledRef.current = key;
+      onPendingActionConsumed?.();
+      return;
+    }
+
+    const ev = events.find(
+      (e) =>
+        e.sourceId === pendingAction.sourceId &&
+        (e.kind === "meeting" || e.kind === "installation")
+    );
+    if (ev) {
+      if (!isSameMonth(ev.at, visibleMonth)) {
+        setVisibleMonth(startOfMonth(ev.at));
+      }
+      setMobileSelectedDay(startOfDay(ev.at));
+      openEditMeeting(ev);
+      pendingActionHandledRef.current = key;
+      onPendingActionConsumed?.();
+    }
+  }, [pendingAction, loading, events, visibleMonth, onPendingActionConsumed]);
 
   const buildDefaultNotificationText = (title: string, dateStr: string, timeStr: string) => {
     const t = timeStr.trim();
@@ -845,6 +940,10 @@ export function CompanyScheduleCalendar({
         : "planned";
 
     const statusForPayload = isInstallation ? instStatus : meetingSt;
+    const reminderOffsetsMinutes = resolveReminderOffsetsMinutes();
+    const skipReminders =
+      statusForPayload === "cancelled" ||
+      statusForPayload === "canceled";
 
     setSaving(true);
     try {
@@ -903,6 +1002,7 @@ export function CompanyScheduleCalendar({
               ? { completedAt: null, cancelledAt: null }
               : {}
           ),
+          reminderOffsetsMinutes,
         };
       } else {
         payloadCommon = {
@@ -923,6 +1023,7 @@ export function CompanyScheduleCalendar({
           ...(endsAtField ? { endsAt: endsAtField } : {}),
           ...(meetingSt === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
           ...(meetingSt === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
+          reminderOffsetsMinutes,
         };
       }
 
@@ -1058,7 +1159,9 @@ export function CompanyScheduleCalendar({
           eventId: realEventId,
           eventStartsAtIso: iso,
           title,
-          calendarKind: "meeting",
+          calendarKind: isInstallation ? "installation" : "meeting",
+          reminderOffsetsMinutes: skipReminders ? undefined : reminderOffsetsMinutes,
+          cancel: skipReminders,
         });
         const isEditMeeting = Boolean(eventIdExisting);
         void sendModuleEmailNotificationFromBrowser({
@@ -1068,7 +1171,7 @@ export function CompanyScheduleCalendar({
           entityId: realEventId,
           title: isEditMeeting ? `Událost upravena: ${title}` : `Nová událost: ${title}`,
           lines: [`Začátek: ${format(d, "d. M. yyyy HH:mm", { locale: cs })}`],
-          actionPath: "/portal/dashboard",
+          actionPath: `/portal/schedule?event=${encodeURIComponent(realEventId)}`,
         });
         if (
           emailPref.enabled &&
@@ -1541,15 +1644,15 @@ export function CompanyScheduleCalendar({
               </div>
               {!loading && events.length === 0 ? (
                 <span className={dark ? "text-slate-300" : "text-slate-800"}>
-                  V tomto měsíci nic — naplánujte v{" "}
+                  V tomto měsíci nic — klepněte na den a naplánujte schůzku nebo montáž, nebo otevřete{" "}
                   <Link
-                    href="/portal/leads"
+                    href="/portal/schedule"
                     className={cn(
                       "font-medium underline underline-offset-2 hover:no-underline",
                       dark ? "text-orange-300" : "text-slate-900"
                     )}
                   >
-                    Poptávkách
+                    celý kalendář
                   </Link>
                   .
                 </span>
@@ -2319,6 +2422,39 @@ export function CompanyScheduleCalendar({
                 value={meetingTimeEnd}
                 onChange={(e) => setMeetingTimeEnd(e.target.value)}
               />
+            </div>
+            <div className="space-y-1 sm:col-span-2">
+              <Label className={dark ? "text-slate-200" : undefined}>Připomenout</Label>
+              <Select
+                value={reminderPreset}
+                onValueChange={setReminderPreset}
+                disabled={readOnly}
+              >
+                <SelectTrigger className={fc}>
+                  <SelectValue placeholder="Vyberte připomenutí" />
+                </SelectTrigger>
+                <SelectContent>
+                  {REMINDER_PRESET_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {reminderPreset === "custom" ? (
+                <Input
+                  className={cn("mt-2", fc)}
+                  type="number"
+                  min={1}
+                  disabled={readOnly}
+                  value={customReminderMinutes}
+                  onChange={(e) => setCustomReminderMinutes(e.target.value)}
+                  placeholder="Minut před začátkem"
+                />
+              ) : null}
+              <p className={cn("text-xs", dark ? "text-slate-500" : "text-muted-foreground")}>
+                Push a e-mail připomenutí se odešle serverově před začátkem události.
+              </p>
             </div>
             <div className="sm:col-span-2 space-y-1">
               <Label className={dark ? "text-slate-200" : undefined}>Místo / adresa</Label>

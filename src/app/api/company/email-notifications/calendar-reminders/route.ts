@@ -17,7 +17,8 @@ type Body = {
   eventId?: string;
   eventStartsAtIso?: string;
   title?: string;
-  calendarKind?: "meeting" | "measurement";
+  calendarKind?: "meeting" | "measurement" | "installation";
+  reminderOffsetsMinutes?: number[];
   /** Pokud true, smaže frontu připomenutí (např. po smazání události). */
   cancel?: boolean;
 };
@@ -59,7 +60,15 @@ export async function POST(request: NextRequest) {
 
   const eventStartsAtIso = String(body.eventStartsAtIso ?? "").trim();
   const title = String(body.title ?? "Událost").trim();
-  const calendarKind = body.calendarKind === "measurement" ? "measurement" : "meeting";
+  const calendarKind =
+    body.calendarKind === "measurement"
+      ? "measurement"
+      : body.calendarKind === "installation"
+        ? "installation"
+        : "meeting";
+  const reminderOffsetsMinutes = Array.isArray(body.reminderOffsetsMinutes)
+    ? body.reminderOffsetsMinutes.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)
+    : undefined;
 
   if (!eventStartsAtIso) {
     return NextResponse.json({ ok: false, error: "Chybí čas události." }, { status: 400 });
@@ -70,6 +79,7 @@ export async function POST(request: NextRequest) {
     eventStartsAtIso,
     title,
     calendarKind,
+    reminderOffsetsMinutes,
   });
   return NextResponse.json({ ok: true });
 }
