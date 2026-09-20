@@ -182,19 +182,36 @@ export function EmailAttachmentsSection(props: Props) {
       const label = data.jobLabel ?? selectedJob?.label ?? selectedJobId;
       const assigned = Number(data.attachmentsAssigned ?? 0);
       const dupes = Number(data.skippedDuplicates ?? 0);
+      const failed = Number(data.failed ?? 0);
+      const folderName = String(data.folderName ?? "").trim();
+      const folderSuffix = folderName ? `, složka ${folderName}` : "";
+      const singleName =
+        !assignAll && selectedAttId
+          ? visible.find((x) => x.id === selectedAttId)?.filename
+          : null;
 
-      if (assigned === 0 && dupes > 0) {
+      if (assigned === 0 && dupes > 0 && failed === 0) {
         toast({
-          title: "Tento dokument už je k zakázce přiřazen.",
+          title: "Tato příloha už je v zakázce uložená.",
           description: label,
+        });
+      } else if (failed > 0 && assigned > 0) {
+        toast({
+          variant: "destructive",
+          title: `${assigned} z ${ids.length} souborů uloženo${folderSuffix}.`,
+          description: `${failed} souborů selhalo.`,
         });
       } else if (assignAll && assigned > 0) {
         toast({
-          title: `Přiřazeno ${assigned} příloh k zakázce ${label}.`,
-          description: dupes > 0 ? `${dupes} už bylo přiřazeno dříve.` : undefined,
+          title: `${assigned} příloh bylo uloženo do zakázky ${label}${folderSuffix}.`,
+          description: dupes > 0 ? `${dupes} už bylo v zakázce.` : undefined,
+        });
+      } else if (assigned === 1 && singleName) {
+        toast({
+          title: `Soubor ${singleName} byl uložen do zakázky ${label}${folderSuffix}.`,
         });
       } else if (assigned > 0) {
-        toast({ title: `Příloha přiřazena k zakázce ${label}.` });
+        toast({ title: `${assigned} příloh uloženo do zakázky ${label}${folderSuffix}.` });
       } else {
         toast({ title: "Přiřazení dokončeno", description: label });
       }
@@ -237,6 +254,7 @@ export function EmailAttachmentsSection(props: Props) {
         {visible.map((att) => (
           <EmailAttachmentCard
             key={att.id}
+            messageId={props.messageId}
             attachment={att}
             canWrite={props.canWrite}
             busy={props.busy || assignSubmitting}

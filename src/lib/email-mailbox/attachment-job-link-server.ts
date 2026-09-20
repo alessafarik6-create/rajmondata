@@ -9,6 +9,10 @@ import {
   type EmailAttachmentJobCategory,
 } from "@/lib/email-mailbox/attachment-meta";
 import { assertJobBelongsToCompany } from "@/lib/email-mailbox/job-access-server";
+import {
+  findOrCreateEmailAttachmentFolder,
+  importEmailAttachmentToJobMedia,
+} from "@/lib/email-mailbox/email-attachment-job-media-server";
 
 export const EMAIL_ATTACHMENT_JOB_LINKS_SUBCOLLECTION = "email_attachment_job_links";
 
@@ -18,6 +22,26 @@ export function companyDocumentIdForEmailAttachment(
 ): string {
   return `emailAtt_${messageId}_${attachmentId}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 120);
 }
+
+export type EmailAttachmentJobLinkResult =
+  | {
+      documentId: string;
+      linkId: string;
+      duplicate: false;
+      jobLabel: string;
+      folderId: string;
+      folderName: string;
+      imageId: string;
+    }
+  | {
+      documentId: string;
+      linkId: string | null;
+      duplicate: true;
+      jobLabel: string;
+      folderId: string;
+      folderName: string;
+      imageId: string;
+    };
 
 export async function linkEmailAttachmentToJob(params: {
   db: Firestore;
@@ -29,10 +53,11 @@ export async function linkEmailAttachmentToJob(params: {
   category: EmailAttachmentJobCategory;
   createdByUserId: string;
   jobDisplayName?: string | null;
-}): Promise<
-  | { documentId: string; linkId: string; duplicate: false; jobLabel: string }
-  | { documentId: string; linkId: string | null; duplicate: true; jobLabel: string }
-> {
+  mailboxEmail?: string | null;
+  emailSubject?: string | null;
+  /** Sdílená složka pro hromadné přiřazení z jednoho e-mailu. */
+  sharedFolder?: { folderId: string; folderName: string } | null;
+}): Promise<EmailAttachmentJobLinkResult> {
   const category = EMAIL_ATTACHMENT_JOB_CATEGORIES.includes(params.category)
     ? params.category
     : "other";
@@ -46,6 +71,51 @@ export async function linkEmailAttachmentToJob(params: {
     throw new Error(jobCheck.error);
   }
 
+  let folderId = params.sharedFolder?.folderId ?? "";
+  let folderName = params.sharedFolder?.folderName ?? "";
+  if (!folderId) {
+    const folder = await findOrCreateEmailAttachmentFolder({
+      db: params.db,
+      companyId: params.companyId,
+      jobId: params.jobId,
+      userId: params.createdByUserId,
+      mailboxEmail: params.mailboxEmail,
+    });
+    folderId = folder.folderId;
+    folderName = folder.folderName;
+  }
+
+  const media = await importEmailAttachmentToJobMedia({
+    db: params.db,
+    companyId: params.companyId,
+    jobId: params.jobId,
+    jobDisplayName: params.jobDisplayName ?? jobCheck.jobLabel,
+    folderId,
+    folderName,
+    messageId: params.messageId,
+    emailAccountId: params.emailAccountId,
+    attachment: params.attachment,
+    createdByUserId: params.createdByUserId,
+    mailboxEmail: params.mailboxEmail,
+    emailSubject: params.emailSubject,
+  });
+
+  if (!media.ok) {
+    throw new Error(media.error);
+  }
+
+  if (media.duplicate) {
+    return {
+      documentId: companyDocumentIdForEmailAttachment(params.messageId, params.attachment.id),
+      linkId: null,
+      duplicate: true,
+      jobLabel: jobCheck.jobLabel,
+      folderId: media.folderId,
+      folderName: media.folderName,
+      imageId: media.imageId,
+    };
+  }
+
   const documentId = companyDocumentIdForEmailAttachment(params.messageId, params.attachment.id);
   const docRef = params.db
     .collection(COMPANIES_COLLECTION)
@@ -53,22 +123,7 @@ export async function linkEmailAttachmentToJob(params: {
     .collection("documents")
     .doc(documentId);
 
-  const existingDoc = await docRef.get();
-  if (existingDoc.exists) {
-    const ex = existingDoc.data() as Record<string, unknown>;
-    const exJob = String(ex.jobId ?? "").trim();
-    if (exJob === params.jobId) {
-      return {
-        documentId,
-        linkId: null,
-        duplicate: true,
-        jobLabel: jobCheck.jobLabel,
-      };
-    }
-  }
-
   const jobName = params.jobDisplayName?.trim() || jobCheck.jobName;
-
   const ts = FieldValue.serverTimestamp();
   const dateIso = new Date().toISOString().slice(0, 10);
 
@@ -84,6 +139,9 @@ export async function linkEmailAttachmentToJob(params: {
       emailAccountId: params.emailAccountId,
       jobId: params.jobId,
       jobName,
+      folderId,
+      jobMediaFolderId: folderId,
+      jobMediaImageId: media.imageId,
       number: params.attachment.filename.slice(0, 120),
       entityName: jobName,
       description: `E-mailová příloha: ${params.attachment.filename}`,
@@ -91,8 +149,8 @@ export async function linkEmailAttachmentToJob(params: {
       fileName: params.attachment.filename,
       fileType: params.attachment.contentType,
       mimeType: params.attachment.contentType,
-      storagePath: params.attachment.storagePath,
-      fileUrl: null,
+      storagePath: media.storagePath,
+      fileUrl: media.fileUrl,
       emailAttachmentCategory: category,
       vat: 0,
       organizationId: params.companyId,
@@ -116,9 +174,19 @@ export async function linkEmailAttachmentToJob(params: {
       documentId,
       documentCategory: category,
       storagePath: params.attachment.storagePath,
+      jobMediaFolderId: folderId,
+      jobMediaImageId: media.imageId,
       createdBy: params.createdByUserId,
       createdAt: ts,
     });
 
-  return { documentId, linkId: linkRef.id, duplicate: false, jobLabel: jobCheck.jobLabel };
+  return {
+    documentId,
+    linkId: linkRef.id,
+    duplicate: false,
+    jobLabel: jobCheck.jobLabel,
+    folderId,
+    folderName,
+    imageId: media.imageId,
+  };
 }

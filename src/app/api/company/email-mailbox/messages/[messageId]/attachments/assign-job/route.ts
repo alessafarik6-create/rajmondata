@@ -13,6 +13,8 @@ import { linkEmailAttachmentToJob } from "@/lib/email-mailbox/attachment-job-lin
 import { appendEmailMessageTimeline } from "@/lib/email-mailbox/message-timeline";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
 import { assertJobBelongsToCompany } from "@/lib/email-mailbox/job-access-server";
+import { findOrCreateEmailAttachmentFolder } from "@/lib/email-mailbox/email-attachment-job-media-server";
+import { loadEmailAccount } from "@/lib/email-mailbox/account-store";
 
 export const dynamic = "force-dynamic";
 
@@ -68,64 +70,118 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   }
 
+  const account = await loadEmailAccount(db, companyId, access.message.emailAccountId);
+  const mailboxEmail = account?.email ?? null;
+  const emailSubject = access.message.subject ?? null;
+
+  const sharedFolder = await findOrCreateEmailAttachmentFolder({
+    db,
+    companyId,
+    jobId,
+    userId: perm.caller.uid,
+    mailboxEmail,
+  });
+
   const attachments = access.message.attachments ?? [];
-  const results: { attachmentId: string; documentId: string; duplicate?: boolean }[] = [];
+  const results: {
+    attachmentId: string;
+    documentId?: string;
+    duplicate?: boolean;
+    error?: string;
+    imageId?: string;
+  }[] = [];
   const updatedAttachments: EmailMessageAttachmentMeta[] = attachments.map((a) => ({ ...a }));
   let attachmentsAssigned = 0;
   let skippedDuplicates = 0;
+  let failed = 0;
 
   for (const attId of attachmentIds) {
     const att = attachments.find((a) => a.id === attId);
-    if (!att || !att.storagePath) continue;
+    if (!att || !att.storagePath) {
+      failed += 1;
+      results.push({ attachmentId: attId, error: "Příloha nemá uložený soubor." });
+      continue;
+    }
 
-    if (att.linkedJobId === jobId && att.linkedDocumentId) {
+    if (
+      att.linkedJobId === jobId &&
+      att.linkedJobMediaImageId &&
+      att.linkedFolderId === sharedFolder.folderId
+    ) {
       skippedDuplicates += 1;
       results.push({
         attachmentId: attId,
-        documentId: att.linkedDocumentId,
+        documentId: att.linkedDocumentId ?? undefined,
         duplicate: true,
+        imageId: att.linkedJobMediaImageId,
       });
       continue;
     }
 
-    const linked = await linkEmailAttachmentToJob({
-      db,
-      companyId,
-      jobId,
-      messageId,
-      emailAccountId: access.message.emailAccountId,
-      attachment: att,
-      category,
-      createdByUserId: perm.caller.uid,
-      jobDisplayName: body.jobDisplayName ?? jobMeta.jobLabel,
-    });
+    try {
+      const linked = await linkEmailAttachmentToJob({
+        db,
+        companyId,
+        jobId,
+        messageId,
+        emailAccountId: access.message.emailAccountId,
+        attachment: att,
+        category,
+        createdByUserId: perm.caller.uid,
+        jobDisplayName: body.jobDisplayName ?? jobMeta.jobLabel,
+        mailboxEmail,
+        emailSubject,
+        sharedFolder: { folderId: sharedFolder.folderId, folderName: sharedFolder.folderName },
+      });
 
-    results.push({
-      attachmentId: attId,
-      documentId: linked.documentId,
-      duplicate: linked.duplicate,
-    });
+      results.push({
+        attachmentId: attId,
+        documentId: linked.documentId,
+        duplicate: linked.duplicate,
+        imageId: linked.imageId,
+      });
 
-    if (linked.duplicate) {
-      skippedDuplicates += 1;
-    } else {
-      attachmentsAssigned += 1;
-    }
+      if (linked.duplicate) {
+        skippedDuplicates += 1;
+      } else {
+        attachmentsAssigned += 1;
+      }
 
-    const idx = updatedAttachments.findIndex((a) => a.id === attId);
-    if (idx >= 0) {
-      updatedAttachments[idx] = {
-        ...updatedAttachments[idx]!,
-        linkedJobId: jobId,
-        linkedJobLabel: linked.jobLabel,
-        linkedDocumentId: linked.documentId,
-        documentCategory: category,
-      };
+      const idx = updatedAttachments.findIndex((a) => a.id === attId);
+      if (idx >= 0) {
+        updatedAttachments[idx] = {
+          ...updatedAttachments[idx]!,
+          linkedJobId: jobId,
+          linkedJobLabel: linked.jobLabel,
+          linkedFolderId: linked.folderId,
+          linkedFolderName: linked.folderName,
+          linkedJobMediaImageId: linked.imageId,
+          linkedDocumentId: linked.documentId,
+          documentCategory: category,
+        };
+      }
+    } catch (e) {
+      failed += 1;
+      results.push({
+        attachmentId: attId,
+        error: e instanceof Error ? e.message : "Uložení selhalo.",
+      });
     }
   }
 
-  if (!results.length) {
-    return NextResponse.json({ ok: false, error: "Žádná příloha nebyla přiřazena." }, { status: 400 });
+  if (attachmentsAssigned === 0 && skippedDuplicates === 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          failed > 0
+            ? `Nepodařilo se uložit přílohy (${failed} chyb).`
+            : "Žádná příloha nebyla přiřazena.",
+        failed,
+        results,
+      },
+      { status: 400 }
+    );
   }
 
   await emailMessagesCol(db, companyId).doc(messageId).update({
@@ -136,21 +192,33 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   if (attachmentsAssigned > 0) {
     await appendEmailMessageTimeline(db, companyId, messageId, {
       kind: "attachment_linked_job",
-      label: `Příloha přiřazena k zakázce ${jobMeta.jobLabel} (${attachmentsAssigned}×)`,
+      label: `Přílohy uloženy do fotodokumentace ${sharedFolder.folderName} (${attachmentsAssigned}×)`,
       userId: perm.caller.uid,
-      metadata: { jobId, attachmentIds, category, attachmentsAssigned },
+      metadata: {
+        jobId,
+        folderId: sharedFolder.folderId,
+        attachmentIds,
+        category,
+        attachmentsAssigned,
+      },
     });
   }
 
+  const partial = failed > 0;
+
   return NextResponse.json({
     ok: true,
-    success: true,
+    success: attachmentsAssigned > 0,
+    partial,
     jobId,
     jobNumber: jobMeta.jobNumber,
     jobName: jobMeta.jobName,
     jobLabel: jobMeta.jobLabel,
+    folderId: sharedFolder.folderId,
+    folderName: sharedFolder.folderName,
     attachmentsAssigned,
     skippedDuplicates,
+    failed,
     results,
   });
 }

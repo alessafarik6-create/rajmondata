@@ -36,6 +36,7 @@ import {
   getPdfPageCountFromUrl,
   renderPdfPagesToPngBlobs,
 } from "@/lib/pdf-to-image-client";
+import { JobMediaPdfThumbnailPreview } from "@/components/jobs/job-media-pdf-thumbnail-preview";
 import {
   buildJobMediaCardDateLine,
   formatMediaDate,
@@ -389,13 +390,15 @@ function MediaCompactDocRow({
   );
 }
 
-function JobMediaPdfPreview() {
+function JobMediaPdfPreview({ pdfUrl }: { pdfUrl?: string | null }) {
+  if (pdfUrl?.trim()) {
+    return <JobMediaPdfThumbnailPreview pdfUrl={pdfUrl} />;
+  }
   return (
     <div
       className="flex aspect-[4/3] min-h-[240px] w-full flex-col items-center justify-center gap-2 bg-red-500/[0.07]"
       aria-hidden
     >
-      <span className="text-3xl leading-none">📄</span>
       <FileText className="h-11 w-11 text-red-600 dark:text-red-400" strokeWidth={1.5} />
       <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         PDF
@@ -2735,7 +2738,7 @@ function UserFolderBlock({
                       ) : kind === "archive" ? (
                         <JobMediaArchivePreview />
                       ) : (
-                        <JobMediaPdfPreview />
+                        <JobMediaPdfPreview pdfUrl={openUrl} />
                       )
                     }
                     title={title}
@@ -3376,6 +3379,31 @@ export function JobMediaSection({
     mediaScope === "employeeLimited" || mediaScope === "customer";
   const firestore = useFirestore();
   const { toast } = useToast();
+  const emailMediaRepairStarted = useRef(false);
+  useEffect(() => {
+    if (!companyId || !jobId || !user?.uid || emailMediaRepairStarted.current) return;
+    emailMediaRepairStarted.current = true;
+    const storageKey = `email-job-media-repair:${companyId}:${jobId}`;
+    if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(storageKey)) return;
+    void (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("/api/company/email-mailbox/repair-job-media", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ companyId, jobId }),
+        });
+        if (res.ok && typeof sessionStorage !== "undefined") {
+          sessionStorage.setItem(storageKey, "1");
+        }
+      } catch {
+        /* tiché — oprava je best-effort */
+      }
+    })();
+  }, [companyId, jobId, user]);
   const actorRef = useMemoFirebase(
     () =>
       firestore && user?.uid ? doc(firestore, "users", user.uid) : null,
@@ -4480,7 +4508,7 @@ export function JobMediaSection({
                           ) : kind === "archive" ? (
                             <JobMediaArchivePreview />
                           ) : (
-                            <JobMediaPdfPreview />
+                            <JobMediaPdfPreview pdfUrl={openUrl} />
                           )
                         }
                         title={title}

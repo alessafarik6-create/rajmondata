@@ -91,6 +91,9 @@ export type EmailMessageAttachmentMeta = {
   /** Propojení na companies/{org}/documents */
   linkedJobId?: string | null;
   linkedJobLabel?: string | null;
+  linkedFolderId?: string | null;
+  linkedFolderName?: string | null;
+  linkedJobMediaImageId?: string | null;
   linkedDocumentId?: string | null;
   documentCategory?: string | null;
   aiSummary?: string | null;

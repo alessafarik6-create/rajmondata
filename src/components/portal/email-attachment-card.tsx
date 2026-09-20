@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { FileSpreadsheet, FileArchive, File, ImageIcon, Loader2 } from "lucide-react";
 import {
@@ -11,15 +12,19 @@ import {
 import { cn } from "@/lib/utils";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
 import { renderPdfPagesToPngBlobs } from "@/lib/pdf-to-image-client";
+import {
+  buildJobEmailAttachmentMediaUrl,
+  buildPortalEmailMessageUrl,
+} from "@/lib/email-mailbox/email-attachment-job-ui-links";
 
 type Props = {
   attachment: EmailMessageAttachmentMeta;
+  messageId: string;
   canWrite: boolean;
   busy?: boolean;
   onAssign?: () => void;
   onOpen?: () => void;
   onDownload?: () => void;
-  /** Načte blob URL PDF pro náhled (autorizovaný fetch). */
   getPdfBlobUrl?: () => Promise<string | null>;
 };
 
@@ -46,8 +51,8 @@ export function EmailAttachmentCard(props: Props) {
         try {
           const blobs = await renderPdfPagesToPngBlobs(pdfUrl, [1], 1.1);
           if (cancelled) return;
-        const url = URL.createObjectURL(blobs[0]!);
-        revoked = url;
+          const url = URL.createObjectURL(blobs[0]!);
+          revoked = url;
           setThumbUrl(url);
         } finally {
           URL.revokeObjectURL(pdfUrl);
@@ -66,6 +71,17 @@ export function EmailAttachmentCard(props: Props) {
   }, [isPdf, disabled, props.getPdfBlobUrl, a.id]);
 
   const linkedLabel = a.linkedJobLabel?.trim() || (a.linkedJobId ? a.linkedJobId : null);
+  const folderName = a.linkedFolderName?.trim();
+  const jobMediaUrl =
+    a.linkedJobId && a.linkedFolderId
+      ? buildJobEmailAttachmentMediaUrl(
+          a.linkedJobId,
+          a.linkedFolderId,
+          a.linkedJobMediaImageId
+        )
+      : a.linkedJobId
+        ? `/portal/jobs/${encodeURIComponent(a.linkedJobId)}?mediaSection=1`
+        : null;
 
   return (
     <div className="rounded-lg border p-3 space-y-2 bg-card">
@@ -101,9 +117,10 @@ export function EmailAttachmentCard(props: Props) {
           <p className="text-xs text-primary/90 mt-1 line-clamp-3">{a.aiSummary}</p>
         ) : null}
         {linkedLabel ? (
-          <p className="text-xs font-medium text-emerald-700 mt-1">
-            Přiřazeno: {linkedLabel}
-          </p>
+          <div className="mt-1 space-y-0.5 text-xs text-emerald-800">
+            <p className="font-medium">Přiřazeno: {linkedLabel}</p>
+            {folderName ? <p>Složka: {folderName}</p> : null}
+          </div>
         ) : null}
       </button>
       <div className="flex flex-wrap gap-1.5">
@@ -113,6 +130,19 @@ export function EmailAttachmentCard(props: Props) {
         <Button size="sm" variant="outline" disabled={disabled} onClick={() => props.onDownload?.()}>
           Stáhnout
         </Button>
+        {linkedLabel && jobMediaUrl ? (
+          <>
+            <Button size="sm" variant="outline" asChild>
+              <Link href={jobMediaUrl}>Otevřít složku</Link>
+            </Button>
+            <Button size="sm" variant="ghost" asChild>
+              <Link href={`/portal/jobs/${encodeURIComponent(a.linkedJobId!)}`}>Otevřít zakázku</Link>
+            </Button>
+            <Button size="sm" variant="ghost" asChild>
+              <Link href={buildPortalEmailMessageUrl(props.messageId)}>Původní e-mail</Link>
+            </Button>
+          </>
+        ) : null}
         {props.canWrite && props.onAssign ? (
           <Button
             size="sm"
