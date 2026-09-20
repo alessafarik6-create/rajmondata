@@ -13,6 +13,8 @@ import { useCompany } from "@/firebase/firestore/use-company";
 import { CompanyChat } from "@/components/chat/CompanyChat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 export default function EmployeeMessagesPage() {
   const { user } = useUser();
@@ -29,6 +31,7 @@ export default function EmployeeMessagesPage() {
   );
   const { data: profile } = useDoc<any>(userRef);
   const { t } = useEmployeeUiLang(profile);
+  const isMobile = useIsMobile();
 
   if (companyLoading) {
     return (
@@ -62,17 +65,27 @@ export default function EmployeeMessagesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 max-w-5xl mx-auto w-full">
-      <div>
-        <h1 className="portal-page-title text-2xl sm:text-3xl">{t("messages")}</h1>
-        <p className="portal-page-description mt-1 text-base text-slate-800">
-          {t("messagesSubtitle")}
-        </p>
-      </div>
+    <div
+      className={cn(
+        "flex flex-col w-full",
+        isMobile
+          ? "fixed inset-0 z-30 bg-background flex flex-col min-h-0"
+          : "gap-4 max-w-5xl mx-auto"
+      )}
+    >
+      {!isMobile ? (
+        <div>
+          <h1 className="portal-page-title text-2xl sm:text-3xl">{t("messages")}</h1>
+          <p className="portal-page-description mt-1 text-base text-slate-800">
+            {t("messagesSubtitle")}
+          </p>
+        </div>
+      ) : null}
       <CompanyChat
         companyId={companyId}
         mode="employee"
         title={t("messages")}
+        fullScreenMobile={isMobile}
         placeholder={
           profile?.language === "ua"
             ? "Повідомлення адміністратору…"

@@ -6,6 +6,8 @@ import { useCompany } from "@/firebase/firestore/use-company";
 import { CompanyChat } from "@/components/chat/CompanyChat";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 /**
  * Chat administrace ↔ zaměstnanci (Firestore: companies/{companyId}/chat).
@@ -17,6 +19,7 @@ export default function PortalChatPage() {
     companyDocMissing,
   } = useCompany();
   const { canWrite: canWriteChat } = usePortalModuleAccess("chat");
+  const isMobile = useIsMobile();
 
   if (companyLoading) {
     return (
@@ -50,19 +53,29 @@ export default function PortalChatPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 max-w-5xl mx-auto w-full">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Zprávy</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Komunikace se zaměstnanci firmy v reálném čase.
-        </p>
-      </div>
+    <div
+      className={cn(
+        "flex flex-col w-full",
+        isMobile
+          ? "fixed inset-0 z-30 bg-background flex flex-col min-h-0"
+          : "gap-4 max-w-5xl mx-auto"
+      )}
+    >
+      {!isMobile ? (
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Zprávy</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Komunikace se zaměstnanci firmy v reálném čase.
+          </p>
+        </div>
+      ) : null}
       <CompanyChat
         companyId={companyId}
         mode="admin"
-        title="Firemní chat"
+        title="Zprávy"
+        fullScreenMobile={isMobile}
         placeholder={
-          canWriteChat ? "Napište odpověď zaměstnanci…" : "Máte pouze náhled — odesílání zpráv je vypnuto."
+          canWriteChat ? "Napište zprávu…" : "Máte pouze náhled — odesílání zpráv je vypnuto."
         }
         readOnly={!canWriteChat}
       />

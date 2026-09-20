@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { collection, getDocs, limit, query, where } from "firebase/firestore";
 import { Loader2, MessageCircle, Mic, Send, Sparkles, Square, User } from "lucide-react";
 import { useIsBelowLg } from "@/hooks/use-mobile";
+import { useDraggableFabPosition } from "@/hooks/use-draggable-fab-position";
 import { usePortalAssistantVoice } from "@/hooks/use-portal-assistant-voice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -63,8 +64,6 @@ const EXAMPLE_QUESTIONS = [
 const quickChipClass =
   "inline-flex min-h-8 max-w-full items-center rounded-md border border-slate-300 bg-[#f3f4f6] px-2.5 py-1.5 text-left text-xs font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#e5e7eb] hover:border-slate-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50";
 
-const FAB_BOTTOM_MOBILE =
-  "bottom-[calc(var(--mobile-bottom-nav-height,72px)+16px+env(safe-area-inset-bottom,0px))]";
 const FAB_BOTTOM_DESKTOP = "bottom-[calc(16px+env(safe-area-inset-bottom,0px))]";
 
 export function ChatAssistant() {
@@ -74,6 +73,11 @@ export function ChatAssistant() {
   const { companyId } = useCompany();
   const { user } = useUser();
   const isMobileLayout = useIsBelowLg();
+  const onChatRoute = pathname.startsWith("/portal/chat") || pathname.includes("/messages");
+  const fabDrag = useDraggableFabPosition({
+    enabled: isMobileLayout,
+    avoidBottomInset: onChatRoute ? 72 : 0,
+  });
 
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
@@ -263,10 +267,28 @@ export function ChatAssistant() {
         <button
           type="button"
           aria-label="Otevřít nápovědu k portálu"
-          onClick={() => setOpen(true)}
+          onPointerDown={isMobileLayout ? fabDrag.onPointerDown : undefined}
+          onPointerMove={isMobileLayout ? fabDrag.onPointerMove : undefined}
+          onPointerUp={isMobileLayout ? fabDrag.onPointerUp : undefined}
+          onClick={() => {
+            if (isMobileLayout && fabDrag.wasDragged()) {
+              fabDrag.resetDragFlag();
+              return;
+            }
+            setOpen(true);
+          }}
+          style={
+            isMobileLayout
+              ? {
+                  left: fabDrag.pos.left,
+                  top: fabDrag.pos.top,
+                  touchAction: "none",
+                }
+              : undefined
+          }
           className={cn(
-            "fixed right-4 z-[80] flex h-14 w-14 min-h-[56px] min-w-[56px] items-center justify-center rounded-full shadow-lg",
-            isMobileLayout ? FAB_BOTTOM_MOBILE : FAB_BOTTOM_DESKTOP,
+            "fixed z-[80] flex h-14 w-14 min-h-[56px] min-w-[56px] items-center justify-center rounded-full shadow-lg",
+            !isMobileLayout && `right-4 ${FAB_BOTTOM_DESKTOP}`,
             "bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
             "transition-transform hover:scale-105 active:scale-95 print:hidden"
           )}

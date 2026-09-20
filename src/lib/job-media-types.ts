@@ -171,6 +171,18 @@ export const JOB_MEDIA_ACCEPT_ATTR =
 export const JOB_IMAGE_ACCEPT_ATTR =
   "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp";
 
+export function isJobMediaVideoFile(row: {
+  mimeType?: string | null;
+  fileName?: string | null;
+  name?: string | null;
+  fileType?: string | null;
+}): boolean {
+  const mt = String(row.mimeType ?? "").toLowerCase();
+  if (mt.startsWith("video/")) return true;
+  const name = String(row.fileName ?? row.name ?? "").toLowerCase();
+  return /\.(mp4|mov|webm|m4v|mkv)$/i.test(name);
+}
+
 export function getJobMediaPreviewUrl(row: {
   annotatedImageUrl?: string;
   imageUrl?: string;

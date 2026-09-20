@@ -17,6 +17,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
@@ -31,7 +32,9 @@ import {
   ImagePlus,
   Loader2,
   Paperclip,
+  Plus,
   Send,
+  Users,
   Video,
   X,
 } from "lucide-react";
@@ -44,11 +47,22 @@ import {
   chatAttachmentStoragePath,
   COMPANY_CHAT_CONVERSATION_ID,
   directMessageParticipantIds,
+  isGroupConversationId,
   messageConversationKey,
+  newGroupConversationId,
   type ChatAttachmentMeta,
+  type ChatConversationDoc,
   type ChatMessageDoc,
 } from "@/lib/company-chat-types";
 import { ChatAssignJobDialog } from "@/components/chat/chat-assign-job-dialog";
+import {
+  ChatAssignProgressDialog,
+  type AssignProgressPhase,
+} from "@/components/chat/chat-assign-progress-dialog";
+import {
+  ChatNewConversationDialog,
+  type ChatEmployeeOption,
+} from "@/components/chat/chat-new-conversation-dialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 
@@ -60,6 +74,7 @@ type Props = {
   title?: string;
   placeholder?: string;
   readOnly?: boolean;
+  fullScreenMobile?: boolean;
 };
 
 type ConversationItem = {
@@ -69,6 +84,8 @@ type ConversationItem = {
   peerUserId?: string | null;
   employeeId?: string | null;
   photo?: string;
+  isGroup?: boolean;
+  participantIds?: string[];
 };
 
 function formatMessageTime(createdAt: unknown): string {
@@ -96,6 +113,7 @@ export function CompanyChatMessenger({
   title = "Zprávy",
   placeholder = "Napište zprávu…",
   readOnly = false,
+  fullScreenMobile = false,
 }: Props) {
   const firestore = useFirestore();
   const { user } = useUser();
@@ -108,6 +126,9 @@ export function CompanyChatMessenger({
     [firestore, user]
   );
   const { data: profile } = useDoc<Record<string, unknown>>(userRef);
+  const role = String(profile?.role ?? "").trim();
+  const canManageGroups =
+    mode === "admin" && ["owner", "admin", "manager"].includes(role);
 
   const readStateRef = useMemoFirebase(() => {
     if (!firestore || !companyId || !user?.uid) return null;
@@ -131,6 +152,15 @@ export function CompanyChatMessenger({
     return m;
   }, [employeeRows]);
 
+  const groupConvQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !user?.uid) return null;
+    return query(
+      collection(firestore, "companies", companyId, "chatConversations"),
+      where("participantIds", "array-contains", user.uid)
+    );
+  }, [firestore, companyId, user?.uid]);
+  const { data: groupConvRaw = [] } = useCollection<ChatConversationDoc>(groupConvQuery);
+
   const chatQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     return query(
@@ -145,29 +175,80 @@ export function CompanyChatMessenger({
     [rawMessages]
   );
 
+  const groupById = useMemo(() => {
+    const m = new Map<string, ChatConversationDoc>();
+    for (const g of groupConvRaw ?? []) {
+      if (g?.id) m.set(g.id, g as ChatConversationDoc);
+    }
+    return m;
+  }, [groupConvRaw]);
+
+  const employeeChatOptions = useMemo((): ChatEmployeeOption[] => {
+    const out: ChatEmployeeOption[] = [];
+    for (const e of employeeRows ?? []) {
+      const authUid = String(e.authUserId ?? "").trim();
+      if (!authUid || authUid === user?.uid) continue;
+      const fn = String(e.firstName ?? "").trim();
+      const ln = String(e.lastName ?? "").trim();
+      out.push({
+        employeeId: e.id,
+        authUserId: authUid,
+        label: `${fn} ${ln}`.trim() || String(e.email ?? "Zaměstnanec"),
+      });
+    }
+    return out;
+  }, [employeeRows, user?.uid]);
+
   const conversations = useMemo((): ConversationItem[] => {
     const list: ConversationItem[] = [
       { id: COMPANY_CHAT_CONVERSATION_ID, label: "Firemní chat" },
     ];
+    for (const g of groupById.values()) {
+      if (g.type !== "group") continue;
+      list.push({
+        id: g.id,
+        label: String(g.name ?? "Skupina"),
+        isGroup: true,
+        participantIds: g.participantIds ?? [],
+      });
+    }
     if (mode === "admin") {
-      for (const e of employeeRows ?? []) {
-        const authUid = String(e.authUserId ?? "").trim();
-        if (!authUid || authUid === user?.uid) continue;
-        const fn = String(e.firstName ?? "").trim();
-        const ln = String(e.lastName ?? "").trim();
-        const label = `${fn} ${ln}`.trim() || String(e.email ?? "Zaměstnanec");
-        const dmId = buildDirectConversationId(user?.uid ?? "", authUid);
+      for (const e of employeeChatOptions) {
+        const dmId = buildDirectConversationId(user?.uid ?? "", e.authUserId);
         list.push({
           id: dmId,
+          label: e.label,
+          peerUserId: e.authUserId,
+          employeeId: e.employeeId,
+        });
+      }
+    } else if (user?.uid) {
+      const seenDm = new Set(list.map((c) => c.id));
+      for (const msg of messages) {
+        const k = messageConversationKey(msg);
+        if (k === COMPANY_CHAT_CONVERSATION_ID || isGroupConversationId(k) || seenDm.has(k)) {
+          continue;
+        }
+        const pids = msg.participantIds ?? [];
+        if (!pids.includes(user.uid) || pids.length < 2) continue;
+        seenDm.add(k);
+        const peerUid = pids.find((uid) => uid !== user.uid) ?? null;
+        const label =
+          msg.senderRole === "admin"
+            ? "Administrace"
+            : String(msg.senderName ?? "").trim() || "Soukromý chat";
+        list.push({
+          id: k,
           label,
-          peerUserId: authUid,
-          employeeId: e.id,
-          photo: String(e.profileImage ?? e.photoURL ?? ""),
+          peerUserId: peerUid,
         });
       }
     }
     return list;
-  }, [employeeRows, mode, user?.uid]);
+  }, [groupById, mode, employeeChatOptions, user?.uid, messages]);
+
+  const [newChatOpen, setNewChatOpen] = useState(false);
+  const [creatingGroup, setCreatingGroup] = useState(false);
 
   const initialConv =
     searchParams.get("c")?.trim() ||
@@ -252,9 +333,11 @@ export function CompanyChatMessenger({
     filteredMessages,
   ]);
 
+  const mobileFull = isMobile || fullScreenMobile;
+
   useEffect(() => {
-    if (mobileShowThread || !isMobile) void markConversationRead();
-  }, [activeConversationId, filteredMessages.length, markConversationRead, isMobile, mobileShowThread]);
+    if (mobileShowThread || !mobileFull) void markConversationRead();
+  }, [activeConversationId, filteredMessages.length, markConversationRead, mobileFull, mobileShowThread]);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -290,8 +373,13 @@ export function CompanyChatMessenger({
     };
   };
 
-  const notifyRecipient = async (recipientUserId: string, hasAttachment: boolean, preview: string) => {
-    if (!user) return;
+  const notifyRecipients = async (params: {
+    recipientUserIds: string[];
+    hasAttachment: boolean;
+    preview: string;
+    groupTitle?: string;
+  }) => {
+    if (!user || !params.recipientUserIds.length) return;
     try {
       const token = await user.getIdToken();
       await fetch("/api/company/chat/notify", {
@@ -302,15 +390,49 @@ export function CompanyChatMessenger({
         },
         body: JSON.stringify({
           companyId,
-          recipientUserId,
+          recipientUserIds: params.recipientUserIds,
           senderName: buildSenderNameFromProfile(profile) || "RAJMONDATA",
-          previewText: preview,
+          previewText: params.preview,
           conversationId: activeConversationId,
-          hasAttachment,
+          hasAttachment: params.hasAttachment,
+          groupTitle: params.groupTitle,
         }),
       });
     } catch {
       /* ignore */
+    }
+  };
+
+  const createDmChat = (authUserId: string, _label: string) => {
+    if (!user?.uid) return;
+    const dmId = buildDirectConversationId(user.uid, authUserId);
+    setActiveConversationId(dmId);
+    if (isMobile || fullScreenMobile) setMobileShowThread(true);
+    setNewChatOpen(false);
+    void markConversationRead();
+  };
+
+  const createGroupChat = async (name: string, memberAuthUserIds: string[]) => {
+    if (!firestore || !companyId || !user?.uid || !canManageGroups) return;
+    setCreatingGroup(true);
+    try {
+      const id = newGroupConversationId();
+      const participantIds = [...new Set([user.uid, ...memberAuthUserIds])];
+      await setDoc(doc(firestore, "companies", companyId, "chatConversations", id), {
+        id,
+        companyId,
+        type: "group",
+        name,
+        participantIds,
+        createdBy: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      setActiveConversationId(id);
+      if (isMobile || fullScreenMobile) setMobileShowThread(true);
+      setNewChatOpen(false);
+    } finally {
+      setCreatingGroup(false);
     }
   };
 
@@ -334,12 +456,17 @@ export function CompanyChatMessenger({
           : "";
 
       const isCompany = activeConversationId === COMPANY_CHAT_CONVERSATION_ID;
+      const groupDoc = groupById.get(activeConversationId);
       const peerUid = activeConvMeta?.peerUserId ?? null;
-      const participantIds =
-        !isCompany && peerUid
-          ? directMessageParticipantIds(user.uid, peerUid)
-          : [user.uid];
-      const recipientUserId = !isCompany && peerUid ? peerUid : null;
+      let participantIds: string[] = [user.uid];
+      if (isCompany) {
+        participantIds = [user.uid];
+      } else if (groupDoc?.participantIds?.length) {
+        participantIds = [...new Set(groupDoc.participantIds)];
+      } else if (peerUid) {
+        participantIds = directMessageParticipantIds(user.uid, peerUid);
+      }
+      const dmRecipient = !isCompany && !groupDoc && peerUid ? peerUid : null;
 
       const msgRef = doc(collection(firestore, "companies", companyId, "chat"));
       const attachments: ChatAttachmentMeta[] = [];
@@ -379,7 +506,7 @@ export function CompanyChatMessenger({
         read: false,
         conversationId: activeConversationId,
         participantIds,
-        recipientUserId,
+        recipientUserId: dmRecipient,
         attachments,
         createdAt: serverTimestamp(),
       });
@@ -397,8 +524,19 @@ export function CompanyChatMessenger({
           lines: [senderName, (text || "Příloha").slice(0, 240)].filter(Boolean),
           actionPath: "/portal/chat",
         });
-      } else if (recipientUserId) {
-        void notifyRecipient(recipientUserId, attachments.length > 0, text);
+      } else if (groupDoc) {
+        void notifyRecipients({
+          recipientUserIds: participantIds.filter((uid) => uid !== user.uid),
+          hasAttachment: attachments.length > 0,
+          preview: text,
+          groupTitle: String(groupDoc.name ?? "Skupinový chat"),
+        });
+      } else if (dmRecipient) {
+        void notifyRecipients({
+          recipientUserIds: [dmRecipient],
+          hasAttachment: attachments.length > 0,
+          preview: text,
+        });
       }
 
       setDraft("");
@@ -413,12 +551,69 @@ export function CompanyChatMessenger({
     messageId: string;
     attachmentIds: string[];
     senderLabel: string;
+    fileName: string;
+    fileSize: number;
+    isVideo: boolean;
   } | null>(null);
   const [assigning, setAssigning] = useState(false);
+  const [assignProgressOpen, setAssignProgressOpen] = useState(false);
+  const [assignPhase, setAssignPhase] = useState<AssignProgressPhase>("idle");
+  const [assignProgressPct, setAssignProgressPct] = useState<number | null>(null);
+  const [assignResult, setAssignResult] = useState<{
+    jobLabel: string;
+    jobId: string;
+    folderName?: string | null;
+  } | null>(null);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const lastAssignJobRef = useRef<{ jobId: string; jobLabel: string } | null>(null);
+  const assignFileMetaRef = useRef({
+    fileName: "",
+    fileSize: 0,
+    isVideo: false,
+  });
+
+  const openAssignForAttachment = (
+    messageId: string,
+    attachmentIds: string[],
+    senderLabel: string,
+    att: ChatAttachmentMeta
+  ) => {
+    assignFileMetaRef.current = {
+      fileName: att.fileName,
+      fileSize: att.size,
+      isVideo: att.mimeType.startsWith("video/"),
+    };
+    setAssignTarget({
+      messageId,
+      attachmentIds,
+      senderLabel,
+      fileName: att.fileName,
+      fileSize: att.size,
+      isVideo: att.mimeType.startsWith("video/"),
+    });
+    setAssignOpen(true);
+  };
 
   const runAssign = async (jobId: string, jobLabel: string) => {
-    if (!assignTarget || !user) return;
+    if (!assignTarget && !lastAssignJobRef.current) return;
+    const target = assignTarget;
+    if (!target || !user) return;
+    lastAssignJobRef.current = { jobId, jobLabel };
+    setAssignOpen(false);
+    setAssignProgressOpen(true);
+    setAssignPhase("prepare");
+    setAssignProgressPct(8);
+    setAssignError(null);
     setAssigning(true);
+    const tick1 = window.setTimeout(() => {
+      setAssignPhase("upload");
+      setAssignProgressPct(35);
+    }, 350);
+    const tick2 = window.setTimeout(() => setAssignProgressPct(62), 900);
+    const tick3 = window.setTimeout(() => {
+      setAssignPhase("save");
+      setAssignProgressPct(88);
+    }, 1500);
     try {
       const token = await user.getIdToken();
       const res = await fetch("/api/company/chat/assign-media", {
@@ -439,12 +634,27 @@ export function CompanyChatMessenger({
       });
       const j = await res.json();
       if (!j.ok) {
-        alert(j.error || "Přiřazení se nepodařilo.");
+        console.error("[chat assign-media]", j.error);
+        setAssignPhase("error");
+        setAssignError(typeof j.error === "string" ? j.error : null);
         return;
       }
-      setAssignOpen(false);
+      setAssignProgressPct(100);
+      setAssignPhase("success");
+      setAssignResult({
+        jobLabel,
+        jobId,
+        folderName: j.folder?.folderName ?? null,
+      });
       setAssignTarget(null);
+    } catch (e) {
+      console.error("[chat assign-media]", e);
+      setAssignPhase("error");
+      setAssignError(null);
     } finally {
+      window.clearTimeout(tick1);
+      window.clearTimeout(tick2);
+      window.clearTimeout(tick3);
       setAssigning(false);
     }
   };
@@ -469,19 +679,37 @@ export function CompanyChatMessenger({
     setPendingFiles((prev) => [...prev, ...next].slice(0, 8));
   };
 
+  const isActiveGroup =
+    isGroupConversationId(activeConversationId) || groupById.has(activeConversationId);
+
   const openConversation = (id: string) => {
     setActiveConversationId(id);
-    if (isMobile) setMobileShowThread(true);
+    if (mobileFull) setMobileShowThread(true);
     void markConversationRead();
   };
 
   const sidebar = (
-    <div className="flex flex-col border-r border-border min-h-0">
-      <div className="px-3 py-2 border-b font-semibold text-sm">{title}</div>
-      <ul className="flex-1 overflow-y-auto text-sm">
+    <div className="flex flex-col border-r border-border min-h-0 flex-1">
+      <div className="px-3 py-2 border-b flex items-center gap-2 shrink-0">
+        <span className="font-semibold text-sm flex-1 truncate">{title}</span>
+        {mode === "admin" ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 shrink-0 gap-1 px-2"
+            onClick={() => setNewChatOpen(true)}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span className="sr-only sm:not-sr-only sm:inline">Nový chat</span>
+          </Button>
+        ) : null}
+      </div>
+      <ul className="flex-1 overflow-y-auto text-sm overscroll-contain">
         {conversations.map((c) => {
           const prev = lastPreviewByConv.get(c.id);
           const unread = unreadByConv.get(c.id) ?? 0;
+          const initials = c.label.slice(0, 2).toUpperCase();
           return (
             <li key={c.id}>
               <button
@@ -493,6 +721,12 @@ export function CompanyChatMessenger({
                 )}
               >
                 <div className="flex items-center gap-2">
+                  <Avatar className="h-9 w-9 shrink-0">
+                    {c.photo ? <AvatarImage src={c.photo} /> : null}
+                    <AvatarFallback className="text-[10px]">
+                      {c.isGroup ? <Users className="h-4 w-4" /> : initials}
+                    </AvatarFallback>
+                  </Avatar>
                   <span className="font-medium truncate flex-1">{c.label}</span>
                   {unread > 0 ? (
                     <Badge variant="destructive" className="h-5 min-w-5 px-1 text-[10px]">
@@ -517,24 +751,26 @@ export function CompanyChatMessenger({
 
   const thread = (
     <>
-      <div className="border-b px-3 py-2 flex items-center gap-2">
-        {isMobile ? (
+      <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 pt-[max(0.5rem,env(safe-area-inset-top,0px))]">
+        {mobileFull ? (
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-8 w-8 shrink-0"
             onClick={() => setMobileShowThread(false)}
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
         ) : null}
-        <h2 className="text-sm font-semibold truncate">
+        <h2 className="text-sm font-semibold truncate flex-1">
           {activeConvMeta?.label ?? "Chat"}
         </h2>
-        <span className="text-xs text-muted-foreground ml-auto truncate">
-          {displayName}
-        </span>
+        {!mobileFull ? (
+          <span className="text-xs text-muted-foreground truncate max-w-[40%]">
+            {displayName}
+          </span>
+        ) : null}
       </div>
 
       {error ? (
@@ -569,7 +805,16 @@ export function CompanyChatMessenger({
                     mine ? "bg-primary text-primary-foreground" : "bg-muted"
                   )}
                 >
-                  <div className="text-[11px] font-semibold mb-1">{senderLabel}</div>
+                  {(isActiveGroup || !mine) && (
+                    <div
+                      className={cn(
+                        "text-[11px] font-semibold mb-1",
+                        mine && isActiveGroup && "opacity-90"
+                      )}
+                    >
+                      {senderLabel}
+                    </div>
+                  )}
                   {m.text ? (
                     <p className="whitespace-pre-wrap break-words">{m.text}</p>
                   ) : null}
@@ -600,30 +845,29 @@ export function CompanyChatMessenger({
                           {att.fileName}
                         </a>
                       )}
-                      {att.linkedJobId && jobsAccess.canRead ? (
-                        <p className="text-[11px] opacity-90">
-                          Přiřazeno k: {att.linkedJobName ?? att.linkedJobId}{" "}
-                          <Link
-                            href={`/portal/jobs/${encodeURIComponent(att.linkedJobId)}`}
-                            className="underline font-medium"
-                          >
-                            Otevřít zakázku
-                          </Link>
-                        </p>
+                      {att.linkedJobId ? (
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                          <Badge variant="secondary" className="text-[10px] h-5">
+                            Přiřazeno k zakázce
+                          </Badge>
+                          {jobsAccess.canRead ? (
+                            <Link
+                              href={`/portal/jobs/${encodeURIComponent(att.linkedJobId)}`}
+                              className="text-[11px] underline font-medium"
+                            >
+                              {att.linkedJobName ?? "Otevřít zakázku"}
+                            </Link>
+                          ) : null}
+                        </div>
                       ) : jobsAccess.canWrite ? (
                         <Button
                           type="button"
                           variant="secondary"
                           size="sm"
                           className="h-7 text-[11px]"
-                          onClick={() => {
-                            setAssignTarget({
-                              messageId: m.id,
-                              attachmentIds: [att.id],
-                              senderLabel,
-                            });
-                            setAssignOpen(true);
-                          }}
+                          onClick={() =>
+                            openAssignForAttachment(m.id, [att.id], senderLabel, att)
+                          }
                         >
                           Přiřadit k zakázce
                         </Button>
@@ -637,12 +881,14 @@ export function CompanyChatMessenger({
                       size="sm"
                       className="mt-2 h-7 text-[11px]"
                       onClick={() => {
-                        setAssignTarget({
-                          messageId: m.id,
-                          attachmentIds: (m.attachments ?? []).map((a) => a.id),
+                        const first = (m.attachments ?? [])[0];
+                        if (!first) return;
+                        openAssignForAttachment(
+                          m.id,
+                          (m.attachments ?? []).map((a) => a.id),
                           senderLabel,
-                        });
-                        setAssignOpen(true);
+                          first
+                        );
                       }}
                     >
                       Přiřadit všechny k zakázce
@@ -660,7 +906,7 @@ export function CompanyChatMessenger({
       </div>
 
       {!readOnly ? (
-        <div className="border-t p-2 space-y-2">
+        <div className="border-t p-2 space-y-2 shrink-0 bg-background pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]">
           {pendingFiles.length > 0 ? (
             <ul className="flex flex-wrap gap-2">
               {pendingFiles.map((f, i) => (
@@ -744,13 +990,20 @@ export function CompanyChatMessenger({
 
   return (
     <>
-      <Card className="flex flex-col overflow-hidden min-h-[420px] max-h-[calc(100vh-120px)] md:max-h-[calc(100vh-140px)]">
-        <div className="flex flex-1 min-h-0">
-          {isMobile ? (
+      <Card
+        className={cn(
+          "flex flex-col overflow-hidden min-h-0",
+          mobileFull
+            ? "h-[100dvh] max-h-[100dvh] rounded-none border-0 shadow-none flex-1"
+            : "min-h-[420px] max-h-[calc(100vh-120px)] md:max-h-[calc(100vh-140px)]"
+        )}
+      >
+        <div className="flex flex-1 min-h-0 w-full overflow-hidden">
+          {mobileFull ? (
             mobileShowThread ? (
-              <div className="flex flex-col flex-1 min-h-0">{thread}</div>
+              <div className="flex flex-col flex-1 min-h-0 w-full">{thread}</div>
             ) : (
-              <div className="flex flex-col flex-1 min-h-0">{sidebar}</div>
+              <div className="flex flex-col flex-1 min-h-0 w-full border-r-0">{sidebar}</div>
             )
           ) : (
             <>
@@ -760,12 +1013,49 @@ export function CompanyChatMessenger({
           )}
         </div>
       </Card>
+      <ChatNewConversationDialog
+        open={newChatOpen}
+        onOpenChange={setNewChatOpen}
+        employees={employeeChatOptions}
+        canCreateGroup={canManageGroups}
+        onCreateDm={createDmChat}
+        onCreateGroup={createGroupChat}
+        creating={creatingGroup}
+      />
       <ChatAssignJobDialog
         open={assignOpen}
         onOpenChange={setAssignOpen}
         companyId={companyId}
         onAssign={runAssign}
         assigning={assigning}
+      />
+      <ChatAssignProgressDialog
+        open={assignProgressOpen}
+        jobLabel={
+          assignResult?.jobLabel ?? lastAssignJobRef.current?.jobLabel ?? "Zakázka"
+        }
+        fileLabel={
+          (assignTarget?.fileName ?? assignFileMetaRef.current.fileName) || "Soubor"
+        }
+        fileSizeBytes={assignTarget?.fileSize ?? assignFileMetaRef.current.fileSize}
+        isVideo={assignTarget?.isVideo ?? assignFileMetaRef.current.isVideo}
+        phase={assignPhase}
+        progressPct={assignProgressPct}
+        folderName={assignResult?.folderName}
+        jobId={assignResult?.jobId ?? lastAssignJobRef.current?.jobId ?? null}
+        errorMessage={assignError}
+        onRetry={() => {
+          const job = lastAssignJobRef.current;
+          if (job && assignTarget) void runAssign(job.jobId, job.jobLabel);
+        }}
+        onDone={() => {
+          setAssignProgressOpen(false);
+          setAssignPhase("idle");
+          setAssignProgressPct(null);
+          setAssignResult(null);
+          setAssignError(null);
+          lastAssignJobRef.current = null;
+        }}
       />
     </>
   );

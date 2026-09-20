@@ -1,5 +1,30 @@
 export const COMPANY_CHAT_CONVERSATION_ID = "company";
 
+export type ChatConversationType = "company" | "dm" | "group";
+
+export type ChatConversationDoc = {
+  id: string;
+  companyId: string;
+  type: ChatConversationType;
+  name?: string | null;
+  participantIds: string[];
+  createdBy: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};
+
+export function isGroupConversationId(conversationId: string): boolean {
+  return String(conversationId).startsWith("group_");
+}
+
+export function newGroupConversationId(): string {
+  const id =
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID().replace(/-/g, "").slice(0, 16)
+      : String(Date.now());
+  return `group_${id}`;
+}
+
 export type ChatAttachmentMeta = {
   id: string;
   fileName: string;

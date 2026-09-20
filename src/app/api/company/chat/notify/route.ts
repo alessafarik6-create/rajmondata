@@ -13,10 +13,12 @@ export async function POST(request: NextRequest) {
   let body: {
     companyId?: string;
     recipientUserId?: string;
+    recipientUserIds?: string[];
     senderName?: string;
     previewText?: string;
     conversationId?: string;
     hasAttachment?: boolean;
+    groupTitle?: string;
   };
   try {
     body = await request.json();
@@ -25,33 +27,53 @@ export async function POST(request: NextRequest) {
   }
 
   const companyId = String(body.companyId ?? perm.caller.companyId).trim();
-  const recipientUserId = String(body.recipientUserId ?? "").trim();
-  if (!recipientUserId || recipientUserId === perm.caller.uid) {
-    return NextResponse.json({ ok: true, skipped: true });
-  }
   if (companyId !== perm.caller.companyId) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
+  const recipients = [
+    ...(Array.isArray(body.recipientUserIds) ? body.recipientUserIds : []),
+    ...(body.recipientUserId ? [body.recipientUserId] : []),
+  ]
+    .map(String)
+    .filter(Boolean)
+    .filter((uid) => uid !== perm.caller.uid);
+
+  const uniqueRecipients = [...new Set(recipients)];
+  if (!uniqueRecipients.length) {
+    return NextResponse.json({ ok: true, skipped: true });
+  }
+
   const senderName = String(body.senderName ?? "RAJMONDATA").trim();
   const conv = encodeURIComponent(String(body.conversationId ?? "company"));
-  const bodyText = body.hasAttachment
-    ? "Poslal fotografii."
-    : String(body.previewText ?? "").slice(0, 160) || "Nová zpráva.";
+  const groupTitle = String(body.groupTitle ?? "").trim();
+  const attachmentLine = body.hasAttachment ? "Poslal fotografii." : "";
+  const preview = String(body.previewText ?? "").slice(0, 160) || "Nová zpráva.";
 
-  await createNotification({
-    recipientUserId,
-    organizationId: companyId,
-    type: "SYSTEM_ALERT",
-    title: `Nová zpráva od ${senderName}`,
-    body: bodyText,
-    url: `/portal/chat?c=${conv}`,
-    entityType: "system",
-    entityId: body.conversationId ?? "company",
-    category: "message",
-    eventId: `chat-${recipientUserId}-${Date.now()}`,
-    source: "chat",
-  });
+  let sent = 0;
+  for (const recipientUserId of uniqueRecipients) {
+    const title = groupTitle
+      ? groupTitle
+      : `Nová zpráva od ${senderName}`;
+    const bodyText = groupTitle
+      ? `${senderName}: ${attachmentLine || preview}`
+      : attachmentLine || preview;
 
-  return NextResponse.json({ ok: true });
+    await createNotification({
+      recipientUserId,
+      organizationId: companyId,
+      type: "SYSTEM_ALERT",
+      title,
+      body: bodyText,
+      url: `/portal/chat?c=${conv}`,
+      entityType: "system",
+      entityId: body.conversationId ?? "company",
+      category: "message",
+      eventId: `chat-${recipientUserId}-${body.conversationId ?? "c"}-${Date.now()}`,
+      source: "chat",
+    });
+    sent += 1;
+  }
+
+  return NextResponse.json({ ok: true, sent });
 }

@@ -41,6 +41,7 @@ import {
   buildJobMediaCardDateLine,
   formatMediaDate,
   getJobMediaPreviewUrl,
+  isJobMediaVideoFile,
   inferJobMediaItemType,
   isAllowedJobImageFile,
   isAllowedJobMediaFile,
@@ -270,11 +271,50 @@ function MediaThumb({
   row,
   alt,
 }: {
-  row: { id: string; fileName?: string; name?: string };
+  row: {
+    id: string;
+    fileName?: string;
+    name?: string;
+    mimeType?: string | null;
+    fileType?: string | null;
+    fileSizeBytes?: number | null;
+  };
   alt?: string;
 }) {
   const [broken, setBroken] = useState(false);
   const src = getJobMediaPreviewUrl(row as Parameters<typeof getJobMediaPreviewUrl>[0]);
+  const fileName = row.fileName || row.name || row.id;
+  const sizeMb =
+    row.fileSizeBytes && row.fileSizeBytes > 0
+      ? row.fileSizeBytes >= 1024 * 1024
+        ? `${(row.fileSizeBytes / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.round(row.fileSizeBytes / 1024)} KB`
+      : "";
+
+  if (isJobMediaVideoFile(row)) {
+    return (
+      <div className="flex aspect-[4/3] min-h-[240px] w-full flex-col items-center justify-center gap-2 bg-muted px-3 py-4 text-center text-sm text-gray-800">
+        {src ? (
+          <video
+            preload="metadata"
+            controls
+            playsInline
+            src={src}
+            className="max-h-[min(240px,50vw)] w-full rounded-md bg-black/80"
+          />
+        ) : (
+          <span className="text-2xl" aria-hidden>
+            🎥
+          </span>
+        )}
+        <p className="font-medium truncate max-w-full">Video</p>
+        <p className="text-xs text-muted-foreground truncate max-w-full">
+          {fileName}
+          {sizeMb ? ` · ${sizeMb}` : ""}
+        </p>
+      </div>
+    );
+  }
 
   if (!src || broken) {
     return (
@@ -287,7 +327,7 @@ function MediaThumb({
   return (
     <img
       src={src}
-      alt={alt || row.fileName || row.id}
+      alt={alt || fileName}
       className="h-full w-full object-cover"
       onError={() => setBroken(true)}
     />
