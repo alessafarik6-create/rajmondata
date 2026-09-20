@@ -46,7 +46,8 @@ function statusColor(status: string, disconnected?: boolean): string {
   if (
     status === "credentials_missing" ||
     status === "credentials_decrypt_failed" ||
-    status === "error"
+    status === "error" ||
+    status === "auth_error"
   ) {
     return "text-destructive";
   }

@@ -9,6 +9,7 @@ import type {
 } from "@/lib/email-mailbox/adapters/types";
 import type { EmailAccountDoc, EmailCredentialsPlain } from "@/lib/email-mailbox/types";
 import { logEmailPhase } from "@/lib/email-mailbox/email-log";
+import { EMAIL_IMAP_SYNC_TIMEOUT_MS } from "@/lib/email-mailbox/sync-timeout";
 
 function mapConnectionError(err: unknown, phase: "imap" | "smtp"): ConnectionTestResult {
   const msg = err instanceof Error ? err.message : String(err);
@@ -85,7 +86,36 @@ function buildImapClient(
       pass: credentials.password,
     },
     logger: false,
+    connectionTimeout: 30_000,
+    greetingTimeout: 30_000,
+    socketTimeout: Math.min(EMAIL_IMAP_SYNC_TIMEOUT_MS, 120_000),
   });
+}
+
+function throwMappedImapSyncError(err: unknown): never {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes("auth") ||
+    lower.includes("credentials") ||
+    lower.includes("login") ||
+    lower.includes("invalid password")
+  ) {
+    logEmailPhase("EMAIL_IMAP_AUTH_FAILED", { detail: msg.slice(0, 120) });
+    const e = new Error(
+      "Přihlášení k e-mailu selhalo. Zkontrolujte heslo / heslo aplikace."
+    );
+    (e as Error & { code?: string }).code = "IMAP_AUTH_FAILED";
+    throw e;
+  }
+  if (lower.includes("timeout") || lower.includes("etimedout")) {
+    logEmailPhase("EMAIL_IMAP_CONNECTION_FAILED", { detail: msg.slice(0, 120) });
+    const e = new Error("IMAP server neodpověděl včas.");
+    (e as Error & { code?: string }).code = "IMAP_TIMEOUT";
+    throw e;
+  }
+  logEmailPhase("EMAIL_SYNC_ERROR", { detail: msg.slice(0, 200) });
+  throw err instanceof Error ? err : new Error(msg);
 }
 
 async function findSentFolder(client: ImapFlow): Promise<string | null> {
@@ -169,35 +199,83 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
   async syncInbound(
     account: EmailAccountDoc,
     credentials: EmailCredentialsPlain,
-    opts: { sinceUid?: number | null; maxMessages?: number }
-  ): Promise<{ messages: InboundEmailPayload[]; lastUid: number | null; sentFolderPath: string | null }> {
+    opts: {
+      sinceUid?: number | null;
+      maxMessages?: number;
+      storedUidValidity?: number | null;
+    }
+  ): Promise<{
+    messages: InboundEmailPayload[];
+    lastUid: number | null;
+    sentFolderPath: string | null;
+    inboxUidValidity: number | null;
+    uidNext: number | null;
+    mailboxExists: number | null;
+  }> {
     const maxMessages = opts.maxMessages ?? 100;
     const client = buildImapClient(account, credentials);
     const out: InboundEmailPayload[] = [];
     let lastUid: number | null = opts.sinceUid ?? null;
     let sentFolderPath: string | null = account.sentFolderPath ?? null;
+    let inboxUidValidity: number | null = null;
+    let uidNext: number | null = null;
+    let mailboxExists: number | null = null;
 
     logEmailPhase("EMAIL_IMAP_CONNECT_START", { host: account.imapHost, email: account.email });
-    await client.connect();
-    logEmailPhase("EMAIL_IMAP_CONNECTED", { email: account.email });
     try {
+      await client.connect();
+      logEmailPhase("EMAIL_IMAP_CONNECTED", { email: account.email });
       if (!sentFolderPath) {
         sentFolderPath = await findSentFolder(client);
       }
       const lock = await client.getMailboxLock("INBOX");
       try {
-        const sinceUid = Math.max(0, Number(opts.sinceUid ?? 0));
+        const mailbox = client.mailbox;
+        if (mailbox && typeof mailbox === "object") {
+          const uv = mailbox.uidValidity;
+          const un = mailbox.uidNext;
+          inboxUidValidity = uv != null ? Number(uv) : null;
+          uidNext = un != null ? Number(un) : null;
+          mailboxExists = mailbox.exists ?? null;
+        }
+        logEmailPhase("EMAIL_MAILBOX_OPENED", { folder: "INBOX", email: account.email });
+        logEmailPhase("EMAIL_UIDVALIDITY", { uidValidity: inboxUidValidity });
+        logEmailPhase("EMAIL_UID_NEXT", { uidNext });
+        logEmailPhase("EMAIL_LAST_SYNCED_UID", { lastSyncedUid: opts.sinceUid ?? null });
+
+        let sinceUid = Math.max(0, Number(opts.sinceUid ?? 0));
+        const storedValidity = opts.storedUidValidity ?? account.inboxUidValidity ?? null;
+        if (
+          storedValidity != null &&
+          inboxUidValidity != null &&
+          storedValidity !== inboxUidValidity
+        ) {
+          logEmailPhase("EMAIL_UIDVALIDITY", {
+            reset: true,
+            previous: storedValidity,
+            current: inboxUidValidity,
+          });
+          sinceUid = 0;
+          lastUid = null;
+        }
+
         let uidList: number[] = [];
         if (sinceUid > 0) {
-          for await (const msg of client.fetch(`${sinceUid + 1}:*`, { uid: true }, { uid: true })) {
-            if (msg.uid) uidList.push(msg.uid);
-          }
+          const searchResult = await client.search({ uid: `${sinceUid + 1}:*` }, { uid: true });
+          uidList = uidsFromSearchResult(searchResult).filter((u) => u > sinceUid);
         } else {
           const searchResult = await client.search({ all: true }, { uid: true });
           uidList = uidsFromSearchResult(searchResult);
         }
         if (uidList.length > maxMessages) {
           uidList = uidList.slice(-maxMessages);
+        }
+        logEmailPhase("EMAIL_NEW_UIDS_COUNT", { count: uidList.length });
+        if (uidList.length > 0) {
+          logEmailPhase("EMAIL_NEW_UID_RANGE", {
+            from: uidList[0] ?? null,
+            to: uidList[uidList.length - 1] ?? null,
+          });
         }
 
         for (const uid of uidList) {
@@ -250,14 +328,24 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
           });
           lastUid = Math.max(lastUid ?? 0, row.uid);
         }
+        logEmailPhase("EMAIL_MESSAGES_FETCHED", { count: out.length });
       } finally {
         lock.release();
       }
+    } catch (err) {
+      throwMappedImapSyncError(err);
     } finally {
-      await client.logout();
+      await client.logout().catch(() => undefined);
     }
 
-    return { messages: out, lastUid, sentFolderPath };
+    return {
+      messages: out,
+      lastUid,
+      sentFolderPath,
+      inboxUidValidity,
+      uidNext,
+      mailboxExists,
+    };
   }
 
   async sendMessage(

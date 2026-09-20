@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useUser, useCompany } from "@/firebase";
@@ -183,6 +183,8 @@ export function EmailPortalPage() {
     }
   }, [user, companyId, folder, access.canRead, accounts.length, activeAccountId, getToken]);
 
+  const backgroundSyncStarted = useRef(false);
+
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
@@ -190,6 +192,26 @@ export function EmailPortalPage() {
   useEffect(() => {
     void loadMessages();
   }, [loadMessages]);
+
+  useEffect(() => {
+    if (!user || !companyId || !access.canWrite || connectedAccounts.length === 0) return;
+    if (backgroundSyncStarted.current) return;
+    backgroundSyncStarted.current = true;
+    void (async () => {
+      try {
+        const token = await getToken();
+        await fetch("/api/company/email-mailbox/accounts/sync-all", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId, maxMessages: 80 }),
+        });
+        await loadMessages();
+        await loadAccounts();
+      } catch {
+        /* tiché — ruční sync zůstává */
+      }
+    })();
+  }, [user, companyId, access.canWrite, connectedAccounts.length, getToken, loadMessages, loadAccounts]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

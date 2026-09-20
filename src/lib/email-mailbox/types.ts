@@ -3,12 +3,15 @@ export type EmailProviderKind = "SEZNAM" | "IMAP_SMTP" | "GOOGLE" | "MICROSOFT";
 export type EmailAccountStatus =
   | "connected"
   | "error"
+  | "auth_error"
   | "disconnected"
   | "pending"
   | "syncing"
   | "attention"
   | "credentials_missing"
   | "credentials_decrypt_failed";
+
+export type EmailLastSyncStatus = "SUCCESS" | "AUTH_ERROR" | "SYNC_ERROR" | "CREDENTIAL_ERROR";
 
 export type EmailMessageDirection = "inbound" | "outbound";
 
@@ -60,8 +63,11 @@ export type EmailAccountDoc = {
   smtpSecure: boolean;
   /** Poslední synchronizované IMAP UID v INBOX (pro inkrementální sync). */
   lastInboxUid?: number | null;
+  /** IMAP UIDVALIDITY pro INBOX — při změně reset inkrementálního syncu. */
+  inboxUidValidity?: number | null;
   sentFolderPath?: string | null;
   lastSyncAt?: Timestamp | null;
+  lastSyncStatus?: EmailLastSyncStatus | null;
   lastError?: string | null;
   createdByUserId?: string | null;
   createdAt?: Timestamp;

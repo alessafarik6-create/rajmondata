@@ -90,18 +90,20 @@ export function messageIsStaleNeedsReply(m: EmailMessageDoc): boolean {
 export function inboundMessageDocId(
   emailAccountId: string,
   messageId: string | null | undefined,
-  imapUid: number | null | undefined
+  imapUid: number | null | undefined,
+  folder?: string | null
 ): string {
+  const folderKey = String(folder ?? "INBOX").trim().toUpperCase() || "INBOX";
   if (messageId?.trim()) {
     const hash = crypto
       .createHash("sha256")
-      .update(`${emailAccountId}|${messageId.trim().toLowerCase()}`)
+      .update(`${emailAccountId}|${folderKey}|${messageId.trim().toLowerCase()}`)
       .digest("hex")
       .slice(0, 40);
     return `m_${hash}`;
   }
   if (imapUid != null && imapUid > 0) {
-    return `u_${emailAccountId}_${imapUid}`;
+    return `u_${emailAccountId}_${folderKey}_${imapUid}`;
   }
   return crypto.randomUUID();
 }
@@ -114,7 +116,12 @@ export async function saveInboundMessage(
 ): Promise<{ id: string; created: boolean }> {
   const id =
     docId ??
-    inboundMessageDocId(data.emailAccountId, data.messageId, data.imapUid ?? null);
+    inboundMessageDocId(
+      data.emailAccountId,
+      data.messageId,
+      data.imapUid ?? null,
+      data.folder
+    );
   const ref = emailMessagesCol(db, companyId).doc(id);
   const existing = await ref.get();
   if (existing.exists) return { id: ref.id, created: false };

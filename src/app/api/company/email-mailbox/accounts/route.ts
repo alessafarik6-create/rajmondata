@@ -13,10 +13,11 @@ import {
 } from "@/lib/email-mailbox/account-access";
 import { normalizeMailboxEmail } from "@/lib/email-mailbox/account-default";
 import {
-  accountStatusFromCredentialResult,
   accountStatusLabel,
+  displayEmailAccountStatus,
   resolveEmailCredentials,
 } from "@/lib/email-mailbox/credential-resolver";
+import { isEmailSyncStateStale } from "@/lib/email-mailbox/sync-timeout";
 import {
   emailMailboxTenantOk,
   requireEmailMailboxRead,
@@ -94,13 +95,18 @@ export async function GET(request: NextRequest) {
       accounts.map(async (row) => {
         const base = formatAccountSafe(row);
         const cred = await resolveEmailCredentials(db, companyId, row.id);
-        const displayStatus = accountStatusFromCredentialResult(row.status, cred);
-        if (!cred.ok && (row.status === "connected" || row.status === "syncing")) {
+        const displayStatus = displayEmailAccountStatus(row.status, cred, row.updatedAt);
+        if (
+          (row.status === "syncing" && isEmailSyncStateStale(row.updatedAt)) ||
+          (!cred.ok && (row.status === "connected" || row.status === "syncing"))
+        ) {
           await emailAccountsCol(db, companyId)
             .doc(row.id)
             .update({
               status: displayStatus,
-              lastError: cred.message.slice(0, 500),
+              lastError: cred.ok
+                ? "Předchozí synchronizace nebyla dokončena."
+                : cred.message.slice(0, 500),
               updatedAt: FieldValue.serverTimestamp(),
             })
             .catch(() => undefined);
@@ -295,7 +301,7 @@ export async function POST(request: NextRequest) {
     });
 
     const sync = await syncEmailAccount(auth.db, companyId, accountId, {
-      maxMessages: 100,
+      maxMessages: 200,
       skipAi: false,
     });
 
@@ -303,7 +309,7 @@ export async function POST(request: NextRequest) {
       accountId,
       sync,
       redirectTo: "/portal/email",
-      message: sync.error
+      message: !sync.success
         ? "Účet uložen, ale první synchronizace selhala."
         : `Schránka připojena. Synchronizováno – ${sync.imported} nových zpráv.`,
     });

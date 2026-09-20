@@ -9,6 +9,7 @@ import {
   type EmailCredentialsPlain,
 } from "@/lib/email-mailbox/types";
 import { emailAccountsCol, loadEmailAccount } from "@/lib/email-mailbox/account-store";
+import { isEmailSyncStateStale } from "@/lib/email-mailbox/sync-timeout";
 
 /** Název ENV proměnné ve Vercel / .env — 32 bajtů (base64 nebo hex). */
 export const EMAIL_CREDENTIALS_ENCRYPTION_KEY_ENV = "EMAIL_CREDENTIALS_ENCRYPTION_KEY";
@@ -125,9 +126,24 @@ export function accountStatusFromCredentialResult(
         return "error";
     }
   }
-  if (storedStatus === "syncing") return "syncing";
+  if (storedStatus === "auth_error") return "auth_error";
   if (storedStatus === "error") return "error";
   return "connected";
+}
+
+/** UI status — zastaralý „syncing“ se nezobrazuje navždy. */
+export function displayEmailAccountStatus(
+  storedStatus: string,
+  cred: EmailCredentialResolveResult,
+  updatedAt?: unknown
+): string {
+  if (storedStatus === "syncing") {
+    if (isEmailSyncStateStale(updatedAt)) {
+      return cred.ok ? "error" : accountStatusFromCredentialResult("error", cred);
+    }
+    return "syncing";
+  }
+  return accountStatusFromCredentialResult(storedStatus, cred);
 }
 
 export function accountStatusLabel(status: string): string {
@@ -142,6 +158,7 @@ export function accountStatusLabel(status: string): string {
       return "Credentials nelze dešifrovat";
     case "attention":
       return "Vyžaduje pozornost";
+    case "auth_error":
     case "error":
       return "Chyba přihlášení";
     default:

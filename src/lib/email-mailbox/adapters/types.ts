@@ -70,8 +70,19 @@ export interface EmailProviderAdapter {
   syncInbound(
     account: EmailAccountDoc,
     credentials: EmailCredentialsPlain,
-    opts: { sinceUid?: number | null; maxMessages?: number }
-  ): Promise<{ messages: InboundEmailPayload[]; lastUid: number | null; sentFolderPath: string | null }>;
+    opts: {
+      sinceUid?: number | null;
+      maxMessages?: number;
+      storedUidValidity?: number | null;
+    }
+  ): Promise<{
+    messages: InboundEmailPayload[];
+    lastUid: number | null;
+    sentFolderPath: string | null;
+    inboxUidValidity: number | null;
+    uidNext: number | null;
+    mailboxExists: number | null;
+  }>;
 
   sendMessage(
     account: EmailAccountDoc,

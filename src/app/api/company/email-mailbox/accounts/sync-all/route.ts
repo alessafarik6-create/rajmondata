@@ -35,19 +35,46 @@ export async function POST(request: NextRequest) {
     const syncable = accounts.filter((a) => isEmailAccountSyncable(a));
     let imported = 0;
     let errors = 0;
+    const results: {
+      accountId: string;
+      email: string;
+      success: boolean;
+      newMessages: number;
+      error?: string;
+      errorCode?: string;
+    }[] = [];
+
     for (const acc of syncable) {
       const r = await syncEmailAccount(perm.db, companyId, acc.id, {
         maxMessages: body.maxMessages ?? 50,
       });
       imported += r.imported;
-      if (r.error) errors++;
+      if (!r.success) errors++;
+      results.push({
+        accountId: acc.id,
+        email: acc.email,
+        success: r.success,
+        newMessages: r.imported,
+        error: r.error,
+        errorCode: r.errorCode,
+      });
     }
+
+    const summaryParts = results.map((r) =>
+      r.success
+        ? `${r.email} – ${r.newMessages} nových`
+        : `${r.email} – ${r.errorCode === "IMAP_AUTH_FAILED" ? "chyba přihlášení" : "chyba sync"}`
+    );
 
     return emailJsonOk({
       accounts: syncable.length,
       imported,
       errors,
-      message: `Synchronizováno ${syncable.length} schránek – ${imported} nových zpráv.`,
+      results,
+      message:
+        summaryParts.length > 0
+          ? summaryParts.join("\n")
+          : `Synchronizováno ${syncable.length} schránek – ${imported} nových zpráv.`,
     });
   } catch (err) {
     return emailRouteErrorResponse(err, "Synchronizace všech schránek selhala.");

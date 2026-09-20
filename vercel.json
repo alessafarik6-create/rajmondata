@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/sync-email-mailboxes",
+      "schedule": "*/10 * * * *"
+    }
+  ],
   "functions": {
     "src/app/api/company/document-email/send/route.ts": {
       "memory": 3008,

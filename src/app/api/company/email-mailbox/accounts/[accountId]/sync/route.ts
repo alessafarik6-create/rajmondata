@@ -73,7 +73,7 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       maxMessages: body.maxMessages ?? 100,
     });
 
-    if (result.error) {
+    if (!result.success || result.error) {
       const code = result.errorCode ?? "SYNC_FAILED";
       const credentialCodes: EmailCredentialErrorCode[] = [
         "EMAIL_ENCRYPTION_KEY_MISSING",
@@ -83,18 +83,29 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       const message = credentialCodes.includes(code as EmailCredentialErrorCode)
         ? messageForCredentialError(code as EmailCredentialErrorCode)
         : code === "EMAIL_IMAP_AUTH_FAILED" || code === "IMAP_AUTH_FAILED"
-          ? "Nelze se přihlásit k IMAP. Zkontrolujte e-mail, heslo aplikace a nastavení Seznam.cz."
-          : result.error;
+          ? "Přihlášení k e-mailové schránce selhalo."
+          : result.error ?? "Synchronizace selhala.";
       return emailJsonErr({
         status: 400,
         message,
         errorCode: code,
-        extra: { imported: result.imported, skipped: result.skipped },
+        extra: {
+          success: false,
+          newMessages: result.imported,
+          accountId,
+          imported: result.imported,
+          skipped: result.skipped,
+        },
       });
     }
 
     return emailJsonOk({
-      ...result,
+      success: true,
+      newMessages: result.imported,
+      accountId,
+      lastSyncAt: result.lastSyncAt ?? new Date().toISOString(),
+      imported: result.imported,
+      skipped: result.skipped,
       message: `Synchronizováno – ${result.imported} nových zpráv.`,
     });
   } catch (err) {
