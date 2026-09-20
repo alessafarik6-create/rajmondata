@@ -39,10 +39,14 @@ export type OrganizationBackupCheckpoint = {
   phase: "firestore" | "files" | "verify" | "done";
   firestoreDocIndex: number;
   fileIndex: number;
-  /** Relativní cesta v bucketu k dílčímu NDJSON exportu. */
+  /** Relativní cesta v bucketu k sloučenému NDJSON exportu. */
   firestoreNdjsonPath: string;
+  /** Dílčí NDJSON soubory během dávkového exportu. */
+  firestoreNdjsonParts?: string[];
   /** Seznam produkčních storage cest ke kopírování. */
   filePaths: string[];
+  /** Průběh dávkového exportu Firestore. */
+  firestoreBatch?: import("@/lib/organization-backup/firestore-export-batch").FirestoreExportBatchState;
 };
 
 export type FirestoreExportLine = {
@@ -63,8 +67,10 @@ export type BackupManifest = {
   fileCount: number;
   sizeBytes: number;
   firestoreNdjsonPath: string;
+  firestoreNdjsonParts?: string[];
   filesManifestPath: string;
   checksum: string;
+  finishedAt?: string;
 };
 
 export type BackupFileEntry = {

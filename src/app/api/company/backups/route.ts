@@ -12,6 +12,8 @@ import { logOrganizationBackupAuditAdmin } from "@/lib/organization-backup/audit
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { ORGANIZATION_BACKUPS_SUBCOLLECTION } from "@/lib/organization-backup/constants";
 import { errorMessageFromUnknown } from "@/lib/server-error-serialize";
+import { serializeBackupForApi } from "@/lib/organization-backup/serialize-backup-api";
+import { markStaleOrganizationBackupsFailed } from "@/lib/organization-backup/stale-backup-admin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,6 +27,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Nemáte oprávnění k zálohám." }, { status: 403 });
     }
 
+    await markStaleOrganizationBackupsFailed(v.db).catch(() => 0);
+
     const snap = await v.db
       .collection(COMPANIES_COLLECTION)
       .doc(v.caller.companyId)
@@ -33,15 +37,19 @@ export async function GET(request: NextRequest) {
       .limit(80)
       .get();
 
-    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    const lastOk = items.find((x) => (x as { status?: string }).status === "COMPLETED");
+    const items = snap.docs.map((d) => serializeBackupForApi(d.id, d.data() as Record<string, unknown>));
+    const lastOk = items.find((x) => x.status === "COMPLETED");
+    const inProgress = items.some(
+      (x) => x.status === "CREATING" || x.status === "VERIFYING" || x.status === "RESTORING"
+    );
 
     return NextResponse.json({
       ok: true,
       items,
       monitoring: {
-        lastSuccessfulAt: (lastOk as { completedAt?: unknown })?.completedAt ?? null,
-        health: items.some((x) => (x as { status?: string }).status === "FAILED") ? "error" : "ok",
+        lastSuccessfulAt: lastOk?.completedAt ?? null,
+        health:
+          items.some((x) => x.status === "FAILED") && !inProgress ? "error" : inProgress ? "running" : "ok",
       },
     });
   } catch (e) {

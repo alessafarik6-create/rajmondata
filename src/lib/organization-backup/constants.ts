@@ -40,6 +40,9 @@ export const BACKUP_MAX_FIRESTORE_DOCS = 120_000;
 /** Max souborů ke kopírování v jednom běhu jobu (pokračování přes checkpoint). */
 export const BACKUP_MAX_FILES_PER_RUN = 800;
 
+/** Max Firestore dokumentů exportovaných v jednom běhu jobu (dávkování proti timeoutu). */
+export const BACKUP_MAX_DOCS_PER_RUN = 500;
+
 export const STORAGE_PATH_KEYS = [
   "storagePath",
   "fileStoragePath",

@@ -37,20 +37,7 @@ function pathToRef(db: Firestore, path: string) {
   return ref as FirebaseFirestore.DocumentReference;
 }
 
-async function loadFirestoreExportLines(
-  storagePath: string,
-  ndjsonRelative: string
-): Promise<FirestoreExportLine[]> {
-  const bucket = getAdminBackupStorageBucket();
-  if (!bucket) throw new Error("Backup bucket není k dispozici.");
-  const full = ndjsonRelative.startsWith(storagePath)
-    ? ndjsonRelative
-    : `${storagePath}/${ndjsonRelative.replace(/^\//, "")}`;
-  const file = bucket.file(full.endsWith(".ndjson") ? full : `${storagePath}/firestore/export.ndjson`);
-  const [exists] = await file.exists();
-  if (!exists) throw new Error("Export Firestore v záloze chybí.");
-  const [buf] = await file.download();
-  const text = buf.toString("utf8");
+function parseNdjson(text: string): FirestoreExportLine[] {
   const lines: FirestoreExportLine[] = [];
   for (const line of text.split("\n")) {
     const t = line.trim();
@@ -58,6 +45,72 @@ async function loadFirestoreExportLines(
     lines.push(JSON.parse(t) as FirestoreExportLine);
   }
   return lines;
+}
+
+async function loadFirestoreExportLines(
+  storagePath: string,
+  ndjsonRelative: string,
+  ndjsonParts?: string[]
+): Promise<FirestoreExportLine[]> {
+  const bucket = getAdminBackupStorageBucket();
+  if (!bucket) throw new Error("Backup bucket není k dispozici.");
+
+  const mergedPath = ndjsonRelative.startsWith(storagePath)
+    ? ndjsonRelative
+    : `${storagePath}/firestore/export.ndjson`;
+  const mergedFile = bucket.file(mergedPath);
+  const [mergedExists] = await mergedFile.exists();
+  if (mergedExists) {
+    const [buf] = await mergedFile.download();
+    return parseNdjson(buf.toString("utf8"));
+  }
+
+  const parts = ndjsonParts?.length
+    ? ndjsonParts
+    : [`firestore/export-part-0.ndjson`];
+  const out: FirestoreExportLine[] = [];
+  for (const rel of parts) {
+    const full = rel.startsWith(storagePath) ? rel : `${storagePath}/${rel.replace(/^\//, "")}`;
+    const file = bucket.file(full);
+    const [exists] = await file.exists();
+    if (!exists) continue;
+    const [buf] = await file.download();
+    out.push(...parseNdjson(buf.toString("utf8")));
+  }
+  if (out.length === 0) throw new Error("Export Firestore v záloze chybí.");
+  return out;
+}
+
+/** Dry-run: načte manifest a spočítá záznamy bez zápisu do produkce. */
+export async function dryRunRestoreOrganizationBackup(params: {
+  organizationId: string;
+  backupId: string;
+  storagePath: string;
+}): Promise<{ ok: boolean; recordCount: number; fileCount: number; error?: string }> {
+  try {
+    const manifest = await readBackupManifest(params.organizationId, params.backupId, params.storagePath);
+    if (!manifest) return { ok: false, recordCount: 0, fileCount: 0, error: "Manifest chybí." };
+    if (!verifyManifestChecksum(manifest)) {
+      return { ok: false, recordCount: 0, fileCount: 0, error: "Checksum manifestu nesouhlasí." };
+    }
+    const lines = await loadFirestoreExportLines(
+      params.storagePath,
+      manifest.firestoreNdjsonPath,
+      manifest.firestoreNdjsonParts
+    );
+    return {
+      ok: true,
+      recordCount: lines.length,
+      fileCount: manifest.fileCount,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      recordCount: 0,
+      fileCount: 0,
+      error: (e as Error).message,
+    };
+  }
 }
 
 function reviveFirestoreFields(data: Record<string, unknown>): Record<string, unknown> {
@@ -152,7 +205,11 @@ export async function restoreOrganizationFromBackup(
     metadata: { preRestoreBackupId },
   });
 
-  const lines = await loadFirestoreExportLines(storagePath, manifest.firestoreNdjsonPath);
+  const lines = await loadFirestoreExportLines(
+    storagePath,
+    manifest.firestoreNdjsonPath,
+    manifest.firestoreNdjsonParts
+  );
   let restoredDocs = 0;
   let batch = db.batch();
   let batchCount = 0;

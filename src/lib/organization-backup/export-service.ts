@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Firestore, DocumentReference } from "firebase-admin/firestore";
+import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import {
   getAdminBackupStorageBucket,
@@ -14,19 +14,19 @@ import {
   ORGANIZATION_BACKUPS_SUBCOLLECTION,
   type OrganizationBackupType,
 } from "@/lib/organization-backup/constants";
-import { collectStoragePathsFromValue } from "@/lib/organization-backup/extract-storage-paths";
 import { computeBackupExpiresAt } from "@/lib/organization-backup/retention";
-import { serializeFirestoreValue } from "@/lib/organization-backup/serialize-firestore";
 import type {
   BackupFileEntry,
   BackupManifest,
-  FirestoreExportLine,
   OrganizationBackupCheckpoint,
   OrganizationBackupRecordCounts,
 } from "@/lib/organization-backup/types";
 import { logOrganizationBackupAuditAdmin } from "@/lib/organization-backup/audit-admin";
-
-const PAGE_SIZE = 400;
+import {
+  createEmptyFirestoreExportBatchState,
+  runFirestoreExportBatch,
+} from "@/lib/organization-backup/firestore-export-batch";
+import { logBackupEvent } from "@/lib/organization-backup/backup-log";
 
 function backupDocRef(db: Firestore, organizationId: string, backupId: string) {
   return db
@@ -60,12 +60,14 @@ export async function createOrganizationBackupRecord(
     status: "CREATING",
     schemaVersion: ORGANIZATION_BACKUP_SCHEMA_VERSION,
     createdAt: FieldValue.serverTimestamp(),
+    startedAt: null,
     createdBy: params.createdBy,
     completedAt: null,
     storagePath: null,
     sizeBytes: 0,
     recordCount: 0,
     fileCount: 0,
+    progressPercent: 0,
     recordCounts: null,
     checksum: null,
     error: null,
@@ -77,8 +79,15 @@ export async function createOrganizationBackupRecord(
       firestoreDocIndex: 0,
       fileIndex: 0,
       firestoreNdjsonPath: "firestore/export.ndjson",
+      firestoreNdjsonParts: [],
       filePaths: [],
+      firestoreBatch: createEmptyFirestoreExportBatchState(),
     } satisfies OrganizationBackupCheckpoint,
+  });
+  logBackupEvent("BACKUP_CREATED", {
+    organizationId: params.organizationId,
+    backupId: ref.id,
+    backupType: params.backupType,
   });
   return ref.id;
 }
@@ -98,88 +107,8 @@ async function loadOrganizationName(db: Firestore, organizationId: string): Prom
   return organizationId;
 }
 
-type ExportWalkState = {
-  lines: FirestoreExportLine[];
-  storagePaths: Set<string>;
-  totalDocs: number;
-  byTop: Record<string, number>;
-};
-
-async function exportDocumentTree(
-  docRef: DocumentReference,
-  state: ExportWalkState,
-  organizationId: string,
-  skipSubcollections: Set<string>
-): Promise<void> {
-  if (state.totalDocs >= BACKUP_MAX_FIRESTORE_DOCS) return;
-
-  const snap = await docRef.get();
-  if (snap.exists) {
-    const data = serializeFirestoreValue(snap.data()) as Record<string, unknown>;
-    collectStoragePathsFromValue(data, organizationId, state.storagePaths);
-    state.lines.push({
-      path: docRef.path,
-      id: docRef.id,
-      data,
-    });
-    state.totalDocs += 1;
-    const parts = docRef.path.split("/");
-    const top = parts.length >= 4 ? parts[3] : "_root";
-    state.byTop[top] = (state.byTop[top] ?? 0) + 1;
-  }
-
-  const subcols = await docRef.listCollections();
-  for (const col of subcols) {
-    if (skipSubcollections.has(col.id)) continue;
-    let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      if (state.totalDocs >= BACKUP_MAX_FIRESTORE_DOCS) break;
-      let q = col.orderBy("__name__").limit(PAGE_SIZE);
-      if (last) q = q.startAfter(last);
-      const page = await q.get();
-      if (page.empty) break;
-      for (const child of page.docs) {
-        await exportDocumentTree(child.ref, state, organizationId, skipSubcollections);
-        if (state.totalDocs >= BACKUP_MAX_FIRESTORE_DOCS) break;
-      }
-      last = page.docs[page.docs.length - 1];
-      if (page.size < PAGE_SIZE) break;
-    }
-  }
-}
-
-async function exportOrgUsers(
-  db: Firestore,
-  organizationId: string,
-  state: ExportWalkState
-): Promise<void> {
-  for (const field of ["companyId", "organizationId"] as const) {
-    let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      let q = db.collection("users").where(field, "==", organizationId).orderBy("__name__").limit(PAGE_SIZE);
-      if (last) q = q.startAfter(last);
-      const page = await q.get();
-      if (page.empty) break;
-      for (const snap of page.docs) {
-        const raw = snap.data();
-        const safe: Record<string, unknown> = { ...raw };
-        delete safe.passwordHash;
-        delete safe.terminalPinHash;
-        const data = serializeFirestoreValue(safe) as Record<string, unknown>;
-        collectStoragePathsFromValue(data, organizationId, state.storagePaths);
-        state.lines.push({ path: snap.ref.path, id: snap.id, data });
-        state.totalDocs += 1;
-        state.byTop.users = (state.byTop.users ?? 0) + 1;
-      }
-      last = page.docs[page.docs.length - 1];
-      if (page.size < PAGE_SIZE) break;
-    }
-  }
-}
-
-async function uploadJson(bucket: any, path: string, body: string | Buffer): Promise<number> {
+async function uploadJson(bucket: ReturnType<typeof getAdminBackupStorageBucket>, path: string, body: string | Buffer): Promise<number> {
+  if (!bucket) return 0;
   const file = bucket.file(path);
   await file.save(body, {
     resumable: false,
@@ -189,7 +118,63 @@ async function uploadJson(bucket: any, path: string, body: string | Buffer): Pro
     },
   });
   const [meta] = await file.getMetadata();
-  return Number(meta.size ?? body.length);
+  return Number(meta.size ?? (typeof body === "string" ? body.length : body.length));
+}
+
+async function mergeFirestoreNdjsonParts(
+  backupBucket: NonNullable<ReturnType<typeof getAdminBackupStorageBucket>>,
+  prefix: string,
+  parts: string[]
+): Promise<{ mergedPath: string; bytes: number }> {
+  const chunks: Buffer[] = [];
+  for (const rel of parts) {
+    const full = rel.startsWith(prefix) ? rel : `${prefix}/${rel.replace(/^\//, "")}`;
+    const file = backupBucket.file(full);
+    const [exists] = await file.exists();
+    if (!exists) throw new Error(`Chybí díl exportu: ${full}`);
+    const [buf] = await file.download();
+    chunks.push(buf);
+  }
+  const merged = Buffer.concat(chunks);
+  const mergedPath = `${prefix}/firestore/export.ndjson`;
+  await backupBucket.file(mergedPath).save(merged, {
+    resumable: false,
+    metadata: { contentType: "application/x-ndjson", cacheControl: "private, max-age=0" },
+  });
+  return { mergedPath, bytes: merged.length };
+}
+
+async function validateBackupBeforeComplete(params: {
+  backupBucket: NonNullable<ReturnType<typeof getAdminBackupStorageBucket>>;
+  prefix: string;
+  recordCount: number;
+  fileCount: number;
+  ndjsonParts: string[];
+  mergedNdjsonPath: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (params.recordCount <= 0) {
+    return { ok: false, error: "Záloha neobsahuje žádné záznamy (recordCount = 0)." };
+  }
+
+  const merged = params.backupBucket.file(params.mergedNdjsonPath);
+  const [mergedOk] = await merged.exists();
+  if (!mergedOk && params.ndjsonParts.length === 0) {
+    return { ok: false, error: "Chybí export dat Firestore." };
+  }
+
+  if (!mergedOk) {
+    for (const rel of params.ndjsonParts) {
+      const full = rel.startsWith(params.prefix) ? rel : `${params.prefix}/${rel.replace(/^\//, "")}`;
+      const [ex] = await params.backupBucket.file(full).exists();
+      if (!ex) return { ok: false, error: `Chybí díl exportu: ${full}` };
+    }
+  }
+
+  logBackupEvent("BACKUP_VALIDATION_OK", {
+    recordCount: params.recordCount,
+    fileCount: params.fileCount,
+  });
+  return { ok: true };
 }
 
 export type RunBackupJobResult = {
@@ -235,6 +220,7 @@ export async function runOrganizationBackupJob(
       error: "Storage bucket není k dispozici.",
       completedAt: FieldValue.serverTimestamp(),
     });
+    logBackupEvent("BACKUP_FAILED", { organizationId, backupId, reason: "no_backup_bucket" });
     return {
       backupId,
       status: "FAILED",
@@ -245,6 +231,11 @@ export async function runOrganizationBackupJob(
     };
   }
 
+  if (!row.startedAt) {
+    await ref.update({ startedAt: FieldValue.serverTimestamp() });
+    logBackupEvent("BACKUP_STARTED", { organizationId, backupId });
+  }
+
   const orgName = String(row.organizationName || (await loadOrganizationName(db, organizationId)));
   const backupType = row.backupType as OrganizationBackupType;
   const prefix = organizationBackupStoragePrefix(organizationId, backupId);
@@ -253,51 +244,80 @@ export async function runOrganizationBackupJob(
 
   try {
     if (checkpoint.phase === "firestore") {
+      logBackupEvent("BACKUP_COLLECTION_START", { organizationId, backupId });
       const skip = new Set<string>([ORGANIZATION_BACKUPS_SUBCOLLECTION, "search_index"]);
-      const state: ExportWalkState = {
-        lines: [],
-        storagePaths: new Set<string>(),
-        totalDocs: 0,
-        byTop: {},
-      };
+      const batchState =
+        checkpoint.firestoreBatch ?? createEmptyFirestoreExportBatchState();
+      const ndjsonParts = [...(checkpoint.firestoreNdjsonParts ?? [])];
 
-      const companyRef = db.collection(COMPANIES_COLLECTION).doc(organizationId);
-      await exportDocumentTree(companyRef, state, organizationId, skip);
+      const { lines, state, firestoreDone } = await runFirestoreExportBatch({
+        db,
+        organizationId,
+        state: batchState,
+        skipSubcollections: skip,
+      });
 
-      const orgRef = db.collection(ORGANIZATIONS_COLLECTION).doc(organizationId);
-      const orgSnap = await orgRef.get();
-      if (orgSnap.exists) {
-        const data = serializeFirestoreValue(orgSnap.data()) as Record<string, unknown>;
-        state.lines.push({ path: orgRef.path, id: orgRef.id, data });
-        state.totalDocs += 1;
-        state.byTop[ORGANIZATIONS_COLLECTION] = 1;
+      if (lines.length > 0) {
+        const partRel = `firestore/export-part-${state.ndjsonPart}.ndjson`;
+        const partPath = `${prefix}/${partRel}`;
+        const ndjson = lines.map((l) => JSON.stringify(l)).join("\n");
+        sizeBytes += await uploadJson(backupBucket, partPath, ndjson);
+        ndjsonParts.push(partRel);
+        state.ndjsonPart += 1;
       }
-
-      await exportOrgUsers(db, organizationId, state);
-
-      const ndjson = state.lines.map((l) => JSON.stringify(l)).join("\n");
-      const ndjsonPath = `${prefix}/${checkpoint.firestoreNdjsonPath}`;
-      sizeBytes += await uploadJson(backupBucket, ndjsonPath, ndjson);
 
       const recordCounts: OrganizationBackupRecordCounts = {
         total: state.totalDocs,
         byTopCollection: state.byTop,
       };
+      const filePathsPreview = Array.from(new Set(state.storagePaths)).sort();
+      const progressPercent = firestoreDone
+        ? 60
+        : Math.min(59, Math.round((state.totalDocs / 5000) * 59));
 
       checkpoint = {
-        phase: "files",
+        ...checkpoint,
+        phase: firestoreDone ? "files" : "firestore",
         firestoreDocIndex: state.totalDocs,
+        firestoreBatch: state,
+        firestoreNdjsonParts: ndjsonParts,
+        filePaths: firestoreDone ? filePathsPreview : checkpoint.filePaths ?? [],
         fileIndex: 0,
-        firestoreNdjsonPath: checkpoint.firestoreNdjsonPath,
-        filePaths: Array.from(state.storagePaths).sort(),
       };
 
       await ref.update({
         recordCount: state.totalDocs,
         recordCounts,
-        fileCount: checkpoint.filePaths.length,
+        fileCount: firestoreDone ? filePathsPreview.length : filePathsPreview.length,
         checkpoint,
+        sizeBytes,
+        progressPercent,
         status: "CREATING",
+      });
+
+      if (!firestoreDone) {
+        logBackupEvent("BACKUP_COLLECTION_DONE", {
+          organizationId,
+          backupId,
+          batchDocs: lines.length,
+          totalDocs: state.totalDocs,
+          continued: true,
+        });
+        return {
+          backupId,
+          status: "CREATING",
+          done: false,
+          recordCount: state.totalDocs,
+          fileCount: filePathsPreview.length,
+          sizeBytes,
+        };
+      }
+
+      logBackupEvent("BACKUP_COLLECTION_DONE", {
+        organizationId,
+        backupId,
+        totalDocs: state.totalDocs,
+        continued: false,
       });
 
       if (state.totalDocs >= BACKUP_MAX_FIRESTORE_DOCS) {
@@ -305,16 +325,21 @@ export async function runOrganizationBackupJob(
           error: `Překročen limit ${BACKUP_MAX_FIRESTORE_DOCS} dokumentů — záloha může být neúplná.`,
         });
       }
+
+      logBackupEvent("BACKUP_FILES_START", {
+        organizationId,
+        backupId,
+        fileCount: filePathsPreview.length,
+      });
     }
 
     if (checkpoint.phase === "files") {
       const filesManifest: BackupFileEntry[] = [];
       const start = checkpoint.fileIndex;
       const end = Math.min(checkpoint.filePaths.length, start + BACKUP_MAX_FILES_PER_RUN);
-      let copied = 0;
 
       for (let i = start; i < end; i++) {
-        const sourcePath = checkpoint.filePaths[i];
+        const sourcePath = checkpoint.filePaths[i]!;
         const backupPath = `${prefix}/files/${sourcePath.replace(/\//g, "__")}`;
         try {
           if (!prodBucket) throw new Error("Produkční bucket chybí.");
@@ -338,7 +363,6 @@ export async function runOrganizationBackupJob(
             md5: typeof meta.md5Hash === "string" ? meta.md5Hash : null,
           });
           sizeBytes += Number(meta.size ?? 0);
-          copied += 1;
         } catch (e) {
           filesManifest.push({
             sourcePath,
@@ -354,9 +378,14 @@ export async function runOrganizationBackupJob(
       sizeBytes += await uploadJson(backupBucket, manifestPath, JSON.stringify(filesManifest));
 
       const nextIndex = end;
+      const progressPercent =
+        checkpoint.filePaths.length > 0
+          ? 60 + Math.round((nextIndex / checkpoint.filePaths.length) * 35)
+          : 95;
+
       if (nextIndex < checkpoint.filePaths.length) {
         checkpoint = { ...checkpoint, phase: "files", fileIndex: nextIndex };
-        await ref.update({ checkpoint, sizeBytes, status: "CREATING" });
+        await ref.update({ checkpoint, sizeBytes, status: "CREATING", progressPercent });
         return {
           backupId,
           status: "CREATING",
@@ -367,8 +396,14 @@ export async function runOrganizationBackupJob(
         };
       }
 
+      logBackupEvent("BACKUP_FILES_DONE", {
+        organizationId,
+        backupId,
+        files: checkpoint.filePaths.length,
+      });
+
       checkpoint = { ...checkpoint, phase: "verify", fileIndex: nextIndex };
-      await ref.update({ checkpoint, sizeBytes, status: "VERIFYING" });
+      await ref.update({ checkpoint, sizeBytes, status: "VERIFYING", progressPercent: 96 });
     }
 
     if (checkpoint.phase === "verify" || checkpoint.phase === "done") {
@@ -379,6 +414,27 @@ export async function runOrganizationBackupJob(
         byTopCollection: {},
       }) as OrganizationBackupRecordCounts;
 
+      const ndjsonParts = checkpoint.firestoreNdjsonParts ?? [];
+      let mergedNdjsonPath = `${prefix}/${checkpoint.firestoreNdjsonPath}`;
+      if (ndjsonParts.length > 0) {
+        const merged = await mergeFirestoreNdjsonParts(backupBucket, prefix, ndjsonParts);
+        mergedNdjsonPath = merged.mergedPath;
+        sizeBytes += merged.bytes;
+      }
+
+      const validation = await validateBackupBeforeComplete({
+        backupBucket,
+        prefix,
+        recordCount: recordCounts.total,
+        fileCount: Number(fresh.fileCount ?? checkpoint.filePaths.length),
+        ndjsonParts,
+        mergedNdjsonPath,
+      });
+      if (!validation.ok) {
+        throw new Error(validation.error ?? "Kontrola integrity zálohy selhala.");
+      }
+
+      const finishedAt = new Date().toISOString();
       const manifestBase: Omit<BackupManifest, "checksum"> = {
         schemaVersion: ORGANIZATION_BACKUP_SCHEMA_VERSION,
         backupId,
@@ -390,17 +446,22 @@ export async function runOrganizationBackupJob(
         recordCounts,
         fileCount: Number(fresh.fileCount ?? checkpoint.filePaths.length),
         sizeBytes,
-        firestoreNdjsonPath: `${prefix}/${checkpoint.firestoreNdjsonPath}`,
+        firestoreNdjsonPath: mergedNdjsonPath,
+        firestoreNdjsonParts: ndjsonParts.length > 0 ? ndjsonParts : undefined,
         filesManifestPath: `${prefix}/files/`,
+        finishedAt,
       };
 
-      const checksum = createHash("sha256")
-        .update(JSON.stringify(manifestBase))
-        .digest("hex");
+      const checksum = createHash("sha256").update(JSON.stringify(manifestBase)).digest("hex");
       const manifest: BackupManifest = { ...manifestBase, checksum };
 
       const manifestPath = `${prefix}/manifest.json`;
       sizeBytes += await uploadJson(backupBucket, manifestPath, JSON.stringify(manifest, null, 2));
+      logBackupEvent("BACKUP_MANIFEST_CREATED", { organizationId, backupId, checksum });
+
+      if (!verifyManifestChecksum(manifest)) {
+        throw new Error("Checksum manifestu nesouhlasí.");
+      }
 
       await ref.update({
         status: "COMPLETED",
@@ -409,7 +470,8 @@ export async function runOrganizationBackupJob(
         storagePath: prefix,
         sizeBytes,
         checksum,
-        checkpoint: { ...checkpoint, phase: "done" },
+        progressPercent: 100,
+        checkpoint: { ...checkpoint, phase: "done", firestoreNdjsonPath: "firestore/export.ndjson" },
         error: null,
         lastSuccessfulAutomaticAt:
           backupType === "MANUAL" || backupType === "PRE_RESTORE"
@@ -429,6 +491,14 @@ export async function runOrganizationBackupJob(
           sizeBytes,
           checksum,
         },
+      });
+
+      logBackupEvent("BACKUP_COMPLETED", {
+        organizationId,
+        backupId,
+        recordCount: recordCounts.total,
+        fileCount: manifest.fileCount,
+        sizeBytes,
       });
 
       return {
@@ -455,6 +525,7 @@ export async function runOrganizationBackupJob(
       status: "FAILED",
       error: msg.slice(0, 2000),
       completedAt: FieldValue.serverTimestamp(),
+      progressPercent: 0,
     });
     await logOrganizationBackupAuditAdmin(db, {
       organizationId,
@@ -464,6 +535,7 @@ export async function runOrganizationBackupJob(
       status: "error",
       details: msg,
     });
+    logBackupEvent("BACKUP_FAILED", { organizationId, backupId, error: msg.slice(0, 500) });
     return {
       backupId,
       status: "FAILED",

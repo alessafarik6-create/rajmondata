@@ -33,12 +33,14 @@ type BackupRow = {
   id: string;
   backupType?: string;
   status?: string;
-  createdAt?: { seconds?: number };
-  completedAt?: { seconds?: number };
+  createdAt?: string | { seconds?: number; _seconds?: number };
+  completedAt?: string | { seconds?: number; _seconds?: number };
   sizeBytes?: number;
   recordCount?: number;
   fileCount?: number;
+  progressPercent?: number;
   error?: string | null;
+  recordCounts?: { byTopCollection?: Record<string, number> };
 };
 
 type Props = {
@@ -60,9 +62,15 @@ function formatBytes(n: number): string {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-function formatTs(ts?: { seconds?: number } | null): string {
-  if (!ts?.seconds) return "—";
-  return new Date(ts.seconds * 1000).toLocaleString("cs-CZ");
+function formatTs(ts?: string | { seconds?: number; _seconds?: number } | null): string {
+  if (!ts) return "—";
+  if (typeof ts === "string") {
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("cs-CZ");
+  }
+  const sec = ts.seconds ?? ts._seconds;
+  if (sec == null) return "—";
+  return new Date(sec * 1000).toLocaleString("cs-CZ");
 }
 
 function backupTypeLabel(t?: string): string {
@@ -114,7 +122,8 @@ export function OrganizationBackupsSettingsCard({
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [items, setItems] = useState<BackupRow[]>([]);
-  const [health, setHealth] = useState<"ok" | "error">("ok");
+  const [health, setHealth] = useState<"ok" | "error" | "running">("ok");
+  const [detailRow, setDetailRow] = useState<BackupRow | null>(null);
   const [lastOk, setLastOk] = useState<string>("—");
   const [restoreId, setRestoreId] = useState<string | null>(null);
   const [confirmPhrase, setConfirmPhrase] = useState("");
@@ -136,9 +145,10 @@ export function OrganizationBackupsSettingsCard({
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Načtení selhalo.");
       setItems(data.items || []);
-      setHealth(data.monitoring?.health === "error" ? "error" : "ok");
+      const h = data.monitoring?.health;
+      setHealth(h === "error" ? "error" : h === "running" ? "running" : "ok");
       const last = data.monitoring?.lastSuccessfulAt;
-      setLastOk(last?.seconds ? formatTs(last) : "—");
+      setLastOk(formatTs(last));
     } catch (e) {
       toast({
         title: "Zálohy",
@@ -195,6 +205,29 @@ export function OrganizationBackupsSettingsCard({
     }
   };
 
+  useEffect(() => {
+    if (!isAdmin || !user) return;
+    const running = items.some(
+      (r) => r.status === "CREATING" || r.status === "VERIFYING" || r.status === "RESTORING"
+    );
+    if (!running) return;
+    const t = window.setInterval(() => {
+      void (async () => {
+        const token = await user.getIdToken();
+        for (const row of items) {
+          if (row.status === "CREATING" || row.status === "VERIFYING") {
+            await fetch(`/api/company/backups/${row.id}/run`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}` },
+            });
+          }
+        }
+        await fetchList();
+      })();
+    }, 12_000);
+    return () => window.clearInterval(t);
+  }, [items, isAdmin, user, fetchList]);
+
   const runRestore = async () => {
     if (!user || !restoreId) return;
     setRestoring(true);
@@ -245,6 +278,8 @@ export function OrganizationBackupsSettingsCard({
               Stav:{" "}
               {health === "ok" ? (
                 <span className="text-green-600 font-medium">V pořádku</span>
+              ) : health === "running" ? (
+                <span className="text-amber-600 font-medium">Probíhá záloha…</span>
               ) : (
                 <span className="text-destructive font-medium">Poslední záloha selhala</span>
               )}
@@ -302,6 +337,9 @@ export function OrganizationBackupsSettingsCard({
                         <TableCell>{(row.fileCount ?? 0).toLocaleString("cs-CZ")}</TableCell>
                         <TableCell>{statusBadge(row.status)}</TableCell>
                         <TableCell className="text-right space-x-2">
+                          <Button variant="ghost" size="sm" onClick={() => setDetailRow(row)}>
+                            Detail
+                          </Button>
                           {(row.status === "CREATING" || row.status === "VERIFYING") && (
                             <Button
                               variant="outline"
@@ -309,6 +347,9 @@ export function OrganizationBackupsSettingsCard({
                               onClick={() => void continueBackup(row.id)}
                             >
                               Pokračovat
+                              {row.progressPercent != null && row.progressPercent > 0
+                                ? ` (${row.progressPercent} %)`
+                                : ""}
                             </Button>
                           )}
                           {row.status === "COMPLETED" && isOwner && (
@@ -326,6 +367,55 @@ export function OrganizationBackupsSettingsCard({
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!detailRow} onOpenChange={(o) => !o && setDetailRow(null)}>
+        <AlertDialogContent className="max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Detail zálohy</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-foreground">
+                {detailRow && (
+                  <>
+                    <p>
+                      <strong>ID:</strong> {detailRow.id}
+                    </p>
+                    <p>
+                      <strong>Datum:</strong> {formatTs(detailRow.completedAt || detailRow.createdAt)}
+                    </p>
+                    <p>
+                      <strong>Záznamů:</strong> {(detailRow.recordCount ?? 0).toLocaleString("cs-CZ")}
+                    </p>
+                    <p>
+                      <strong>Souborů:</strong> {(detailRow.fileCount ?? 0).toLocaleString("cs-CZ")}
+                    </p>
+                    <p>
+                      <strong>Velikost:</strong> {formatBytes(detailRow.sizeBytes ?? 0)}
+                    </p>
+                    {detailRow.recordCounts?.byTopCollection && (
+                      <ul className="mt-2 max-h-48 overflow-y-auto border rounded p-2 text-xs">
+                        {Object.entries(detailRow.recordCounts.byTopCollection)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([k, v]) => (
+                            <li key={k} className="flex justify-between gap-2">
+                              <span>{k}</span>
+                              <span>{v.toLocaleString("cs-CZ")}</span>
+                            </li>
+                          ))}
+                      </ul>
+                    )}
+                    {detailRow.error && (
+                      <p className="text-destructive text-xs">{detailRow.error}</p>
+                    )}
+                  </>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Zavřít</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!restoreId} onOpenChange={(o) => !o && setRestoreId(null)}>
         <AlertDialogContent>

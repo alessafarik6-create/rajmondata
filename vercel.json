@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/sync-email-mailboxes",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/organization-backups",
+      "schedule": "0 2 * * *"
     }
   ],
   "functions": {
@@ -25,6 +29,9 @@
       "maxDuration": 300
     },
     "src/app/api/cron/organization-backups/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/backups/route.ts": {
       "maxDuration": 300
     },
     "src/app/api/cron/sync-email-mailboxes/route.ts": {
