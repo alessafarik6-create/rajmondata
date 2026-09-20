@@ -26,13 +26,19 @@ import {
 } from "@/lib/portal-payment-summary";
 import { DASHBOARD_WIDGET_LIST_SCROLL_CLASS } from "@/lib/dashboard-widget-list-styles";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { DashboardCompactCard } from "@/components/portal/dashboard-compact-card";
 
 type Props = {
   companyId: string;
   todayIso: string;
+  layout?: "default" | "compact";
 };
 
-export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
+export function DashboardDocumentsToPayWidget({
+  companyId,
+  todayIso,
+  layout = "default",
+}: Props) {
   const firestore = useFirestore();
   const { user } = useUser();
   const { canWrite: canWriteDocuments } = usePortalModuleAccess("documents");
@@ -113,6 +119,56 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
     return null;
   }
 
+  const displayRows = layout === "compact" ? rows.slice(0, 3) : rows;
+
+  if (layout === "compact") {
+    return (
+      <DashboardCompactCard
+        title="Nutno uhradit"
+        icon={<Banknote className="h-4 w-4 text-emerald-700" />}
+        accentClass="border-l-emerald-600"
+        href="/portal/documents"
+        footerLabel="Zobrazit vše"
+      >
+        <div className="space-y-2 text-xs">
+          <p className="font-semibold tabular-nums text-foreground">
+            {stats.toPay} ks · {Math.round(stats.totalKc).toLocaleString("cs-CZ")} Kč
+          </p>
+          {stats.overdueTotal > 0 ? (
+            <p className="text-red-700">
+              Po splatnosti: <strong>{stats.overdueTotal}</strong>
+            </p>
+          ) : null}
+          <ul className="space-y-1.5 pt-1">
+            {displayRows.map((row) => {
+              const u = getDocumentPaymentUrgency(row, todayIso);
+              const gross = documentGrossForPayment(row);
+              const title = documentDisplayTitleForPayment(row);
+              const entity = row.entityName?.trim() || "";
+              return (
+                <li
+                  key={row.id}
+                  className={cn(
+                    "rounded-md border border-border/60 px-2 py-1.5",
+                    u === "overdue" && "bg-red-50/80"
+                  )}
+                >
+                  <p className="truncate font-medium text-foreground">{entity || title}</p>
+                  <p className="flex justify-between gap-2 text-[11px] text-muted-foreground">
+                    <span className="tabular-nums font-semibold text-foreground">
+                      {Math.round(gross).toLocaleString("cs-CZ")} Kč
+                    </span>
+                    <span>{urgencyLabel(u)}</span>
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </DashboardCompactCard>
+    );
+  }
+
   return (
     <Card className="flex h-full w-full flex-col border border-gray-300 bg-white text-gray-900 shadow-sm">
       <CardHeader className="space-y-1 pb-2">
@@ -142,7 +198,7 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
           )}
         >
           <ul className="divide-y divide-gray-200">
-            {rows.map((row, index) => {
+            {displayRows.map((row, index) => {
               const u = getDocumentPaymentUrgency(row, todayIso);
               const gross = documentGrossForPayment(row);
               const subtitle =

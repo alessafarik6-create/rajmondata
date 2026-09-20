@@ -23,6 +23,7 @@ import {
   terminalActiveSegmentDashboardLabel,
 } from "@/lib/terminal-active-segment";
 import { DASHBOARD_WIDGET_LIST_SCROLL_CLASS } from "@/lib/dashboard-widget-list-styles";
+import { DashboardCompactCard } from "@/components/portal/dashboard-compact-card";
 import { cn } from "@/lib/utils";
 
 type EmployeeDoc = Record<string, unknown> & { id?: string };
@@ -32,12 +33,14 @@ export function DashboardTerminalActiveWidget({
   attendanceTodayRows,
   openWorkSegmentRows,
   loading,
+  layout = "default",
 }: {
   employees: EmployeeDoc[] | undefined;
   attendanceTodayRows: AttendanceRow[] | null | undefined;
   /** Otevřené úseky z `work_segments` (dnes, `closed === false`) — realtime z Firestore. */
   openWorkSegmentRows?: Array<Record<string, unknown> & { id: string }> | null;
   loading?: boolean;
+  layout?: "default" | "compact";
 }) {
   const active = useMemo(() => {
     const raw = Array.isArray(employees) ? employees : [];
@@ -75,6 +78,45 @@ export function DashboardTerminalActiveWidget({
     rows.sort((a, b) => a.name.localeCompare(b.name, "cs"));
     return rows;
   }, [employees, attendanceTodayRows, openWorkSegmentRows]);
+
+  const empTotal = Array.isArray(employees) ? employees.length : 0;
+  const inCount = active.length;
+  const outCount = Math.max(0, empTotal - inCount);
+
+  if (layout === "compact") {
+    return (
+      <DashboardCompactCard
+        title="V práci"
+        icon={<UserCheck className="h-4 w-4 text-emerald-600" />}
+        accentClass="border-l-emerald-500"
+        href="/portal/labor/dochazka"
+        footerLabel="Docházka"
+      >
+        {loading ? (
+          <p className="text-xs text-muted-foreground">Načítání…</p>
+        ) : (
+          <div className="space-y-2 text-xs">
+            <div className="flex flex-wrap gap-x-3 text-muted-foreground">
+              <span>
+                V práci: <strong className="text-foreground">{inCount}</strong>
+              </span>
+              <span>
+                Mimo: <strong className="text-foreground">{outCount}</strong>
+              </span>
+            </div>
+            <ul className="space-y-1">
+              {active.slice(0, 4).map((item) => (
+                <li key={item.employeeKey} className="truncate rounded border border-border/50 px-2 py-0.5">
+                  {item.name}
+                  <span className="text-muted-foreground"> · od {item.checkInLabel}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </DashboardCompactCard>
+    );
+  }
 
   return (
     <Card className="flex h-full w-full flex-col border-border bg-card shadow-sm">

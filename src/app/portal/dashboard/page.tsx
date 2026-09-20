@@ -55,11 +55,8 @@ import {
 } from "@/lib/employee-money";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
-import { DashboardJobTasksWidget } from "@/components/jobs/dashboard-job-tasks-widget";
-import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
-import { DashboardDocumentsToPayWidget } from "@/components/portal/dashboard-documents-to-pay-widget";
-import { DashboardEmailAttentionWidget } from "@/components/portal/dashboard-email-attention-widget";
-import { DashboardActivitySection } from "@/components/portal/dashboard-activity-section";
+import { PortalDashboardCompactGrid } from "@/components/portal/portal-dashboard-compact-grid";
+import type { DashboardActivityRow } from "@/components/portal/dashboard-activity-section";
 import { DashboardUnassignedMeasurementPhotos } from "@/components/portal/dashboard-unassigned-measurement-photos";
 import {
   isCustomerActivityUnresolved,
@@ -1182,538 +1179,45 @@ export default function CompanyDashboard() {
 
       {showAdminDashboard ? (
         <div className="space-y-6">
-          {!belowLg && companyId ? (
-            <DashboardJobTasksWidget
-              companyId={companyId}
-              todayIso={todayIso}
-              jobs={typedJobs}
-              jobsLoading={isJobsLoading}
-            />
-          ) : null}
-
-          {!chatDashboardLoading && unreadEmployeeChatCount > 0 ? (
-            <Link
-              href="/portal/chat"
-              className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
-            >
-              <Alert className="border-2 border-red-600 bg-red-50 text-red-950 shadow-md dark:border-red-500 dark:bg-red-950/40 dark:text-red-50">
-                <MessageSquare className="h-5 w-5 text-red-600 dark:text-red-400" />
-                <AlertTitle className="text-base font-semibold">
-                  Nepřečtené zprávy od zaměstnanců
-                </AlertTitle>
-                <AlertDescription className="text-sm font-medium text-red-900 dark:text-red-100">
-                  Máte {unreadEmployeeChatCount}{" "}
-                  {unreadEmployeeChatCount === 1
-                    ? "nepřečtenou zprávu"
-                    : unreadEmployeeChatCount < 5
-                      ? "nepřečtené zprávy"
-                      : "nepřečtených zpráv"}
-                  . Klepnutím otevřete firemní chat.
-                </AlertDescription>
-              </Alert>
-            </Link>
-          ) : null}
-          <DashboardActivitySection
-            title="Aktivita zákazníků"
-            description="Nové akce a zprávy od zákazníků (jen nevyřízené). Zelené = do 3 dnů, červené = starší než 3 dny."
-            items={customerActivitiesUnresolved}
-            expanded={customerActivitiesExpanded}
-            onToggleExpand={() => setCustomerActivitiesExpanded((v) => !v)}
-            onMarkResolved={(id) => void markCustomerActivityResolved(id)}
-            resolvingId={resolvingCustomerActivityId}
-            badgeCount={customerActivitiesUnresolved.length}
-            highlightBorder
-            highlightCustomerAge
-          />
-
-          <DashboardActivitySection
-            title="Aktivita zaměstnanců"
-            description="Např. odeslané výkazy práce ke schválení (jen nevyřízené)."
-            items={employeeActivitiesUnresolved}
-            expanded={employeeActivitiesExpanded}
-            onToggleExpand={() => setEmployeeActivitiesExpanded((v) => !v)}
-            onMarkResolved={(id) => void markEmployeeActivityResolved(id)}
-            resolvingId={resolvingEmployeeActivityId}
-            badgeCount={employeeActivitiesUnresolved.length}
-            highlightBorder
-          />
-
           {companyId ? (
-            <DashboardUnassignedMeasurementPhotos
-              firestore={firestore}
-              companyId={companyId}
-              jobNamesById={jobNamesById}
-              jobsForAssign={jobsForAssign}
-              userId={user?.uid ?? null}
-              profile={profile as { role?: string; globalRoles?: unknown } | null}
-            />
-          ) : null}
-
-          {pendingDocuments.length > 0 ? (
-            <Card className="border-amber-300 bg-amber-50/80">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <FileText className="h-5 w-5 text-amber-700" />
-                  Doklady k zařazení
-                </CardTitle>
-                <CardDescription>
-                  {pendingDocuments.length} dokladů čeká na přiřazení.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {pendingDocuments.slice(0, 5).map((d) => (
-                  <div key={d.id} className="rounded border border-amber-200 bg-white/80 p-2 text-sm">
-                    <div className="font-medium truncate">{d.fileName || d.id}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {(d.uploadedByName || "Neznámý uživatel").toString()} ·{" "}
-                      {(d.fileType || "soubor").toString()}
-                    </div>
-                  </div>
-                ))}
-                <Link href="/portal/documents">
-                  <Button variant="secondary" className="min-h-[40px]">
-                    Otevřít a zařadit doklady
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {companyId ? (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch lg:gap-6">
-              <DashboardEmailAttentionWidget companyId={companyId} />
-              <div className="peer/pay min-w-0 h-full">
-                <DashboardDocumentsToPayWidget companyId={companyId} todayIso={todayIso} />
-              </div>
-              <div className="min-w-0 h-full peer-empty/pay:lg:col-span-2">
-                <DashboardTerminalActiveWidget
-                  employees={employees as Record<string, unknown>[] | undefined}
-                  attendanceTodayRows={attendanceTodayRows as AttendanceRow[]}
-                  openWorkSegmentRows={openWorkSegmentsRaw ?? []}
-                  loading={attendanceTodayLoading || openWorkSegmentsLoading}
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {companyId && showAdminDashboard && !belowLg ? (
-            <div id="portal-schedule-calendar" className="scroll-mt-4">
-              <CompanyScheduleCalendar companyId={companyId} />
-            </div>
-          ) : null}
-
-          {companyId ? (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch lg:gap-6">
-              <Link
-                href="/portal/leads"
-                className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black"
-              >
-                <Card className="h-full border-2 border-black bg-white text-black shadow-sm transition-shadow hover:shadow-md">
-                  <CardHeader className="space-y-1 pb-2">
-                    <CardTitle className="flex items-center gap-2 text-base font-semibold text-black">
-                      <Inbox className="h-5 w-5 shrink-0" aria-hidden />
-                      Poptávky aktuálně v hodnotě
-                    </CardTitle>
-                    <CardDescription className="text-sm text-black/75">
-                      Odhadovaná hodnota aktivních poptávek (cena z importu, nabídky, AI odhad nebo
-                      statistika typu).
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3 pt-0">
-                    {importLeadsLoading || leadPortfolioLoading ? (
-                      <div className="flex min-h-[4.5rem] items-center">
-                        <span className="inline-block h-9 w-9 animate-spin rounded-full border-2 border-black border-t-transparent" />
-                      </div>
-                    ) : importLeadsError && !leadPortfolioStats ? (
-                      <p className="text-sm text-destructive">{importLeadsError}</p>
-                    ) : leadPortfolioStats ? (
-                      <>
-                        {leadPortfolioStats.activeCount === 0 ? (
-                          <>
-                            <p className="text-2xl font-semibold text-black/80">
-                              Žádné aktivní poptávky
-                            </p>
-                            <p className="text-sm text-black/75">
-                              V importu není otevřená poptávka, nebo jsou všechny uzavřené.
-                            </p>
-                          </>
-                        ) : leadPortfolioStats.showNotQuantifiedMessage ? (
-                          <>
-                            <p className="text-2xl font-semibold text-black/85">
-                              Hodnota zatím není vyčíslena
-                            </p>
-                            <p className="text-sm text-black/85">
-                              {leadPortfolioStats.activeCount} aktivních poptávek — doplněte cenu,
-                              nabídku nebo počkejte na AI odhad.
-                            </p>
-                          </>
-                        ) : (
-                          <>
-                            <p className="text-3xl font-bold tabular-nums tracking-tight text-black sm:text-4xl">
-                              {formatKc(leadPortfolioStats.totalGrossKc)}
-                            </p>
-                            {formatPortfolioMillionsKc(leadPortfolioStats.totalGrossKc) ? (
-                              <p className="text-sm font-medium text-black/80">
-                                Odhadovaná hodnota aktivních poptávek:{" "}
-                                {formatPortfolioMillionsKc(leadPortfolioStats.totalGrossKc)}
-                              </p>
-                            ) : null}
-                            <p className="text-sm leading-snug text-black/85">
-                              {leadPortfolioStats.activeCount} aktivních poptávek
-                            </p>
-                            <p className="text-xs leading-relaxed text-black/75">
-                              Z toho: {leadPortfolioStats.bySource.explicit_price} s přesnou cenou
-                              · {leadPortfolioStats.bySource.offer} podle nabídky ·{" "}
-                              {leadPortfolioStats.bySource.ai_generation +
-                                leadPortfolioStats.bySource.cached_ai_estimate +
-                                leadPortfolioStats.bySource.type_statistic}{" "}
-                              odhad / statistika
-                            </p>
-                            {leadPortfolioStats.hasEstimatePortion ? (
-                              <p className="text-xs text-amber-900/90">
-                                Část hodnoty je dopočítána odhadem.
-                              </p>
-                            ) : null}
-                          </>
-                        )}
-                        <p className="text-xs text-black/70">
-                          Přepočet cca každou minutu; odhady se ukládají k poptávce (bez opakovaného
-                          AI při každém načtení).
-                        </p>
-                      </>
-                    ) : (
-                      <p className="text-sm text-black/75">Hodnotu poptávek se nepodařilo načíst.</p>
-                    )}
-                  </CardContent>
-                </Card>
-              </Link>
-
-              <Card
-                className={cn(
-                  "flex h-full min-h-0 flex-col border border-emerald-200/70 bg-emerald-50/35 shadow-sm dark:border-emerald-900/45 dark:bg-emerald-950/20"
+            <>
+              <PortalDashboardCompactGrid
+                companyId={companyId}
+                todayIso={todayIso}
+                jobs={jobs}
+                allJobs={typedJobs}
+                jobsLoading={isJobsLoading}
+                importLeadsRows={importLeadsRows}
+                importLeadsLoading={importLeadsLoading}
+                latestLeads={latestFiveDashboardLeads}
+                importLeadOverlayByKey={
+                  importLeadOverlayByKey as Map<string, InquiryTypeOverlayFields>
+                }
+                employees={employees as Record<string, unknown>[] | undefined}
+                attendanceTodayRows={attendanceTodayRows as AttendanceRow[]}
+                openWorkSegmentRows={openWorkSegmentsRaw ?? []}
+                attendanceLoading={attendanceTodayLoading || openWorkSegmentsLoading}
+                customerActivities={customerActivitiesUnresolved as DashboardActivityRow[]}
+                employeeActivities={employeeActivitiesUnresolved as DashboardActivityRow[]}
+                unreadChatCount={unreadEmployeeChatCount}
+                chatLoading={chatDashboardLoading}
+                pendingDocumentsCount={pendingDocuments.length}
+                fleetConnected={Boolean(
+                  (company as { fleetIntegrationStatus?: string } | null)?.fleetIntegrationStatus ===
+                    "configured"
                 )}
-              >
-                <CardHeader className="space-y-0.5 pb-2 pt-4">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold text-emerald-950 dark:text-emerald-100">
-                    <Inbox className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
-                    Nejnovější poptávky
-                  </CardTitle>
-                  <CardDescription className="text-xs text-emerald-900/75 dark:text-emerald-200/80">
-                    Posledních 5 podle data (import nebo přijetí v aplikaci). Aktualizace z API a z
-                    Firestore.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-1 flex-col gap-2 pb-4 pt-0">
-                  {importLeadsLoading && importLeadsRows.length === 0 ? (
-                    <div className="flex min-h-[6rem] items-center justify-center">
-                      <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-emerald-600/50 border-t-transparent" />
-                    </div>
-                  ) : importLeadsError && importLeadsRows.length === 0 ? (
-                    <p className="text-sm text-destructive">{importLeadsError}</p>
-                  ) : latestFiveDashboardLeads.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      Zatím žádné poptávky k zobrazení. Zkontrolujte import v nastavení firmy.
-                    </p>
-                  ) : (
-                    <ul className="flex flex-col gap-1.5">
-                      {latestFiveDashboardLeads.map((r) => {
-                        const key = stableImportLeadDocumentId(r);
-                        const overlayRow = importLeadOverlayByKey.get(key) as
-                          | InquiryTypeOverlayFields
-                          | undefined;
-                        const inquiryTypeSource = resolveInquiryTypeRaw(r, overlayRow);
-                        const ts = leadNewestTimestampMs(r, importLeadOverlayByKey.get(key));
-                        const contact =
-                          [r.telefon?.trim(), r.email?.trim()].filter(Boolean).join(" · ") || "—";
-                        const msg = String(r.zprava ?? "").trim();
-                        return (
-                          <li key={key}>
-                            <Link
-                              href={`/portal/leads?openLead=${encodeURIComponent(key)}`}
-                              className={cn(
-                                "flex min-h-[48px] gap-2 rounded-md border border-emerald-200/60 bg-white/70 px-2.5 py-2 text-left transition-colors hover:bg-emerald-50/90 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:hover:bg-emerald-900/35",
-                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
-                              )}
-                            >
-                              <div className="min-w-0 flex-1 space-y-0.5">
-                                <div className="flex items-baseline justify-between gap-2">
-                                  <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                                    <span className="truncate text-sm font-semibold text-foreground">
-                                      {r.jmeno?.trim() || "—"}
-                                    </span>
-                                    <InquiryTypeBadge
-                                      type={inquiryTypeSource}
-                                      variant="preview"
-                                      className="max-w-[9rem] text-[10px] font-normal leading-none"
-                                    />
-                                  </span>
-                                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                                    {formatLeadListDate(ts)}
-                                  </span>
-                                </div>
-                                <p className="truncate text-xs text-muted-foreground">{contact}</p>
-                                <p className="line-clamp-1 text-xs text-foreground/85" title={msg}>
-                                  {msg || "—"}
-                                </p>
-                              </div>
-                              <ArrowRight
-                                className="h-4 w-4 shrink-0 self-center text-emerald-600 opacity-70 dark:text-emerald-400"
-                                aria-hidden
-                              />
-                            </Link>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                  <Link
-                    href="/portal/leads"
-                    className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-400"
-                  >
-                    Všechny poptávky
-                    <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-                  </Link>
-                </CardContent>
-              </Card>
-            </div>
+                scheduleTodayCount={installationCalendarBadge}
+              />
+              <DashboardUnassignedMeasurementPhotos
+                firestore={firestore}
+                companyId={companyId}
+                jobNamesById={jobNamesById}
+                jobsForAssign={jobsForAssign}
+                userId={user?.uid ?? null}
+                profile={profile as { role?: string; globalRoles?: unknown } | null}
+              />
+            </>
           ) : null}
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Card className="border-border bg-card shadow-sm transition-shadow hover:shadow-md">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium leading-none">Zakázky</CardTitle>
-                <Briefcase className="h-4 w-4 shrink-0 text-primary" />
-              </CardHeader>
-              <CardContent className="space-y-1">
-                {jobsError ? (
-                  <p className="text-sm text-destructive">Chyba načtení zakázek</p>
-                ) : (
-                  <>
-                    <div className="portal-kpi-value text-2xl sm:text-3xl">
-                      {isJobsLoading ? (
-                        <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent align-middle" />
-                      ) : (
-                        jobsAggregate.count
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground">Počet zakázek ve firmě</p>
-                    <div className="pt-2 space-y-0.5 text-sm">
-                      <div className="flex justify-between gap-2 tabular-nums">
-                        <span className="text-muted-foreground">Bez DPH</span>
-                        <span className="font-semibold text-foreground">
-                          {isJobsLoading ? "…" : formatKc(jobsAggregate.totalBudgetNetKc)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between gap-2 tabular-nums text-base font-bold text-foreground">
-                        <span className="font-normal text-muted-foreground text-sm">S DPH</span>
-                        <span>
-                          {isJobsLoading ? "…" : formatKc(jobsAggregate.totalBudgetGrossKc)}
-                        </span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Součet rozpočtů zakázek</p>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border bg-card shadow-sm transition-shadow hover:shadow-md">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium leading-none">
-                  Vyplaceno zaměstnancům
-                </CardTitle>
-                <Banknote className="h-4 w-4 shrink-0 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="portal-kpi-value text-2xl sm:text-3xl">
-                  {dailyReportsLoading ? (
-                    <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent align-middle" />
-                  ) : (
-                    formatKc(paidToEmployeesCzk)
-                  )}
-                </div>
-                <p className="portal-kpi-label mt-1">
-                  Součet schválených výkazů (payableAmountCzk)
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-border bg-card shadow-sm transition-shadow hover:shadow-md sm:col-span-2 xl:col-span-1">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium leading-none">Finance</CardTitle>
-                <PieChart className="h-4 w-4 shrink-0 text-primary" />
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">
-                    Celkové příjmy (zaplacené, s DPH)
-                  </span>
-                  <span className="font-semibold tabular-nums text-foreground">
-                    {isJobsLoading ? "…" : formatKc(totalPaidFromJobsGrossCzk)}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">
-                    Hodnota zakázek (rozpočty s DPH)
-                  </span>
-                  <span className="font-semibold tabular-nums text-foreground">
-                    {isJobsLoading ? "…" : formatKc(totalIncomeFromJobsGrossCzk)}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Zbývá doplatit (s DPH)</span>
-                  <span
-                    className={`font-semibold tabular-nums ${
-                      totalRemainingToPayGrossCzk < 0
-                        ? "text-destructive"
-                        : "text-foreground"
-                    }`}
-                  >
-                    {isJobsLoading ? "…" : formatKc(totalRemainingToPayGrossCzk)}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-2 border-t border-border/60 pt-2">
-                  <span className="text-muted-foreground">Rozpočty bez DPH (součet)</span>
-                  <span className="font-semibold tabular-nums">
-                    {isJobsLoading ? "…" : formatKc(totalIncomeFromJobsNetCzk)}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Náklady (mzdy)</span>
-                  <span className="font-semibold tabular-nums">
-                    {dailyReportsLoading ? "…" : formatKc(totalLaborCostsCzk)}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-2 border-t pt-3">
-                  <span className="font-medium">Zisk (odhad)</span>
-                  <span
-                    className={`font-bold tabular-nums ${
-                      profitCzk >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"
-                    }`}
-                  >
-                    {isJobsLoading || dailyReportsLoading
-                      ? "…"
-                      : formatKc(profitCzk)}
-                  </span>
-                </div>
-                <p className="text-[11px] leading-snug text-muted-foreground">
-                  Zisk = součet rozpočtů zakázek s DPH minus schválené částky z výkazů. Nezahrnuje ostatní náklady.
-                </p>
-              </CardContent>
-            </Card>
-
-            <Link
-              href="/portal/chat"
-              className="block min-h-[44px] rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Card
-                className={`h-full shadow-sm transition-shadow hover:shadow-md ${
-                  !chatDashboardLoading && unreadEmployeeChatCount > 0
-                    ? "border-2 border-red-600 bg-red-50/90 dark:border-red-500 dark:bg-red-950/30"
-                    : "border-border bg-card"
-                }`}
-              >
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium leading-none">Zprávy</CardTitle>
-                  <MessageSquare
-                    className={`h-4 w-4 shrink-0 ${
-                      !chatDashboardLoading && unreadEmployeeChatCount > 0
-                        ? "text-red-600 dark:text-red-400"
-                        : "text-primary"
-                    }`}
-                  />
-                </CardHeader>
-                <CardContent>
-                  {chatDashboardLoading ? (
-                    <div className="flex h-12 items-center">
-                      <span className="inline-block h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                    </div>
-                  ) : (
-                    <>
-                      <p
-                        className={`text-lg font-semibold ${
-                          unreadEmployeeChatCount > 0
-                            ? "text-red-700 dark:text-red-200"
-                            : "text-foreground"
-                        }`}
-                      >
-                        {unreadEmployeeChatCount === 0
-                          ? "Žádné nové"
-                          : `${unreadEmployeeChatCount} nepřečtených`}
-                      </p>
-                      <p className="portal-kpi-label mt-1">Od zaměstnanců — klepněte pro chat</p>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            </Link>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {isManagement && (
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="portal-section-label text-sm font-medium">Tým</CardTitle>
-                  <Users className="h-4 w-4 text-primary" />
-                </CardHeader>
-                <CardContent>
-                  <div className="portal-kpi-value">{employees.length || 0}</div>
-                  <p className="portal-kpi-label">Celkový počet pracovníků</p>
-                </CardContent>
-              </Card>
-            )}
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="portal-section-label text-sm font-medium">
-                  Aktivní zakázky
-                </CardTitle>
-                <Briefcase className="h-4 w-4 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="portal-kpi-value">
-                  {jobs.filter((job) => job.status !== "dokončená").length || 0}
-                </div>
-                <p className="portal-kpi-label">Probíhající projekty</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="portal-section-label text-sm font-medium">
-                  Docházka dnes
-                </CardTitle>
-                <Clock className="h-4 w-4 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="portal-kpi-value">{attendanceTodayCount}</div>
-                <p className="portal-kpi-label">
-                  {attendanceTodayCount === 0
-                    ? "Zatím nejsou záznamy docházky"
-                    : "Záznamy docházky za dnešek"}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="portal-section-label text-sm font-medium">
-                  Měsíční obrat
-                </CardTitle>
-                <Wallet className="h-4 w-4 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="portal-kpi-value">
-                  {monthlyRevenueCzk.toLocaleString("cs-CZ")} Kč
-                </div>
-                <p className="portal-kpi-label">
-                  {monthlyRevenueCzk === 0
-                    ? "Zatím nejsou k dispozici žádná data"
-                    : "Součet příjmů v aktuálním měsíci z dokladů"}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
@@ -1863,11 +1367,8 @@ export default function CompanyDashboard() {
           </div>
         ) : null}
 
-        <div
-          className={`min-w-0 space-y-6 lg:space-y-8 ${
-            showAdminDashboard ? "max-w-md lg:max-w-none" : ""
-          }`}
-        >
+        {!showAdminDashboard ? (
+        <div className="min-w-0 space-y-6 lg:space-y-8">
           {!isCustomer && (
             <Card>
               <CardHeader>
@@ -1951,6 +1452,7 @@ export default function CompanyDashboard() {
             </CardContent>
           </Card>
         </div>
+        ) : null}
       </div>
       </div>
     </>
