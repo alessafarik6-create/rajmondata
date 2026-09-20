@@ -84,6 +84,10 @@ type MobilePane = "folders" | "list" | "detail";
 
 const EMAIL_LIST_PAGE_SIZE = 50;
 
+/** Levý panel + seznam: vlastní scroll, zůstávají v viewportu při scrollu detailu stránky. */
+const EMAIL_STICKY_LIST_PANEL =
+  "lg:sticky lg:top-4 lg:z-[2] lg:max-h-[calc(100dvh-6rem)] lg:flex lg:flex-col lg:overflow-hidden lg:self-start bg-background";
+
 const ONBOARDING_BULLETS = [
   "příchozí a odeslané e-maily v RAJMONDATA",
   "přiřazení e-mailu k zákazníkovi",
@@ -848,7 +852,7 @@ export function EmailPortalPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="w-full min-w-0 bg-background">
       {connectedAccounts.length === 0 && accounts.length > 0 ? (
         <div className="mx-3 mt-3 shrink-0 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
           Všechny účty jsou odpojené. Historii zpráv stále vidíte níže. Nový e-mail připojte v{" "}
@@ -858,10 +862,11 @@ export function EmailPortalPage() {
           .
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+      <div className="flex flex-col lg:flex-row lg:items-start">
       <aside
         className={cn(
-          "flex w-full shrink-0 flex-col min-h-0 overflow-hidden border-b p-3 lg:w-56 lg:max-h-full lg:border-b-0 lg:border-r",
+          EMAIL_STICKY_LIST_PANEL,
+          "w-full shrink-0 border-b p-3 lg:w-56 lg:border-b-0 lg:border-r",
           mobilePane !== "folders" && "hidden lg:flex"
         )}
       >
@@ -976,7 +981,7 @@ export function EmailPortalPage() {
         ) : null}
       </aside>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row">
+      <div className="flex min-w-0 flex-1 flex-col lg:flex-row lg:items-start">
         <div className="flex shrink-0 gap-2 border-b p-2 lg:hidden">
           <Button size="sm" variant={mobilePane === "folders" ? "secondary" : "outline"} onClick={() => setMobilePane("folders")}>
             Složky
@@ -987,7 +992,8 @@ export function EmailPortalPage() {
         </div>
         <div
           className={cn(
-            "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-b lg:w-[min(100%,22rem)] lg:flex-none lg:border-b-0 lg:border-r max-lg:min-h-[40vh]",
+            EMAIL_STICKY_LIST_PANEL,
+            "min-w-0 flex flex-col border-b lg:w-[min(100%,22rem)] lg:shrink-0 lg:border-b-0 lg:border-r max-lg:min-h-[40vh]",
             mobilePane === "detail" && "hidden lg:flex",
             mobilePane === "folders" && "hidden lg:flex"
           )}
@@ -1044,12 +1050,12 @@ export function EmailPortalPage() {
 
         <div
           className={cn(
-            "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3 sm:p-4 max-lg:min-h-[50vh]",
+            "min-w-0 flex-1 p-3 sm:p-4 bg-background",
             mobilePane !== "detail" && "max-lg:hidden"
           )}
         >
           {composeOpen ? (
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain max-w-xl">
+            <div className="space-y-3 max-w-xl">
               <h2 className="font-semibold">Nový e-mail</h2>
               {connectedAccounts.length > 1 ? (
                 <div className="space-y-1">
@@ -1113,7 +1119,6 @@ export function EmailPortalPage() {
                 : "Ve schránce nejsou žádné zprávy."}
             </p>
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <EmailPortalDetailPanel
               detail={detail}
               canWrite={access.canWrite}
@@ -1170,7 +1175,6 @@ export function EmailPortalPage() {
               onRajmondataRefsChange={setRajmondataRefs}
               forwardMode={composeForwardMode}
             />
-            </div>
           )}
         </div>
       </div>

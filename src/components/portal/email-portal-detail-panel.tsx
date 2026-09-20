@@ -126,15 +126,15 @@ export function EmailPortalDetailPanel(props: Props) {
   const pri = String(d.aiPriority ?? "NORMAL");
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-w-3xl w-full">
+    <div className="w-full max-w-3xl space-y-4 bg-background">
       {props.onBack ? (
-        <Button variant="ghost" size="sm" className="-ml-2 shrink-0" onClick={props.onBack}>
+        <Button variant="ghost" size="sm" className="-ml-2" onClick={props.onBack}>
           ← Zpět
         </Button>
       ) : null}
 
       {props.canWrite ? (
-        <div className="sticky top-0 z-10 shrink-0 flex flex-wrap items-center gap-1.5 border-b bg-background/95 pb-3 pt-0.5 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="flex flex-wrap items-center gap-1.5 border-b pb-3">
           <Button size="sm" disabled={props.busy} onClick={props.onReply}>
             Odpovědět
           </Button>
@@ -182,7 +182,6 @@ export function EmailPortalDetailPanel(props: Props) {
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-0.5">
       <div>
         <h1 className="text-lg font-semibold break-words">{d.subject}</h1>
         <p className="text-sm text-muted-foreground break-all">Od: {d.from}</p>
@@ -293,7 +292,7 @@ export function EmailPortalDetailPanel(props: Props) {
               className={`text-sm border-l-2 pl-3 ${t.direction === "outbound" ? "border-primary" : "border-muted-foreground/40"}`}
             >
               <p className="text-xs text-muted-foreground">{t.from}</p>
-              <p className="whitespace-pre-wrap break-words line-clamp-6">{t.textBody}</p>
+              <p className="whitespace-pre-wrap break-words">{t.textBody}</p>
             </div>
           ))}
         </div>
@@ -302,27 +301,6 @@ export function EmailPortalDetailPanel(props: Props) {
           {d.textBody}
         </div>
       )}
-
-      <EmailAttachmentsSection
-        companyId={props.companyId}
-        messageId={d.id}
-        attachments={d.attachments}
-        canWrite={props.canWrite}
-        busy={props.busy}
-        getToken={props.getToken}
-        onLinked={props.onAttachmentsLinked}
-      />
-
-      {props.timeline.length > 0 ? (
-        <div className="text-xs text-muted-foreground space-y-1 border-t pt-3">
-          <p className="font-semibold uppercase">Historie</p>
-          {props.timeline.map((e, i) => (
-            <p key={`${e.label}-${i}`}>
-              {e.createdAt ? new Date(e.createdAt).toLocaleString("cs-CZ") : "—"} {e.label}
-            </p>
-          ))}
-        </div>
-      ) : null}
 
       {props.canWrite ? (
         <>
@@ -341,6 +319,20 @@ export function EmailPortalDetailPanel(props: Props) {
           />
           <Textarea rows={5} value={props.replyText} onChange={(e) => props.onReplyText(e.target.value)} />
           <div className="flex flex-wrap gap-2">
+            <Button size="sm" disabled={props.busy} onClick={props.onReply}>
+              Odpovědět
+            </Button>
+            <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onForward}>
+              Přeposlat
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={props.busy}
+              onClick={() => props.onAiDraft()}
+            >
+              <Sparkles className="h-3.5 w-3.5 mr-1" /> AI odpověď
+            </Button>
             <Button size="sm" variant="outline" disabled={props.busy} onClick={() => props.onAiDraft("shorter")}>
               Zkrátit
             </Button>
@@ -395,7 +387,27 @@ export function EmailPortalDetailPanel(props: Props) {
           </div>
         </>
       ) : null}
-      </div>
+
+      <EmailAttachmentsSection
+        companyId={props.companyId}
+        messageId={d.id}
+        attachments={d.attachments}
+        canWrite={props.canWrite}
+        busy={props.busy}
+        getToken={props.getToken}
+        onLinked={props.onAttachmentsLinked}
+      />
+
+      {props.timeline.length > 0 ? (
+        <div className="text-xs text-muted-foreground space-y-1 border-t pt-3">
+          <p className="font-semibold uppercase">Historie</p>
+          {props.timeline.map((e, i) => (
+            <p key={`${e.label}-${i}`}>
+              {e.createdAt ? new Date(e.createdAt).toLocaleString("cs-CZ") : "—"} {e.label}
+            </p>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
