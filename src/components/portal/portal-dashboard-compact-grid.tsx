@@ -7,16 +7,11 @@ import { useCollection, useMemoFirebase, useUser, useDoc } from "@/firebase";
 import { DashboardCompactCalendar } from "@/components/portal/dashboard-compact-calendar";
 import {
   Briefcase,
-  Car,
-  Factory,
-  FileText,
   Inbox,
   ListTodo,
   MessageSquare,
-  Package,
   Activity,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { DashboardEmailAttentionWidget } from "@/components/portal/dashboard-email-attention-widget";
 import { DashboardDocumentsToPayWidget } from "@/components/portal/dashboard-documents-to-pay-widget";
 import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
@@ -36,7 +31,22 @@ import type { AttendanceRow } from "@/lib/employee-attendance";
 import type { DashboardActivityRow } from "@/components/portal/dashboard-activity-section";
 import { formatDashboardActivityTime } from "@/components/portal/dashboard-activity-section";
 import { safeTime } from "@/lib/date-safe";
-
+import { useUserDashboardLayout } from "@/hooks/use-user-dashboard-layout";
+import {
+  PortalDashboardDraggableGrid,
+  type DashboardWidgetSlot,
+} from "@/components/portal/portal-dashboard-draggable-grid";
+import type { DashboardWidgetId } from "@/lib/dashboard-widget-layout";
+import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  DashboardFleetCompact,
+  DashboardOffersCompact,
+  DashboardPendingDocumentsCompact,
+  DashboardProductionCompact,
+  DashboardWarehouseCompact,
+  filterImportantDashboardActivities,
+  type PendingDocPreview,
+} from "@/components/portal/dashboard-compact-data-widgets";
 type JobData = {
   id: string;
   name?: string;
@@ -62,30 +72,18 @@ export type PortalDashboardCompactGridProps = {
   employeeActivities: DashboardActivityRow[];
   unreadChatCount: number;
   chatLoading: boolean;
-  pendingDocumentsCount: number;
+  pendingDocuments: PendingDocPreview[];
   fleetConnected: boolean;
   scheduleTodayCount?: number;
   restrictScheduleForEmployee?: boolean;
 };
 
-function leadTs(
-  lead: LeadImportRow,
-  overlay?: { receivedAt?: unknown }
-): number {
-  if (lead.receivedAtIso) {
-    const t = Date.parse(lead.receivedAtIso);
-    if (!Number.isNaN(t)) return t;
-  }
-  const raw = overlay?.receivedAt;
-  if (raw && typeof raw === "object" && "toMillis" in raw) {
-    return (raw as { toMillis: () => number }).toMillis();
-  }
-  return 0;
-}
-
 export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProps) {
   const firestore = useFirestore();
   const { user } = useUser();
+  const isMobile = useIsMobile();
+  const { order, saveOrder, resetLayout } = useUserDashboardLayout(props.companyId);
+
   const userRef = useMemoFirebase(
     () => (firestore && user ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
@@ -174,28 +172,29 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
   }, [props.importLeadsRows, props.latestLeads]);
 
   const activityItems = useMemo(() => {
-    const merged = [...props.customerActivities, ...props.employeeActivities];
+    const filteredCustomer = filterImportantDashboardActivities(props.customerActivities);
+    const merged = [...filteredCustomer, ...props.employeeActivities];
     merged.sort((a, b) => {
       const ta = safeTime(a.createdAt ?? a.timestamp ?? a.sentAt);
       const tb = safeTime(b.createdAt ?? b.timestamp ?? b.sentAt);
       return tb - ta;
     });
-    return merged.slice(0, 5);
+    return merged.slice(0, 4);
   }, [props.customerActivities, props.employeeActivities]);
 
-  const gridClass =
-    "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-5 auto-rows-fr";
+  const slots = useMemo(() => {
+    const list: DashboardWidgetSlot[] = [];
 
-  return (
-    <div className={gridClass}>
-      {emailAccess.canRead ? (
-        <div className="order-1 min-w-0">
-          <DashboardEmailAttentionWidget companyId={props.companyId} />
-        </div>
-      ) : null}
-
-      {jobsAccess.canRead ? (
-        <div className="order-2 min-w-0">
+    if (emailAccess.canRead) {
+      list.push({
+        id: "emails",
+        node: <DashboardEmailAttentionWidget companyId={props.companyId} />,
+      });
+    }
+    if (jobsAccess.canRead) {
+      list.push({
+        id: "jobs",
+        node: (
           <DashboardCompactCard
             title="Zakázky"
             icon={<Briefcase className="h-4 w-4 text-orange-600" />}
@@ -241,11 +240,13 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
               </div>
             )}
           </DashboardCompactCard>
-        </div>
-      ) : null}
-
-      {leadsAccess.canRead ? (
-        <div className="order-3 min-w-0">
+        ),
+      });
+    }
+    if (leadsAccess.canRead) {
+      list.push({
+        id: "leads",
+        node: (
           <DashboardCompactCard
             title="Poptávky"
             icon={<Inbox className="h-4 w-4 text-violet-600" />}
@@ -285,21 +286,26 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
               </div>
             )}
           </DashboardCompactCard>
-        </div>
-      ) : null}
-
-      {documentsAccess.canRead ? (
-        <div className="order-4 min-w-0">
+        ),
+      });
+    }
+    if (documentsAccess.canRead) {
+      list.push({
+        id: "documentsToPay",
+        node: (
           <DashboardDocumentsToPayWidget
             companyId={props.companyId}
             todayIso={props.todayIso}
             layout="compact"
           />
-        </div>
-      ) : null}
-
-      {(meetingsAccess.canRead || jobsAccess.canRead) ? (
-        <div className="order-5 min-w-0 md:col-span-2 xl:col-span-2">
+        ),
+      });
+    }
+    if (meetingsAccess.canRead || jobsAccess.canRead) {
+      list.push({
+        id: "calendar",
+        colSpanClass: "md:col-span-2 xl:col-span-2",
+        node: (
           <DashboardCompactCalendar
             companyId={props.companyId}
             todayIso={props.todayIso}
@@ -315,11 +321,13 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
               leadsAccess.canWrite && !props.restrictScheduleForEmployee
             }
           />
-        </div>
-      ) : null}
-
-      {jobsAccess.canRead ? (
-        <div className="order-6 min-w-0">
+        ),
+      });
+    }
+    if (jobsAccess.canRead) {
+      list.push({
+        id: "tasks",
+        node: (
           <DashboardCompactCard
             title="Úkoly"
             icon={<ListTodo className="h-4 w-4 text-amber-600" />}
@@ -346,110 +354,82 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
               </div>
             )}
           </DashboardCompactCard>
-        </div>
-      ) : null}
-
-      {laborAccess.canRead ? (
-        <div className="order-7 min-w-0 [&_article]:min-h-[240px]">
-          <DashboardTerminalActiveWidget
-            employees={props.employees}
-            attendanceTodayRows={props.attendanceTodayRows}
-            openWorkSegmentRows={props.openWorkSegmentRows}
-            loading={props.attendanceLoading}
-            layout="compact"
-          />
-        </div>
-      ) : null}
-
-      {offersAccess.canRead ? (
-        <div className="order-8 min-w-0">
-          <DashboardCompactCard
-            title="Nabídky"
-            icon={<FileText className="h-4 w-4 text-blue-600" />}
-            accentClass="border-l-blue-500"
-            href="/portal/offers"
-            footerLabel="Otevřít nabídky"
-          >
-            <p className="text-xs text-muted-foreground">Přehled nabídek a stavů schválení.</p>
-          </DashboardCompactCard>
-        </div>
-      ) : null}
-
-      {!props.chatLoading && props.unreadChatCount > 0 ? (
-        <div className="order-2 xl:order-none min-w-0">
+        ),
+      });
+    }
+    if (laborAccess.canRead) {
+      list.push({
+        id: "labor",
+        node: (
+          <div className="[&_article]:min-h-[240px]">
+            <DashboardTerminalActiveWidget
+              employees={props.employees}
+              attendanceTodayRows={props.attendanceTodayRows}
+              openWorkSegmentRows={props.openWorkSegmentRows}
+              loading={props.attendanceLoading}
+              layout="compact"
+            />
+          </div>
+        ),
+      });
+    }
+    if (offersAccess.canRead) {
+      list.push({
+        id: "offers",
+        node: <DashboardOffersCompact companyId={props.companyId} />,
+      });
+    }
+    if (!props.chatLoading && props.unreadChatCount > 0) {
+      list.push({
+        id: "messages",
+        node: (
           <DashboardCompactCard
             title="Zprávy"
             icon={<MessageSquare className="h-4 w-4 text-red-600" />}
             accentClass="border-l-red-500"
             href="/portal/chat"
+            footerLabel="Otevřít chat"
           >
-            <p className="text-lg font-semibold text-red-700">{props.unreadChatCount} nepřečtených</p>
+            <p className="text-lg font-semibold text-red-700">
+              {props.unreadChatCount} nepřečtených
+            </p>
           </DashboardCompactCard>
-        </div>
-      ) : null}
-
-      {skladAccess.canRead ? (
-        <div className="min-w-0">
-          <DashboardCompactCard
-            title="Sklad"
-            icon={<Package className="h-4 w-4 text-slate-600" />}
-            accentClass="border-l-slate-500"
-            href="/portal/sklad"
-            footerLabel="Otevřít sklad"
-          >
-            <p className="text-xs text-muted-foreground">Stav skladu a pohyby.</p>
-          </DashboardCompactCard>
-        </div>
-      ) : null}
-
-      {vyrobaAccess.canRead ? (
-        <div className="min-w-0">
-          <DashboardCompactCard
-            title="Výroba"
-            icon={<Factory className="h-4 w-4 text-slate-600" />}
-            accentClass="border-l-slate-600"
-            href="/portal/vyroba"
-            footerLabel="Otevřít výrobu"
-          >
-            <p className="text-xs text-muted-foreground">Výrobní přehled.</p>
-          </DashboardCompactCard>
-        </div>
-      ) : null}
-
-      {fleetAccess.canRead ? (
-        <div className="min-w-0">
-          <DashboardCompactCard
-            title="Vozový park"
-            icon={<Car className="h-4 w-4 text-sky-700" />}
-            accentClass="border-l-sky-600"
-            href="/portal/fleet"
-            footerLabel="Otevřít vozový park"
-          >
-            {props.fleetConnected ? (
-              <p className="text-xs text-muted-foreground">GPS monitoring je připojen.</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">GPS monitoring není připojen.</p>
-            )}
-          </DashboardCompactCard>
-        </div>
-      ) : null}
-
-      {props.pendingDocumentsCount > 0 && documentsAccess.canRead ? (
-        <div className="min-w-0">
-          <DashboardCompactCard
-            title="Doklady k zařazení"
-            icon={<FileText className="h-4 w-4 text-amber-700" />}
-            accentClass="border-l-amber-600"
-            href="/portal/documents"
-            footerLabel="Zařadit doklady"
-          >
-            <Badge variant="secondary">{props.pendingDocumentsCount} čeká</Badge>
-          </DashboardCompactCard>
-        </div>
-      ) : null}
-
-      {activityItems.length > 0 ? (
-        <div className="min-w-0">
+        ),
+      });
+    }
+    if (skladAccess.canRead) {
+      list.push({
+        id: "warehouse",
+        node: <DashboardWarehouseCompact companyId={props.companyId} />,
+      });
+    }
+    if (vyrobaAccess.canRead) {
+      list.push({
+        id: "production",
+        node: <DashboardProductionCompact companyId={props.companyId} />,
+      });
+    }
+    if (fleetAccess.canRead) {
+      list.push({
+        id: "fleet",
+        node: (
+          <DashboardFleetCompact
+            companyId={props.companyId}
+            fleetConnected={props.fleetConnected}
+          />
+        ),
+      });
+    }
+    if (documentsAccess.canRead && props.pendingDocuments.length > 0) {
+      list.push({
+        id: "pendingDocuments",
+        node: <DashboardPendingDocumentsCompact pendingDocuments={props.pendingDocuments} />,
+      });
+    }
+    if (activityItems.length > 0) {
+      list.push({
+        id: "activity",
+        node: (
           <DashboardCompactCard
             title="Aktivita"
             icon={<Activity className="h-4 w-4 text-primary" />}
@@ -458,7 +438,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
             footerLabel="Zobrazit vše"
           >
             <ul className="space-y-1.5 text-xs">
-              {activityItems.slice(0, 4).map((row) => (
+              {activityItems.map((row) => (
                 <li key={row.id} className="truncate border-b border-border/40 pb-1 last:border-0">
                   <span className="font-medium">{row.title || row.message || "Aktivita"}</span>
                   <span className="text-muted-foreground ml-1">
@@ -468,8 +448,42 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
               ))}
             </ul>
           </DashboardCompactCard>
-        </div>
-      ) : null}
-    </div>
+        ),
+      });
+    }
+
+    return list;
+  }, [
+    emailAccess.canRead,
+    jobsAccess.canRead,
+    leadsAccess.canRead,
+    documentsAccess.canRead,
+    meetingsAccess.canRead,
+    laborAccess.canRead,
+    offersAccess.canRead,
+    skladAccess.canRead,
+    vyrobaAccess.canRead,
+    fleetAccess.canRead,
+    props,
+    jobStats,
+    leadStats,
+    mergedTasks,
+    openTasks,
+    overdueTasks,
+    tasksLoading,
+    activityItems,
+    user?.uid,
+    viewerEmployeeId,
+    leadsAccess.canWrite,
+  ]);
+
+  return (
+    <PortalDashboardDraggableGrid
+      slots={slots}
+      order={order}
+      onOrderChange={(next) => void saveOrder(next as DashboardWidgetId[])}
+      onResetLayout={() => void resetLayout()}
+      dragEnabled={!isMobile}
+    />
   );
 }

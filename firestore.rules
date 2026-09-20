@@ -2393,15 +2393,46 @@ service cloud.firestore {
         allow write: if signedIn() && sameCompany(companyId) && canPrivilegedWrite();
       }
 
+      function chatMessageReadable(data) {
+        return !('conversationId' in data) ||
+          data.conversationId == 'company' ||
+          (data.participantIds is list && request.auth.uid in data.participantIds);
+      }
+
+      function chatTextOrAttachmentsOk() {
+        return request.resource.data.text is string &&
+          request.resource.data.text.size() <= 8000 &&
+          (
+            (request.resource.data.text.size() > 0) ||
+            ('attachments' in request.resource.data &&
+              request.resource.data.attachments is list &&
+              request.resource.data.attachments.size() > 0)
+          );
+      }
+
+      /** Pořadí dashboard boxů — per uživatel v rámci firmy. */
+      match /userDashboardLayouts/{layoutId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          resource.data.userId == request.auth.uid;
+        allow create, update: if signedIn() && sameCompany(companyId) &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.organizationId == companyId;
+        allow delete: if false;
+      }
+
+      /** Poslední přečtení konverzací chatu. */
+      match /chatReadState/{stateUserId} {
+        allow read, write: if signedIn() && sameCompany(companyId) &&
+          request.auth.uid == stateUserId;
+      }
+
       /** Chat zaměstnanec ↔ administrace: companies/{companyId}/chat/{messageId} */
       match /chat/{messageId} {
-        allow read: if signedIn() && sameCompany(companyId);
+        allow read: if signedIn() && sameCompany(companyId) && chatMessageReadable(resource.data);
         allow create: if signedIn() && sameCompany(companyId) &&
           request.resource.data.companyId == companyId &&
           request.resource.data.senderId == request.auth.uid &&
-          request.resource.data.text is string &&
-          request.resource.data.text.size() > 0 &&
-          request.resource.data.text.size() <= 8000 &&
+          chatTextOrAttachmentsOk() &&
           request.resource.data.read == false &&
           request.resource.data.senderRole in ['employee', 'admin'] &&
           request.resource.data.senderName is string &&
@@ -2417,16 +2448,39 @@ service cloud.firestore {
             (request.resource.data.senderRole == 'admin' &&
               isPrivileged() &&
               companyModuleWriteOk(companyId, 'chat'))
+          ) &&
+          (
+            !('conversationId' in request.resource.data) ||
+            request.resource.data.conversationId == 'company' ||
+            (
+              request.resource.data.conversationId is string &&
+              request.resource.data.participantIds is list &&
+              request.auth.uid in request.resource.data.participantIds &&
+              request.resource.data.participantIds.size() >= 2 &&
+              request.resource.data.participantIds.size() <= 8
+            )
           );
-        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
-          companyModuleWriteOk(companyId, 'chat') &&
-          request.resource.data.senderId == resource.data.senderId &&
-          request.resource.data.companyId == resource.data.companyId &&
-          request.resource.data.text == resource.data.text &&
-          request.resource.data.senderRole == resource.data.senderRole &&
-          request.resource.data.read is bool &&
-          resource.data.read == false &&
-          request.resource.data.read == true;
+        allow update: if signedIn() && sameCompany(companyId) && chatMessageReadable(resource.data) && (
+          (
+            isPrivileged() &&
+            companyModuleWriteOk(companyId, 'chat') &&
+            request.resource.data.senderId == resource.data.senderId &&
+            request.resource.data.companyId == resource.data.companyId &&
+            request.resource.data.senderRole == resource.data.senderRole &&
+            request.resource.data.read is bool &&
+            resource.data.read == false &&
+            request.resource.data.read == true
+          ) ||
+          (
+            ('participantIds' in resource.data) &&
+            resource.data.participantIds is list &&
+            request.auth.uid in resource.data.participantIds &&
+            request.resource.data.senderId == resource.data.senderId &&
+            request.resource.data.text == resource.data.text &&
+            ('attachments' in request.resource.data) &&
+            request.resource.data.attachments is list
+          )
+        );
         allow delete: if false;
       }
 

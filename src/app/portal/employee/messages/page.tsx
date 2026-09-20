@@ -62,7 +62,7 @@ export default function EmployeeMessagesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 max-w-3xl mx-auto">
+    <div className="flex flex-col gap-4 max-w-5xl mx-auto w-full">
       <div>
         <h1 className="portal-page-title text-2xl sm:text-3xl">{t("messages")}</h1>
         <p className="portal-page-description mt-1 text-base text-slate-800">

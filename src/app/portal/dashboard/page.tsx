@@ -1201,7 +1201,7 @@ export default function CompanyDashboard() {
                 employeeActivities={employeeActivitiesUnresolved as DashboardActivityRow[]}
                 unreadChatCount={unreadEmployeeChatCount}
                 chatLoading={chatDashboardLoading}
-                pendingDocumentsCount={pendingDocuments.length}
+                pendingDocuments={pendingDocuments.slice(0, 8) as PendingDocumentRow[]}
                 fleetConnected={Boolean(
                   (company as { fleetIntegrationStatus?: string } | null)?.fleetIntegrationStatus ===
                     "configured"
