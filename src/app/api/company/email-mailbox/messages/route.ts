@@ -13,6 +13,7 @@ import {
   buildMessageViewFilter,
   messageIsStaleNeedsReply,
 } from "@/lib/email-mailbox/message-store";
+import { attachmentCountForList } from "@/lib/email-mailbox/attachment-meta";
 import type { EmailMessageDoc, EmailMessageWorkflowView } from "@/lib/email-mailbox/types";
 
 export const runtime = "nodejs";
@@ -107,6 +108,7 @@ export async function GET(request: NextRequest) {
         isRead: Boolean(m.isRead),
         customerName: m.customerName ?? null,
         jobLabel: m.jobLabel ?? null,
+        attachmentCount: attachmentCountForList(m.attachments),
       }));
 
     return emailJsonOk({ view, messages });

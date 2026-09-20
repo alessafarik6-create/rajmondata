@@ -82,6 +82,17 @@ export type EmailMessageAttachmentMeta = {
   contentType: string;
   size: number;
   storagePath?: string | null;
+  disposition?: "attachment" | "inline" | null;
+  contentId?: string | null;
+  related?: boolean;
+  /** false = inline logo podpisu — nezobrazovat v UI jako přílohu */
+  userVisible?: boolean;
+  hidden?: boolean;
+  /** Propojení na companies/{org}/documents */
+  linkedJobId?: string | null;
+  linkedDocumentId?: string | null;
+  documentCategory?: string | null;
+  aiSummary?: string | null;
   aiSuggestedAction?: string | null;
 };
 

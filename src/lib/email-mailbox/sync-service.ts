@@ -18,7 +18,11 @@ import {
   type EmailCredentialErrorCode,
 } from "@/lib/email-mailbox/credential-resolver";
 import { logEmailPhase } from "@/lib/email-mailbox/email-log";
-import { saveInboundMessage } from "@/lib/email-mailbox/message-store";
+import {
+  emailMessagesCol,
+  inboundMessageDocId,
+  saveInboundMessage,
+} from "@/lib/email-mailbox/message-store";
 import type {
   EmailAccountDoc,
   EmailAccountStatus,
@@ -42,6 +46,7 @@ import {
   prepareTextBodyForFirestore,
 } from "@/lib/email-mailbox/message-content-limits";
 import { uploadEmailAttachments } from "@/lib/email-mailbox/attachment-upload";
+import { shouldBackfillMessageAttachments } from "@/lib/email-mailbox/attachment-backfill";
 
 export type SyncEmailAccountResult = {
   success: boolean;
@@ -367,18 +372,42 @@ export async function syncEmailAccount(
           jobHint = await resolveJobHint(db, companyId, customer.customerId);
         }
 
-        const { id: savedId, created } = await saveInboundMessage(db, companyId, {
-          ...base,
-          isRead: Boolean(msg.isRead),
-          customerId: customer?.customerId ?? null,
-          customerName: customer?.customerName ?? null,
-          suggestedCustomerId: customer?.customerId ?? null,
-          jobId: jobHint?.jobId ?? null,
-          jobLabel: jobHint?.jobLabel ?? null,
-          suggestedJobId: jobHint?.jobId ?? null,
-        });
+        const docId = inboundMessageDocId(
+          accountId,
+          msg.messageId,
+          msg.imapUid,
+          msg.folder
+        );
+        const { id: savedId, created } = await saveInboundMessage(
+          db,
+          companyId,
+          {
+            ...base,
+            isRead: Boolean(msg.isRead),
+            customerId: customer?.customerId ?? null,
+            customerName: customer?.customerName ?? null,
+            suggestedCustomerId: customer?.customerId ?? null,
+            jobId: jobHint?.jobId ?? null,
+            jobLabel: jobHint?.jobLabel ?? null,
+            suggestedJobId: jobHint?.jobId ?? null,
+          },
+          docId
+        );
 
         if (!created) {
+          const ref = emailMessagesCol(db, companyId).doc(savedId);
+          const prevSnap = await ref.get();
+          const prev = prevSnap.data() as EmailMessageDoc | undefined;
+          if (
+            prev &&
+            shouldBackfillMessageAttachments(prev.attachments, attachmentsMeta)
+          ) {
+            await ref.update({
+              attachments: attachmentsMeta,
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+            logEmailPhase("EMAIL_SYNC_ATTACHMENT_BACKFILL", { messageId: savedId });
+          }
           skipped++;
         } else {
           imported++;

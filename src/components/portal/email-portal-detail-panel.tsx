@@ -20,6 +20,13 @@ import {
 import { priorityEmoji } from "@/lib/email-mailbox/intelligence-types";
 import type { EmailAiCategory } from "@/lib/email-mailbox/intelligence-types";
 import { EMAIL_WORKFLOW_STATE_LABELS } from "@/lib/email-mailbox/intelligence-types";
+import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
+import { EmailAttachmentsSection } from "@/components/portal/email-attachments-section";
+import {
+  EmailReplyAttachments,
+  type LocalReplyFile,
+} from "@/components/portal/email-reply-attachments";
+import type { JobDocumentEmailAttachmentRef } from "@/lib/job-document-email-attachments";
 
 export type EmailDetailModel = {
   id: string;
@@ -48,6 +55,7 @@ export type EmailDetailModel = {
   inquiryDraft?: Record<string, unknown> | null;
   assignmentNote?: string | null;
   assignmentDueAt?: string | null;
+  attachments?: EmailMessageAttachmentMeta[] | null;
 };
 
 export type ThreadMessage = {
@@ -99,6 +107,16 @@ type Props = {
   onAssignEmployee: () => void;
   onReminder: (preset: string) => void;
   onApplySuggestedJob: () => void;
+  companyId: string;
+  getToken: () => Promise<string>;
+  onAttachmentsLinked?: () => void;
+  replyLocalFiles: LocalReplyFile[];
+  onReplyLocalFilesChange: (files: LocalReplyFile[]) => void;
+  forwardAttachmentIds: string[];
+  onForwardAttachmentIdsChange: (ids: string[]) => void;
+  rajmondataRefs: (JobDocumentEmailAttachmentRef & { jobId: string })[];
+  onRajmondataRefsChange: (refs: (JobDocumentEmailAttachmentRef & { jobId: string })[]) => void;
+  forwardMode?: boolean;
 };
 
 export function EmailPortalDetailPanel(props: Props) {
@@ -233,6 +251,16 @@ export function EmailPortalDetailPanel(props: Props) {
         </div>
       )}
 
+      <EmailAttachmentsSection
+        companyId={props.companyId}
+        messageId={d.id}
+        attachments={d.attachments}
+        canWrite={props.canWrite}
+        busy={props.busy}
+        getToken={props.getToken}
+        onLinked={props.onAttachmentsLinked}
+      />
+
       {props.timeline.length > 0 ? (
         <div className="text-xs text-muted-foreground space-y-1 border-t pt-3">
           <p className="font-semibold uppercase">Historie</p>
@@ -246,6 +274,19 @@ export function EmailPortalDetailPanel(props: Props) {
 
       {props.canWrite ? (
         <>
+          <EmailReplyAttachments
+            companyId={props.companyId}
+            jobId={d.jobId ?? d.suggestedJobId}
+            sourceAttachments={d.attachments}
+            forwardMode={props.forwardMode}
+            getToken={props.getToken}
+            localFiles={props.replyLocalFiles}
+            onLocalFilesChange={props.onReplyLocalFilesChange}
+            forwardAttachmentIds={props.forwardAttachmentIds}
+            onForwardAttachmentIdsChange={props.onForwardAttachmentIdsChange}
+            rajmondataRefs={props.rajmondataRefs}
+            onRajmondataRefsChange={props.onRajmondataRefsChange}
+          />
           <Textarea rows={5} value={props.replyText} onChange={(e) => props.onReplyText(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" disabled={props.busy} onClick={() => props.onAiDraft("shorter")}>

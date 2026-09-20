@@ -25,6 +25,10 @@ export type InboundEmailPayload = {
     filename: string;
     contentType: string;
     content: Buffer;
+    disposition?: "attachment" | "inline" | null;
+    contentId?: string | null;
+    related?: boolean;
+    userVisible?: boolean;
   }[];
 };
 

@@ -2,13 +2,22 @@ import crypto from "node:crypto";
 import type { Bucket } from "@google-cloud/storage";
 import { logEmailPhase } from "@/lib/email-mailbox/email-log";
 import { EMAIL_ATTACHMENT_MAX_BYTES } from "@/lib/email-mailbox/message-content-limits";
+import { sanitizeStorageFilename } from "@/lib/email-mailbox/attachment-meta";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
 
 export async function uploadEmailAttachments(params: {
   bucket: Bucket | null;
   companyId: string;
   accountId: string;
-  attachments: { filename: string; contentType: string; content: Buffer }[];
+  attachments: {
+    filename: string;
+    contentType: string;
+    content: Buffer;
+    disposition?: "attachment" | "inline" | null;
+    contentId?: string | null;
+    related?: boolean;
+    userVisible?: boolean;
+  }[];
 }): Promise<EmailMessageAttachmentMeta[]> {
   const out: EmailMessageAttachmentMeta[] = [];
   for (const att of params.attachments) {
@@ -27,16 +36,27 @@ export async function uploadEmailAttachments(params: {
         contentType: att.contentType || "application/octet-stream",
         size,
         storagePath: null,
+        disposition: att.disposition ?? "attachment",
+        contentId: att.contentId ?? null,
+        related: att.related ?? false,
+        userVisible: att.userVisible !== false,
       });
       continue;
     }
     const id = crypto.randomUUID();
     let storagePath: string | null = null;
+    const safeName = sanitizeStorageFilename(att.filename);
     if (params.bucket) {
-      storagePath = `companies/${params.companyId}/email_attachments/${params.accountId}/${id}_${att.filename}`;
+      storagePath = `companies/${params.companyId}/email_attachments/${params.accountId}/${id}_${safeName}`;
       await params.bucket.file(storagePath).save(att.content, {
         contentType: att.contentType,
-        resumable: false,
+        resumable: size > 2 * 1024 * 1024,
+        metadata: {
+          metadata: {
+            organizationId: params.companyId,
+            emailAccountId: params.accountId,
+          },
+        },
       });
       logEmailPhase("EMAIL_SYNC_ATTACHMENT_STORED", {
         size,
@@ -49,6 +69,10 @@ export async function uploadEmailAttachments(params: {
       contentType: att.contentType || "application/octet-stream",
       size,
       storagePath,
+      disposition: att.disposition ?? "attachment",
+      contentId: att.contentId ?? null,
+      related: att.related ?? false,
+      userVisible: att.userVisible !== false,
     });
   }
   return out;

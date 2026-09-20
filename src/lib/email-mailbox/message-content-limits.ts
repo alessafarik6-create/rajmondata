@@ -2,7 +2,8 @@
 
 export const EMAIL_TEXT_BODY_MAX_CHARS = 80_000;
 export const EMAIL_HTML_BODY_MAX_CHARS = 120_000;
-export const EMAIL_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+/** Max velikost jedné přílohy ukládané do Storage (ne do Firestore). */
+export const EMAIL_ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
 export const EMAIL_SYNC_BATCH_SIZE = 25;
 export const EMAIL_BOOTSTRAP_WINDOW = 100;
 

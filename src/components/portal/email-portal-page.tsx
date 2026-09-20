@@ -30,7 +30,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Mail, Plus, Search } from "lucide-react";
+import { Loader2, Mail, Paperclip, Plus, Search } from "lucide-react";
+import { userVisibleAttachments } from "@/lib/email-mailbox/attachment-meta";
+import {
+  EmailReplyAttachments,
+  type LocalReplyFile,
+} from "@/components/portal/email-reply-attachments";
+import type { JobDocumentEmailAttachmentRef } from "@/lib/job-document-email-attachments";
 import { EMAIL_ACCOUNT_ALL_MAILBOXES } from "@/lib/email-mailbox/account-default";
 
 type AccountRow = {
@@ -57,7 +63,10 @@ type MsgRow = {
   mailboxEmail?: string | null;
   aiPriority?: string | null;
   aiCategory?: string | null;
+  attachmentCount?: number;
 };
+
+type RajmondataAttachRef = JobDocumentEmailAttachmentRef & { jobId: string };
 
 type MsgDetail = EmailDetailModel & {
   to?: string[];
@@ -116,6 +125,10 @@ export function EmailPortalPage() {
   const [assigneeUserId, setAssigneeUserId] = useState("");
   const [assignNote, setAssignNote] = useState("");
   const [assignDue, setAssignDue] = useState("");
+  const [replyLocalFiles, setReplyLocalFiles] = useState<LocalReplyFile[]>([]);
+  const [forwardAttachmentIds, setForwardAttachmentIds] = useState<string[]>([]);
+  const [rajmondataRefs, setRajmondataRefs] = useState<RajmondataAttachRef[]>([]);
+  const [composeForwardMode, setComposeForwardMode] = useState(false);
 
   const connectedAccounts = useMemo(
     () => accounts.filter((a) => !a.disconnected && a.status !== "disconnected"),
@@ -387,27 +400,71 @@ export function EmailPortalPage() {
       toast({ variant: "destructive", title: "Vyberte odesílací schránku" });
       return;
     }
-    const to = opts.reply && detail
+    const to = opts.reply && detail && !opts.forward
       ? [detail.from.replace(/.*<([^>]+)>.*/, "$1").trim() || detail.from]
       : composeTo.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
-    const subject = opts.reply ? detail!.subject : composeSubject;
-    const text = opts.reply ? replyText : composeBody;
+    let subject = opts.reply && detail && !opts.forward ? detail.subject : composeSubject;
+    if (opts.forward && !subject.toLowerCase().startsWith("fwd:")) {
+      subject = `Fwd: ${subject}`;
+    }
+    const text = opts.reply && !opts.forward ? replyText : composeBody;
     if (!to.length || !text.trim()) return;
     setBusy(true);
     try {
       const token = await getToken();
-      const res = await fetch("/api/company/email-mailbox/messages/send", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          companyId,
-          accountId: sendAccountId,
-          to,
-          subject,
-          textBody: text,
-          replyToMessageId: opts.reply ? detail?.id : undefined,
-        }),
-      });
+      const useMultipart =
+        replyLocalFiles.length > 0 ||
+        forwardAttachmentIds.length > 0 ||
+        rajmondataRefs.length > 0;
+
+      let res: Response;
+      if (useMultipart) {
+        const form = new FormData();
+        form.set("companyId", companyId);
+        form.set("accountId", sendAccountId);
+        form.set("to", JSON.stringify(to));
+        form.set("subject", subject);
+        form.set("textBody", text);
+        if (opts.reply && detail?.id) form.set("replyToMessageId", detail.id);
+        if (opts.forward && detail?.id) {
+          form.set("forwardFromMessageId", detail.id);
+          form.set("forwardAttachmentIds", JSON.stringify(forwardAttachmentIds));
+        } else if (forwardAttachmentIds.length && detail?.id) {
+          form.set("forwardFromMessageId", detail.id);
+          form.set("forwardAttachmentIds", JSON.stringify(forwardAttachmentIds));
+        }
+        const rajJob = rajmondataRefs[0]?.jobId ?? detail?.jobId ?? "";
+        if (rajJob && rajmondataRefs.length) {
+          form.set("rajmondataJobId", rajJob);
+          form.set(
+            "rajmondataAttachmentRefs",
+            JSON.stringify(
+              rajmondataRefs.map(({ jobId: _j, ...r }) => r)
+            )
+          );
+        }
+        for (const row of replyLocalFiles) {
+          form.append("files", row.file);
+        }
+        res = await fetch("/api/company/email-mailbox/messages/send", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: form,
+        });
+      } else {
+        res = await fetch("/api/company/email-mailbox/messages/send", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            companyId,
+            accountId: sendAccountId,
+            to,
+            subject,
+            textBody: text,
+            replyToMessageId: opts.reply && !opts.forward ? detail?.id : undefined,
+          }),
+        });
+      }
       const data = await res.json();
       if (!data.ok) {
         toast({ variant: "destructive", title: "Odeslání selhalo", description: data.error });
@@ -415,6 +472,9 @@ export function EmailPortalPage() {
       }
       toast({ title: "E-mail odeslán" });
       setComposeOpen(false);
+      setComposeForwardMode(false);
+      setReplyLocalFiles([]);
+      setRajmondataRefs([]);
       await loadMessages();
     } finally {
       setBusy(false);
@@ -751,6 +811,9 @@ export function EmailPortalPage() {
                 >
                   <p className="truncate flex items-center gap-1">
                     <span>{priorityEmoji(String(m.aiPriority ?? "NORMAL") as "NORMAL")}</span>
+                    {(m.attachmentCount ?? 0) > 0 ? (
+                      <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                    ) : null}
                     <span className="truncate">{m.subject}</span>
                   </p>
                   <p className="truncate text-xs text-muted-foreground">{m.from}</p>
@@ -792,11 +855,35 @@ export function EmailPortalPage() {
               <Input placeholder="Komu" value={composeTo} onChange={(e) => setComposeTo(e.target.value)} />
               <Input placeholder="Předmět" value={composeSubject} onChange={(e) => setComposeSubject(e.target.value)} />
               <Textarea rows={8} value={composeBody} onChange={(e) => setComposeBody(e.target.value)} />
+              {composeForwardMode && detail && companyId ? (
+                <EmailReplyAttachments
+                  companyId={companyId}
+                  jobId={detail.jobId}
+                  sourceAttachments={detail.attachments}
+                  forwardMode
+                  getToken={getToken}
+                  localFiles={replyLocalFiles}
+                  onLocalFilesChange={setReplyLocalFiles}
+                  forwardAttachmentIds={forwardAttachmentIds}
+                  onForwardAttachmentIdsChange={setForwardAttachmentIds}
+                  rajmondataRefs={rajmondataRefs}
+                  onRajmondataRefsChange={setRajmondataRefs}
+                />
+              ) : null}
               <div className="flex flex-wrap gap-2">
-                <Button disabled={busy} onClick={() => void sendMail({})}>
+                <Button
+                  disabled={busy}
+                  onClick={() => void sendMail(composeForwardMode ? { forward: true } : {})}
+                >
                   Odeslat
                 </Button>
-                <Button variant="ghost" onClick={() => setComposeOpen(false)}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setComposeOpen(false);
+                    setComposeForwardMode(false);
+                  }}
+                >
                   Zrušit
                 </Button>
               </div>
@@ -837,6 +924,10 @@ export function EmailPortalPage() {
                 setComposeSubject(`Fwd: ${detail.subject}`);
                 setComposeBody(`\n\n---------- Přeposlaná zpráva ----------\n${detail.textBody ?? ""}`);
                 setComposeFromAccountId(detail.emailAccountId || defaultAccountId);
+                setForwardAttachmentIds(
+                  userVisibleAttachments(detail.attachments).map((a) => a.id)
+                );
+                setComposeForwardMode(true);
                 setComposeOpen(true);
               }}
               onResolve={() => void markResolved()}
@@ -844,6 +935,16 @@ export function EmailPortalPage() {
               onAssignEmployee={() => void assignEmployeeInternal()}
               onReminder={(p) => void setReminder(p)}
               onApplySuggestedJob={() => void applySuggestedJob()}
+              companyId={companyId!}
+              getToken={getToken}
+              onAttachmentsLinked={() => selectedId && void loadDetail(selectedId)}
+              replyLocalFiles={replyLocalFiles}
+              onReplyLocalFilesChange={setReplyLocalFiles}
+              forwardAttachmentIds={forwardAttachmentIds}
+              onForwardAttachmentIdsChange={setForwardAttachmentIds}
+              rajmondataRefs={rajmondataRefs}
+              onRajmondataRefsChange={setRajmondataRefs}
+              forwardMode={composeForwardMode}
             />
           )}
         </div>

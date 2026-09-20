@@ -15,6 +15,7 @@ import {
   EMAIL_BOOTSTRAP_WINDOW,
   EMAIL_SYNC_BATCH_SIZE,
 } from "@/lib/email-mailbox/message-content-limits";
+import { isLikelySignatureInlineAttachment } from "@/lib/email-mailbox/attachment-meta";
 
 function mapConnectionError(err: unknown, phase: "imap" | "smtp"): ConnectionTestResult {
   const msg = err instanceof Error ? err.message : String(err);
@@ -355,12 +356,39 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
               : [];
           const attachments: InboundEmailPayload["attachments"] = [];
           for (const att of parsed.attachments ?? []) {
-            if (!att.content || !att.filename) continue;
-            if (att.size > EMAIL_ATTACHMENT_MAX_BYTES) continue;
+            if (!att.content) continue;
+            const filename =
+              String(att.filename ?? "").trim() ||
+              (att.contentId ? `inline-${String(att.contentId).replace(/[<>]/g, "")}` : "") ||
+              "priloha.bin";
+            const size = att.size ?? att.content.length ?? 0;
+            if (size <= 0) continue;
+            const disposition =
+              att.contentDisposition === "inline"
+                ? "inline"
+                : att.contentDisposition === "attachment"
+                  ? "attachment"
+                  : null;
+            const contentId = att.contentId ? String(att.contentId) : null;
+            const related = Boolean((att as { related?: boolean }).related);
+            const userVisible = !isLikelySignatureInlineAttachment({
+              filename,
+              contentType: att.contentType || "application/octet-stream",
+              size,
+              disposition,
+              contentId,
+              related,
+            });
+            if (!userVisible) continue;
+            if (size > EMAIL_ATTACHMENT_MAX_BYTES) continue;
             attachments.push({
-              filename: att.filename,
+              filename,
               contentType: att.contentType || "application/octet-stream",
               content: att.content,
+              disposition,
+              contentId,
+              related,
+              userVisible: true,
             });
           }
           out.push({
