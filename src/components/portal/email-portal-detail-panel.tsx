@@ -126,15 +126,15 @@ export function EmailPortalDetailPanel(props: Props) {
   const pri = String(d.aiPriority ?? "NORMAL");
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-w-3xl w-full">
       {props.onBack ? (
-        <Button variant="ghost" size="sm" className="-ml-2" onClick={props.onBack}>
+        <Button variant="ghost" size="sm" className="-ml-2 shrink-0" onClick={props.onBack}>
           ← Zpět
         </Button>
       ) : null}
 
       {props.canWrite ? (
-        <div className="flex flex-wrap items-center gap-1.5 border-b pb-3">
+        <div className="sticky top-0 z-10 shrink-0 flex flex-wrap items-center gap-1.5 border-b bg-background/95 pb-3 pt-0.5 backdrop-blur supports-[backdrop-filter]:bg-background/80">
           <Button size="sm" disabled={props.busy} onClick={props.onReply}>
             Odpovědět
           </Button>
@@ -182,6 +182,7 @@ export function EmailPortalDetailPanel(props: Props) {
         </div>
       ) : null}
 
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-0.5">
       <div>
         <h1 className="text-lg font-semibold break-words">{d.subject}</h1>
         <p className="text-sm text-muted-foreground break-all">Od: {d.from}</p>
@@ -297,7 +298,7 @@ export function EmailPortalDetailPanel(props: Props) {
           ))}
         </div>
       ) : (
-        <div className="whitespace-pre-wrap break-words text-sm border rounded-md p-3 max-h-[40vh] overflow-y-auto">
+        <div className="whitespace-pre-wrap break-words text-sm border rounded-md p-3">
           {d.textBody}
         </div>
       )}
@@ -394,6 +395,7 @@ export function EmailPortalDetailPanel(props: Props) {
           </div>
         </>
       ) : null}
+      </div>
     </div>
   );
 }

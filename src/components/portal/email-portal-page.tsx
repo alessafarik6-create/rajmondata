@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useUser, useCompany } from "@/firebase";
@@ -82,6 +82,8 @@ type MsgDetail = EmailDetailModel & {
 
 type MobilePane = "folders" | "list" | "detail";
 
+const EMAIL_LIST_PAGE_SIZE = 50;
+
 const ONBOARDING_BULLETS = [
   "příchozí a odeslané e-maily v RAJMONDATA",
   "přiřazení e-mailu k zákazníkovi",
@@ -141,6 +143,9 @@ export function EmailPortalPage() {
   const [forwardAttachmentIds, setForwardAttachmentIds] = useState<string[]>([]);
   const [rajmondataRefs, setRajmondataRefs] = useState<RajmondataAttachRef[]>([]);
   const [composeForwardMode, setComposeForwardMode] = useState(false);
+  const [visibleListCount, setVisibleListCount] = useState(EMAIL_LIST_PAGE_SIZE);
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const listScrollTopRef = useRef(0);
 
   const connectedAccounts = useMemo(
     () => accounts.filter((a) => !a.disconnected && a.status !== "disconnected"),
@@ -310,7 +315,18 @@ export function EmailPortalPage() {
   useEffect(() => {
     setSelectedId(null);
     setDetail(null);
+    setVisibleListCount(EMAIL_LIST_PAGE_SIZE);
+    if (listScrollRef.current) {
+      listScrollRef.current.scrollTop = 0;
+    }
   }, [folder, activeAccountId]);
+
+  useEffect(() => {
+    setVisibleListCount(EMAIL_LIST_PAGE_SIZE);
+    if (listScrollRef.current) {
+      listScrollRef.current.scrollTop = 0;
+    }
+  }, [search]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -329,6 +345,33 @@ export function EmailPortalPage() {
       return tb - ta;
     });
   }, [messages, search]);
+
+  const listSlice = useMemo(
+    () => filtered.slice(0, visibleListCount),
+    [filtered, visibleListCount]
+  );
+
+  const hasMoreListItems = filtered.length > visibleListCount;
+
+  const onListScroll = useCallback(() => {
+    const el = listScrollRef.current;
+    if (!el) return;
+    listScrollTopRef.current = el.scrollTop;
+    if (!hasMoreListItems) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 96) {
+      setVisibleListCount((c) => Math.min(filtered.length, c + EMAIL_LIST_PAGE_SIZE));
+    }
+  }, [filtered.length, hasMoreListItems]);
+
+  const loadMoreList = useCallback(() => {
+    setVisibleListCount((c) => Math.min(filtered.length, c + EMAIL_LIST_PAGE_SIZE));
+  }, [filtered.length]);
+
+  useLayoutEffect(() => {
+    const el = listScrollRef.current;
+    if (!el) return;
+    el.scrollTop = listScrollTopRef.current;
+  }, [selectedId, detail?.id]);
 
   const messageIdFromUrl = searchParams.get("messageId");
 
@@ -805,9 +848,9 @@ export function EmailPortalPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {connectedAccounts.length === 0 && accounts.length > 0 ? (
-        <div className="mx-3 mt-3 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+        <div className="mx-3 mt-3 shrink-0 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
           Všechny účty jsou odpojené. Historii zpráv stále vidíte níže. Nový e-mail připojte v{" "}
           <Link href="/portal/settings" className="text-primary underline">
             Profil → Moje e-mailové účty
@@ -815,11 +858,11 @@ export function EmailPortalPage() {
           .
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
       <aside
         className={cn(
-          "w-full shrink-0 border-b lg:w-56 lg:border-b-0 lg:border-r p-3",
-          mobilePane !== "folders" && "hidden lg:block"
+          "flex w-full shrink-0 flex-col min-h-0 overflow-hidden border-b p-3 lg:w-56 lg:max-h-full lg:border-b-0 lg:border-r",
+          mobilePane !== "folders" && "hidden lg:flex"
         )}
       >
         <p className="mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -879,7 +922,7 @@ export function EmailPortalPage() {
         >
           <Plus className="h-4 w-4" /> Nový e-mail
         </Button>
-        <nav className="flex flex-col gap-0.5 max-h-[50vh] lg:max-h-none overflow-y-auto">
+        <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain">
           {EMAIL_PORTAL_FOLDERS.map((f) => {
             const count = f.countActive ? folderCounts[f.id] : undefined;
             const theme = folderTheme(f.id as EmailMessageWorkflowView);
@@ -920,7 +963,7 @@ export function EmailPortalPage() {
         <Button
           variant="outline"
           size="sm"
-          className="mt-4 w-full min-h-[44px]"
+          className="mt-4 w-full shrink-0 min-h-[44px]"
           disabled={busy || connectedAccounts.length === 0}
           onClick={() => void syncNow()}
         >
@@ -933,8 +976,8 @@ export function EmailPortalPage() {
         ) : null}
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col lg:flex-row">
-        <div className="flex gap-2 border-b p-2 lg:hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row">
+        <div className="flex shrink-0 gap-2 border-b p-2 lg:hidden">
           <Button size="sm" variant={mobilePane === "folders" ? "secondary" : "outline"} onClick={() => setMobilePane("folders")}>
             Složky
           </Button>
@@ -944,12 +987,12 @@ export function EmailPortalPage() {
         </div>
         <div
           className={cn(
-            "min-w-0 border-b lg:w-[min(100%,22rem)] lg:border-b-0 lg:border-r flex flex-col",
+            "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-b lg:w-[min(100%,22rem)] lg:flex-none lg:border-b-0 lg:border-r max-lg:min-h-[40vh]",
             mobilePane === "detail" && "hidden lg:flex",
             mobilePane === "folders" && "hidden lg:flex"
           )}
         >
-          <div className="p-2 border-b">
+          <div className="sticky top-0 z-10 shrink-0 border-b bg-background p-2">
             <div className="relative">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -960,7 +1003,11 @@ export function EmailPortalPage() {
               />
             </div>
           </div>
-          <div className="max-h-[50vh] lg:max-h-none flex-1 overflow-y-auto">
+          <div
+            ref={listScrollRef}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            onScroll={onListScroll}
+          >
             {loadingList ? (
               <div className="p-4 flex justify-center">
                 <Loader2 className="h-6 w-6 animate-spin" />
@@ -968,22 +1015,41 @@ export function EmailPortalPage() {
             ) : filtered.length === 0 ? (
               <p className="p-4 text-sm text-muted-foreground">Ve schránce nejsou žádné zprávy.</p>
             ) : (
-              filtered.map((m) => (
-                <EmailMessageListRow
-                  key={m.id}
-                  message={m}
-                  selected={selectedId === m.id}
-                  showMailbox={activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES}
-                  onSelect={() => void loadDetail(m.id)}
-                />
-              ))
+              <>
+                {listSlice.map((m) => (
+                  <EmailMessageListRow
+                    key={m.id}
+                    message={m}
+                    selected={selectedId === m.id}
+                    showMailbox={activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES}
+                    onSelect={() => {
+                      if (listScrollRef.current) {
+                        listScrollTopRef.current = listScrollRef.current.scrollTop;
+                      }
+                      void loadDetail(m.id);
+                    }}
+                  />
+                ))}
+                {hasMoreListItems ? (
+                  <div className="border-t p-2">
+                    <Button variant="ghost" size="sm" className="w-full" onClick={loadMoreList}>
+                      Načíst další ({filtered.length - visibleListCount} zbývá)
+                    </Button>
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         </div>
 
-        <div className={cn("min-w-0 flex-1 p-3 sm:p-4", mobilePane !== "detail" && "max-lg:hidden")}>
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3 sm:p-4 max-lg:min-h-[50vh]",
+            mobilePane !== "detail" && "max-lg:hidden"
+          )}
+        >
           {composeOpen ? (
-            <div className="space-y-3 max-w-xl">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain max-w-xl">
               <h2 className="font-semibold">Nový e-mail</h2>
               {connectedAccounts.length > 1 ? (
                 <div className="space-y-1">
@@ -1047,6 +1113,7 @@ export function EmailPortalPage() {
                 : "Ve schránce nejsou žádné zprávy."}
             </p>
           ) : (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <EmailPortalDetailPanel
               detail={detail}
               canWrite={access.canWrite}
@@ -1103,6 +1170,7 @@ export function EmailPortalPage() {
               onRajmondataRefsChange={setRajmondataRefs}
               forwardMode={composeForwardMode}
             />
+            </div>
           )}
         </div>
       </div>

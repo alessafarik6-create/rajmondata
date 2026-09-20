@@ -79,6 +79,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       pathname === "/portal/employees" ||
       pathname === "/portal/jobs");
 
+  /** E-mail: třísloupcový layout s vlastním scrollem — stránka se nenatahuje podle délky seznamu. */
+  const isEmailFullHeightRoute = pathname === "/portal/email";
+
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [authResolved, setAuthResolved] = useState(false);
@@ -777,7 +780,12 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       ) : null}
 
       <div
-        className="flex-1 flex flex-col min-w-0 min-h-screen bg-slate-100 text-slate-900 dark:bg-background dark:text-foreground"
+        className={cn(
+          "flex-1 flex flex-col min-w-0 bg-slate-100 text-slate-900 dark:bg-background dark:text-foreground",
+          isEmailFullHeightRoute
+            ? "min-h-0 h-svh max-h-svh overflow-hidden"
+            : "min-h-screen"
+        )}
         data-portal-content
       >
         <PwaInstallBanner />
@@ -786,32 +794,47 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         ) : null}
         <main
           className={cn(
-            "flex-1 overflow-x-hidden overflow-y-auto print:p-2 min-w-0",
-            hideMobileTopChrome
-              ? "px-0 py-0"
-              : "px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8"
+            "flex-1 min-w-0 print:p-2",
+            isEmailFullHeightRoute
+              ? "flex min-h-0 flex-col overflow-hidden px-2 py-2 sm:px-3 sm:py-3 lg:px-4 lg:py-4"
+              : cn(
+                  "overflow-x-hidden overflow-y-auto",
+                  hideMobileTopChrome
+                    ? "px-0 py-0"
+                    : "px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8"
+                )
           )}
         >
-          {trialBanner}
-          {licenseNotice}
-          {profile?.role ? (
-            <PortalPermissionsProvider
-              role={String(profile.role)}
-              globalRoles={profile.globalRoles as string[] | undefined}
-              employeeDoc={profileEmployeeRow ?? null}
-            >
-              <PortalModuleAccessGate
-                pathname={pathname}
+          <div
+            className={cn(
+              isEmailFullHeightRoute && "flex min-h-0 flex-1 flex-col overflow-hidden [&>*:not(:last-child)]:shrink-0"
+            )}
+          >
+            {trialBanner}
+            {licenseNotice}
+            {profile?.role ? (
+              <PortalPermissionsProvider
                 role={String(profile.role)}
                 globalRoles={profile.globalRoles as string[] | undefined}
                 employeeDoc={profileEmployeeRow ?? null}
               >
+                <PortalModuleAccessGate
+                  pathname={pathname}
+                  role={String(profile.role)}
+                  globalRoles={profile.globalRoles as string[] | undefined}
+                  employeeDoc={profileEmployeeRow ?? null}
+                >
+                  <div className={cn(isEmailFullHeightRoute && "flex min-h-0 flex-1 flex-col overflow-hidden")}>
+                    {children}
+                  </div>
+                </PortalModuleAccessGate>
+              </PortalPermissionsProvider>
+            ) : (
+              <div className={cn(isEmailFullHeightRoute && "flex min-h-0 flex-1 flex-col overflow-hidden")}>
                 {children}
-              </PortalModuleAccessGate>
-            </PortalPermissionsProvider>
-          ) : (
-            children
-          )}
+              </div>
+            )}
+          </div>
         </main>
       </div>
       <ChatAssistant />
