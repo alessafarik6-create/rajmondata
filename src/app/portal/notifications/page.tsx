@@ -28,7 +28,7 @@ export default function PortalNotificationsPage() {
   } = usePortalNotifications();
 
   const pushActive =
-    pushDiagnostics.subscriptionActive &&
+    pushDiagnostics.localDevicePushActive &&
     pushDiagnostics.permission === "granted" &&
     pushDiagnostics.vapidConfigured;
 

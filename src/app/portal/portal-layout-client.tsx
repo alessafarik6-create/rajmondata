@@ -43,6 +43,7 @@ import {
 } from "@/lib/employee-portal-modules";
 import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
 import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
+import { MobilePushPromptSheet } from "@/components/pwa/mobile-push-prompt-sheet";
 import { ChatAssistant } from "@/components/portal/ChatAssistant";
 import { OnboardingOverlay } from "@/components/portal/OnboardingOverlay";
 import { useIsBelowLg } from "@/hooks/use-mobile";
@@ -816,6 +817,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       </div>
       <ChatAssistant />
       <OnboardingOverlay enabled={!isPortalEmployeeOnly && !isPortalCustomerOnly} />
+      <MobilePushPromptSheet
+        enabled={Boolean(user && authResolved && !isProfileLoading && profile)}
+      />
     </div>
   );
 }

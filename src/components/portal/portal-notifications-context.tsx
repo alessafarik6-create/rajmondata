@@ -22,7 +22,11 @@ import { getAuth } from "firebase/auth";
 import { useCollection, useMemoFirebase, useUser, useFirebase } from "@/firebase";
 import { applyAppBadgeCount, clearAppBadgeSafe } from "@/lib/app-badge";
 import { registerPwaServiceWorker } from "@/lib/pwa-install";
-import { detectPushPlatform, urlBase64ToUint8Array } from "@/lib/web-push-client";
+import {
+  detectPushPlatform,
+  probeLocalPushSubscription,
+  urlBase64ToUint8Array,
+} from "@/lib/web-push-client";
 import type { PortalNotificationCategory } from "@/lib/portal-notifications-types";
 
 export type PortalNotificationItem = {
@@ -43,6 +47,8 @@ export type PushRegisterResult = {
 export type PushDiagnostics = {
   vapidConfigured: boolean;
   subscriptionActive: boolean;
+  /** Platná subscription v PushManager na tomto zařízení. */
+  localDevicePushActive: boolean;
   activeDeviceCount: number;
   lastPushError: string | null;
   permission: NotificationPermission | "unsupported";
@@ -67,6 +73,7 @@ type PortalNotificationsContextValue = {
 const defaultDiagnostics: PushDiagnostics = {
   vapidConfigured: false,
   subscriptionActive: false,
+  localDevicePushActive: false,
   activeDeviceCount: 0,
   lastPushError: null,
   permission: "unsupported",
@@ -140,6 +147,7 @@ export function PortalNotificationsProvider({ children }: { children: React.Reac
     const platform = detectPushPlatform();
     let permission: NotificationPermission | "unsupported" =
       typeof Notification !== "undefined" ? Notification.permission : "unsupported";
+    const localDevicePushActive = await probeLocalPushSubscription();
     try {
       const token = await user.getIdToken();
       const res = await fetch("/api/notifications/push-status", {
@@ -150,6 +158,7 @@ export function PortalNotificationsProvider({ children }: { children: React.Reac
         setPushDiagnostics({
           vapidConfigured: Boolean(data.vapidConfigured && data.vapidValid),
           subscriptionActive: Boolean(data.subscriptionActive),
+          localDevicePushActive,
           activeDeviceCount: Number(data.activeDeviceCount ?? 0),
           lastPushError: data.lastPushError ?? null,
           permission,
@@ -164,6 +173,7 @@ export function PortalNotificationsProvider({ children }: { children: React.Reac
     setPushDiagnostics((d) => ({
       ...d,
       permission,
+      localDevicePushActive,
       deviceLabel: `${platform.deviceName} / ${platform.platform}`,
       iosHomeScreenHint: platform.iosHomeScreenHint,
     }));
@@ -268,6 +278,8 @@ export function PortalNotificationsProvider({ children }: { children: React.Reac
       body: JSON.stringify(sub.toJSON()),
     });
     if (!r.ok) {
+      const errText = await r.text().catch(() => "");
+      console.error("[registerWebPush] subscribe API failed", r.status, errText);
       return { ok: false, message: "Uložení subscription na server selhalo." };
     }
 
