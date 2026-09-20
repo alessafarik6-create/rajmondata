@@ -13,7 +13,6 @@ import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { EmailConnectWizard } from "@/components/portal/email-connect-wizard";
 import type { EmailMessageWorkflowView } from "@/lib/email-mailbox/types";
 import { EMAIL_PORTAL_FOLDERS } from "@/lib/email-mailbox/intelligence-types";
-import { priorityEmoji } from "@/lib/email-mailbox/intelligence-types";
 import { parseEmailApiResponse } from "@/lib/email-mailbox/client-fetch";
 import {
   EmailPortalDetailPanel,
@@ -30,7 +29,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Mail, Paperclip, Plus, Search } from "lucide-react";
+import { Loader2, Mail, Plus, Search } from "lucide-react";
+import { EmailMessageListRow } from "@/components/portal/email-message-list-row";
+import { folderTheme } from "@/lib/email-mailbox/email-portal-folder-theme";
 import { userVisibleAttachments } from "@/lib/email-mailbox/attachment-meta";
 import {
   EmailReplyAttachments,
@@ -59,12 +60,17 @@ type MsgRow = {
   needsReply?: boolean;
   staleNeedsReply?: boolean;
   customerName?: string | null;
+  jobId?: string | null;
   jobLabel?: string | null;
   emailAccountId: string;
   mailboxEmail?: string | null;
   aiPriority?: string | null;
   aiCategory?: string | null;
   attachmentCount?: number;
+  aiSummary?: string | null;
+  aiReviewPending?: boolean;
+  resolved?: boolean;
+  workflowState?: string | null;
 };
 
 type RajmondataAttachRef = JobDocumentEmailAttachmentRef & { jobId: string };
@@ -117,7 +123,11 @@ export function EmailPortalPage() {
   const [emailJobDialogOpen, setEmailJobDialogOpen] = useState(false);
   const [assignCustomerId, setAssignCustomerId] = useState("");
   const [shareWithJob, setShareWithJob] = useState(false);
-  const [selectedAccountId, setSelectedAccountId] = useState<string>(EMAIL_ACCOUNT_ALL_MAILBOXES);
+  /** Prázdné = použij výchozí účet po načtení seznamu účtů. */
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "updated">("idle");
+  const [lastSyncLabel, setLastSyncLabel] = useState<string | null>(null);
+  const mailboxSelectionInitialized = useRef(false);
   const [composeFromAccountId, setComposeFromAccountId] = useState<string>("");
   const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
   const [mobilePane, setMobilePane] = useState<MobilePane>("list");
@@ -143,7 +153,7 @@ export function EmailPortalPage() {
   const activeAccountId =
     selectedAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES
       ? EMAIL_ACCOUNT_ALL_MAILBOXES
-      : selectedAccountId || defaultAccountId || EMAIL_ACCOUNT_ALL_MAILBOXES;
+      : selectedAccountId || defaultAccountId || "";
 
   const composeAccountId = composeFromAccountId || defaultAccountId;
 
@@ -168,10 +178,20 @@ export function EmailPortalPage() {
         const connected = list.filter((a) => !a.disconnected && a.status !== "disconnected");
         const fromUrl = searchParams.get("account");
         setSelectedAccountId((prev) => {
-          if (fromUrl && list.some((a) => a.id === fromUrl)) return fromUrl;
-          if (prev && (prev === EMAIL_ACCOUNT_ALL_MAILBOXES || list.some((a) => a.id === prev))) return prev;
-          if (connected.length > 1) return EMAIL_ACCOUNT_ALL_MAILBOXES;
-          return connected[0]?.id ?? EMAIL_ACCOUNT_ALL_MAILBOXES;
+          if (fromUrl && list.some((a) => a.id === fromUrl)) {
+            mailboxSelectionInitialized.current = true;
+            return fromUrl;
+          }
+          if (
+            mailboxSelectionInitialized.current &&
+            prev &&
+            (prev === EMAIL_ACCOUNT_ALL_MAILBOXES || list.some((a) => a.id === prev))
+          ) {
+            return prev;
+          }
+          mailboxSelectionInitialized.current = true;
+          const def = connected.find((a) => a.isDefault)?.id ?? connected[0]?.id ?? "";
+          return def;
         });
         const def = connected.find((a) => a.isDefault)?.id ?? connected[0]?.id ?? "";
         setComposeFromAccountId((p) => p || def);
@@ -185,7 +205,7 @@ export function EmailPortalPage() {
   }, [user, companyId, access.canRead, getToken, toast, searchParams]);
 
   const loadMessages = useCallback(async () => {
-    if (!user || !companyId || !access.canRead || accounts.length === 0) return;
+    if (!user || !companyId || !access.canRead || accounts.length === 0 || !activeAccountId) return;
     setLoadingList(true);
     try {
       const token = await getToken();
@@ -236,8 +256,6 @@ export function EmailPortalPage() {
     }
   }, [user, companyId, access.canRead, getToken]);
 
-  const backgroundSyncStarted = useRef(false);
-
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
@@ -251,40 +269,68 @@ export function EmailPortalPage() {
     void loadEmployees();
   }, [loadEmployees]);
 
-  useEffect(() => {
-    if (!user || !companyId || !access.canWrite || connectedAccounts.length === 0) return;
-    if (backgroundSyncStarted.current) return;
-    backgroundSyncStarted.current = true;
-    void (async () => {
+  const runIncrementalSync = useCallback(
+    async (accountId: string) => {
+      if (!companyId || !access.canWrite || !accountId || accountId === EMAIL_ACCOUNT_ALL_MAILBOXES) {
+        return;
+      }
+      setSyncStatus("syncing");
       try {
         const token = await getToken();
-        for (let round = 0; round < 6; round++) {
-          const res = await fetch("/api/company/email-mailbox/accounts/sync-all", {
+        let hasMore = true;
+        for (let round = 0; round < 3 && hasMore; round++) {
+          const res = await fetch(`/api/company/email-mailbox/accounts/${accountId}/sync`, {
             method: "POST",
             headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ companyId, maxMessages: 25 }),
+            body: JSON.stringify({ companyId, maxMessages: 25, batchSize: 25 }),
           });
           const data = await parseEmailApiResponse<{ hasMore?: boolean }>(res);
-          if (!data.ok || !data.hasMore) break;
+          if (!data.ok) break;
+          hasMore = Boolean(data.hasMore);
         }
         await loadMessages();
-        await loadAccounts();
+        await loadFolderCounts();
+        setSyncStatus("updated");
+        setLastSyncLabel(
+          new Date().toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })
+        );
+        window.setTimeout(() => setSyncStatus("idle"), 8000);
       } catch {
-        /* tiché — ruční sync zůstává */
+        setSyncStatus("idle");
       }
-    })();
-  }, [user, companyId, access.canWrite, connectedAccounts.length, getToken, loadMessages, loadAccounts]);
+    },
+    [companyId, access.canWrite, getToken, loadMessages, loadFolderCounts]
+  );
+
+  useEffect(() => {
+    if (!activeAccountId || activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES) return;
+    void runIncrementalSync(activeAccountId);
+  }, [activeAccountId, runIncrementalSync]);
+
+  useEffect(() => {
+    setSelectedId(null);
+    setDetail(null);
+  }, [folder, activeAccountId]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return messages;
-    return messages.filter(
-      (m) =>
-        m.subject.toLowerCase().includes(q) ||
-        m.from.toLowerCase().includes(q) ||
-        (m.customerName ?? "").toLowerCase().includes(q)
-    );
+    const base = q
+      ? messages.filter(
+          (m) =>
+            m.subject.toLowerCase().includes(q) ||
+            m.from.toLowerCase().includes(q) ||
+            (m.customerName ?? "").toLowerCase().includes(q) ||
+            (m.aiSummary ?? "").toLowerCase().includes(q)
+        )
+      : messages;
+    return [...base].sort((a, b) => {
+      const ta = a.receivedAt ? new Date(a.receivedAt).getTime() : 0;
+      const tb = b.receivedAt ? new Date(b.receivedAt).getTime() : 0;
+      return tb - ta;
+    });
   }, [messages, search]);
+
+  const messageIdFromUrl = searchParams.get("messageId");
 
   const loadDetail = useCallback(
     async (id: string) => {
@@ -323,10 +369,38 @@ export function EmailPortalPage() {
             body: JSON.stringify({ companyId, isRead: true }),
           });
         }
+        setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isRead: true } : m)));
       }
     },
     [user, companyId, getToken, access.canWrite]
   );
+
+  useEffect(() => {
+    if (loadingList || loadingAccounts) return;
+    if (filtered.length === 0) return;
+
+    if (messageIdFromUrl && filtered.some((m) => m.id === messageIdFromUrl)) {
+      if (selectedId !== messageIdFromUrl) void loadDetail(messageIdFromUrl);
+      return;
+    }
+
+    if (selectedId && filtered.some((m) => m.id === selectedId)) return;
+
+    const isDesktop =
+      typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
+    if (isDesktop && !messageIdFromUrl) {
+      void loadDetail(filtered[0]!.id);
+    }
+  }, [
+    loadingList,
+    loadingAccounts,
+    filtered,
+    messageIdFromUrl,
+    selectedId,
+    folder,
+    activeAccountId,
+    loadDetail,
+  ]);
 
   async function syncNow() {
     if (!companyId) return;
@@ -363,11 +437,20 @@ export function EmailPortalPage() {
         });
       }
       await loadMessages();
+      await loadFolderCounts();
       await loadAccounts();
+      setSyncStatus("updated");
+      setLastSyncLabel(
+        new Date().toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })
+      );
     } finally {
       setBusy(false);
     }
   }
+
+  const activeMailboxEmail =
+    connectedAccounts.find((a) => a.id === activeAccountId)?.email ??
+    (activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES ? "Všechny schránky" : "");
 
   async function aiDraft(tone?: "default" | "shorter" | "formal" | "friendly") {
     if (!selectedId || !companyId) return;
@@ -653,8 +736,9 @@ export function EmailPortalPage() {
 
   if (loadingAccounts) {
     return (
-      <div className="flex min-h-[40vh] items-center justify-center">
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 p-6">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Načítám schránku…</p>
       </div>
     );
   }
@@ -738,23 +822,50 @@ export function EmailPortalPage() {
           mobilePane !== "folders" && "hidden lg:block"
         )}
       >
-        <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Moje schránka</p>
-        {connectedAccounts.length >= 1 ? (
-          <Select value={activeAccountId} onValueChange={setSelectedAccountId}>
-            <SelectTrigger className="mb-3 w-full min-h-[44px]">
-              <SelectValue placeholder="Schránka" />
-            </SelectTrigger>
-            <SelectContent>
-              {connectedAccounts.length > 1 ? (
-                <SelectItem value={EMAIL_ACCOUNT_ALL_MAILBOXES}>Všechny moje schránky</SelectItem>
-              ) : null}
-              {connectedAccounts.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.email}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <p className="mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          Moje schránka
+        </p>
+        {connectedAccounts.length >= 1 && activeAccountId ? (
+          <>
+            <Select
+              value={activeAccountId}
+              onValueChange={(v) => {
+                mailboxSelectionInitialized.current = true;
+                setSelectedAccountId(v);
+              }}
+            >
+              <SelectTrigger className="mb-1 w-full min-h-[44px] font-medium">
+                <SelectValue placeholder="Načítám…" />
+              </SelectTrigger>
+              <SelectContent>
+                {connectedAccounts.length > 1 ? (
+                  <SelectItem value={EMAIL_ACCOUNT_ALL_MAILBOXES}>Všechny moje schránky</SelectItem>
+                ) : null}
+                {connectedAccounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.email}
+                    {a.isDefault ? " (výchozí)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="mb-2 flex items-center gap-1.5 text-[11px] text-emerald-700">
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
+              Připojeno
+            </p>
+            {syncStatus === "syncing" ? (
+              <p className="mb-2 text-[11px] text-muted-foreground">Synchronizuji nové zprávy…</p>
+            ) : syncStatus === "updated" && lastSyncLabel ? (
+              <p className="mb-2 text-[11px] text-muted-foreground">Aktualizováno {lastSyncLabel}</p>
+            ) : activeMailboxEmail ? (
+              <p className="mb-2 truncate text-[11px] text-muted-foreground">{activeMailboxEmail}</p>
+            ) : null}
+          </>
+        ) : connectedAccounts.length >= 1 ? (
+          <div className="mb-3 space-y-2">
+            <div className="h-10 animate-pulse rounded-md bg-muted" />
+            <p className="text-[11px] text-muted-foreground">Načítám schránku…</p>
+          </div>
         ) : (
           <p className="mb-3 truncate text-sm font-medium text-muted-foreground">—</p>
         )}
@@ -771,20 +882,34 @@ export function EmailPortalPage() {
         <nav className="flex flex-col gap-0.5 max-h-[50vh] lg:max-h-none overflow-y-auto">
           {EMAIL_PORTAL_FOLDERS.map((f) => {
             const count = f.countActive ? folderCounts[f.id] : undefined;
+            const theme = folderTheme(f.id as EmailMessageWorkflowView);
+            const Icon = theme.icon;
+            const active = folder === f.id;
             return (
               <Button
                 key={f.id}
-                variant={folder === f.id ? "secondary" : "ghost"}
+                variant="ghost"
                 size="sm"
-                className="justify-between gap-2 min-h-[36px]"
+                className={cn(
+                  "justify-between gap-2 min-h-[36px] border-l-[3px] border-transparent pl-2",
+                  active && theme.activeRowClass
+                )}
                 onClick={() => {
                   setFolder(f.id);
                   setMobilePane("list");
                 }}
               >
-                <span className="truncate text-left">{f.label}</span>
+                <span className="flex min-w-0 items-center gap-2 truncate text-left">
+                  <Icon className={cn("h-4 w-4 shrink-0", theme.accentClass)} />
+                  <span className={cn(active && "font-semibold")}>{f.label}</span>
+                </span>
                 {typeof count === "number" && count > 0 ? (
-                  <span className="shrink-0 rounded-full bg-primary/15 px-1.5 text-xs font-medium text-primary">
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-full px-1.5 py-0 text-[11px] font-semibold tabular-nums",
+                      theme.badgeClass
+                    )}
+                  >
                     {count}
                   </span>
                 ) : null}
@@ -841,34 +966,16 @@ export function EmailPortalPage() {
                 <Loader2 className="h-6 w-6 animate-spin" />
               </div>
             ) : filtered.length === 0 ? (
-              <p className="p-4 text-sm text-muted-foreground">Žádné zprávy.</p>
+              <p className="p-4 text-sm text-muted-foreground">Ve schránce nejsou žádné zprávy.</p>
             ) : (
               filtered.map((m) => (
-                <button
+                <EmailMessageListRow
                   key={m.id}
-                  type="button"
-                  className={cn(
-                    "w-full border-b px-3 py-2 text-left text-sm hover:bg-muted/50",
-                    selectedId === m.id && "bg-muted",
-                    !m.isRead && "font-semibold"
-                  )}
-                  onClick={() => void loadDetail(m.id)}
-                >
-                  <p className="truncate flex items-center gap-1">
-                    <span>{priorityEmoji(String(m.aiPriority ?? "NORMAL") as "NORMAL")}</span>
-                    {(m.attachmentCount ?? 0) > 0 ? (
-                      <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                    ) : null}
-                    <span className="truncate">{m.subject}</span>
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">{m.from}</p>
-                  {activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES && m.mailboxEmail ? (
-                    <p className="truncate text-xs text-primary/80">Schránka: {m.mailboxEmail}</p>
-                  ) : null}
-                  {m.staleNeedsReply ? (
-                    <p className="text-xs text-amber-600">Čeká na odpověď</p>
-                  ) : null}
-                </button>
+                  message={m}
+                  selected={selectedId === m.id}
+                  showMailbox={activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES}
+                  onSelect={() => void loadDetail(m.id)}
+                />
               ))
             )}
           </div>
@@ -934,7 +1041,11 @@ export function EmailPortalPage() {
               </div>
             </div>
           ) : !detail ? (
-            <p className="text-muted-foreground text-sm">Vyberte zprávu v seznamu.</p>
+            <p className="text-muted-foreground text-sm">
+              {filtered.length > 0
+                ? "Vyberte zprávu v seznamu."
+                : "Ve schránce nejsou žádné zprávy."}
+            </p>
           ) : (
             <EmailPortalDetailPanel
               detail={detail}

@@ -12,12 +12,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Sparkles, Check, Bell, UserPlus, Briefcase } from "lucide-react";
+import { Sparkles, Check, Bell, UserPlus, Briefcase, AlertTriangle } from "lucide-react";
 import {
   EMAIL_AI_CATEGORY_LABELS,
   emailPriorityLabel,
 } from "@/lib/email-mailbox/category-labels";
-import { priorityEmoji } from "@/lib/email-mailbox/intelligence-types";
 import type { EmailAiCategory } from "@/lib/email-mailbox/intelligence-types";
 import { EMAIL_WORKFLOW_STATE_LABELS } from "@/lib/email-mailbox/intelligence-types";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
@@ -135,16 +134,23 @@ export function EmailPortalDetailPanel(props: Props) {
       ) : null}
 
       {props.canWrite ? (
-        <div className="flex flex-wrap gap-1.5 border-b pb-3">
+        <div className="flex flex-wrap items-center gap-1.5 border-b pb-3">
           <Button size="sm" disabled={props.busy} onClick={props.onReply}>
             Odpovědět
           </Button>
           <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onForward}>
             Přeposlat
           </Button>
-          <Button size="sm" variant="outline" disabled={props.busy} onClick={() => props.onAiDraft()}>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="border border-indigo-200 bg-indigo-50 text-indigo-950 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-100"
+            disabled={props.busy}
+            onClick={() => props.onAiDraft()}
+          >
             <Sparkles className="h-3.5 w-3.5 mr-1" /> AI odpověď
           </Button>
+          <span className="hidden sm:inline h-5 w-px bg-border mx-0.5" aria-hidden />
           <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onAssignEmployee}>
             <UserPlus className="h-3.5 w-3.5 mr-1" /> Přiřadit
           </Button>
@@ -160,20 +166,24 @@ export function EmailPortalDetailPanel(props: Props) {
               <SelectItem value="3d">Za 3 dny</SelectItem>
             </SelectContent>
           </Select>
-          <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onAssignEmailToJob}>
+          <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onAssignEmailToJob}>
             <Briefcase className="h-3.5 w-3.5 mr-1" /> Zakázka
           </Button>
-          <Button size="sm" variant="default" disabled={props.busy} onClick={props.onResolve}>
+          <span className="hidden sm:inline h-5 w-px bg-border mx-0.5" aria-hidden />
+          <Button
+            size="sm"
+            variant="default"
+            className="bg-emerald-700 hover:bg-emerald-800"
+            disabled={props.busy}
+            onClick={props.onResolve}
+          >
             <Check className="h-3.5 w-3.5 mr-1" /> Vyřízeno
           </Button>
         </div>
       ) : null}
 
       <div>
-        <h1 className="text-lg font-semibold break-words flex items-start gap-2">
-          <span>{priorityEmoji(pri as "URGENT")}</span>
-          <span>{d.subject}</span>
-        </h1>
+        <h1 className="text-lg font-semibold break-words">{d.subject}</h1>
         <p className="text-sm text-muted-foreground break-all">Od: {d.from}</p>
         <p className="text-xs text-muted-foreground">
           {d.receivedAt ? new Date(d.receivedAt).toLocaleString("cs-CZ") : ""}
@@ -199,20 +209,36 @@ export function EmailPortalDetailPanel(props: Props) {
         ) : null}
       </div>
 
-      <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-2">
-        <p className="font-semibold text-primary">RAJMONDATA AI</p>
-        <p>
-          <span className="text-muted-foreground">Kategorie: </span>
-          {catLabel}
+      <div className="rounded-lg border border-indigo-200/80 bg-gradient-to-br from-indigo-50/90 to-slate-50 p-4 text-sm space-y-3 dark:border-indigo-900 dark:from-indigo-950/40 dark:to-slate-950">
+        <p className="flex items-center gap-2 font-semibold text-indigo-950 dark:text-indigo-100">
+          <Sparkles className="h-4 w-4 text-indigo-600" />
+          RAJMONDATA AI
         </p>
-        <p>
-          <span className="text-muted-foreground">Priorita: </span>
-          {emailPriorityLabel(pri)}
-        </p>
-        <p>
-          <span className="text-muted-foreground">Vyžaduje odpověď: </span>
-          {d.needsReply ? "Ano" : "Ne"}
-        </p>
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          <p>
+            <span className="text-slate-600 dark:text-slate-400">Kategorie: </span>
+            <span className="font-medium text-slate-900 dark:text-slate-100">{catLabel}</span>
+          </p>
+          <p>
+            <span className="text-slate-600 dark:text-slate-400">Priorita: </span>
+            <span className="font-medium text-slate-900 dark:text-slate-100">{emailPriorityLabel(pri)}</span>
+          </p>
+          <p className="sm:col-span-2">
+            <span className="text-slate-600 dark:text-slate-400">Vyžaduje odpověď: </span>
+            <span className="font-medium text-slate-900 dark:text-slate-100">{d.needsReply ? "Ano" : "Ne"}</span>
+          </p>
+        </div>
+        {(d.needsReply || d.requiresAction) && (d.aiInsights?.length || d.aiSummary) ? (
+          <div className="rounded-md border border-orange-300/80 bg-orange-50 px-3 py-2 dark:border-orange-900 dark:bg-orange-950/50">
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-orange-950 dark:text-orange-100">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Vyžaduje reakci
+            </p>
+            <p className="mt-1 text-sm text-orange-950/90 dark:text-orange-50/90">
+              {(d.aiInsights ?? [])[0] ?? d.aiSummary}
+            </p>
+          </div>
+        ) : null}
         {(d.suggestedCustomerName || d.suggestedCustomerId) && (
           <p>
             <span className="text-muted-foreground">Pravděpodobný zákazník: </span>
@@ -233,11 +259,19 @@ export function EmailPortalDetailPanel(props: Props) {
             ) : null}
           </div>
         )}
-        {d.aiSummary ? <p className="text-muted-foreground">{d.aiSummary}</p> : null}
-        {(d.aiInsights ?? []).map((line) => (
-          <p key={line} className="text-amber-800 dark:text-amber-200">
+        {d.aiSummary ? (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Shrnutí</p>
+            <p className="mt-1 text-slate-800 dark:text-slate-200">{d.aiSummary}</p>
+          </div>
+        ) : null}
+        {(d.aiInsights ?? []).slice(d.needsReply || d.requiresAction ? 1 : 0).map((line) => (
+          <div
+            key={line}
+            className="rounded-md border-l-[3px] border-l-slate-400 bg-white/80 px-3 py-2 text-slate-800 dark:bg-slate-900/60 dark:text-slate-200"
+          >
             {line}
-          </p>
+          </div>
         ))}
         {d.inquiryDraft && props.canWrite ? (
           <div className="rounded border border-dashed p-2 mt-2">
