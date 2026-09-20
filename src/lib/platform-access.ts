@@ -152,13 +152,12 @@ export function getEffectiveModulesMerged(
    * Nový modul vozovyPark: existující organizace nemají klíč v licenci — default zapnuto,
    * dokud admin modul výslovně nevypne (`vozovyPark: false` v modules / license.modules).
    */
+  /**
+   * Nový modul — pokud organizace nemá vozovyPark explicitně v mapě modulů, považuj za zapnutý.
+   * (Superadmin může vypnout: vozovyPark: false v modules / license.modules.)
+   */
   if (!isCanonicalModuleExplicitInCompany(company, "vozovyPark")) {
-    const anyOtherEnabled = CANONICAL_MODULE_KEYS.some(
-      (k) => k !== "vozovyPark" && merged[k]
-    );
-    if (anyOtherEnabled) {
-      merged.vozovyPark = true;
-    }
+    merged.vozovyPark = true;
   }
   return merged;
 }

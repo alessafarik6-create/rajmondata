@@ -33,7 +33,11 @@ import {
   PORTAL_SIDEBAR_MENU_DEFS,
 } from '@/lib/portal-menu-config';
 import { PORTAL_MENU_ICONS } from '@/lib/portal-menu-icons';
-import { isPortalMenuItemVisible } from '@/lib/portal-menu-visibility';
+import {
+  debugPortalMenuItemHiddenReason,
+  isPortalMenuItemVisible,
+} from '@/lib/portal-menu-visibility';
+import { FLEET_PORTAL_MODULE_ID } from '@/lib/portal-menu-fleet-access';
 import {
   canAccessPortalModule,
   resolveEffectivePortalPermissions,
@@ -121,11 +125,26 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
       employeeDoc: (employeeRow as Record<string, unknown> | null) ?? null,
     });
 
-    return PORTAL_SIDEBAR_MENU_DEFS.filter((def) => {
-      if (!isPortalMenuItemVisible(def, ctx)) return false;
+    const filtered = PORTAL_SIDEBAR_MENU_DEFS.filter((def) => {
       const modId = def.id as PortalModuleId;
-      return canAccessPortalModule(portalPermissions, modId, "read");
-    }).map((def) => ({
+      const permOk = canAccessPortalModule(portalPermissions, modId, "read");
+      const visible = isPortalMenuItemVisible(def, ctx);
+      if (process.env.NODE_ENV === "development" && def.id === FLEET_PORTAL_MODULE_ID) {
+        const hiddenReason = debugPortalMenuItemHiddenReason(def, ctx, permOk);
+        console.log("NAVIGATION_ITEM_FLEET", {
+          visible,
+          permissionRead: permOk,
+          hiddenReason,
+          role,
+          moduleEnabled: ctx.effectiveModules.vozovyPark,
+          fleetPermission: portalPermissions.fleet,
+        });
+      }
+      if (!visible) return false;
+      return permOk;
+    });
+
+    return filtered.map((def) => ({
       label: def.label,
       href: def.href,
       icon: PORTAL_MENU_ICONS[def.id] ?? LayoutDashboard,

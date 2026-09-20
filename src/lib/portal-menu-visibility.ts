@@ -14,6 +14,11 @@ import {
   parentLicenseKeysSatisfied,
   type PortalSidebarMenuDef,
 } from "@/lib/portal-menu-config";
+import {
+  explainFleetMenuHiddenReason,
+  FLEET_PORTAL_MODULE_ID,
+  isFleetMenuLicensed,
+} from "@/lib/portal-menu-fleet-access";
 
 export type PortalMenuVisibilityCtx = {
   role: string;
@@ -60,7 +65,11 @@ export function isPortalMenuItemVisible(
     if (!parentLicenseKeysSatisfied(def.parentLicenseKeys, effectiveModules)) return false;
   }
 
-  if (def.type === "module" || def.type === "child") {
+  if (def.id === FLEET_PORTAL_MODULE_ID && def.type === "module") {
+    if (!isFleetMenuLicensed({ role, globalRoles, company, effectiveModules })) {
+      return false;
+    }
+  } else if (def.type === "module" || def.type === "child") {
     if (def.type === "module" && !licenseKeysSatisfied(def.licenseKeys, effectiveModules)) {
       return false;
     }
@@ -94,4 +103,28 @@ export function isPortalMenuItemVisible(
   }
 
   return true;
+}
+
+/** Dev diagnostika — proč je položka skrytá (bez citlivých dat). */
+export function debugPortalMenuItemHiddenReason(
+  def: PortalSidebarMenuDef,
+  ctx: PortalMenuVisibilityCtx,
+  permissionReadOk: boolean
+): string | null {
+  if (def.id === FLEET_PORTAL_MODULE_ID) {
+    const fleetReason = explainFleetMenuHiddenReason({
+      role: ctx.role,
+      globalRoles: ctx.globalRoles,
+      company: ctx.company,
+      effectiveModules: ctx.effectiveModules,
+      rolesAllowed: def.roles,
+      licenseRevoked: isLicenseExplicitlyRevokedForPortal(ctx.company),
+    });
+    if (fleetReason !== "visible") return fleetReason;
+    if (!permissionReadOk) return "permission_fleet_none";
+    return null;
+  }
+  if (!isPortalMenuItemVisible(def, ctx)) return "visibility_filter";
+  if (!permissionReadOk) return "permission_read";
+  return null;
 }
