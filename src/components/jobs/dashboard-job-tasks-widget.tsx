@@ -48,6 +48,7 @@ import {
   LIGHT_SELECT_TRIGGER_CLASS,
 } from "@/lib/light-form-control-classes";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
+import { filterEmployeesForAssignment } from "@/lib/employee-active";
 import { useActiveJobTasksFromJobList } from "@/components/jobs/use-active-job-tasks-from-jobs";
 
 type JobRef = { id: string; name?: string };
@@ -148,6 +149,12 @@ export function DashboardJobTasksWidget({
   }, [firestore, cid]);
 
   const { data: employeesRaw } = useCollection(employeesQuery);
+  const assignableEmployees = useMemo(() => {
+    const list = Array.isArray(employeesRaw) ? employeesRaw : [];
+    return filterEmployeesForAssignment(list, {
+      alsoIncludeIds: dlgAssignEmp ? [dlgAssignEmp] : [],
+    });
+  }, [employeesRaw, dlgAssignEmp]);
   const employeeNameById = useMemo(() => {
     const m = new Map<string, string>();
     const list = Array.isArray(employeesRaw) ? employeesRaw : [];
@@ -683,7 +690,7 @@ export function DashboardJobTasksWidget({
                   aria-label="Zaměstnanec"
                 >
                   <option value="">— vyberte —</option>
-                  {(Array.isArray(employeesRaw) ? employeesRaw : [])
+                  {assignableEmployees
                     .filter((emp) =>
                       Boolean((emp as { id?: string }).id)
                     )

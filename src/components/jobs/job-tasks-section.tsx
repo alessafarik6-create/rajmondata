@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import { useFirestore, useCollection, useMemoFirebase, useDoc } from "@/firebase";
 import { logActivitySafe } from "@/lib/activity-log";
+import { filterEmployeesForAssignment } from "@/lib/employee-active";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -159,6 +160,12 @@ export function JobTasksSection({ companyId, jobId, user, canEdit, layout = "def
   const [assignModeInput, setAssignModeInput] =
     useState<TaskAssignedMode>("all");
   const [assignEmployeeId, setAssignEmployeeId] = useState("");
+  const assignableEmployees = useMemo(() => {
+    const list = Array.isArray(employeesRaw) ? employeesRaw : [];
+    return filterEmployeesForAssignment(list, {
+      alsoIncludeIds: assignEmployeeId ? [assignEmployeeId] : [],
+    });
+  }, [employeesRaw, assignEmployeeId]);
   const [submitting, setSubmitting] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -671,7 +678,7 @@ export function JobTasksSection({ companyId, jobId, user, canEdit, layout = "def
                   aria-label="Zaměstnanec"
                 >
                   <option value="">— vyberte —</option>
-                  {(Array.isArray(employeesRaw) ? employeesRaw : [])
+                  {assignableEmployees
                     .filter((e) => Boolean((e as { id?: string }).id))
                     .map((e) => {
                       const r = e as {

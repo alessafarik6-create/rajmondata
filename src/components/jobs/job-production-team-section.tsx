@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { parseJobProductionSettings, type ProductionCustomerDisplayMode } from "@/lib/job-production-settings";
+import { filterEmployeesForAssignment, isEmployeeActive } from "@/lib/employee-active";
 
 type EmployeeRow = { id: string; firstName?: string; lastName?: string; email?: string };
 type FolderRow = {
@@ -58,14 +59,19 @@ export function JobProductionTeamSection(props: {
   const { data: employeesRaw } = useCollection(empCol);
   const employees = useMemo(() => {
     const list = Array.isArray(employeesRaw) ? employeesRaw : [];
-    return list
+    const assignable = filterEmployeesForAssignment(list, {
+      alsoIncludeIds: settings.productionAssignedEmployeeIds,
+    });
+    return assignable
       .filter((e): e is EmployeeRow & { id: string } => !!e && typeof (e as { id?: string }).id === "string")
       .map((e) => ({
         id: e.id,
-        label: `${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() || e.email || e.id,
+        label:
+          `${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() || e.email || e.id,
+        inactive: !isEmployeeActive(e),
       }))
       .sort((a, b) => a.label.localeCompare(b.label, "cs"));
-  }, [employeesRaw]);
+  }, [employeesRaw, settings.productionAssignedEmployeeIds]);
 
   const foldersCol = useMemoFirebase(
     () => collection(firestore, "companies", companyId, "jobs", jobId, "folders"),
@@ -225,7 +231,10 @@ export function JobProductionTeamSection(props: {
               employees.map((e) => (
                 <label key={e.id} className="flex items-center gap-2 cursor-pointer">
                   <Checkbox checked={selected.has(e.id)} onCheckedChange={() => toggleEmp(e.id)} />
-                  <span>{e.label}</span>
+                  <span>
+                    {e.label}
+                    {e.inactive ? " · Neaktivní" : ""}
+                  </span>
                 </label>
               ))
             )}

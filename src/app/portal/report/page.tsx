@@ -46,6 +46,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isEmployeeActive } from "@/lib/employee-active";
 
 const PAGE_LIMIT_STEP = 75;
 const MAX_EXPORT = 500;
@@ -176,6 +177,7 @@ export default function AuditReportPage() {
   const employeeFilterOptions = useMemo(() => {
     const m = new Map<string, string>();
     for (const e of employees ?? []) {
+      if (!isEmployeeActive(e)) continue;
       const label =
         e.displayName?.trim() ||
         e.name?.trim() ||

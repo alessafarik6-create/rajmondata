@@ -69,6 +69,11 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import {
+  filterActiveEmployees,
+  filterEmployeesForAssignment,
+  formatEmployeeLabelWithInactiveState,
+} from "@/lib/employee-active";
+import {
   formatKc,
   getLoggedHours,
   getReviewLabel,
@@ -401,21 +406,18 @@ function PayrollAdminPageInner() {
 
   const employeesForSelect = useMemo(() => {
     const q = employeeSearchQuery.trim().toLowerCase();
-    let list = employees;
+    let list = filterEmployeesForAssignment(employees, {
+      alsoIncludeIds:
+        selectedEmployeeId && selectedEmployeeId !== "all" ? [selectedEmployeeId] : [],
+    });
     if (q) {
-      list = employees.filter((e: any) => {
+      list = list.filter((e: any) => {
         const label = [e.firstName, e.lastName, e.email]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
         return label.includes(q) || String(e.id).toLowerCase().includes(q);
       });
-    }
-    if (selectedEmployeeId && selectedEmployeeId !== "all") {
-      const sel = employees.find((e) => e.id === selectedEmployeeId);
-      if (sel && !list.some((e) => e.id === sel.id)) {
-        list = [sel, ...list];
-      }
     }
     return list;
   }, [employees, employeeSearchQuery, selectedEmployeeId]);
@@ -440,7 +442,8 @@ function PayrollAdminPageInner() {
   }, [periodPreset, payrollYear, payrollMonth, customFromStr, customToStr]);
 
   useEffect(() => {
-    if (employees.length === 0) return;
+    const active = filterActiveEmployees(employees);
+    if (active.length === 0) return;
     if (employeeFromUrl === "all") {
       setSelectedEmployeeId("all");
       return;
@@ -453,7 +456,7 @@ function PayrollAdminPageInner() {
       return;
     }
     if (!selectedEmployeeId) {
-      setSelectedEmployeeId(employees[0].id);
+      setSelectedEmployeeId(active[0].id);
     }
   }, [employees, selectedEmployeeId, employeeFromUrl]);
 
@@ -2466,9 +2469,7 @@ function PayrollAdminPageInner() {
                     <option value="all">Všichni zaměstnanci (výkazy)</option>
                     {employeesForSelect.map((e) => (
                       <option key={e.id} value={e.id}>
-                        {[e.firstName, e.lastName].filter(Boolean).join(" ") ||
-                          e.email ||
-                          e.id}
+                        {formatEmployeeLabelWithInactiveState(e, e.id)}
                         {e.jobTitle ? ` — ${e.jobTitle}` : ""}
                       </option>
                     ))}

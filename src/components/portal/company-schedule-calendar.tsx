@@ -50,6 +50,7 @@ import { useFirestore, useMemoFirebase, useCollection, useUser, useDoc, useCompa
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { filterActiveEmployees } from "@/lib/employee-active";
 
 /** Mobil: prostor pod mřížkou — nepřekrývá spodní navigace ani safe area. */
 const MOBILE_CALENDAR_BOTTOM_PAD =
@@ -524,7 +525,7 @@ export function CompanyScheduleCalendar({
     return rows;
   }, [jobsRaw]);
   const employeeOptions = useMemo(() => {
-    const list = Array.isArray(employeesRaw) ? employeesRaw : [];
+    const list = filterActiveEmployees(Array.isArray(employeesRaw) ? employeesRaw : []);
     return list
       .map((e) => {
         const r = e as {
@@ -546,11 +547,8 @@ export function CompanyScheduleCalendar({
       .filter((x): x is { id: string; name: string } => x != null);
   }, [employeesRaw]);
   const employeeIds = useMemo(() => {
-    const raw = Array.isArray(employeesRaw) ? employeesRaw : [];
-    return raw
-      .map((e: any) => String(e?.id ?? "").trim())
-      .filter(Boolean);
-  }, [employeesRaw]);
+    return employeeOptions.map((e) => e.id);
+  }, [employeeOptions]);
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [mobileSelectedDay, setMobileSelectedDay] = useState(() =>
     startOfDay(new Date())

@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+import { isEmployeeActive } from "@/lib/employee-active";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import { formatChatTimestampDisplay } from "@/lib/format-chat-timestamp";
 import {
@@ -300,6 +301,7 @@ export function CompanyChatMessenger({
   const employeeChatOptions = useMemo((): ChatEmployeeOption[] => {
     const out: ChatEmployeeOption[] = [];
     for (const e of employeeRows ?? []) {
+      if (!isEmployeeActive(e)) continue;
       const authUid = String(e.authUserId ?? "").trim();
       if (!authUid || authUid === user?.uid) continue;
       const fn = String(e.firstName ?? "").trim();

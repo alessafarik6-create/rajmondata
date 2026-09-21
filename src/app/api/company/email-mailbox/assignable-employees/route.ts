@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireEmailMailboxRead } from "@/lib/email-mailbox/api-auth";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
+import { isEmployeeActive } from "@/lib/employee-active";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,9 @@ export async function GET(request: NextRequest) {
         lastName?: string;
         email?: string;
         active?: boolean;
+        isActive?: boolean;
       };
+      if (!isEmployeeActive(data)) return null;
       const userId = String(data.authUserId ?? "").trim();
       if (!userId) return null;
       const name =

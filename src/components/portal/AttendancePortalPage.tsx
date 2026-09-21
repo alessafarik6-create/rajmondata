@@ -50,6 +50,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
 import { formatKc } from "@/lib/employee-money";
+import { filterEmployeesForAssignment } from "@/lib/employee-active";
 import { AdminDailyWorkReportDetailSheet } from "@/components/portal/AdminDailyWorkReportDetailSheet";
 import { EmployeeAttendanceOverview } from "@/app/portal/employee/employee-attendance-overview";
 import {
@@ -288,7 +289,12 @@ export function AttendancePortalPage() {
   const { data: employees = [] } = useCollection<Record<string, unknown>>(employeesQuery);
 
   const employeeOptions = useMemo(() => {
-    const rows = Array.isArray(employees) ? employees : [];
+    const rows = filterEmployeesForAssignment(Array.isArray(employees) ? employees : [], {
+      alsoIncludeIds:
+        selectedEmployeeId && selectedEmployeeId !== ALL_EMPLOYEES
+          ? [selectedEmployeeId]
+          : [],
+    });
     const items = rows
       .map((e) => {
         const id = String((e as any).id ?? "");
@@ -301,7 +307,7 @@ export function AttendancePortalPage() {
     // Fallback sort by label (in case lastName missing)
     items.sort((a, b) => a.label.localeCompare(b.label, "cs"));
     return items;
-  }, [employees]);
+  }, [employees, selectedEmployeeId]);
 
   const filteredDailyReports = useMemo(() => {
     const rows = Array.isArray(dailyReports) ? (dailyReports as Record<string, unknown>[]) : [];

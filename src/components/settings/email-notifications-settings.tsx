@@ -25,6 +25,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { filterActiveEmployees } from "@/lib/employee-active";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import {
   type EmailModuleKey,
@@ -298,7 +299,7 @@ export function EmailNotificationsSettings(props: {
     useCollection<EmployeeRow>(employeesColRef);
 
   const employees = useMemo(() => {
-    const list = (employeesRaw ?? []) as EmployeeRow[];
+    const list = filterActiveEmployees((employeesRaw ?? []) as EmployeeRow[]);
     return list
       .filter((e) => e?.id)
       .sort((a, b) => {

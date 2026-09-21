@@ -33,6 +33,11 @@ import {
   type JobRoleOnSite,
 } from "@/lib/job-employee-access";
 import { cn } from "@/lib/utils";
+import {
+  filterEmployeesForAssignment,
+  formatEmployeeDisplayName,
+} from "@/lib/employee-active";
+import { EmployeeInactiveBadge } from "@/components/employees/employee-inactive-badge";
 
 type EmployeeRow = {
   id: string;
@@ -102,6 +107,11 @@ export function JobEmployeeAssignmentsSection({
     () =>
       (Array.isArray(employeesRaw) ? employeesRaw : []) as EmployeeRow[],
     [employeesRaw]
+  );
+
+  const employeesForAdd = useMemo(
+    () => filterEmployeesForAssignment(employees),
+    [employees]
   );
 
   const members = useMemo(
@@ -330,13 +340,11 @@ export function JobEmployeeAssignmentsSection({
                   onChange={(e) => setSelEmp(e.target.value)}
                 >
                   <option value="">— vyberte —</option>
-                  {employees
+                  {employeesForAdd
                     .filter((e) => e.id && !memberIdSet.has(e.id))
                     .map((e) => (
                       <option key={e.id} value={e.id}>
-                        {e.companyName?.trim() ||
-                          `${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() ||
-                          e.id}
+                        {formatEmployeeDisplayName(e, e.id)}
                       </option>
                     ))}
                 </select>
@@ -399,17 +407,17 @@ export function JobEmployeeAssignmentsSection({
                 <ul className="space-y-2">
                   {members.map((m) => {
                     const emp = employees.find((e) => e.id === m.id);
-                    const label =
-                      emp?.companyName?.trim() ||
-                      `${emp?.firstName ?? ""} ${emp?.lastName ?? ""}`.trim() ||
-                      m.id;
+                    const label = formatEmployeeDisplayName(emp, m.id);
                     return (
                       <li
                         key={m.id}
                         className="flex flex-col gap-2 rounded-md border border-slate-200 p-3 sm:flex-row sm:items-end sm:justify-between"
                       >
                         <div className="space-y-1 min-w-0">
-                          <p className="font-medium truncate">{label}</p>
+                          <p className="font-medium truncate flex items-center gap-2 flex-wrap">
+                            {label}
+                            <EmployeeInactiveBadge employee={emp} />
+                          </p>
                           <p className="text-[11px] text-muted-foreground">
                             ID: {m.id}
                           </p>

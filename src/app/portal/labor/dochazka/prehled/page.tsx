@@ -83,6 +83,7 @@ import {
   totalsFromRows,
   type PeriodMode,
 } from "@/lib/attendance-overview-compute";
+import { filterEmployeesForAssignment } from "@/lib/employee-active";
 import { downloadAttendanceOverviewPdf } from "@/lib/attendance-overview-pdf";
 import {
   buildGlobalDayPayoutMap,
@@ -855,19 +856,25 @@ export default function AttendanceOverviewPage() {
             </SelectTrigger>
             <SelectContent className="border-black bg-white text-black">
               <SelectItem value={ALL}>Všichni zaměstnanci</SelectItem>
-              {[...employees.values()]
+              {filterEmployeesForAssignment([...employees.values()], {
+                alsoIncludeIds:
+                  employeeFilter !== ALL ? [employeeFilter] : [],
+              })
                 .filter(
                   (e) =>
                     e != null &&
                     typeof e === "object" &&
-                    typeof e.id === "string" &&
-                    e.id.length > 0
+                    typeof (e as { id?: string }).id === "string" &&
+                    String((e as { id?: string }).id).length > 0
                 )
-                .map((e) => (
-                  <SelectItem key={e.id} value={e.id}>
-                    {e.displayName}
+                .map((e) => {
+                  const row = e as { id: string; displayName?: string };
+                  return (
+                  <SelectItem key={row.id} value={row.id}>
+                    {row.displayName}
                   </SelectItem>
-                ))}
+                  );
+                })}
             </SelectContent>
           </Select>
         </div>

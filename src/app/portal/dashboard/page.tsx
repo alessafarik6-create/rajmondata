@@ -63,6 +63,7 @@ import {
   sortCustomerActivitiesByNewest,
 } from "@/lib/customer-activity";
 import { isEmployeeActivityUnresolved } from "@/lib/employee-activity";
+import { filterActiveEmployees } from "@/lib/employee-active";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import {
@@ -355,6 +356,10 @@ export default function CompanyDashboard() {
   const { data: employeesRaw } = useCollection(employeesQuery);
   /** useCollection vrací `null` při načítání/chybě — default `= []` se na null nevztahuje. */
   const employees = employeesRaw ?? [];
+  const activeEmployeeCount = useMemo(
+    () => filterActiveEmployees(employees).length,
+    [employees]
+  );
 
   const {
     data: allJobsRaw,
@@ -1231,7 +1236,7 @@ export default function CompanyDashboard() {
                 <Users className="h-4 w-4 text-primary" />
               </CardHeader>
               <CardContent>
-                <div className="portal-kpi-value">{employees.length || 0}</div>
+                <div className="portal-kpi-value">{activeEmployeeCount || 0}</div>
                 <p className="portal-kpi-label">Celkový počet pracovníků</p>
               </CardContent>
             </Card>

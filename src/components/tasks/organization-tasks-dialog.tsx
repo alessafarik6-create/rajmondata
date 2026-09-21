@@ -40,6 +40,7 @@ import {
 } from "@/lib/organization-task";
 import type { JobTaskPriority, TaskAssignedMode } from "@/lib/job-task-types";
 import { jobTaskPriorityLabel } from "@/lib/job-task-types";
+import { filterEmployeesForAssignment } from "@/lib/employee-active";
 
 type Props = {
   open: boolean;
@@ -159,6 +160,13 @@ export function OrganizationTasksDialog({
   const [priority, setPriority] = useState<JobTaskPriority>("medium");
   const [assignMode, setAssignMode] = useState<TaskAssignedMode>("all");
   const [assignEmployeeId, setAssignEmployeeId] = useState("");
+  const assignableEmployees = useMemo(
+    () =>
+      filterEmployeesForAssignment(employeesList, {
+        alsoIncludeIds: assignEmployeeId ? [assignEmployeeId] : [],
+      }),
+    [employeesList, assignEmployeeId]
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -447,11 +455,7 @@ export function OrganizationTasksDialog({
                   aria-label="Zaměstnanec"
                 >
                   <option value="">— vyberte —</option>
-                  {(employeesList as {
-                    id?: string;
-                    firstName?: string;
-                    lastName?: string;
-                  }[])
+                  {assignableEmployees
                     .filter((e) => e?.id)
                     .map((e) => (
                       <option key={String(e.id)} value={String(e.id)}>
