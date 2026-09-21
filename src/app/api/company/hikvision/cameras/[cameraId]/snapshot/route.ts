@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  buildIsapiConfigForOrg,
-  hikvisionCamerasCol,
-} from "@/lib/hikvision/stores";
+import { hikvisionCamerasCol } from "@/lib/hikvision/stores";
 import { hikvisionTenantOk, requireCamerasRead } from "@/lib/hikvision/api-auth";
-import { fetchHikvisionChannelPicture } from "@/lib/hikvision/isapi-client";
+import { resolveHikvisionProviderForOrg } from "@/lib/hikvision/providers/resolver";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 type Params = { params: Promise<{ cameraId: string }> };
 
@@ -26,20 +24,14 @@ export async function GET(request: NextRequest, { params }: Params) {
   if (!camSnap.exists) {
     return NextResponse.json({ ok: false, error: "Kamera nenalezena." }, { status: 404 });
   }
-  const cam = camSnap.data() as { trackStreamId?: string };
-  const trackStreamId = String(cam.trackStreamId ?? "").trim();
-  if (!trackStreamId) {
-    return NextResponse.json({ ok: false, error: "Chybí stream ID kamery." }, { status: 400 });
-  }
 
-  const cfg = await buildIsapiConfigForOrg(auth.db, companyId);
-  if (!cfg.ok) {
-    return NextResponse.json({ ok: false, error: cfg.error }, { status: 400 });
-  }
-
-  const pic = await fetchHikvisionChannelPicture(cfg.config, trackStreamId);
+  const { provider } = await resolveHikvisionProviderForOrg(auth.db, companyId);
+  const pic = await provider.getSnapshot(
+    { db: auth.db, organizationId: companyId },
+    cameraId
+  );
   if (!pic.ok) {
-    return NextResponse.json({ ok: false, error: pic.error }, { status: 502 });
+    return NextResponse.json({ ok: false, code: pic.code, error: pic.error }, { status: 502 });
   }
 
   return new NextResponse(new Uint8Array(pic.buffer), {

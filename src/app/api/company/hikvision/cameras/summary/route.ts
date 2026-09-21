@@ -4,6 +4,8 @@ import {
   loadHikvisionIntegration,
 } from "@/lib/hikvision/stores";
 import { hikvisionTenantOk, requireCamerasRead } from "@/lib/hikvision/api-auth";
+import { normalizeConnectionMode } from "@/lib/hikvision/providers/resolver";
+import { isHikvisionIntegrationConfigured } from "@/lib/hikvision/integration-status";
 
 export const dynamic = "force-dynamic";
 
@@ -25,12 +27,19 @@ export async function GET(request: NextRequest) {
   const online = cameras.filter((c) => c.online).length;
   const offline = cameras.length - online;
 
+  const configured = integration
+    ? await isHikvisionIntegrationConfigured(integration, auth.db, companyId)
+    : { configured: false as const };
+
   return NextResponse.json({
     ok: true,
     total: cameras.length,
     online,
     offline,
+    connectionMode: normalizeConnectionMode(integration?.connectionMode),
+    integrationConfigured: configured.configured,
     nvrStatus: integration?.status ?? "not_connected",
+    deviceCount: integration?.deviceCount ?? 0,
     connectorOnline: Boolean(integration?.connectorOnline),
     lastError: integration?.lastError ?? null,
     recentEvents: [],

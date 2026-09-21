@@ -1,21 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/firebase";
-import { Loader2, Video } from "lucide-react";
+import { Loader2, Video, Cloud, Server, Plug } from "lucide-react";
+
+type ConnectionMode = "hikconnect_openapi" | "direct" | "local_connector";
 
 type IntegrationState = {
   deviceLabel: string;
@@ -25,15 +22,20 @@ type IntegrationState = {
   rtspPort: number;
   useHttps: boolean;
   username: string;
-  connectionMode: "direct" | "local_connector";
+  connectionMode: ConnectionMode;
   active: boolean;
   status: string;
   hasPassword: boolean;
+  hasApiSecret: boolean;
+  apiKey: string;
+  integrationConfigured: boolean;
   model: string | null;
   serialNumber: string | null;
   firmwareVersion: string | null;
   deviceName: string | null;
   cameraCount: number;
+  deviceCount: number;
+  hikConnectTeamName: string | null;
   connectorOnline: boolean;
   lastTestAt: string | null;
   lastSyncAt: string | null;
@@ -51,15 +53,20 @@ const emptyIntegration: IntegrationState = {
   rtspPort: 554,
   useHttps: false,
   username: "admin",
-  connectionMode: "direct",
+  connectionMode: "hikconnect_openapi",
   active: true,
   status: "not_connected",
   hasPassword: false,
+  hasApiSecret: false,
+  apiKey: "",
+  integrationConfigured: false,
   model: null,
   serialNumber: null,
   firmwareVersion: null,
   deviceName: null,
   cameraCount: 0,
+  deviceCount: 0,
+  hikConnectTeamName: null,
   connectorOnline: false,
   lastTestAt: null,
   lastSyncAt: null,
@@ -69,6 +76,12 @@ const emptyIntegration: IntegrationState = {
   allowInsecureTls: false,
 };
 
+function modeLabel(mode: ConnectionMode): string {
+  if (mode === "hikconnect_openapi") return "Hik-Connect Cloud";
+  if (mode === "local_connector") return "Local Connector";
+  return "Direct ISAPI";
+}
+
 export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: string | null }) {
   const { user } = useUser();
   const { toast } = useToast();
@@ -76,6 +89,7 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState(emptyIntegration);
   const [password, setPassword] = useState("");
+  const [apiSecret, setApiSecret] = useState("");
   const [registrationToken, setRegistrationToken] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -85,11 +99,18 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
       const token = await user.getIdToken();
       const res = await fetch(
         `/api/company/hikvision/integration?companyId=${encodeURIComponent(companyId)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" }
       );
       const data = await res.json();
       if (data.ok && data.integration) {
-        setForm({ ...emptyIntegration, ...data.integration });
+        const mode = data.integration.connectionMode;
+        const connectionMode: ConnectionMode =
+          mode === "local_connector"
+            ? "local_connector"
+            : mode === "direct"
+              ? "direct"
+              : "hikconnect_openapi";
+        setForm({ ...emptyIntegration, ...data.integration, connectionMode });
       }
     } finally {
       setLoading(false);
@@ -112,6 +133,11 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
           companyId,
           ...form,
           password: password.trim() || undefined,
+          apiKey: form.connectionMode === "hikconnect_openapi" ? form.apiKey : undefined,
+          apiSecret:
+            form.connectionMode === "hikconnect_openapi" && apiSecret.trim()
+              ? apiSecret.trim()
+              : undefined,
         }),
       });
       const data = await res.json();
@@ -121,6 +147,7 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
       }
       toast({ title: "Uloženo", description: data.message });
       setPassword("");
+      setApiSecret("");
       await load();
     } finally {
       setBusy(false);
@@ -140,10 +167,32 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
       const data = await res.json();
       toast({
         variant: data.ok ? "default" : "destructive",
-        title: data.ok ? "NVR online" : "Test selhal",
+        title: data.ok ? "✓ Připojení OK" : "✕ Připojení selhalo",
         description: data.ok
-          ? `${data.model ?? ""} ${data.serialNumber ?? ""}`.trim() || data.message
-          : data.error,
+          ? data.message ?? `${data.provider ?? ""} ${data.latencyMs != null ? `${data.latencyMs} ms` : ""}`
+          : data.message ?? data.error,
+      });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function syncDevices() {
+    if (!user || !companyId) return;
+    setBusy(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/hikvision/integration/sync-devices", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId }),
+      });
+      const data = await res.json();
+      toast({
+        variant: data.ok ? "default" : "destructive",
+        title: "Zařízení",
+        description: data.message ?? data.error,
       });
       await load();
     } finally {
@@ -197,17 +246,23 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
 
   if (!companyId) return null;
 
-  const nvrOnline = form.status === "online";
+  const isCloud = form.connectionMode === "hikconnect_openapi";
+  const isDirect = form.connectionMode === "direct";
+  const isConnector = form.connectionMode === "local_connector";
+  const connected =
+    form.integrationConfigured &&
+    form.active &&
+    (form.status === "online" || (isConnector && form.connectorOnline));
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Video className="h-5 w-5 text-orange-600" /> Integrace → Hikvision NVR
+          <Video className="h-5 w-5 text-orange-600" /> Integrace → Hikvision
         </CardTitle>
         <CardDescription>
-          ISAPI (Pro Series). Heslo se ukládá pouze server-side šifrovaně. Snapshoty a ISAPI volání jdou
-          přes zabezpečené API RAJMONDATA.
+          Hik-Connect Cloud (doporučeno) nebo přímé ISAPI / Local Connector. Tajemství (API Secret, heslo
+          NVR) se ukládají pouze server-side šifrovaně.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -219,122 +274,191 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
 
         <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
           <p>
-            NVR:{" "}
-            <span className="font-medium">{nvrOnline ? "Online" : form.status === "offline" ? "Offline" : "—"}</span>
+            Režim: <span className="font-medium">{modeLabel(form.connectionMode)}</span>
           </p>
           <p>
-            Connector:{" "}
-            <span className="font-medium">{form.connectorOnline ? "Online" : "Offline"}</span>
+            Stav:{" "}
+            <span className="font-medium">
+              {connected ? "Připojeno" : form.integrationConfigured ? "Nakonfigurováno" : "Nepřipojeno"}
+            </span>
           </p>
-          {form.model ? <p>Model: {form.model}</p> : null}
-          {form.firmwareVersion ? <p>Firmware: {form.firmwareVersion}</p> : null}
-          <p>Kamer: {form.cameraCount}</p>
-          {form.lastCommunicationAt ? (
-            <p className="text-xs text-muted-foreground">Poslední komunikace: {form.lastCommunicationAt}</p>
+          {isCloud && form.hikConnectTeamName ? <p>Team: {form.hikConnectTeamName}</p> : null}
+          {isDirect && form.model ? <p>Model: {form.model}</p> : null}
+          {isConnector ? (
+            <p>
+              Connector:{" "}
+              <span className="font-medium">{form.connectorOnline ? "Online" : "Offline"}</span>
+            </p>
+          ) : null}
+          <p>
+            Zařízení: {form.deviceCount} · Kamer: {form.cameraCount}
+          </p>
+          {form.lastSyncAt ? (
+            <p className="text-xs text-muted-foreground">Poslední synchronizace: {form.lastSyncAt}</p>
           ) : null}
           {form.lastError ? (
             <p className="text-xs text-destructive">Poslední chyba: {form.lastError}</p>
           ) : null}
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-2 sm:col-span-2">
-            <Label>Název zařízení</Label>
-            <Input
-              value={form.deviceLabel}
-              onChange={(e) => setForm((f) => ({ ...f, deviceLabel: e.target.value }))}
-              placeholder="NVR sklad"
-            />
+        <div className="space-y-3">
+          <Label>Způsob připojení</Label>
+          <RadioGroup
+            value={form.connectionMode}
+            onValueChange={(v) =>
+              setForm((f) => ({
+                ...f,
+                connectionMode: v as ConnectionMode,
+              }))
+            }
+            className="space-y-2"
+          >
+            <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer has-[:checked]:border-orange-500">
+              <RadioGroupItem value="hikconnect_openapi" className="mt-1" />
+              <div>
+                <p className="font-medium flex items-center gap-1">
+                  <Cloud className="h-4 w-4" /> Hik-Connect Cloud / OpenAPI
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Doporučeno — bez veřejné IP a bez zařízení ve firemní síti
+                </p>
+              </div>
+            </label>
+            <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer has-[:checked]:border-orange-500">
+              <RadioGroupItem value="direct" className="mt-1" />
+              <div>
+                <p className="font-medium flex items-center gap-1">
+                  <Server className="h-4 w-4" /> Direct ISAPI
+                </p>
+                <p className="text-xs text-muted-foreground">Přímé připojení k NVR (LAN / veřejná IP)</p>
+              </div>
+            </label>
+            <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer has-[:checked]:border-orange-500">
+              <RadioGroupItem value="local_connector" className="mt-1" />
+              <div>
+                <p className="font-medium flex items-center gap-1">
+                  <Plug className="h-4 w-4" /> Local Connector
+                </p>
+                <p className="text-xs text-muted-foreground">Agent ve firemní LAN</p>
+              </div>
+            </label>
+          </RadioGroup>
+        </div>
+
+        {isCloud ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label>API Key / Access Key</Label>
+              <Input
+                value={form.apiKey}
+                onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>
+                API Secret / Secret Key{" "}
+                {form.hasApiSecret ? "(uloženo — vyplňte pouze pro změnu)" : ""}
+              </Label>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                placeholder={form.hasApiSecret ? "••••••••••••••" : ""}
+                value={apiSecret}
+                onChange={(e) => setApiSecret(e.target.value)}
+              />
+            </div>
           </div>
-          <div className="space-y-2 sm:col-span-2">
-            <Label>Host / IP NVR</Label>
-            <Input
-              value={form.host}
-              onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
-              placeholder="192.168.1.64"
-            />
+        ) : null}
+
+        {isDirect ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Název zařízení</Label>
+              <Input
+                value={form.deviceLabel}
+                onChange={(e) => setForm((f) => ({ ...f, deviceLabel: e.target.value }))}
+                placeholder="NVR sklad"
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Host / IP NVR</Label>
+              <Input
+                value={form.host}
+                onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
+                placeholder="192.168.1.64"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>HTTP port</Label>
+              <Input
+                type="number"
+                value={form.httpPort}
+                onChange={(e) => setForm((f) => ({ ...f, httpPort: Number(e.target.value) || 80 }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>HTTPS port</Label>
+              <Input
+                type="number"
+                value={form.httpsPort}
+                onChange={(e) => setForm((f) => ({ ...f, httpsPort: Number(e.target.value) || 443 }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>RTSP port</Label>
+              <Input
+                type="number"
+                value={form.rtspPort}
+                onChange={(e) => setForm((f) => ({ ...f, rtspPort: Number(e.target.value) || 554 }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Uživatelské jméno</Label>
+              <Input
+                value={form.username}
+                onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Heslo {form.hasPassword ? "(uloženo — vyplňte pro změnu)" : ""}</Label>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={form.useHttps}
+                onCheckedChange={(v) => setForm((f) => ({ ...f, useHttps: v }))}
+              />
+              <Label>Použít HTTPS pro ISAPI</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={form.allowInsecureTls}
+                onCheckedChange={(v) => setForm((f) => ({ ...f, allowInsecureTls: v }))}
+              />
+              <Label>Povolit self-signed certifikát (LAN)</Label>
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label>HTTP port</Label>
-            <Input
-              type="number"
-              value={form.httpPort}
-              onChange={(e) => setForm((f) => ({ ...f, httpPort: Number(e.target.value) || 80 }))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>HTTPS port</Label>
-            <Input
-              type="number"
-              value={form.httpsPort}
-              onChange={(e) => setForm((f) => ({ ...f, httpsPort: Number(e.target.value) || 443 }))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>RTSP port</Label>
-            <Input
-              type="number"
-              value={form.rtspPort}
-              onChange={(e) => setForm((f) => ({ ...f, rtspPort: Number(e.target.value) || 554 }))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Uživatelské jméno</Label>
-            <Input
-              value={form.username}
-              onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-2 sm:col-span-2">
-            <Label>Heslo {form.hasPassword ? "(uloženo — vyplňte pro změnu)" : ""}</Label>
-            <Input
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-          <div className="space-y-2 sm:col-span-2">
-            <Label>Způsob připojení</Label>
-            <Select
-              value={form.connectionMode}
-              onValueChange={(v) =>
-                setForm((f) => ({
-                  ...f,
-                  connectionMode: v === "local_connector" ? "local_connector" : "direct",
-                }))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="direct">Direct connection (cloud → NVR, pokud je dostupné)</SelectItem>
-                <SelectItem value="local_connector">Local Connector (doporučeno v LAN)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={form.useHttps}
-              onCheckedChange={(v) => setForm((f) => ({ ...f, useHttps: v }))}
-            />
-            <Label>Použít HTTPS pro ISAPI</Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={form.allowInsecureTls}
-              onCheckedChange={(v) => setForm((f) => ({ ...f, allowInsecureTls: v }))}
-            />
-            <Label>Povolit self-signed certifikát (LAN)</Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={form.active}
-              onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))}
-            />
-            <Label>Aktivní</Label>
-          </div>
+        ) : null}
+
+        {isConnector ? (
+          <p className="text-sm text-muted-foreground">
+            Vygenerujte registrační token a spusťte Local Connector ve firmě. Sync kamer probíhá přes
+            connector (TODO).
+          </p>
+        ) : null}
+
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={form.active}
+            onCheckedChange={(v) => setForm((f) => ({ ...f, active: v }))}
+          />
+          <Label>Integrace aktivní</Label>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -343,13 +467,21 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
             Uložit
           </Button>
           <Button type="button" variant="secondary" onClick={() => void testConn()} disabled={busy}>
-            Otestovat připojení
+            {isCloud ? "Otestovat Hik-Connect" : "Otestovat připojení"}
+          </Button>
+          <Button type="button" variant="outline" onClick={() => void syncDevices()} disabled={busy}>
+            Načíst zařízení
           </Button>
           <Button type="button" variant="outline" onClick={() => void syncCameras()} disabled={busy}>
-            Načíst kamery z NVR
+            Synchronizovat kamery
           </Button>
-          <Button type="button" variant="outline" onClick={() => void createConnectorToken()} disabled={busy}>
-            Token pro Local Connector
+          {isConnector ? (
+            <Button type="button" variant="outline" onClick={() => void createConnectorToken()} disabled={busy}>
+              Token pro Local Connector
+            </Button>
+          ) : null}
+          <Button type="button" variant="ghost" asChild>
+            <Link href="/portal/cameras">Otevřít kamery</Link>
           </Button>
         </div>
 

@@ -149,8 +149,8 @@ export function CamerasGrid({
     return (
       <Card>
         <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          Zatím žádné kamery. V Nastavení → Integrace → Hikvision otestujte NVR a spusťte „Načíst kamery
-          z NVR“.
+          Zatím žádné kamery. V Nastavení → Integrace → Hikvision otestujte připojení a spusťte
+          „Synchronizovat kamery“ (Hik-Connect nebo ISAPI).
         </CardContent>
       </Card>
     );

@@ -5,11 +5,15 @@ export const HIKVISION_INTEGRATION_DOC_ID = "hikvision_integration";
 export const HIKVISION_INTEGRATION_CREDENTIALS_DOC = "credentials";
 
 export const HIKVISION_CAMERAS_SUBCOLLECTION = "hikvision_cameras";
+export const HIKVISION_DEVICES_SUBCOLLECTION = "hikvision_devices";
 export const HIKVISION_CONNECTORS_SUBCOLLECTION = "hikvision_connectors";
 export const HIKVISION_EVENTS_SUBCOLLECTION = "hikvision_camera_events";
 export const HIKVISION_STREAM_SESSIONS_SUBCOLLECTION = "hikvision_stream_sessions";
+export const HIKVISION_EMPLOYEE_CAMERA_ACCESS_SUBCOLLECTION = "hikvision_employee_camera_access";
 
-export type HikvisionConnectionMode = "direct" | "local_connector";
+export type HikvisionConnectionMode = "hikconnect_openapi" | "direct" | "local_connector";
+
+export type HikvisionProviderKind = "HIKCONNECT_OPENAPI" | "DIRECT_ISAPI" | "LOCAL_CONNECTOR";
 
 export type HikvisionIntegrationStatus =
   | "not_connected"
@@ -42,6 +46,8 @@ export type HikvisionIntegrationDoc = {
   lastCommunicationAt?: unknown;
   lastError?: string | null;
   cameraCount?: number;
+  deviceCount?: number;
+  hikConnectTeamName?: string | null;
   connectorOnline?: boolean;
   lastConnectorHeartbeatAt?: unknown;
   pendingRegistrationTokenHash?: string | null;
@@ -50,9 +56,27 @@ export type HikvisionIntegrationDoc = {
   updatedAt?: unknown;
 };
 
+export type HikvisionDeviceDoc = {
+  organizationId: string;
+  provider: HikvisionProviderKind;
+  externalDeviceId: string;
+  name: string;
+  model?: string | null;
+  serialMasked?: string | null;
+  online: boolean;
+  capabilities?: Record<string, boolean>;
+  lastSeenAt?: unknown;
+  lastSyncAt?: unknown;
+  updatedAt?: unknown;
+};
+
 export type HikvisionCameraDoc = {
   organizationId: string;
   integrationId: string;
+  provider?: HikvisionProviderKind;
+  deviceId?: string | null;
+  externalDeviceId?: string | null;
+  externalCameraId?: string | null;
   channelId: string;
   name: string;
   ipAddress?: string | null;
@@ -60,7 +84,22 @@ export type HikvisionCameraDoc = {
   serialNumber?: string | null;
   online: boolean;
   trackStreamId: string;
+  capabilities?: {
+    liveView?: boolean;
+    playback?: boolean;
+    snapshot?: boolean;
+    ptz?: boolean;
+  };
   lastCheckedAt?: unknown;
+  updatedAt?: unknown;
+};
+
+export type HikvisionEmployeeCameraAccessDoc = {
+  organizationId: string;
+  employeeId: string;
+  cameraId: string;
+  canViewLive: boolean;
+  canPlayback: boolean;
   updatedAt?: unknown;
 };
 

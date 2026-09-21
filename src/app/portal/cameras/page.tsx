@@ -71,7 +71,7 @@ export default function PortalCamerasPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Kamery</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Hikvision NVR — náhledy přes zabezpečené API RAJMONDATA.
+            Hikvision (Hik-Connect Cloud nebo ISAPI) — náhledy přes zabezpečené API RAJMONDATA.
           </p>
         </div>
         {cameraPerms.admin ? (

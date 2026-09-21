@@ -6,6 +6,8 @@ import {
   hikvisionCredentialsRef,
   loadHikvisionIntegration,
   saveHikvisionPassword,
+  saveHikConnectApiCredentials,
+  hasHikConnectApiSecret,
 } from "@/lib/hikvision/stores";
 import {
   hikvisionTenantOk,
@@ -13,13 +15,30 @@ import {
 } from "@/lib/hikvision/api-auth";
 import { isHikvisionIntegrationEncryptionConfigured } from "@/lib/hikvision/integration-crypto";
 import type { HikvisionConnectionMode } from "@/lib/hikvision/types";
+import {
+  isHikvisionIntegrationConfiguredForOrg,
+  isHikvisionIntegrationConfigured,
+} from "@/lib/hikvision/integration-status";
+import { normalizeConnectionMode } from "@/lib/hikvision/providers/resolver";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+function parseConnectionMode(raw: unknown): HikvisionConnectionMode {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (v === "hikconnect_openapi" || v === "hikconnect") return "hikconnect_openapi";
+  if (v === "local_connector") return "local_connector";
+  return "direct";
+}
 
 function safeIntegrationPublic(
   integration: Awaited<ReturnType<typeof loadHikvisionIntegration>>,
-  hasPassword: boolean
+  hasPassword: boolean,
+  hasApiSecret: boolean,
+  apiKey: string,
+  integrationConfigured: boolean
 ) {
+  const mode = normalizeConnectionMode(integration?.connectionMode);
   if (!integration) {
     return {
       deviceLabel: "",
@@ -29,15 +48,20 @@ function safeIntegrationPublic(
       rtspPort: 554,
       useHttps: false,
       username: "",
-      connectionMode: "direct" as HikvisionConnectionMode,
+      connectionMode: "hikconnect_openapi" as HikvisionConnectionMode,
       active: false,
       status: "not_connected",
-      hasPassword,
+      hasPassword: false,
+      hasApiSecret: false,
+      apiKey: "",
+      integrationConfigured: false,
       model: null,
       serialNumber: null,
       firmwareVersion: null,
       deviceName: null,
       cameraCount: 0,
+      deviceCount: 0,
+      hikConnectTeamName: null,
       connectorOnline: false,
       lastTestAt: null,
       lastSyncAt: null,
@@ -55,15 +79,20 @@ function safeIntegrationPublic(
     rtspPort: integration.rtspPort ?? 554,
     useHttps: Boolean(integration.useHttps),
     username: integration.username ?? "",
-    connectionMode: integration.connectionMode ?? "direct",
+    connectionMode: mode,
     active: Boolean(integration.active),
     status: integration.status ?? "not_connected",
     hasPassword,
+    hasApiSecret,
+    apiKey,
+    integrationConfigured,
     model: integration.model ?? null,
     serialNumber: integration.serialNumber ?? null,
     firmwareVersion: integration.firmwareVersion ?? null,
     deviceName: integration.deviceName ?? null,
     cameraCount: integration.cameraCount ?? 0,
+    deviceCount: integration.deviceCount ?? 0,
+    hikConnectTeamName: integration.hikConnectTeamName ?? null,
     connectorOnline: Boolean(integration.connectorOnline),
     lastTestAt: firestoreTimestampToIso(integration.lastTestAt),
     lastSyncAt: firestoreTimestampToIso(integration.lastSyncAt),
@@ -86,14 +115,27 @@ export async function GET(request: NextRequest) {
   }
   const integration = await loadHikvisionIntegration(auth.db, companyId);
   const credSnap = await hikvisionCredentialsRef(auth.db, companyId).get();
-  const hasPassword = Boolean(
-    String((credSnap.data() as { encryptedPassword?: string })?.encryptedPassword ?? "").trim()
+  const credData = credSnap.data() as { encryptedPassword?: string; apiKey?: string };
+  const hasPassword = Boolean(String(credData?.encryptedPassword ?? "").trim());
+  const hasApiSecret = await hasHikConnectApiSecret(auth.db, companyId);
+  const apiKey = String(credData?.apiKey ?? "").trim();
+  const configuredCheck = integration
+    ? await isHikvisionIntegrationConfigured(integration, auth.db, companyId)
+    : { configured: false as const };
+  return NextResponse.json(
+    {
+      ok: true,
+      integration: safeIntegrationPublic(
+        integration,
+        hasPassword,
+        hasApiSecret,
+        apiKey,
+        configuredCheck.configured
+      ),
+      encryptionConfigured: isHikvisionIntegrationEncryptionConfigured(),
+    },
+    { headers: { "Cache-Control": "no-store" } }
   );
-  return NextResponse.json({
-    ok: true,
-    integration: safeIntegrationPublic(integration, hasPassword),
-    encryptionConfigured: isHikvisionIntegrationEncryptionConfigured(),
-  });
 }
 
 export async function PATCH(request: NextRequest) {
@@ -112,7 +154,10 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
   const password = typeof body.password === "string" ? body.password.trim() : "";
-  if (password && !isHikvisionIntegrationEncryptionConfigured()) {
+  const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+  const apiSecret = typeof body.apiSecret === "string" ? body.apiSecret.trim() : "";
+  const needsEncryption = Boolean(password) || Boolean(apiSecret);
+  if (needsEncryption && !isHikvisionIntegrationEncryptionConfigured()) {
     return NextResponse.json(
       {
         ok: false,
@@ -136,19 +181,35 @@ export async function PATCH(request: NextRequest) {
   if (body.useHttps !== undefined) patch.useHttps = Boolean(body.useHttps);
   if (body.username !== undefined) patch.username = String(body.username ?? "").trim();
   if (body.connectionMode !== undefined) {
-    const mode = String(body.connectionMode);
-    patch.connectionMode =
-      mode === "local_connector" ? "local_connector" : ("direct" as HikvisionConnectionMode);
+    patch.connectionMode = parseConnectionMode(body.connectionMode);
   }
   if (body.active !== undefined) patch.active = Boolean(body.active);
   if (body.allowInsecureTls !== undefined) patch.allowInsecureTls = Boolean(body.allowInsecureTls);
   if (body.active === false) patch.status = "disabled";
-  else if (body.host) patch.status = "configured";
+  else patch.status = "configured";
 
   await ref.set(patch, { merge: true });
   if (password) {
     await saveHikvisionPassword(auth.db, companyId, password);
   }
+  if (apiKey || apiSecret) {
+    await saveHikConnectApiCredentials(auth.db, companyId, {
+      apiKey: apiKey || undefined,
+      apiSecret: apiSecret || undefined,
+    });
+  }
 
-  return NextResponse.json({ ok: true, message: "Integrace Hikvision uložena." });
+  const integration = await loadHikvisionIntegration(auth.db, companyId);
+  const configured = integration
+    ? await isHikvisionIntegrationConfigured(integration, auth.db, companyId)
+    : await isHikvisionIntegrationConfiguredForOrg(auth.db, companyId);
+
+  return NextResponse.json(
+    {
+      ok: true,
+      message: "Integrace Hikvision uložena.",
+      integrationConfigured: configured.configured,
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }

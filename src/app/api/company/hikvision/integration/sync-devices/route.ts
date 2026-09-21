@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import {
   hikvisionIntegrationRef,
-  loadHikvisionIntegration,
   providerKindForOrgIntegration,
-  upsertHikvisionCameras,
-  deviceDocId,
+  upsertHikvisionDevices,
+  loadHikvisionIntegration,
 } from "@/lib/hikvision/stores";
 import {
   hikvisionTenantOk,
@@ -22,7 +21,7 @@ export async function POST(request: NextRequest) {
   if (!auth.ok) {
     return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
   }
-  let body: { companyId?: string; externalDeviceId?: string };
+  let body: { companyId?: string };
   try {
     body = await request.json();
   } catch {
@@ -37,15 +36,11 @@ export async function POST(request: NextRequest) {
   const integration = await loadHikvisionIntegration(auth.db, companyId);
   const providerKind = providerKindForOrgIntegration(integration);
 
-  const result = await provider.syncCameras(
-    { db: auth.db, organizationId: companyId },
-    body.externalDeviceId
-  );
+  const result = await provider.syncDevices({ db: auth.db, organizationId: companyId });
   if (!result.ok) {
     await hikvisionIntegrationRef(auth.db, companyId).set(
       {
         lastError: result.error.slice(0, 500),
-        lastCommunicationAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
@@ -61,30 +56,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const count = await upsertHikvisionCameras(
+  const count = await upsertHikvisionDevices(
     auth.db,
     companyId,
-    result.cameras.map((ch) => ({
-      provider: providerKind,
-      deviceId: deviceDocId(ch.externalDeviceId),
-      externalDeviceId: ch.externalDeviceId,
-      externalCameraId: ch.externalCameraId,
-      channelId: ch.channelId,
-      name: ch.name,
-      ipAddress: ch.ipAddress ?? null,
-      model: ch.model ?? null,
-      serialNumber: ch.serialNumber ?? null,
-      online: ch.online,
-      trackStreamId: ch.trackStreamId,
-      capabilities: ch.capabilities,
+    providerKind,
+    result.devices.map((d) => ({
+      externalDeviceId: d.externalDeviceId,
+      name: d.name,
+      model: d.model ?? null,
+      serialMasked: d.serialMasked ?? null,
+      online: d.online,
+      capabilities: d.capabilities,
     }))
   );
 
-  const online = result.cameras.filter((c) => c.online).length;
-
   await hikvisionIntegrationRef(auth.db, companyId).set(
     {
-      cameraCount: count,
+      deviceCount: count,
       lastSyncAt: FieldValue.serverTimestamp(),
       lastCommunicationAt: FieldValue.serverTimestamp(),
       lastError: null,
@@ -94,12 +82,7 @@ export async function POST(request: NextRequest) {
   );
 
   return NextResponse.json(
-    {
-      ok: true,
-      cameraCount: count,
-      onlineCount: online,
-      message: `Synchronizováno ${count} kamer (${online} online).`,
-    },
+    { ok: true, deviceCount: count, message: `Synchronizováno ${count} zařízení.` },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

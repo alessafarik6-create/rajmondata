@@ -11,9 +11,13 @@ import {
   HIKVISION_INTEGRATION_CREDENTIALS_DOC,
   HIKVISION_INTEGRATION_DOC_ID,
   HIKVISION_INTEGRATION_SUBCOLLECTION,
+  HIKVISION_DEVICES_SUBCOLLECTION,
   type HikvisionCameraDoc,
+  type HikvisionDeviceDoc,
   type HikvisionIntegrationDoc,
+  type HikvisionProviderKind,
 } from "@/lib/hikvision/types";
+import { providerIdFromConnectionMode, normalizeConnectionMode } from "@/lib/hikvision/providers/resolver";
 import type { HikvisionIsapiConfig } from "@/lib/hikvision/isapi-client";
 
 export function hikvisionIntegrationRef(db: Firestore, companyId: string) {
@@ -35,6 +39,13 @@ export function hikvisionCamerasCol(db: Firestore, companyId: string) {
     .collection(COMPANIES_COLLECTION)
     .doc(companyId)
     .collection(HIKVISION_CAMERAS_SUBCOLLECTION);
+}
+
+export function hikvisionDevicesCol(db: Firestore, companyId: string) {
+  return db
+    .collection(COMPANIES_COLLECTION)
+    .doc(companyId)
+    .collection(HIKVISION_DEVICES_SUBCOLLECTION);
 }
 
 export function hikvisionConnectorsCol(db: Firestore, companyId: string) {
@@ -67,6 +78,48 @@ export async function saveHikvisionPassword(
   );
 }
 
+export async function saveHikConnectApiCredentials(
+  db: Firestore,
+  companyId: string,
+  input: { apiKey?: string; apiSecret?: string }
+): Promise<void> {
+  const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+  if (input.apiKey !== undefined && input.apiKey.trim()) {
+    patch.apiKey = input.apiKey.trim();
+  }
+  if (input.apiSecret !== undefined && input.apiSecret.trim()) {
+    patch.encryptedApiSecret = encryptHikvisionSecret(input.apiSecret.trim());
+  }
+  if (Object.keys(patch).length <= 1) return;
+  await hikvisionCredentialsRef(db, companyId).set(patch, { merge: true });
+}
+
+export async function loadHikConnectApiCredentials(
+  db: Firestore,
+  companyId: string
+): Promise<{ apiKey: string; apiSecret: string } | null> {
+  const snap = await hikvisionCredentialsRef(db, companyId).get();
+  if (!snap.exists) return null;
+  const data = snap.data() as { apiKey?: string; encryptedApiSecret?: string };
+  const apiKey = String(data.apiKey ?? "").trim();
+  const enc = String(data.encryptedApiSecret ?? "").trim();
+  if (!apiKey || !enc) return null;
+  try {
+    const apiSecret = decryptHikvisionSecret(enc);
+    return { apiKey, apiSecret };
+  } catch {
+    return null;
+  }
+}
+
+export async function hasHikConnectApiSecret(db: Firestore, companyId: string): Promise<boolean> {
+  const snap = await hikvisionCredentialsRef(db, companyId).get();
+  if (!snap.exists) return false;
+  return Boolean(
+    String((snap.data() as { encryptedApiSecret?: string })?.encryptedApiSecret ?? "").trim()
+  );
+}
+
 export async function loadHikvisionPassword(
   db: Firestore,
   companyId: string
@@ -90,7 +143,14 @@ export async function buildIsapiConfigForOrg(
   if (!integration?.active) {
     return { ok: false, error: "Integrace Hikvision není aktivní." };
   }
-  if (integration.connectionMode === "local_connector") {
+  const mode = normalizeConnectionMode(integration.connectionMode);
+  if (mode === "hikconnect_openapi") {
+    return {
+      ok: false,
+      error: "Režim Hik-Connect Cloud: ISAPI se nepoužívá (cloud OpenAPI provider).",
+    };
+  }
+  if (mode === "local_connector") {
     return {
       ok: false,
       error:
@@ -129,8 +189,58 @@ export function firestoreTimestampToIso(value: unknown): string | null {
   return null;
 }
 
-export function cameraDocId(channelId: string): string {
-  return `ch_${String(channelId).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+export function cameraDocId(channelId: string, externalDeviceId?: string): string {
+  const ch = String(channelId).replace(/[^a-zA-Z0-9_-]/g, "_");
+  if (externalDeviceId?.trim()) {
+    const dev = String(externalDeviceId).replace(/[^a-zA-Z0-9_-]/g, "_");
+    return `ch_${dev}_${ch}`;
+  }
+  return `ch_${ch}`;
+}
+
+export function deviceDocId(externalDeviceId: string): string {
+  return `dev_${String(externalDeviceId).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+export async function upsertHikvisionDevices(
+  db: Firestore,
+  companyId: string,
+  provider: HikvisionProviderKind,
+  devices: Omit<HikvisionDeviceDoc, "organizationId" | "provider" | "updatedAt" | "lastSyncAt">[]
+): Promise<number> {
+  const batch = db.batch();
+  const col = hikvisionDevicesCol(db, companyId);
+  const now = FieldValue.serverTimestamp();
+  for (const dev of devices) {
+    const id = deviceDocId(dev.externalDeviceId);
+    batch.set(
+      col.doc(id),
+      {
+        ...dev,
+        organizationId: companyId,
+        provider,
+        lastSyncAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+  }
+  await batch.commit();
+  return devices.length;
+}
+
+export async function listHikvisionDevices(
+  db: Firestore,
+  companyId: string
+): Promise<(HikvisionDeviceDoc & { id: string })[]> {
+  const snap = await hikvisionDevicesCol(db, companyId).get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as HikvisionDeviceDoc) }));
+}
+
+export function providerKindForOrgIntegration(
+  integration: HikvisionIntegrationDoc | null
+): HikvisionProviderKind {
+  return providerIdFromConnectionMode(normalizeConnectionMode(integration?.connectionMode));
 }
 
 export async function upsertHikvisionCameras(
@@ -142,7 +252,7 @@ export async function upsertHikvisionCameras(
   const col = hikvisionCamerasCol(db, companyId);
   const now = FieldValue.serverTimestamp();
   for (const ch of channels) {
-    const id = cameraDocId(ch.channelId);
+    const id = cameraDocId(ch.channelId, ch.externalDeviceId ?? undefined);
     batch.set(
       col.doc(id),
       {
