@@ -47,17 +47,6 @@ export function buildOrganizationBriefing(
         text: `${ctx.emails.urgent} urgentních e-mailů`,
       });
     }
-    for (const s of ctx.emails.samples ?? []) {
-      const ref = organizationAiEntityRef("email", s.id, s.subject);
-      if (ref) {
-        items.push({
-          priority: "NORMAL",
-          icon: "✉",
-          text: `E-mail: ${s.subject}`,
-          ref,
-        });
-      }
-    }
   }
 
   if (ctx.jobs?.overdue) {
@@ -66,15 +55,6 @@ export function buildOrganizationBriefing(
       icon: "⚠",
       text: `${ctx.jobs.overdue} zakázek je po termínu`,
     });
-    for (const j of ctx.jobs.overdueSamples ?? []) {
-      const ref = organizationAiEntityRef("job", j.id, j.name);
-      items.push({
-        priority: "HIGH",
-        icon: "⚠",
-        text: `Zakázka ${j.name} je ${j.daysOverdue} dní po termínu`,
-        ref: ref ?? undefined,
-      });
-    }
   }
 
   if (ctx.documents?.pendingClassification) {
@@ -91,15 +71,6 @@ export function buildOrganizationBriefing(
       icon: "💰",
       text: `${ctx.finance.overdueInvoices} faktur je po splatnosti`,
     });
-    for (const inv of ctx.finance.overdueSamples ?? []) {
-      const ref = organizationAiEntityRef("invoice", inv.id, inv.label);
-      items.push({
-        priority: "HIGH",
-        icon: "💰",
-        text: `Faktura ${inv.label} je po splatnosti`,
-        ref: ref ?? undefined,
-      });
-    }
   }
 
   if (ctx.calendar) {
@@ -149,38 +120,18 @@ export function buildOrganizationBriefing(
   if (attention === 0) {
     intro = "Z dostupných dat teď nevidím nic urgentního. Můžete se zeptat na konkrétní oblast firmy.";
   } else if (attention === 1) {
-    intro = "Dnes jsem našla 1 věc, která potřebuje vaši pozornost.";
+    intro = "Dnes potřebuje pozornost 1 věc.";
   } else if (attention >= 2 && attention <= 4) {
-    intro = `Dnes jsem našla ${attention} věci, které potřebují vaši pozornost.`;
+    intro = `Dnes potřebuje pozornost ${attention} věci.`;
   } else {
-    intro = `Dnes jsem našla ${attention} věcí, které potřebují vaši pozornost.`;
-  }
-
-  const detailParts: string[] = [];
-  if (ctx.emails?.waitingForReply && ctx.emails.waitingForReply > 0) {
-    detailParts.push(
-      `Dnes bych doporučila věnovat pozornost ${ctx.emails.waitingForReply} e-mailům čekajícím na odpověď.`
-    );
-  }
-  if (ctx.jobs?.overdueSamples?.[0]) {
-    const j = ctx.jobs.overdueSamples[0];
-    detailParts.push(`Zakázka ${j.name} je po termínu.`);
-  }
-  if (ctx.finance?.overdueInvoices) {
-    detailParts.push(`${ctx.finance.overdueInvoices} faktury jsou po splatnosti.`);
-  }
-  if (ctx.calendar?.nextEventLabel) {
-    detailParts.push(`Dnes v kalendáři: ${ctx.calendar.nextEventLabel}.`);
-  }
-  if (detailParts.length) {
-    intro = `${intro} ${detailParts.join(" ")}`.trim();
+    intro = `Dnes potřebuje pozornost ${attention} věcí.`;
   }
 
   return {
     ok: true,
     greeting,
     intro,
-    items: items.slice(0, 12),
+    items: items.slice(0, 5),
     attentionCount: attention,
     contextGeneratedAt: ctx.generatedAt,
   };

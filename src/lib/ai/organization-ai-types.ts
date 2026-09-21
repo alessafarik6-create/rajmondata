@@ -9,20 +9,36 @@ export type OrganizationAiBriefingItem = {
   ref?: OrganizationAiEntityRef;
 };
 
+export type OrganizationAiEmailAccess =
+  | { ok: true; mailboxId: string; emailAddress: string; connectionStatus: string }
+  | { ok: false; code: string; userMessage: string };
+
 export type OrganizationAiContextSnapshot = {
   generatedAt: string;
   organizationId: string;
+  userId: string;
   user: {
     displayName: string;
     role: string;
   };
+  activeMailboxId?: string | null;
+  emailAccess?: OrganizationAiEmailAccess;
   modulesEnabled: Record<string, boolean>;
   permissions: Record<string, "none" | "read" | "write">;
   emails?: {
+    mailboxId: string;
+    emailAddress: string;
     waitingForReply: number;
     overdue: number;
     urgent: number;
-    samples?: Array<{ id: string; subject: string }>;
+    unread?: number;
+    samples?: Array<{
+      id: string;
+      subject: string;
+      sender?: string;
+      receivedAt?: string;
+      waitingHours?: number;
+    }>;
   };
   jobs?: {
     active: number;

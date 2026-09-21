@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireEmailMailboxRead } from "@/lib/email-mailbox/api-auth";
-import {
-  loadAccessibleAccountIdSet,
-  messageBelongsToUser,
-} from "@/lib/email-mailbox/account-access";
-import {
-  emailMessagesCol,
-  computeDashboardEmailStats,
-} from "@/lib/email-mailbox/message-store";
+import { loadUserEmailDashboardSnapshot } from "@/lib/email-mailbox/user-mailbox-context";
+import { emailMessagesCol, computeDashboardEmailStats } from "@/lib/email-mailbox/message-store";
 import type { EmailMessageDoc } from "@/lib/email-mailbox/types";
+import { messageVisibleToUser } from "@/lib/email-mailbox/message-access";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
 
 export const dynamic = "force-dynamic";
@@ -24,8 +19,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
-  const accessibleIds = await loadAccessibleAccountIdSet(perm.db, companyId, perm.caller.uid);
-  if (accessibleIds.size === 0) {
+  const loaded = await loadUserEmailDashboardSnapshot({
+    db: perm.db,
+    organizationId: companyId,
+    userId: perm.caller.uid,
+    hasEmailPortalRead: true,
+    messageLimit: 200,
+  });
+  if (!loaded.ok) {
     return NextResponse.json({
       ok: true,
       waitingReply: 0,
@@ -34,13 +35,15 @@ export async function GET(request: NextRequest) {
       urgent: 0,
       assignedToJobs: 0,
       aiImportant: 0,
+      mailboxStatus: loaded.context.code,
     });
   }
 
+  const mailboxIds = new Set([loaded.mailbox.mailboxId]);
   const snap = await emailMessagesCol(perm.db, companyId).orderBy("receivedAt", "desc").limit(200).get();
   const rows = snap.docs
     .map((d) => d.data() as EmailMessageDoc)
-    .filter((m) => messageBelongsToUser(m, perm.caller.uid, accessibleIds));
+    .filter((m) => messageVisibleToUser(m, perm.caller.uid, mailboxIds));
 
   const dash = computeDashboardEmailStats(rows, perm.caller.uid);
   let assignedToJobs = 0;
@@ -53,6 +56,8 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    mailboxId: loaded.mailbox.mailboxId,
+    mailboxEmail: loaded.mailbox.emailAddress,
     waitingReply: dash.waitingReply,
     overdue: dash.overdue,
     assignedToMe: dash.assignedToMe,

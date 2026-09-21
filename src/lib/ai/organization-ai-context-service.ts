@@ -17,15 +17,7 @@ import {
   isJobOpenForDeadlineWidget,
   selectUpcomingDeadlineJobs,
 } from "@/lib/dashboard-deadline-jobs";
-import {
-  computeDashboardEmailStats,
-  emailMessagesCol,
-} from "@/lib/email-mailbox/message-store";
-import {
-  loadAccessibleAccountIdSet,
-  messageBelongsToUser,
-} from "@/lib/email-mailbox/account-access";
-import type { EmailMessageDoc } from "@/lib/email-mailbox/types";
+import { loadUserEmailDashboardSnapshot } from "@/lib/email-mailbox/user-mailbox-context";
 import { listHikvisionCameras } from "@/lib/hikvision/stores";
 import type { OrganizationAiContextSnapshot } from "@/lib/ai/organization-ai-types";
 
@@ -91,9 +83,11 @@ export class OrganizationAiContextService {
       permissions[id] = portalPerms[id] ?? "none";
     }
 
+    const emailPortalRead = canAccessPortalModule(portalPerms, "emails", "read");
+
     const modulesEnabled: Record<string, boolean> = {
       jobs: moduleActive(this.company, catalog, "jobs"),
-      emails: moduleActive(this.company, catalog, "emails"),
+      emails: emailPortalRead,
       invoicing: moduleActive(this.company, catalog, "invoicing"),
       cameras: moduleActive(this.company, catalog, "cameras"),
       sklad: moduleActive(this.company, catalog, "sklad"),
@@ -104,51 +98,64 @@ export class OrganizationAiContextService {
     const snapshot: OrganizationAiContextSnapshot = {
       generatedAt: new Date().toISOString(),
       organizationId: this.organizationId,
+      userId: this.caller.uid,
       user: { displayName, role: this.caller.role },
       modulesEnabled,
       permissions,
+      activeMailboxId: null,
     };
 
     const tasks: Promise<void>[] = [];
 
-    if (
-      modulesEnabled.emails &&
-      canAccessPortalModule(portalPerms, "emails", "read")
-    ) {
+    if (emailPortalRead) {
       tasks.push(
         (async () => {
-          const accessibleIds = await loadAccessibleAccountIdSet(
-            this.db,
-            this.organizationId,
-            this.caller.uid
-          );
-          if (accessibleIds.size === 0) {
-            snapshot.emails = { waitingForReply: 0, overdue: 0, urgent: 0, samples: [] };
+          const loaded = await loadUserEmailDashboardSnapshot({
+            db: this.db,
+            organizationId: this.organizationId,
+            userId: this.caller.uid,
+            hasEmailPortalRead: true,
+            messageLimit: 200,
+          });
+          if (!loaded.ok) {
+            snapshot.emailAccess = {
+              ok: false,
+              code: loaded.context.code,
+              userMessage: loaded.context.userMessage,
+            };
+            snapshot.activeMailboxId = null;
             return;
           }
-          const snap = await emailMessagesCol(this.db, this.organizationId)
-            .orderBy("receivedAt", "desc")
-            .limit(120)
-            .get();
-          const rows = snap.docs
-            .map((d) => ({ id: d.id, ...(d.data() as EmailMessageDoc) }))
-            .filter((m) => messageBelongsToUser(m, this.caller.uid, accessibleIds));
-          const dash = computeDashboardEmailStats(rows, this.caller.uid);
-          const samples = rows
-            .filter((m) => m.needsReply && !m.resolved && m.direction === "inbound")
-            .slice(0, 3)
-            .map((m) => ({
-              id: m.id,
-              subject: String(m.subject ?? "E-mail").slice(0, 120),
-            }));
+          snapshot.activeMailboxId = loaded.mailbox.mailboxId;
+          snapshot.emailAccess = {
+            ok: true,
+            mailboxId: loaded.mailbox.mailboxId,
+            emailAddress: loaded.mailbox.emailAddress,
+            connectionStatus: loaded.mailbox.connectionStatus,
+          };
           snapshot.emails = {
-            waitingForReply: dash.waitingReply,
-            overdue: dash.overdue,
-            urgent: dash.urgent,
-            samples,
+            mailboxId: loaded.mailbox.mailboxId,
+            emailAddress: loaded.mailbox.emailAddress,
+            waitingForReply: loaded.snapshot.waitingForReply,
+            overdue: loaded.snapshot.overdue,
+            urgent: loaded.snapshot.urgent,
+            unread: loaded.snapshot.unread,
+            samples: loaded.snapshot.waitingSamples.slice(0, 5).map((s) => ({
+              id: s.messageId,
+              subject: s.subject,
+              sender: s.sender,
+              receivedAt: s.receivedAt,
+              waitingHours: s.waitingHours,
+            })),
           };
         })()
       );
+    } else {
+      snapshot.emailAccess = {
+        ok: false,
+        code: "EMAIL_PERMISSION_DENIED",
+        userMessage: "K modulu E-mail nemáte oprávnění.",
+      };
     }
 
     if (modulesEnabled.jobs && canAccessPortalModule(portalPerms, "jobs", "read")) {

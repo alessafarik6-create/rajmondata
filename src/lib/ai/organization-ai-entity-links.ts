@@ -19,7 +19,7 @@ export function organizationAiEntityHref(type: string, id: string): string | nul
       return `/portal/documents?doc=${safe}`;
     case "email":
     case "email_message":
-      return `/portal/emails?message=${safe}`;
+      return `/portal/email?messageId=${safe}`;
     case "lead":
     case "inquiry":
       return `/portal/leads?lead=${safe}`;

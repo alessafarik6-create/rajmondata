@@ -43,6 +43,28 @@ function questionNeedsCameras(q: string): boolean {
   return s.includes("kamer") || s.includes("cctv") || s.includes("nvr");
 }
 
+function questionNeedsEmail(q: string): boolean {
+  const s = q.toLowerCase();
+  return (
+    s.includes("e-mail") ||
+    s.includes("email") ||
+    s.includes("mail") ||
+    s.includes("schránk") ||
+    s.includes("nepřečten") ||
+    s.includes("odpověd")
+  );
+}
+
+function resolveEmailAccessAnswer(ctx: OrganizationAiContextSnapshot): string | null {
+  if (ctx.emailAccess && !ctx.emailAccess.ok) {
+    return ctx.emailAccess.userMessage;
+  }
+  if (!ctx.modulesEnabled.emails) {
+    return "K modulu E-mail nemáte oprávnění.";
+  }
+  return null;
+}
+
 export async function answerOrganizationQuestion(input: {
   question: string;
   context: OrganizationAiContextSnapshot;
@@ -74,6 +96,13 @@ export async function answerOrganizationQuestion(input: {
     };
   }
 
+  if (questionNeedsEmail(q)) {
+    const blocked = resolveEmailAccessAnswer(input.context);
+    if (blocked) {
+      return { ok: true, answer: blocked, references: [], deniedModules: ["emails"] };
+    }
+  }
+
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
     return answerDeterministic(q, input.context);
@@ -81,9 +110,12 @@ export async function answerOrganizationQuestion(input: {
 
   const system = `Jsi RAJMONDATA AI — firemní sekretářka. Odpovídej POUZE z JSON kontextu níže.
 - Nevymýšlej čísla, zakázky, jména ani termíny.
+- E-maily v kontextu jsou vždy z aktivní schránky přihlášeného uživatele (emailAccess / emails.mailboxId).
+- Nikdy nepiš, že „modul e-mailů není aktivní“, pokud emailAccess.ok=true nebo emails obsahuje data.
+- Pokud emailAccess.ok=false, použij userMessage z emailAccess.
 - Pokud kontext neobsahuje odpověď, napiš: "Tyto informace nyní nemám k dispozici."
 - Odpovídej česky, stručně, profesionálně.
-- references: pouze entity, které jsou v kontextu se skutečným id.
+- references: pouze entity, které jsou v kontextu se skutečným id (typ email pro zprávy).
 - denied=true pouze pokud uživatel žádá data mimo kontext kvůli oprávnění (už řešeno).`;
 
   const userPrompt = JSON.stringify(
@@ -208,12 +240,35 @@ function answerDeterministic(
     };
   }
 
-  if (ctx.emails && s.includes("e-mail")) {
-    return {
-      ok: true,
-      answer: `E-maily čekající na odpověď: ${ctx.emails.waitingForReply}, po lhůtě: ${ctx.emails.overdue}.`,
-      references: [],
-    };
+  if (questionNeedsEmail(q)) {
+    const blocked = resolveEmailAccessAnswer(ctx);
+    if (blocked) return { ok: true, answer: blocked, references: [] };
+  }
+
+  if (ctx.emails && questionNeedsEmail(q)) {
+    const addr = ctx.emails.emailAddress ? ` (${ctx.emails.emailAddress})` : "";
+    const lines: string[] = [];
+    if (s.includes("nepřečten")) {
+      lines.push(`Nepřečtených e-mailů: ${ctx.emails.unread ?? 0}${addr}.`);
+    } else if (s.includes("neodpověd") || s.includes("čekaj") || s.includes("odpověd")) {
+      lines.push(
+        `E-maily čekající na odpověď: ${ctx.emails.waitingForReply}${addr}. Po lhůtě: ${ctx.emails.overdue}.`
+      );
+      for (const sample of ctx.emails.samples ?? []) {
+        lines.push(`• ${sample.subject}${sample.sender ? ` — ${sample.sender}` : ""}`);
+      }
+    } else if (s.includes("termín") || s.includes("po lhůt")) {
+      lines.push(`E-maily po termínu odpovědi: ${ctx.emails.overdue}${addr}.`);
+    } else {
+      lines.push(
+        `Ve vaší schránce${addr}: ${ctx.emails.waitingForReply} čeká na odpověď, ${ctx.emails.overdue} po lhůtě, ${ctx.emails.unread ?? 0} nepřečtených.`
+      );
+    }
+    const refs = (ctx.emails.samples ?? [])
+      .slice(0, 5)
+      .map((m) => organizationAiEntityRef("email", m.id, m.subject))
+      .filter((x): x is NonNullable<typeof x> => x != null);
+    return { ok: true, answer: lines.join("\n"), references: refs };
   }
 
   return {

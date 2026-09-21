@@ -65,18 +65,14 @@ export function DashboardEmailAttentionWidget({ companyId }: { companyId: string
       setLoading(true);
       try {
         const token = await user.getIdToken();
-        const [statsRes, msgRes] = await Promise.all([
-          fetch(`/api/company/email-mailbox/stats?companyId=${encodeURIComponent(companyId)}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(
-            `/api/company/email-mailbox/messages?companyId=${encodeURIComponent(companyId)}&view=inbox`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          ),
-        ]);
+        const statsRes = await fetch(
+          `/api/company/email-mailbox/stats?companyId=${encodeURIComponent(companyId)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
         const statsData = await statsRes.json();
-        const msgData = await msgRes.json();
         if (cancelled) return;
+        const activeMailboxId =
+          typeof statsData.mailboxId === "string" ? statsData.mailboxId : null;
         if (statsData.ok) {
           setStats({
             waitingReply: statsData.waitingReply ?? 0,
@@ -85,6 +81,15 @@ export function DashboardEmailAttentionWidget({ companyId }: { companyId: string
             urgent: statsData.urgent ?? 0,
           });
         }
+        const msgQuery = activeMailboxId
+          ? `&accountId=${encodeURIComponent(activeMailboxId)}`
+          : "";
+        const msgRes = await fetch(
+          `/api/company/email-mailbox/messages?companyId=${encodeURIComponent(companyId)}&view=inbox${msgQuery}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const msgData = await msgRes.json();
+        if (cancelled) return;
         const list = Array.isArray(msgData.messages) ? (msgData.messages as PreviewMessage[]) : [];
         setMessages(list.slice(0, 5));
       } catch {
