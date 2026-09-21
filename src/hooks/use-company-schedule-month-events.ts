@@ -14,6 +14,7 @@ import {
   buildCompanyScheduleEvents,
   type CompanyScheduleCalendarEvent,
 } from "@/lib/company-schedule-events";
+import { pragueMonthScheduledAtIsoRange } from "@/lib/calendar/company-calendar-service";
 
 export function useCompanyScheduleMonthEvents(
   companyId: string | undefined,
@@ -38,8 +39,7 @@ export function useCompanyScheduleMonthEvents(
 
   const measurementsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
-    const startIso = monthStart.toISOString();
-    const endIso = monthEnd.toISOString();
+    const { startIso, endIso } = pragueMonthScheduledAtIsoRange(month);
     return query(
       collection(firestore, "companies", companyId, "measurements"),
       where("scheduledAt", ">=", startIso),

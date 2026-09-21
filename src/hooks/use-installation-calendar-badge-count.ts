@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { endOfDay, startOfDay } from "date-fns";
 import { isValidCompanyScheduleEvent } from "@/lib/company-schedule-events";
 import { useCompanyScheduleMonthEvents } from "@/hooks/use-company-schedule-month-events";
+import { calendarEventAssignsToViewer } from "@/lib/calendar/company-calendar-service";
 
 /**
  * Badge na dlaždici Kalendář — dnešní montáže ve stavu „aktivní“ (planned / inProgress)
@@ -12,6 +13,7 @@ import { useCompanyScheduleMonthEvents } from "@/hooks/use-company-schedule-mont
 export function useInstallationCalendarBadgeCount(params: {
   companyId: string | undefined;
   employeeId?: string | null;
+  viewerUid?: string | null;
   /** Owner / admin / manager / accountant — celá firma. */
   isPrivileged?: boolean;
 }): { count: number; loading: boolean } {
@@ -33,12 +35,13 @@ export function useInstallationCalendarBadgeCount(params: {
       const st = String(ev.status ?? "");
       if (st === "done" || st === "canceled") return false;
       if (params.isPrivileged) return true;
-      const eid = String(params.employeeId ?? "").trim();
-      if (!eid) return false;
-      const ids = ev.assignedEmployeeIds ?? [];
-      return Array.isArray(ids) && ids.includes(eid);
+      return calendarEventAssignsToViewer(
+        ev,
+        String(params.employeeId ?? "").trim(),
+        String(params.viewerUid ?? "").trim()
+      );
     }).length;
-  }, [events, params.isPrivileged, params.employeeId]);
+  }, [events, params.isPrivileged, params.employeeId, params.viewerUid]);
 
   return { count, loading };
 }

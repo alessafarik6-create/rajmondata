@@ -1,5 +1,6 @@
 import { parseISO } from "date-fns";
 import { parseFirestoreScheduledAt } from "@/lib/lead-meeting-utils";
+import { getAssignedEmployeeIdsFromFirestore } from "@/lib/calendar/company-calendar-service";
 import type { MeasurementDoc, MeasurementStatus } from "@/lib/measurements";
 import { MEASUREMENT_STATUS_LABELS } from "@/lib/measurements";
 import type { EmployeeNotificationType } from "@/lib/employee-notifications";
@@ -209,10 +210,9 @@ export function buildCompanyScheduleEvents(
     const createdByUid =
       typeof raw?.createdBy === "string" && raw.createdBy.trim() ? raw.createdBy.trim() : undefined;
 
-    const assignedEmployeeIdsRaw = raw?.assignedEmployeeIds;
-    const assignedEmployeeIds = Array.isArray(assignedEmployeeIdsRaw)
-      ? assignedEmployeeIdsRaw.map((x) => String(x ?? "").trim()).filter(Boolean)
-      : undefined;
+    const assignedEmployeeIds = getAssignedEmployeeIdsFromFirestore(raw);
+    const assignedEmployeeIdsNorm =
+      assignedEmployeeIds.length > 0 ? assignedEmployeeIds : undefined;
     const assignedEmployeeNamesRaw = raw?.assignedEmployeeNames;
     const assignedEmployeeNames = Array.isArray(assignedEmployeeNamesRaw)
       ? assignedEmployeeNamesRaw.map((x) => String(x ?? "").trim()).filter(Boolean)
@@ -263,7 +263,7 @@ export function buildCompanyScheduleEvents(
         jobId,
         jobName,
         customerId,
-        assignedEmployeeIds,
+        assignedEmployeeIds: assignedEmployeeIdsNorm,
         assignedEmployeeNames,
         reminderOffsetsMinutes,
       });
@@ -299,6 +299,8 @@ export function buildCompanyScheduleEvents(
       notificationType: nt,
       notificationMessage,
       titleClass: v.titleClass,
+      assignedEmployeeIds: assignedEmployeeIdsNorm,
+      assignedEmployeeNames,
       reminderOffsetsMinutes,
     });
   }
@@ -314,9 +316,18 @@ export function buildCompanyScheduleEvents(
     const note = String(raw.note ?? "").trim();
     const phone = String(raw.phone ?? "").trim();
     const address = String(raw.address ?? "").trim();
+    const createdByUid =
+      typeof raw?.createdBy === "string" && raw.createdBy.trim()
+        ? raw.createdBy.trim()
+        : undefined;
+    const mAssigned = getAssignedEmployeeIdsFromFirestore(
+      raw as Record<string, unknown>
+    );
     out.push({
       id: `z-${raw.id}`,
       at,
+      createdByUid,
+      assignedEmployeeIds: mAssigned.length > 0 ? mAssigned : undefined,
       title: raw.customerName?.trim() || "—",
       headline: note || "Zaměření",
       kind: "measurement",

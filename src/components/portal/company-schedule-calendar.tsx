@@ -53,6 +53,10 @@ import {
   employeeCanWriteCalendarEventKind,
   resolveCalendarPermissions,
 } from "@/lib/calendar/calendar-access";
+import {
+  calendarEventAssignsToViewer,
+  filterCompanyCalendarEventsForViewer,
+} from "@/lib/calendar/company-calendar-service";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -553,6 +557,7 @@ export function CompanyScheduleCalendar({
       .map((e) => {
         const r = e as {
           id?: string;
+          authUserId?: string;
           firstName?: string;
           lastName?: string;
           displayName?: string;
@@ -565,9 +570,13 @@ export function CompanyScheduleCalendar({
             ? r.displayName.trim()
             : null) ||
           (typeof r.email === "string" && r.email.trim() ? r.email.trim() : r.id);
-        return { id: r.id, name };
+        const authUserId =
+          typeof r.authUserId === "string" && r.authUserId.trim()
+            ? r.authUserId.trim()
+            : undefined;
+        return { id: r.id, name, authUserId };
       })
-      .filter((x): x is { id: string; name: string } => x != null);
+      .filter((x): x is NonNullable<typeof x> => x != null);
   }, [employeesRaw]);
   const employeeIds = useMemo(() => {
     return employeeOptions.map((e) => e.id);
@@ -682,7 +691,13 @@ export function CompanyScheduleCalendar({
   const viewerUid = String(user?.uid ?? "").trim();
   const viewerEmployeeId = String(profile?.employeeId ?? "").trim();
   const events = useMemo(() => {
-    let list = eventsRaw;
+    let list = filterCompanyCalendarEventsForViewer(eventsRaw, {
+      restrictToEmployeeScope: restrictEmployeeEvents,
+      viewerUid,
+      viewerEmployeeId,
+      isManagement,
+      calendarAccess,
+    });
     if (scheduleFilter === "installationsOnly") {
       list = list.filter((ev) => isValidCompanyScheduleEvent(ev) && ev.kind === "installation");
     } else if (scheduleFilter === "meetingsOnly") {
@@ -692,27 +707,7 @@ export function CompanyScheduleCalendar({
           (ev.kind === "meeting" || ev.kind === "measurement")
       );
     }
-    if (!isManagement) {
-      list = list.filter((ev) => {
-        if (!isValidCompanyScheduleEvent(ev)) return false;
-        return employeeCanViewCalendarEventKind(ev.kind, calendarAccess);
-      });
-    }
-    if (!restrictEmployeeEvents || !viewerUid) return list;
-    return list.filter((ev) => {
-      if (!isValidCompanyScheduleEvent(ev)) return false;
-      if (ev.kind === "measurement") return true;
-      if (ev.kind === "installation") {
-        if (!viewerEmployeeId) return false;
-        const ids = ev.assignedEmployeeIds ?? [];
-        return Array.isArray(ids) && ids.includes(viewerEmployeeId);
-      }
-      if (ev.kind === "meeting") {
-        if (ev.sentToAllEmployees) return true;
-        return ev.createdByUid === viewerUid;
-      }
-      return true;
-    });
+    return list;
   }, [
     eventsRaw,
     restrictEmployeeEvents,
@@ -1037,6 +1032,16 @@ export function CompanyScheduleCalendar({
         employeeTargetCount: employeeIds.length,
       });
 
+      const expandedInstallAssigneeIds = (() => {
+        const out = new Set<string>();
+        for (const id of selectedInstallEmployeeIds) {
+          out.add(id);
+          const row = employeeOptions.find((e) => e.id === id);
+          if (row?.authUserId) out.add(row.authUserId);
+        }
+        return [...out];
+      })();
+
       const assignedNames = selectedInstallEmployeeIds.map((id) => {
         const row = employeeOptions.find((e) => e.id === id);
         return row?.name ?? id;
@@ -1068,7 +1073,7 @@ export function CompanyScheduleCalendar({
           updatedAt: serverTimestamp(),
           endsAt: endsAtField,
           ...(endsAtField ? { endAt: endsAtField } : {}),
-          assignedEmployeeIds: selectedInstallEmployeeIds,
+          assignedEmployeeIds: expandedInstallAssigneeIds,
           assignedEmployeeNames: assignedNames,
           ...(installJobId.trim() ? { jobId: installJobId.trim() } : {}),
           ...(installJobName.trim() ? { jobName: installJobName.trim() } : {}),
@@ -1401,8 +1406,7 @@ export function CompanyScheduleCalendar({
     Boolean(
       viewerEmployeeId &&
         ev.kind === "installation" &&
-        Array.isArray(ev.assignedEmployeeIds) &&
-        ev.assignedEmployeeIds.includes(viewerEmployeeId)
+        calendarEventAssignsToViewer(ev, viewerEmployeeId, viewerUid)
     );
 
   const setInstallationQuickStatus = async (ev: CalendarEvent, st: InstallationStatus) => {

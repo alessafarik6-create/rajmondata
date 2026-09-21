@@ -1,6 +1,13 @@
 import { format, parseISO, startOfDay } from "date-fns";
 import type { CompanyScheduleCalendarEvent } from "@/lib/company-schedule-events";
 import { isValidCompanyScheduleEvent } from "@/lib/company-schedule-events";
+import {
+  filterCompanyCalendarEventsForViewer,
+} from "@/lib/calendar/company-calendar-service";
+import {
+  resolveCalendarPermissions,
+  type CalendarPermissionsResolved,
+} from "@/lib/calendar/calendar-access";
 import type { DashboardTaskItem } from "@/lib/dashboard-task-items-merge";
 
 export type DashboardCalendarFilter = "all" | "meetings" | "jobs" | "tasks";
@@ -57,22 +64,23 @@ export function filterScheduleEventsForDashboardViewer(
     restrictEmployeeEvents: boolean;
     viewerUid: string;
     viewerEmployeeId: string;
+    isManagement?: boolean;
+    calendarAccess?: CalendarPermissionsResolved;
   }
 ): CompanyScheduleCalendarEvent[] {
-  if (!opts.restrictEmployeeEvents || !opts.viewerUid) return events;
-  return events.filter((ev) => {
-    if (!isValidCompanyScheduleEvent(ev)) return false;
-    if (ev.kind === "measurement") return true;
-    if (ev.kind === "installation") {
-      if (!opts.viewerEmployeeId) return false;
-      const ids = ev.assignedEmployeeIds ?? [];
-      return Array.isArray(ids) && ids.includes(opts.viewerEmployeeId);
-    }
-    if (ev.kind === "meeting") {
-      if (ev.sentToAllEmployees) return true;
-      return ev.createdByUid === opts.viewerUid;
-    }
-    return true;
+  const calendarAccess =
+    opts.calendarAccess ??
+    resolveCalendarPermissions({
+      role: opts.isManagement ? "admin" : "employee",
+      employeeDoc: null,
+    });
+
+  return filterCompanyCalendarEventsForViewer(events, {
+    restrictToEmployeeScope: opts.restrictEmployeeEvents,
+    viewerUid: opts.viewerUid,
+    viewerEmployeeId: opts.viewerEmployeeId,
+    isManagement: opts.isManagement === true,
+    calendarAccess,
   });
 }
 

@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useCompanyScheduleMonthEvents } from "@/hooks/use-company-schedule-month-events";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
 import type { DashboardTaskItem } from "@/lib/dashboard-task-items-merge";
 import {
   buildDashboardCalendarEvents,
@@ -83,6 +84,7 @@ function parseISOSafe(iso: string): Date {
 
 export function DashboardCompactCalendar(props: DashboardCompactCalendarProps) {
   const router = useRouter();
+  const portalPerm = usePortalPermissionsOptional();
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [filter, setFilter] = useState<DashboardCalendarFilter>("all");
   const [dayDialogKey, setDayDialogKey] = useState<string | null>(null);
@@ -104,6 +106,8 @@ export function DashboardCompactCalendar(props: DashboardCompactCalendarProps) {
       restrictEmployeeEvents: props.restrictEmployeeEvents,
       viewerUid: props.viewerUid,
       viewerEmployeeId: props.viewerEmployeeId,
+      isManagement: !props.restrictEmployeeEvents,
+      calendarAccess: portalPerm?.calendar,
     });
   }, [
     raw0,
@@ -112,6 +116,7 @@ export function DashboardCompactCalendar(props: DashboardCompactCalendarProps) {
     props.restrictEmployeeEvents,
     props.viewerUid,
     props.viewerEmployeeId,
+    portalPerm?.calendar,
   ]);
 
   const rangeStart = startOfWeek(startOfMonth(visibleMonth), { weekStartsOn: 1 });
