@@ -1,0 +1,27 @@
+import { NextRequest, NextResponse } from "next/server";
+import { hikvisionTenantOk, requireCamerasRead } from "@/lib/hikvision/api-auth";
+import { HikvisionStreamGateway } from "@/lib/hikvision/stream-gateway";
+
+export const dynamic = "force-dynamic";
+
+type Params = { params: Promise<{ cameraId: string }> };
+
+export async function POST(request: NextRequest, { params }: Params) {
+  const auth = await requireCamerasRead(request);
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
+  }
+  const { cameraId } = await params;
+  const companyId = auth.caller.companyId;
+  if (!hikvisionTenantOk(auth.caller, companyId)) {
+    return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
+  }
+
+  const gateway = new HikvisionStreamGateway();
+  const session = await gateway.startLiveSession({
+    organizationId: companyId,
+    cameraId,
+    userId: auth.caller.uid,
+  });
+  return NextResponse.json(session, { status: 501 });
+}

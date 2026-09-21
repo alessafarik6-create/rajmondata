@@ -39,6 +39,7 @@ import {
 import type { DashboardWidgetId } from "@/lib/dashboard-widget-layout";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
+  DashboardCamerasCompact,
   DashboardFleetCompact,
   DashboardOffersCompact,
   DashboardPendingDocumentsCompact,
@@ -98,6 +99,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
   const documentsAccess = usePortalModuleAccess("documents");
   const laborAccess = usePortalModuleAccess("labor");
   const fleetAccess = usePortalModuleAccess("fleet");
+  const camerasAccess = usePortalModuleAccess("cameras");
   const skladAccess = usePortalModuleAccess("sklad");
   const vyrobaAccess = usePortalModuleAccess("vyroba");
   const offersAccess = usePortalModuleAccess("offers");
@@ -420,6 +422,12 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
         ),
       });
     }
+    if (camerasAccess.canRead) {
+      list.push({
+        id: "cameras",
+        node: <DashboardCamerasCompact companyId={props.companyId} />,
+      });
+    }
     if (documentsAccess.canRead && props.pendingDocuments.length > 0) {
       list.push({
         id: "pendingDocuments",
@@ -464,6 +472,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
     skladAccess.canRead,
     vyrobaAccess.canRead,
     fleetAccess.canRead,
+    camerasAccess.canRead,
     props,
     jobStats,
     leadStats,

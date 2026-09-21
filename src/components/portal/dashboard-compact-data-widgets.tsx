@@ -5,7 +5,8 @@ import Link from "next/link";
 import { collection, limit, orderBy, query } from "firebase/firestore";
 import { useCollection, useFirestore, useMemoFirebase } from "@/firebase";
 import { DashboardCompactCard } from "@/components/portal/dashboard-compact-card";
-import { Car, Factory, FileText, Package } from "lucide-react";
+import { Car, Cctv, Factory, FileText, Package } from "lucide-react";
+import { useUser } from "@/firebase";
 import type { InventoryItemRow, InventoryMovementRow } from "@/lib/inventory-types";
 import type { ProductionRecordRow, ProductionStatus } from "@/lib/production-types";
 import { PRODUCTION_STATUS_LABELS } from "@/lib/production-types";
@@ -427,6 +428,77 @@ export function DashboardPendingDocumentsCompact({
           })}
         </ul>
       </div>
+    </DashboardCompactCard>
+  );
+}
+
+export function DashboardCamerasCompact({ companyId }: { companyId: string }) {
+  const { user } = useUser();
+  const [summary, setSummary] = useState<{
+    total: number;
+    online: number;
+    offline: number;
+    nvrStatus: string;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!user || !companyId) return;
+    let cancelled = false;
+    setLoading(true);
+    void (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/hikvision/cameras/summary?companyId=${encodeURIComponent(companyId)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const j = await res.json();
+        if (!cancelled && j?.ok) {
+          setSummary({
+            total: j.total ?? 0,
+            online: j.online ?? 0,
+            offline: j.offline ?? 0,
+            nvrStatus: j.nvrStatus ?? "not_connected",
+          });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, companyId]);
+
+  return (
+    <DashboardCompactCard
+      title="Kamery"
+      icon={<Cctv className="h-4 w-4 text-orange-600" />}
+      accentClass="border-l-orange-500"
+      href="/portal/cameras"
+      footerLabel="Otevřít kamery"
+    >
+      {loading && !summary ? (
+        <p className="text-xs text-muted-foreground">Načítání…</p>
+      ) : (
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>
+            Celkem: <strong className="text-foreground">{summary?.total ?? 0}</strong>
+          </p>
+          <p>
+            Online: <strong className="text-foreground">{summary?.online ?? 0}</strong>
+            {" · "}
+            Offline: <strong className="text-foreground">{summary?.offline ?? 0}</strong>
+          </p>
+          <p>
+            NVR:{" "}
+            <strong className="text-foreground">
+              {summary?.nvrStatus === "online" ? "Online" : "Nepřipojeno / offline"}
+            </strong>
+          </p>
+        </div>
+      )}
     </DashboardCompactCard>
   );
 }

@@ -29,6 +29,7 @@ import {
   UsersRound,
   FileStack,
   Car,
+  Cctv,
 } from "lucide-react";
 
 /** Ikony položek portálu — sdílené sidebar + mobilní dlaždice. */
@@ -45,6 +46,7 @@ export const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
   emails: Mail,
   meetingRecords: CalendarClock,
   fleet: Car,
+  cameras: Cctv,
   finance: Landmark,
   invoices: Receipt,
   documents: FileText,

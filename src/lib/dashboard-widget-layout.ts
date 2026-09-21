@@ -12,6 +12,7 @@ export type DashboardWidgetId =
   | "warehouse"
   | "production"
   | "fleet"
+  | "cameras"
   | "pendingDocuments"
   | "activity";
 
@@ -28,6 +29,7 @@ export const DEFAULT_DASHBOARD_WIDGET_ORDER: DashboardWidgetId[] = [
   "warehouse",
   "production",
   "fleet",
+  "cameras",
   "pendingDocuments",
   "activity",
 ];

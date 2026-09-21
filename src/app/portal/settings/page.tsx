@@ -29,6 +29,7 @@ import { InquiryEmailIdentitySettingsCard } from "@/components/settings/inquiry-
 import { EmailMailboxAccountsSettingsCard } from "@/components/settings/email-mailbox-accounts-settings-card";
 import { EmailMyMailboxSettingsCard } from "@/components/settings/email-my-mailbox-settings-card";
 import { FleetIntegrationSettingsCard } from "@/components/settings/fleet-integration-settings-card";
+import { HikvisionIntegrationSettingsCard } from "@/components/settings/hikvision-integration-settings-card";
 import { InquiryOfferTemplatesSettingsCard } from "@/components/settings/inquiry-offer-templates-settings-card";
 import { InquiryOfferLibrarySettingsCard } from "@/components/settings/inquiry-offer-library-settings-card";
 import { AiAssistantSettingsCard } from "@/components/settings/ai-assistant-settings-card";
@@ -688,6 +689,9 @@ export default function SettingsPage() {
                       <div className="pt-2">
                         <h3 className="font-semibold mb-2">Integrace → GPS / Vozový park</h3>
                         <FleetIntegrationSettingsCard companyId={companyId} />
+                      </div>
+                      <div className="pt-2">
+                        <HikvisionIntegrationSettingsCard companyId={companyId} />
                       </div>
                     </div>
                   ) : null}
