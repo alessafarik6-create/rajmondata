@@ -289,9 +289,15 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
   const isCloud = form.connectionMode === "HIKCONNECT_OPENAPI";
   const isDirect = form.connectionMode === "DIRECT_ISAPI";
   const isConnector = form.connectionMode === "LOCAL_CONNECTOR";
-  const cloudReadyForTest =
-    isCloud && form.active && form.hasApiKey && form.hasApiSecret && form.integrationConfigured;
-  const canTest = isCloud ? cloudReadyForTest || (form.apiKey.trim() && apiSecret.trim()) : true;
+  const cloudCredentialsOk =
+    isCloud &&
+    form.active &&
+    form.apiKey.trim() &&
+    (form.hasApiSecret || apiSecret.trim());
+  const cloudApiConnected = isCloud && form.lifecycle === "CONNECTED";
+  const canTest = isCloud ? cloudCredentialsOk : true;
+  const canSyncDevices = isCloud && cloudApiConnected;
+  const canSyncCameras = isCloud && cloudApiConnected && form.deviceCount > 0;
 
   return (
     <Card>
@@ -321,13 +327,19 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
             Stav:{" "}
             <span className="font-medium">{lifecycleLabel(form.lifecycle, isCloud)}</span>
           </p>
-          {isCloud && form.integrationConfigured ? (
-            <p className="text-xs text-muted-foreground">
-              OpenAPI přihlašovací údaje jsou uloženy.
-              {form.lifecycle !== "CONNECTED"
-                ? " Pro dokončení API komunikace je nutná Hik-Connect OpenAPI specifikace na serveru."
-                : null}
-            </p>
+          {isCloud ? (
+            <>
+              <p>
+                API credentials:{" "}
+                <span className="font-medium">
+                  {form.hasApiKey && form.hasApiSecret ? "nakonfigurováno" : "neúplné"}
+                </span>
+              </p>
+              <p>
+                Cloud API:{" "}
+                <span className="font-medium">{cloudApiConnected ? "připojeno" : "nepřipojeno"}</span>
+              </p>
+            </>
           ) : null}
           {isCloud && form.hasApiSecret ? (
             <p className="text-xs text-green-700">API Secret je uložen</p>
@@ -524,10 +536,20 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
           >
             {isCloud ? "Otestovat Hik-Connect" : "Otestovat připojení"}
           </Button>
-          <Button type="button" variant="outline" onClick={() => void syncDevices()} disabled={busy}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void syncDevices()}
+            disabled={busy || (isCloud && !canSyncDevices)}
+          >
             Načíst zařízení
           </Button>
-          <Button type="button" variant="outline" onClick={() => void syncCameras()} disabled={busy}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void syncCameras()}
+            disabled={busy || (isCloud && !canSyncCameras)}
+          >
             Synchronizovat kamery
           </Button>
           {isConnector ? (

@@ -1,23 +1,25 @@
-# Hik-Connect for Teams — OpenAPI
+# Hik-Connect for Teams / HikCentral Connect OpenAPI
 
-RAJMONDATA používá **samostatný cloud provider** (`HIKCONNECT_OPENAPI`), ne ISAPI na LAN.
+Implementace v RAJMONDATA vychází z **HikCentral Connect OpenAPI Developer Guide** (Hik-Connect for Teams):
 
-V tomto repozitáři **není** kompletní oficiální specifikace OpenAPI (base URL, podpis requestu, nonce, hash, endpointy pro zařízení/kanály/stream/playback).
+- Autentizace: `POST /api/hccgw/platform/v1/token/get` — JSON `{ appKey, secretKey }` → `accessToken`
+- Další volání: HTTP header **`Token: {accessToken}`** (ne ISAPI Digest, ne HCP Artemis X-Ca-Signature)
+- Test: token + `GET /api/hccgw/platform/v1/systemproperties`
+- Zařízení: `POST /api/hccgw/resource/v1/devices/get`
+- Kamery: `POST /api/hccgw/resource/v1/areas/cameras/get`
+- Stream token (live): `GET /api/hccgw/platform/v1/streamtoken/get`
+- Snapshot: `POST /api/hccgw/resource/v1/device/capturePic`
 
-## Co je implementováno
+## Server env (Vercel)
 
-- Provider abstrakce a ukládání **API Key / API Secret** (šifrovaně server-side)
-- Test / sync / live / snapshot volají `HikConnectOpenApiProvider` — bez specifikace vrací srozumitelné `TODO` / chybu `HIKCONNECT_API_NOT_CONFIGURED`
+| Proměnná | Povinné | Popis |
+|----------|---------|--------|
+| `EMAIL_CREDENTIALS_ENCRYPTION_KEY` | ano | Šifrování API Secret v DB |
+| `HIKCONNECT_OPENAPI_BASE_URL` | ne | Přepíše region, např. `https://ieu.hikcentralconnect.com` |
+| `HIKCONNECT_OPENAPI_REGION` | ne | `eu` (default), `us`, `sg`, `sa`, `ru` — hostname dle dokumentace |
 
-## Co doplnit po obdržení dokumentace od Hikvision
+API Key / Secret **organizace** — pouze v Firestore (`private/credentials`), ne v env.
 
-1. `HIKCONNECT_OPENAPI_BASE_URL` — produkční base URL
-2. Algoritmus podpisu v `sign-request.ts` (TODO)
-3. Endpoint testu připojení v `HikConnectOpenApiProvider.testConnection`
-4. Endpoint seznamu zařízení v `listDevices`
-5. Endpoint kanálů/kamer v `listCameras`
-6. Mechanismus live view (URL / token / SDK) v `getLiveView`
-7. Vyhledávání záznamů v `searchRecordings`
-8. Webhook ověření podpisu v `src/app/api/webhooks/hikvision/route.ts`
+## Klient
 
-**Nepoužívejte** veřejnou IP z Device Management, RTSP port ani Digest ISAPI jako náhradu OpenAPI.
+`client.ts` — token cache per organization, ukládá `areaDomain` z odpovědi token/get.

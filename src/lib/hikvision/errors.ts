@@ -9,7 +9,8 @@ export type HikvisionErrorCode =
   | "LIVE_VIEW_NOT_SUPPORTED"
   | "PLAYBACK_NOT_SUPPORTED"
   | "INTEGRATION_NOT_CONFIGURED"
-  | "ISAPI_ERROR";
+  | "ISAPI_ERROR"
+  | "HIKCONNECT_TIMEOUT";
 
 const CS_MESSAGES: Record<HikvisionErrorCode, string> = {
   HIKCONNECT_AUTH_FAILED: "Přihlášení k Hik-Connect se nezdařilo. Zkontrolujte API Key a API Secret.",
@@ -24,6 +25,7 @@ const CS_MESSAGES: Record<HikvisionErrorCode, string> = {
   PLAYBACK_NOT_SUPPORTED: "Přehrávání záznamů pro tento režim zatím není k dispozici.",
   INTEGRATION_NOT_CONFIGURED: "Integrace Hikvision není pro zvolený režim nakonfigurována.",
   ISAPI_ERROR: "Chyba přímého ISAPI připojení k NVR.",
+  HIKCONNECT_TIMEOUT: "Hik-Connect API neodpovědělo včas (timeout).",
 };
 
 export class HikvisionServiceError extends Error {

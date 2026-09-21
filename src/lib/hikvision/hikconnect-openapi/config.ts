@@ -1,21 +1,44 @@
 /**
- * Server-side konfigurace Hik-Connect OpenAPI.
- * Hodnoty pouze z env — nikdy z klienta.
+ * Hik-Connect for Teams / HikCentral Connect OpenAPI
+ * @see HikCentral Connect OpenAPI Developer Guide (Chapter 3 — AK/SK → Token)
  */
 
-export type HikConnectOpenApiServerConfig = {
-  baseUrl: string | null;
-  /** Relativní cesta pro test — doplnit dle oficiální dokumentace. */
-  testPath: string | null;
+export type HikConnectRegion = "eu" | "us" | "sg" | "sa" | "ru";
+
+/** Regionální hostname dle dokumentace (Getting Started — Country/Region Server Address). */
+const REGION_HOST: Record<HikConnectRegion, string> = {
+  eu: "ieu.hikcentralconnect.com",
+  us: "ius.hikcentralconnect.com",
+  sg: "isg.hikcentralconnect.com",
+  sa: "isa.hikcentralconnect.com",
+  ru: "iru.hikcentralconnect.com",
 };
 
-export function getHikConnectOpenApiServerConfig(): HikConnectOpenApiServerConfig {
-  const baseUrl = String(process.env.HIKCONNECT_OPENAPI_BASE_URL ?? "").trim() || null;
-  const testPath = String(process.env.HIKCONNECT_OPENAPI_TEST_PATH ?? "").trim() || null;
-  return { baseUrl, testPath };
+export const HCC_TOKEN_PATH = "/api/hccgw/platform/v1/token/get";
+export const HCC_SYSTEM_PROPERTIES_PATH = "/api/hccgw/platform/v1/systemproperties";
+export const HCC_DEVICES_GET_PATH = "/api/hccgw/resource/v1/devices/get";
+export const HCC_CAMERAS_GET_PATH = "/api/hccgw/resource/v1/areas/cameras/get";
+export const HCC_STREAM_TOKEN_PATH = "/api/hccgw/platform/v1/streamtoken/get";
+export const HCC_CAPTURE_PIC_PATH = "/api/hccgw/resource/v1/device/capturePic";
+
+export function resolveHikConnectApiBaseUrl(areaDomain?: string | null): string {
+  const fromEnv = String(process.env.HIKCONNECT_OPENAPI_BASE_URL ?? "").trim();
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, "");
+  }
+  const domain = String(areaDomain ?? "").trim();
+  if (domain) {
+    const host = domain.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+    return `https://${host}`;
+  }
+  const region = String(process.env.HIKCONNECT_OPENAPI_REGION ?? "eu")
+    .trim()
+    .toLowerCase() as HikConnectRegion;
+  const host = REGION_HOST[region] ?? REGION_HOST.eu;
+  return `https://${host}`;
 }
 
 export function isHikConnectOpenApiServerConfigured(): boolean {
-  const { baseUrl, testPath } = getHikConnectOpenApiServerConfig();
-  return Boolean(baseUrl && testPath);
+  if (String(process.env.HIKCONNECT_OPENAPI_BASE_URL ?? "").trim()) return true;
+  return true;
 }

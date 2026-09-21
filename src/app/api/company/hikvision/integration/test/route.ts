@@ -31,6 +31,7 @@ function httpStatusForProviderCode(code: string): number {
   if (code === "HIKCONNECT_PERMISSION_DENIED") return 403;
   if (code === "HIKCONNECT_RATE_LIMIT") return 429;
   if (code === "HIKCONNECT_API_NOT_CONFIGURED") return 503;
+  if (code === "HIKCONNECT_TIMEOUT") return 504;
   if (code === "DEVICE_OFFLINE") return 503;
   return 502;
 }

@@ -52,6 +52,8 @@ export type HikvisionIntegrationDoc = {
   cameraCount?: number;
   deviceCount?: number;
   hikConnectTeamName?: string | null;
+  /** Doména z token/get (areaDomain) pro správný region API. */
+  hikConnectAreaDomain?: string | null;
   connectorOnline?: boolean;
   lastConnectorHeartbeatAt?: unknown;
   pendingRegistrationTokenHash?: string | null;
