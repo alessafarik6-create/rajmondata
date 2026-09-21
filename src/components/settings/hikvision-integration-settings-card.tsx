@@ -332,6 +332,7 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
             `Player init: ${liveDiagData.playerInit}`,
             sdkLoad.ok ? `JSSDK global: OK (${sdkLoad.scriptUrl})` : `JSSDK global: ${sdkLoad.code}`,
             `Runtime phase: ${runtime.phase}${runtime.lastErrorCode ? ` (${runtime.lastErrorCode})` : ""}`,
+            `Counts — SDK load: ${runtime.sdkLoadCount}, live fetch: ${runtime.liveConfigFetchCount}, create: ${runtime.playerCreateCount}, destroy: ${runtime.playerDestroyCount}, play: ${runtime.playStartCount}`,
           ].join("\n")
         );
       }

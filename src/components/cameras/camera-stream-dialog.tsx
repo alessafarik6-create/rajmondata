@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useUser } from "@/firebase";
 import {
   Dialog,
@@ -14,7 +14,12 @@ import {
   type HikvisionLivePlayerErrorCode,
 } from "@/components/cameras/hikvision-ezopen-player";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { setHikvisionPlayerStreamMeta } from "@/lib/hikvision/player-runtime-diagnostics";
+import {
+  bumpHikvisionLiveConfigFetchCount,
+  hikLiveLog,
+  resetHikvisionPlayerDebugCounters,
+  setHikvisionPlayerStreamMeta,
+} from "@/lib/hikvision/player-runtime-diagnostics";
 
 type CameraRow = { id: string; name: string; online: boolean };
 
@@ -36,65 +41,88 @@ export function CameraLiveDialog(props: {
   camera: CameraRow | null;
 }) {
   const { open, onOpenChange, companyId, camera } = props;
+  const cameraId = camera?.id ?? null;
   const { user } = useUser();
   const isMobile = useIsMobile();
   const [session, setSession] = useState<EzopenSession | null>(null);
   const [loadingStream, setLoadingStream] = useState(false);
   const [streamErrorCode, setStreamErrorCode] = useState<HikvisionLivePlayerErrorCode | null>(null);
+  const fetchGenRef = useRef(0);
 
-  const load = useCallback(async () => {
-    if (!user || !camera) return;
-    setLoadingStream(true);
-    setStreamErrorCode(null);
-    try {
-      const token = await user.getIdToken();
-      const res = await fetch(
-        `/api/company/hikvision/cameras/${encodeURIComponent(camera.id)}/live`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ companyId }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setSession(null);
-        setStreamErrorCode(mapStreamApiError(data));
-        return;
+  const fetchLiveConfig = useCallback(
+    async (reason: "open" | "retry") => {
+      if (!user || !cameraId) return;
+      const gen = ++fetchGenRef.current;
+      bumpHikvisionLiveConfigFetchCount();
+      hikLiveLog("CONFIG FETCH", { reason, camera: cameraId });
+      setLoadingStream(true);
+      if (reason === "open") {
+        setStreamErrorCode(null);
       }
-      setSession({
-        ezopenUrl: String(data.ezopenUrl ?? data.url ?? ""),
-        accessToken: String(data.accessToken ?? ""),
-        appKey: data.appKey,
-        streamAreaDomain: data.streamAreaDomain,
-      });
-      setHikvisionPlayerStreamMeta({
-        streamUrlPresent: Boolean(data.streamUrlPresent ?? data.ezopenUrl ?? data.url),
-        expiresAt: data.expiresAt ? String(data.expiresAt) : null,
-      });
-    } catch {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/hikvision/cameras/${encodeURIComponent(cameraId)}/live`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ companyId }),
+          }
+        );
+        const data = await res.json();
+        if (gen !== fetchGenRef.current) return;
+        if (!res.ok || !data.ok) {
+          if (reason === "open") {
+            setSession(null);
+          }
+          setStreamErrorCode(mapStreamApiError(data));
+          return;
+        }
+        setSession({
+          ezopenUrl: String(data.ezopenUrl ?? data.url ?? ""),
+          accessToken: String(data.accessToken ?? ""),
+          appKey: data.appKey,
+          streamAreaDomain: data.streamAreaDomain,
+        });
+        setStreamErrorCode(null);
+        setHikvisionPlayerStreamMeta({
+          streamUrlPresent: Boolean(data.streamUrlPresent ?? data.ezopenUrl ?? data.url),
+          expiresAt: data.expiresAt ? String(data.expiresAt) : null,
+        });
+      } catch {
+        if (gen !== fetchGenRef.current) return;
+        if (reason === "open") setSession(null);
+        setStreamErrorCode("STREAM_TOKEN_FAILED");
+      } finally {
+        if (gen === fetchGenRef.current) {
+          setLoadingStream(false);
+        }
+      }
+    },
+    [user, cameraId, companyId]
+  );
+
+  useEffect(() => {
+    if (!open || !cameraId) {
+      fetchGenRef.current += 1;
       setSession(null);
-      setStreamErrorCode("STREAM_TOKEN_FAILED");
-    } finally {
+      setStreamErrorCode(null);
       setLoadingStream(false);
+      return;
     }
-  }, [user, camera, companyId]);
+    resetHikvisionPlayerDebugCounters();
+    setSession(null);
+    void fetchLiveConfig("open");
+  }, [open, cameraId, fetchLiveConfig]);
 
-  React.useEffect(() => {
-    if (open && camera) {
-      setSession(null);
-      setStreamErrorCode(null);
-      void load();
-    } else {
-      setSession(null);
-      setStreamErrorCode(null);
-    }
-  }, [open, camera, load]);
+  const handleRetry = useCallback(() => {
+    void fetchLiveConfig("retry");
+  }, [fetchLiveConfig]);
 
-  if (!camera) return null;
+  if (!camera || !cameraId) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -111,13 +139,16 @@ export function CameraLiveDialog(props: {
           </DialogHeader>
         ) : null}
         <HikvisionEzopenPlayer
-          session={loadingStream ? null : session}
+          key={cameraId}
+          cameraId={cameraId}
+          session={session}
+          streamLoading={loadingStream && !session}
           cameraName={camera.name}
           online={camera.online}
           mode="live"
           className={isMobile ? "h-[100dvh] rounded-none" : "w-full"}
           onClose={() => onOpenChange(false)}
-          onRetry={() => void load()}
+          onRetry={handleRetry}
           streamErrorCode={streamErrorCode}
         />
       </DialogContent>

@@ -173,7 +173,9 @@ export function CameraPlaybackDialog(props: {
         ) : null}
 
         <HikvisionEzopenPlayer
-          session={loading ? null : session}
+          cameraId={camera.id}
+          session={session}
+          streamLoading={loading && !session}
           cameraName={camera.name}
           online={camera.online}
           mode="playback"

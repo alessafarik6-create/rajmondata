@@ -5,6 +5,8 @@ import {
   type HikvisionJssdkPublicConfig,
 } from "@/lib/hikvision/jssdk-config-shared";
 import {
+  bumpHikvisionSdkLoadCount,
+  hikLiveLog,
   setHikvisionPlayerError,
   setHikvisionPlayerPhase,
   setHikvisionPlayerSdkMeta,
@@ -152,9 +154,11 @@ async function loadHikvisionSdkInternal(): Promise<HikvisionSdkLoadResult> {
   if (isHikvisionSdkReady()) {
     setHikvisionPlayerPhase("SDK_LOADED");
     setHikvisionPlayerSdkMeta(scriptCandidates[0] ?? config.scriptUrl);
+    hikLiveLog("SDK READY");
     return { ok: true, config, scriptUrl: scriptCandidates[0] ?? config.scriptUrl };
   }
 
+  bumpHikvisionSdkLoadCount();
   setHikvisionPlayerPhase("SDK_LOADING");
   setHikvisionPlayerError(null);
 
@@ -167,6 +171,7 @@ async function loadHikvisionSdkInternal(): Promise<HikvisionSdkLoadResult> {
     if (ok) {
       setHikvisionPlayerPhase("SDK_LOADED");
       setHikvisionPlayerSdkMeta(candidate);
+      hikLiveLog("SDK READY");
       return { ok: true, config, scriptUrl: candidate };
     }
   }

@@ -57,7 +57,7 @@ function LiveTile(props: {
     return () => {
       cancelled = true;
     };
-  }, [cameraId, user, companyId, camera]);
+  }, [cameraId, user, companyId]);
 
   return (
     <div className="border rounded-lg overflow-hidden bg-muted flex flex-col min-h-[180px]">
@@ -80,6 +80,7 @@ function LiveTile(props: {
       </div>
       {camera && session ? (
         <HikvisionEzopenPlayer
+          cameraId={camera.id}
           session={session}
           cameraName={camera.name}
           online={camera.online}
