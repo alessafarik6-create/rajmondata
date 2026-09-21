@@ -15,19 +15,16 @@ import {
 
 export async function ensurePlatformModulesSeeded(db: Firestore): Promise<void> {
   const col = db.collection(PLATFORM_MODULES_COLLECTION);
-  const snap = await col.limit(1).get();
-  if (!snap.empty) return;
-
-  const batch = db.batch();
   for (const m of DEFAULT_PLATFORM_MODULES) {
     const ref = col.doc(m.code);
-    batch.set(ref, {
+    const snap = await ref.get();
+    if (snap.exists) continue;
+    await ref.set({
       ...m,
       updatedAt: FieldValue.serverTimestamp(),
       createdAt: FieldValue.serverTimestamp(),
     });
   }
-  await batch.commit();
 }
 
 export async function ensurePlatformSettingsSeeded(db: Firestore): Promise<void> {

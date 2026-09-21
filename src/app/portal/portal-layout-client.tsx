@@ -29,6 +29,7 @@ import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
 } from "@/lib/warehouse-production-access";
+import { resolveCameraPermissions } from "@/lib/hikvision/camera-access";
 import { ActivitySessionBridge } from "@/components/portal/activity-session-bridge";
 import { PortalTrialStatusBanner } from "@/components/portal/portal-trial-status-banner";
 import {
@@ -286,6 +287,21 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         return;
       }
     }
+    if (pathname.startsWith("/portal/cameras")) {
+      if (!canAccessCompanyModule(company, "cameras", platformCatalog)) {
+        router.replace("/portal/dashboard");
+        return;
+      }
+      const cam = resolveCameraPermissions({
+        role: String(profile.role || "employee"),
+        globalRoles: profile.globalRoles as string[] | undefined,
+        employeeDoc: profileEmployeeRow ?? null,
+        portalModuleCamerasLevel: portalPermissionsResolved?.cameras ?? "none",
+      });
+      if (!cam.view) {
+        router.replace("/portal/dashboard");
+      }
+    }
   }, [
     profile,
     isProfileLoading,
@@ -294,6 +310,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     router,
     profileEmployeeRow,
     platformCatalog,
+    portalPermissionsResolved,
   ]);
 
   /** Zaměstnanecké moduly (Peníze, Zprávy, Docházka, Zakázky) — skryté položky + blokace přímého URL. */

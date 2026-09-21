@@ -103,6 +103,8 @@ export function isPlatformModuleEnabledFromModuleMap(
       return Boolean(m.sklad);
     case "vyroba":
       return Boolean(m.vyroba);
+    case "cameras":
+      return Boolean(m.kamery);
     default:
       return false;
   }
@@ -255,8 +257,17 @@ export function hasActiveModuleAccess(
     return !isLicenseExplicitlyRevokedForPortal(company);
   }
 
+  const catalogForGlobal =
+    globalCatalog != null && Object.keys(globalCatalog).length > 0
+      ? { ...defaultPlatformCatalogMap(), ...globalCatalog }
+      : defaultPlatformCatalogMap();
+
   const effective = getEffectiveModulesMerged(company);
   if (isPlatformModuleEnabledFromModuleMap(effective, moduleCode)) {
+    const globalRow = catalogForGlobal[moduleCode];
+    if (globalRow && !globalRow.activeGlobally) {
+      return false;
+    }
     return !isLicenseExplicitlyRevokedForPortal(company);
   }
 

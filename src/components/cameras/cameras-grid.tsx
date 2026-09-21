@@ -78,7 +78,15 @@ function CameraSnapshot({
   );
 }
 
-export function CamerasGrid({ companyId }: { companyId: string }) {
+export function CamerasGrid({
+  companyId,
+  canLive = true,
+  canPlayback = false,
+}: {
+  companyId: string;
+  canLive?: boolean;
+  canPlayback?: boolean;
+}) {
   const { user } = useUser();
   const { toast } = useToast();
   const [cameras, setCameras] = useState<CameraRow[]>([]);
@@ -105,7 +113,14 @@ export function CamerasGrid({ companyId }: { companyId: string }) {
   }, [load]);
 
   async function onLive(cameraId: string) {
-    if (!user) return;
+    if (!user || !canLive) {
+      toast({
+        variant: "destructive",
+        title: "Živý obraz",
+        description: "Nemáte oprávnění CAMERAS_LIVE.",
+      });
+      return;
+    }
     const token = await user.getIdToken();
     const res = await fetch(
       `/api/company/hikvision/cameras/${encodeURIComponent(cameraId)}/live`,
@@ -172,10 +187,15 @@ export function CamerasGrid({ companyId }: { companyId: string }) {
               </p>
             </CardHeader>
             <CardFooter className="gap-2 pb-4">
-              <Button size="sm" variant="default" onClick={() => void onLive(cam.id)}>
+              <Button
+                size="sm"
+                variant="default"
+                disabled={!canLive}
+                onClick={() => void onLive(cam.id)}
+              >
                 <PlayCircle className="h-4 w-4 mr-1" /> Živý obraz
               </Button>
-              <Button size="sm" variant="outline" disabled>
+              <Button size="sm" variant="outline" disabled={!canPlayback}>
                 <History className="h-4 w-4 mr-1" /> Záznam
               </Button>
             </CardFooter>
@@ -207,10 +227,15 @@ export function CamerasGrid({ companyId }: { companyId: string }) {
               <p className="text-xs text-muted-foreground">Kanál {cam.channelId}</p>
             </CardHeader>
             <CardFooter className="gap-2 pb-4">
-              <Button size="sm" className="flex-1" onClick={() => void onLive(cam.id)}>
+              <Button
+                size="sm"
+                className="flex-1"
+                disabled={!canLive}
+                onClick={() => void onLive(cam.id)}
+              >
                 <PlayCircle className="h-4 w-4 mr-1" /> Živý obraz
               </Button>
-              <Button size="sm" variant="outline" className="flex-1" disabled>
+              <Button size="sm" variant="outline" className="flex-1" disabled={!canPlayback}>
                 <History className="h-4 w-4 mr-1" /> Záznam
               </Button>
             </CardFooter>

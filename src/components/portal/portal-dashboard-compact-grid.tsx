@@ -17,6 +17,10 @@ import { DashboardDocumentsToPayWidget } from "@/components/portal/dashboard-doc
 import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
 import { DashboardCompactCard } from "@/components/portal/dashboard-compact-card";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { useCameraPermissions } from "@/hooks/use-camera-permissions";
+import { useCompany } from "@/firebase/firestore/use-company";
+import { canAccessCompanyModule } from "@/lib/platform-access";
+import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { useActiveJobTasksFromJobList } from "@/components/jobs/use-active-job-tasks-from-jobs";
 import { useFirestore } from "@/firebase";
 import { buildMergedDashboardTaskItems } from "@/lib/dashboard-task-items-merge";
@@ -100,6 +104,11 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
   const laborAccess = usePortalModuleAccess("labor");
   const fleetAccess = usePortalModuleAccess("fleet");
   const camerasAccess = usePortalModuleAccess("cameras");
+  const cameraPerms = useCameraPermissions();
+  const { company } = useCompany();
+  const platformCatalog = useMergedPlatformModuleCatalog();
+  const camerasModuleOn =
+    company != null && canAccessCompanyModule(company, "cameras", platformCatalog);
   const skladAccess = usePortalModuleAccess("sklad");
   const vyrobaAccess = usePortalModuleAccess("vyroba");
   const offersAccess = usePortalModuleAccess("offers");
@@ -422,7 +431,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
         ),
       });
     }
-    if (camerasAccess.canRead) {
+    if (camerasModuleOn && camerasAccess.canRead && cameraPerms.view) {
       list.push({
         id: "cameras",
         node: <DashboardCamerasCompact companyId={props.companyId} />,
@@ -473,6 +482,8 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
     vyrobaAccess.canRead,
     fleetAccess.canRead,
     camerasAccess.canRead,
+    camerasModuleOn,
+    cameraPerms.view,
     props,
     jobStats,
     leadStats,

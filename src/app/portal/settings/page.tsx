@@ -30,6 +30,7 @@ import { EmailMailboxAccountsSettingsCard } from "@/components/settings/email-ma
 import { EmailMyMailboxSettingsCard } from "@/components/settings/email-my-mailbox-settings-card";
 import { FleetIntegrationSettingsCard } from "@/components/settings/fleet-integration-settings-card";
 import { HikvisionIntegrationSettingsCard } from "@/components/settings/hikvision-integration-settings-card";
+import { useCameraPermissions } from "@/hooks/use-camera-permissions";
 import { InquiryOfferTemplatesSettingsCard } from "@/components/settings/inquiry-offer-templates-settings-card";
 import { InquiryOfferLibrarySettingsCard } from "@/components/settings/inquiry-offer-library-settings-card";
 import { AiAssistantSettingsCard } from "@/components/settings/ai-assistant-settings-card";
@@ -69,6 +70,7 @@ export default function SettingsPage() {
     profile?.role === 'owner' || profile?.globalRoles?.includes('super_admin');
 
   const { company, companyName, companyId } = useCompany();
+  const cameraPerms = useCameraPermissions();
   const [companyNameInput, setCompanyNameInput] = useState('');
   const [icoInput, setIcoInput] = useState('');
   const [dicInput, setDicInput] = useState('');
@@ -690,9 +692,11 @@ export default function SettingsPage() {
                         <h3 className="font-semibold mb-2">Integrace → GPS / Vozový park</h3>
                         <FleetIntegrationSettingsCard companyId={companyId} />
                       </div>
-                      <div className="pt-2">
-                        <HikvisionIntegrationSettingsCard companyId={companyId} />
-                      </div>
+                      {cameraPerms.admin ? (
+                        <div className="pt-2">
+                          <HikvisionIntegrationSettingsCard companyId={companyId} />
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

@@ -144,6 +144,10 @@ function legacyEmployeeModuleCoarseAllowed(
   if (moduleId === "vyroba") {
     return row.canAccessProduction === true;
   }
+  if (moduleId === "cameras") {
+    const cp = row.cameraPermissions as { view?: boolean; admin?: boolean } | undefined;
+    return cp?.view === true || cp?.admin === true;
+  }
   if (moduleId === "labor") {
     return coarse.dochazka;
   }

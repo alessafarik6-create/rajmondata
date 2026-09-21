@@ -1077,7 +1077,15 @@ export default function EmployeesPage() {
     dismissWithModalLockRelease(() => setOrgSettingsEmp(null));
   };
 
-  const savePortalPermissions = async (permissions: Record<string, string>) => {
+  const savePortalPermissions = async (payload: {
+    permissions: Record<string, string>;
+    cameraPermissions?: {
+      view?: boolean;
+      live?: boolean;
+      playback?: boolean;
+      admin?: boolean;
+    } | null;
+  }) => {
     if (!canManage || !user || !permissionsEmp?.id) return;
     setPermissionsSaving(true);
     try {
@@ -1090,7 +1098,8 @@ export default function EmployeesPage() {
         },
         body: JSON.stringify({
           employeeId: permissionsEmp.id,
-          permissions,
+          permissions: payload.permissions,
+          cameraPermissions: payload.cameraPermissions,
         }),
       });
       const data = (await res.json()) as { error?: string };

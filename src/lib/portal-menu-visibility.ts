@@ -20,6 +20,7 @@ import {
   FLEET_PORTAL_MODULE_ID,
   isFleetMenuLicensed,
 } from "@/lib/portal-menu-fleet-access";
+import { resolveCameraPermissions } from "@/lib/hikvision/camera-access";
 
 function portalMenuRoleAllowed(def: PortalSidebarMenuDef, role: string): boolean {
   const r = normalizeCompanyRole(role);
@@ -107,6 +108,14 @@ export function isPortalMenuItemVisible(
         globalRoles,
         employeeRow: employeeRow as { canAccessProduction?: boolean } | null,
       });
+    }
+    if (def.platformModuleCode === "cameras" || def.id === "cameras") {
+      const cam = resolveCameraPermissions({
+        role,
+        globalRoles,
+        employeeDoc: employeeRow,
+      });
+      if (!cam.view) return false;
     }
   }
 

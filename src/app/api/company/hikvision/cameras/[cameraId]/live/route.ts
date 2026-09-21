@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hikvisionTenantOk, requireCamerasRead } from "@/lib/hikvision/api-auth";
+import { hikvisionTenantOk, requireCamerasLive } from "@/lib/hikvision/api-auth";
 import { HikvisionStreamGateway } from "@/lib/hikvision/stream-gateway";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 type Params = { params: Promise<{ cameraId: string }> };
 
 export async function POST(request: NextRequest, { params }: Params) {
-  const auth = await requireCamerasRead(request);
+  const auth = await requireCamerasLive(request);
   if (!auth.ok) {
     return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
   }

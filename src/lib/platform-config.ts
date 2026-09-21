@@ -20,6 +20,7 @@ export const PLATFORM_MODULE_CODES = [
   "jobs",
   "sklad",
   "vyroba",
+  "cameras",
 ] as const;
 
 export type PlatformModuleCode = (typeof PLATFORM_MODULE_CODES)[number];
@@ -130,6 +131,21 @@ export const DEFAULT_PLATFORM_MODULES: PlatformModuleDef[] = [
     billingType: "per_company",
     configurableBySuperadmin: true,
   },
+  {
+    code: "cameras",
+    name: "Kamery",
+    description:
+      "Hikvision kamerový systém, živé náhledy, snapshoty, záznamy a události.",
+    activeGlobally: true,
+    defaultEnabled: false,
+    basePriceCzk: 0,
+    priceMonthly: 0,
+    currency: "CZK",
+    billingPeriod: "monthly",
+    isPaid: true,
+    billingType: "per_company",
+    configurableBySuperadmin: true,
+  },
 ];
 
 export type ModuleEntitlement = {
@@ -209,6 +225,8 @@ export function portalPathsForModule(code: PlatformModuleCode): string[] {
       return ["/portal/sklad"];
     case "vyroba":
       return ["/portal/vyroba"];
+    case "cameras":
+      return ["/portal/cameras"];
     default:
       return [];
   }

@@ -21,6 +21,7 @@ export function platformCodesToCanonicalModuleKeys(
     else if (c === "invoicing") out.push("faktury", "doklady", "finance");
     else if (c === "sklad") out.push("sklad");
     else if (c === "vyroba") out.push("vyroba");
+    else if (c === "cameras") out.push("kamery");
   }
   return [...new Set(out)];
 }
@@ -36,6 +37,7 @@ const CANONICAL_KEYS_FOR_PLATFORM: {
   jobs: ["zakazky"],
   sklad: ["sklad"],
   vyroba: ["vyroba"],
+  cameras: ["kamery"],
 };
 
 export function buildPlatformModulesSyncFromLegacy(

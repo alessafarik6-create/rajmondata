@@ -19,6 +19,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ShieldAlert, Loader2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { normalizeCameraPermissionsForFirestore } from "@/lib/hikvision/camera-access";
 import {
   ALL_PORTAL_MODULE_IDS,
   applyPermissionPreset,
@@ -45,7 +47,10 @@ export function EmployeePortalPermissionsDialog(props: {
   employeeDoc: Record<string, unknown> | null;
   userRoleLabel?: string;
   busy?: boolean;
-  onSave: (permissions: Record<string, string>) => Promise<void>;
+  onSave: (payload: {
+    permissions: Record<string, string>;
+    cameraPermissions: ReturnType<typeof normalizeCameraPermissionsForFirestore>;
+  }) => Promise<void>;
 }) {
   const { open, onOpenChange, employeeName, employeeDoc, userRoleLabel, busy, onSave } = props;
 
@@ -64,9 +69,28 @@ export function EmployeePortalPermissionsDialog(props: {
 
   const [levels, setLevels] = useState(initial);
 
+  const initialCamera = useMemo(() => {
+    const raw = employeeDoc?.cameraPermissions;
+    if (raw && typeof raw === "object") {
+      const o = raw as Record<string, unknown>;
+      return {
+        view: o.view === true,
+        live: o.live === true,
+        playback: o.playback === true,
+        admin: o.admin === true,
+      };
+    }
+    return { view: false, live: false, playback: false, admin: false };
+  }, [employeeDoc]);
+
+  const [cameraFlags, setCameraFlags] = useState(initialCamera);
+
   useEffect(() => {
-    if (open) setLevels(initial);
-  }, [open, initial]);
+    if (open) {
+      setLevels(initial);
+      setCameraFlags(initialCamera);
+    }
+  }, [open, initial, initialCamera]);
 
   const applyPreset = (preset: PortalPermissionPresetId) => {
     setLevels(applyPermissionPreset(preset));
@@ -79,7 +103,33 @@ export function EmployeePortalPermissionsDialog(props: {
   };
 
   const handleSave = async () => {
-    await onSave(serializePortalModulePermissionsForFirestore(levels));
+    const cameraPermissions = normalizeCameraPermissionsForFirestore(cameraFlags);
+    let permissions = serializePortalModulePermissionsForFirestore(levels);
+    if (cameraPermissions?.view) {
+      permissions = { ...permissions, cameras: permissions.cameras ?? "read" };
+    } else if (cameraPermissions?.admin) {
+      permissions = { ...permissions, cameras: "write" };
+    }
+    await onSave({ permissions, cameraPermissions });
+  };
+
+  const setCameraFlag = (key: keyof typeof cameraFlags, checked: boolean) => {
+    setCameraFlags((prev) => {
+      const next = { ...prev, [key]: checked };
+      if (key === "admin" && checked) {
+        next.view = true;
+        next.live = true;
+        next.playback = true;
+      }
+      if (key === "view" && !checked) {
+        next.live = false;
+        next.playback = false;
+      }
+      if ((key === "live" || key === "playback") && checked) {
+        next.view = true;
+      }
+      return next;
+    });
   };
 
   return (
@@ -166,6 +216,41 @@ export function EmployeePortalPermissionsDialog(props: {
             </li>
           ))}
         </ul>
+
+        <div className="space-y-3 border-t border-slate-200 pt-3">
+          <p className="text-sm font-medium text-slate-900">Kamery</p>
+          <p className="text-xs text-slate-600">
+            Hikvision monitoring — detailní oprávnění k živému obrazu a správě NVR.
+          </p>
+          <ul className="space-y-2">
+            {(
+              [
+                ["view", "Zobrazit kamery", "Seznam kamer a snapshoty."],
+                ["live", "Živý obraz", "Sledování live streamu."],
+                ["playback", "Záznamy", "Historické záznamy."],
+                ["admin", "Správa kamer", "Integrace Hikvision a synchronizace."],
+              ] as const
+            ).map(([key, label, hint]) => (
+              <li key={key} className="flex items-start gap-2">
+                <Checkbox
+                  id={`cam-perm-${key}`}
+                  checked={cameraFlags[key]}
+                  disabled={
+                    busy ||
+                    (key !== "view" && key !== "admin" && !cameraFlags.view && !cameraFlags.admin)
+                  }
+                  onCheckedChange={(v) => setCameraFlag(key, v === true)}
+                />
+                <div className="grid gap-0.5 leading-none">
+                  <label htmlFor={`cam-perm-${key}`} className="text-sm font-medium cursor-pointer">
+                    {label}
+                  </label>
+                  <span className="text-[11px] text-slate-600">{hint}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

@@ -2,10 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { ALL_PORTAL_MODULE_IDS, type PortalAccessLevel } from "@/lib/portal-permissions";
+import { normalizeCameraPermissionsForFirestore } from "@/lib/hikvision/camera-access";
 
 type Body = {
   employeeId?: string;
   permissions?: Record<string, string>;
+  cameraPermissions?: {
+    view?: boolean;
+    live?: boolean;
+    playback?: boolean;
+    admin?: boolean;
+  } | null;
 };
 
 function normalizeLevel(raw: unknown): PortalAccessLevel | null {
@@ -76,13 +83,17 @@ export async function PATCH(request: NextRequest) {
 
   const before = (empSnap.data()?.portalModulePermissions ?? {}) as Record<string, string>;
 
-  await empRef.set(
-    {
-      portalModulePermissions,
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
+  const patch: Record<string, unknown> = {
+    portalModulePermissions,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (body.cameraPermissions !== undefined) {
+    const normalized = normalizeCameraPermissionsForFirestore(body.cameraPermissions ?? {});
+    if (normalized) patch.cameraPermissions = normalized;
+    else patch.cameraPermissions = FieldValue.delete();
+  }
+
+  await empRef.set(patch, { merge: true });
 
   try {
     await db.collection("companies").doc(companyId).collection("activity_log").add({

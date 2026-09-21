@@ -72,7 +72,7 @@ export const MODULE_MENU_MAP: Record<
   sklad: { licenseKeys: ["sklad"], platformModuleCode: "sklad" },
   vyroba: { licenseKeys: ["vyroba"], platformModuleCode: "vyroba" },
   fleet: { licenseKeys: ["vozovyPark"], platformModuleCode: null },
-  cameras: { licenseKeys: ["kamery"], platformModuleCode: null },
+  cameras: { licenseKeys: ["kamery"], platformModuleCode: "cameras" },
   reports: { licenseKeys: ["reporty"], platformModuleCode: "attendance_payroll" },
   billing: { licenseKeys: ["predplatne"], platformModuleCode: null },
 };
@@ -259,7 +259,7 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     roles: ["owner", "admin", "manager", "accountant", "employee"],
     licenseKeys: ["kamery"],
     mobileHomeVisible: true,
-    platformModuleCode: null,
+    platformModuleCode: "cameras",
   },
   {
     id: "reports",

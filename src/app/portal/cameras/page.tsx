@@ -6,12 +6,20 @@ import { Loader2 } from "lucide-react";
 import { useCompany } from "@/firebase/firestore/use-company";
 import { CamerasGrid } from "@/components/cameras/cameras-grid";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { useCameraPermissions } from "@/hooks/use-camera-permissions";
+import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
+import { canAccessCompanyModule } from "@/lib/platform-access";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
 export default function PortalCamerasPage() {
-  const { companyId, isLoading: companyLoading, companyDocMissing } = useCompany();
+  const { companyId, isLoading: companyLoading, companyDocMissing, company } = useCompany();
+  const platformCatalog = useMergedPlatformModuleCatalog();
   const access = usePortalModuleAccess("cameras");
+  const cameraPerms = useCameraPermissions();
+
+  const moduleActive =
+    company != null && canAccessCompanyModule(company, "cameras", platformCatalog);
 
   if (companyLoading) {
     return (
@@ -31,11 +39,28 @@ export default function PortalCamerasPage() {
     );
   }
 
-  if (!access.canRead) {
+  if (!moduleActive) {
+    return (
+      <Alert className="max-w-lg">
+        <AlertTitle>Modul Kamery není aktivní</AlertTitle>
+        <AlertDescription>
+          Pro tuto organizaci není modul zapnutý nebo je globálně vypnutý. Aktivaci provedete v
+          Nastavení → Předplatné / Moduly.
+        </AlertDescription>
+        <Button asChild className="mt-3" variant="outline" size="sm">
+          <Link href="/portal/billing">Předplatné a moduly</Link>
+        </Button>
+      </Alert>
+    );
+  }
+
+  if (!access.canRead || !cameraPerms.view) {
     return (
       <Alert className="max-w-lg">
         <AlertTitle>Bez oprávnění</AlertTitle>
-        <AlertDescription>Modul Kamery nemáte povolený.</AlertDescription>
+        <AlertDescription>
+          K modulu Kamery nemáte oprávnění. Požádejte administrátora organizace.
+        </AlertDescription>
       </Alert>
     );
   }
@@ -49,13 +74,13 @@ export default function PortalCamerasPage() {
             Hikvision NVR — náhledy přes zabezpečené API RAJMONDATA.
           </p>
         </div>
-        {access.canWrite ? (
+        {cameraPerms.admin ? (
           <Button asChild variant="outline" size="sm">
             <Link href="/portal/settings?tab=organization">Nastavení Hikvision</Link>
           </Button>
         ) : null}
       </div>
-      <CamerasGrid companyId={companyId} />
+      <CamerasGrid companyId={companyId} canLive={cameraPerms.live} canPlayback={cameraPerms.playback} />
     </div>
   );
 }
