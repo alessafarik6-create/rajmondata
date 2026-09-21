@@ -17,6 +17,10 @@ import {
   type PortalModuleId,
 } from "@/lib/portal-permissions";
 import { resolveCameraPermissions } from "@/lib/hikvision/camera-access";
+import {
+  canAccessSchedulePortalRead,
+  resolveCalendarPermissions,
+} from "@/lib/calendar/calendar-access";
 import { isDailyWorkLogEnabled, isWorkLogEnabled } from "@/lib/employee-report-flags";
 
 export type EmployeePortalNavItem = {
@@ -85,6 +89,16 @@ function employeeCanSeeModule(
       portalModuleCamerasLevel: input.permissions.cameras ?? "none",
     });
     if (!cam.view) return false;
+  }
+
+  if (def.id === "schedule") {
+    const cal = resolveCalendarPermissions({
+      role: input.role,
+      globalRoles: input.globalRoles,
+      employeeDoc: input.employeeDoc,
+      portalModuleScheduleLevel: input.permissions.schedule ?? "none",
+    });
+    if (!cal.anyView) return false;
   }
 
   return isPortalMenuItemVisible(def, input.visibilityCtx);
@@ -221,9 +235,21 @@ export function portalModuleIdForEmployeeRoute(pathname: string): PortalModuleId
 
 export function employeeHasReadAccessToPath(
   pathname: string,
-  permissions: Record<PortalModuleId, PortalAccessLevel>
+  permissions: Record<PortalModuleId, PortalAccessLevel>,
+  input?: {
+    role?: string;
+    globalRoles?: string[] | null;
+    employeeDoc?: Record<string, unknown> | null;
+  }
 ): boolean {
   const modId = portalModuleIdForEmployeeRoute(pathname);
   if (!modId) return true;
+  if (modId === "schedule") {
+    return canAccessSchedulePortalRead({
+      role: input?.role ?? "employee",
+      globalRoles: input?.globalRoles,
+      employeeDoc: input?.employeeDoc,
+    });
+  }
   return canAccessPortalModule(permissions, modId, "read");
 }

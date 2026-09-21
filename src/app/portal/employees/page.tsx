@@ -1085,6 +1085,7 @@ export default function EmployeesPage() {
       playback?: boolean;
       admin?: boolean;
     } | null;
+    calendarPermissions?: Record<string, string> | null;
   }) => {
     if (!canManage || !user || !permissionsEmp?.id) return;
     setPermissionsSaving(true);
@@ -1100,6 +1101,7 @@ export default function EmployeesPage() {
           employeeId: permissionsEmp.id,
           permissions: payload.permissions,
           cameraPermissions: payload.cameraPermissions,
+          calendarPermissions: payload.calendarPermissions,
         }),
       });
       const data = (await res.json()) as { error?: string };

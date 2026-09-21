@@ -10,6 +10,7 @@ import {
   resolveEffectivePortalPermissions,
   type PortalModuleId,
 } from "@/lib/portal-permissions";
+import { canAccessSchedulePortalRead } from "@/lib/calendar/calendar-access";
 
 export function PortalModuleAccessGate(props: {
   pathname: string;
@@ -35,7 +36,16 @@ export function PortalModuleAccessGate(props: {
     employeeDoc: props.employeeDoc,
   });
 
-  if (canAccessPortalModule(permissions, moduleId as PortalModuleId, "read")) {
+  const allowed =
+    moduleId === "schedule"
+      ? canAccessSchedulePortalRead({
+          role: props.role,
+          globalRoles: props.globalRoles,
+          employeeDoc: props.employeeDoc,
+        })
+      : canAccessPortalModule(permissions, moduleId as PortalModuleId, "read");
+
+  if (allowed) {
     return <>{props.children}</>;
   }
 

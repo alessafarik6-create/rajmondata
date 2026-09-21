@@ -47,6 +47,12 @@ import {
   type UpdateData,
 } from "firebase/firestore";
 import { useFirestore, useMemoFirebase, useCollection, useUser, useDoc, useCompany } from "@/firebase";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
+import {
+  employeeCanViewCalendarEventKind,
+  employeeCanWriteCalendarEventKind,
+  resolveCalendarPermissions,
+} from "@/lib/calendar/calendar-access";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -469,8 +475,8 @@ export function CompanyScheduleCalendar({
   readOnly?: boolean;
   /** Zaměstnanec: zúžit schůzky na vlastní / rozeslané týmu; montáže dle přiřazení; zaměření ponechat. */
   restrictEmployeeEvents?: boolean;
-  /** `installationsOnly` = jen montáže (např. sekce „Moje montáže“). */
-  scheduleFilter?: "all" | "installationsOnly";
+  /** Filtr typů událostí (např. dashboard zaměstnance). */
+  scheduleFilter?: "all" | "installationsOnly" | "meetingsOnly";
   /** Otevření z dashboardu / URL query — po zpracování zavolá `onPendingActionConsumed`. */
   pendingAction?: ScheduleCalendarPendingAction | null;
   onPendingActionConsumed?: () => void;
@@ -498,8 +504,25 @@ export function CompanyScheduleCalendar({
   );
   const { data: profile } = useDoc<any>(userRef);
   const role = String(profile?.role ?? "");
-  const canSendToAllEmployees =
+  const isManagement =
     role === "owner" || role === "admin" || role === "manager" || role === "accountant";
+  const canSendToAllEmployees = isManagement;
+  const permCtx = usePortalPermissionsOptional();
+  const calendarAccess = useMemo(() => {
+    if (permCtx) return permCtx.calendar;
+    if (isManagement) {
+      const full = { level: "write" as const, view: true, write: true };
+      return { meetings: full, installations: full, anyView: true, anyWrite: true };
+    }
+    return resolveCalendarPermissions({ role, employeeDoc: null, portalModuleScheduleLevel: "none" });
+  }, [permCtx, isManagement, role]);
+  const canCreateMeeting =
+    !readOnly && (isManagement || calendarAccess.meetings.write);
+  const canCreateInstallation =
+    !readOnly && (isManagement || calendarAccess.installations.write);
+  const showMeetingLegend = isManagement || calendarAccess.meetings.view;
+  const showInstallationLegend = isManagement || calendarAccess.installations.view;
+  const showMeasurementLegend = showMeetingLegend || showInstallationLegend;
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || readOnly) return null;
@@ -662,6 +685,18 @@ export function CompanyScheduleCalendar({
     let list = eventsRaw;
     if (scheduleFilter === "installationsOnly") {
       list = list.filter((ev) => isValidCompanyScheduleEvent(ev) && ev.kind === "installation");
+    } else if (scheduleFilter === "meetingsOnly") {
+      list = list.filter(
+        (ev) =>
+          isValidCompanyScheduleEvent(ev) &&
+          (ev.kind === "meeting" || ev.kind === "measurement")
+      );
+    }
+    if (!isManagement) {
+      list = list.filter((ev) => {
+        if (!isValidCompanyScheduleEvent(ev)) return false;
+        return employeeCanViewCalendarEventKind(ev.kind, calendarAccess);
+      });
     }
     if (!restrictEmployeeEvents || !viewerUid) return list;
     return list.filter((ev) => {
@@ -678,7 +713,15 @@ export function CompanyScheduleCalendar({
       }
       return true;
     });
-  }, [eventsRaw, restrictEmployeeEvents, viewerUid, viewerEmployeeId, scheduleFilter]);
+  }, [
+    eventsRaw,
+    restrictEmployeeEvents,
+    viewerUid,
+    viewerEmployeeId,
+    scheduleFilter,
+    isManagement,
+    calendarAccess,
+  ]);
 
   React.useEffect(() => {
     setMobileSelectedDay((prev) => {
@@ -736,6 +779,22 @@ export function CompanyScheduleCalendar({
     day: Date,
     presetKind: "lead_meeting" | "installation" = "lead_meeting"
   ) => {
+    if (presetKind === "installation" && !canCreateInstallation) {
+      toast({
+        variant: "destructive",
+        title: "Bez oprávnění",
+        description: "Nemáte oprávnění vytvářet montáže.",
+      });
+      return;
+    }
+    if (presetKind !== "installation" && !canCreateMeeting) {
+      toast({
+        variant: "destructive",
+        title: "Bez oprávnění",
+        description: "Nemáte oprávnění vytvářet schůzky.",
+      });
+      return;
+    }
     if (readOnly) {
       toast({
         variant: "destructive",
@@ -780,6 +839,17 @@ export function CompanyScheduleCalendar({
 
   const openEditMeeting = (ev: CalendarEvent) => {
     if (ev.kind !== "meeting" && ev.kind !== "installation") return;
+    if (
+      !isManagement &&
+      !employeeCanViewCalendarEventKind(ev.kind, calendarAccess)
+    ) {
+      toast({
+        variant: "destructive",
+        title: "Bez oprávnění",
+        description: "K tomuto typu události nemáte přístup.",
+      });
+      return;
+    }
     console.log("[calendar] open edit meeting", {
       calendarId: ev.id,
       sourceId: ev.sourceId,
@@ -911,6 +981,20 @@ export function CompanyScheduleCalendar({
           ? "calendar_task"
           : "lead_meeting";
     const isInstallation = calendarEventTypeStr === "installation";
+    if (!isManagement) {
+      const writeOk = employeeCanWriteCalendarEventKind(
+        isInstallation ? "installation" : "meeting",
+        calendarAccess
+      );
+      if (!writeOk) {
+        toast({
+          variant: "destructive",
+          title: "Bez oprávnění",
+          description: "Úpravy tohoto typu události nejsou povoleny.",
+        });
+        return;
+      }
+    }
 
     if (isInstallation) {
       if (selectedInstallEmployeeIds.length === 0) {
@@ -1498,7 +1582,7 @@ export function CompanyScheduleCalendar({
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
-                className={cn("h-9 gap-2", showFull && !readOnly ? "inline-flex" : "hidden")}
+                className={cn("h-9 gap-2", showFull && canCreateMeeting ? "inline-flex" : "hidden")}
                 onClick={() => openCreateForDay(new Date())}
               >
                 <Plus className="h-4 w-4" />
@@ -1509,7 +1593,7 @@ export function CompanyScheduleCalendar({
                 variant="secondary"
                 className={cn(
                   "h-9 gap-2 border",
-                  showFull && !readOnly ? "inline-flex" : "hidden",
+                  showFull && canCreateInstallation ? "inline-flex" : "hidden",
                   dark
                     ? "border-violet-400/40 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25"
                     : "border-violet-300 bg-violet-50 text-violet-950 hover:bg-violet-100"
@@ -1611,34 +1695,46 @@ export function CompanyScheduleCalendar({
               <div
                 className={cn("flex-wrap gap-4", showFull ? "hidden md:flex" : "hidden")}
               >
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-sm bg-orange-100 ring-1 ring-orange-200" />
-                  Schůzka (poptávka)
-                </span>
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-sm bg-violet-100 ring-1 ring-violet-200" />
-                  Montáž
-                </span>
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-sm bg-emerald-100 ring-1 ring-emerald-200" />
-                  Zaměření
-                </span>
+                {showMeetingLegend ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-sm bg-orange-100 ring-1 ring-orange-200" />
+                    Schůzka (poptávka)
+                  </span>
+                ) : null}
+                {showInstallationLegend ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-sm bg-violet-100 ring-1 ring-violet-200" />
+                    Montáž
+                  </span>
+                ) : null}
+                {showMeasurementLegend ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-sm bg-emerald-100 ring-1 ring-emerald-200" />
+                    Zaměření
+                  </span>
+                ) : null}
               </div>
               <div
                 className={cn("w-full flex-wrap gap-3", showCompact ? "flex" : "hidden")}
               >
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-sm bg-orange-100 ring-1 ring-orange-200" />
-                  Schůzka
-                </span>
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-sm bg-violet-100 ring-1 ring-violet-200" />
-                  Montáž
-                </span>
-                <span className="inline-flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-sm bg-emerald-100 ring-1 ring-emerald-200" />
-                  Zaměření
-                </span>
+                {showMeetingLegend ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-sm bg-orange-100 ring-1 ring-orange-200" />
+                    Schůzka
+                  </span>
+                ) : null}
+                {showInstallationLegend ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-sm bg-violet-100 ring-1 ring-violet-200" />
+                    Montáž
+                  </span>
+                ) : null}
+                {showMeasurementLegend ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-sm bg-emerald-100 ring-1 ring-emerald-200" />
+                    Zaměření
+                  </span>
+                ) : null}
               </div>
               {!loading && events.length === 0 ? (
                 <span className={dark ? "text-slate-300" : "text-slate-800"}>
@@ -1659,31 +1755,35 @@ export function CompanyScheduleCalendar({
 
             {/* Mobil / compact: pás dní, seznam akcí, měsíční mřížka */}
             <div className={showCompact ? "block" : "hidden"}>
-              {!readOnly ? (
+              {canCreateMeeting || canCreateInstallation ? (
                 <div className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                  <Button
-                    type="button"
-                    className={cn(
-                      "min-h-[44px] w-full gap-2",
-                      dark && "bg-orange-500 text-slate-950 hover:bg-orange-400"
-                    )}
-                    onClick={() => openCreateForDay(mobileSelectedDay)}
-                  >
-                    <Plus className="h-4 w-4" /> Nová schůzka
-                  </Button>
-                  <Button
-                    type="button"
-                    className={cn(
-                      "min-h-[44px] w-full gap-2",
-                      dark
-                        ? "border border-violet-400/50 bg-violet-500/20 text-violet-50 hover:bg-violet-500/30"
-                        : "border border-violet-300 bg-violet-50 text-violet-950 hover:bg-violet-100"
-                    )}
-                    variant="outline"
-                    onClick={() => openCreateForDay(mobileSelectedDay, "installation")}
-                  >
-                    <Plus className="h-4 w-4" /> Nová montáž
-                  </Button>
+                  {canCreateMeeting ? (
+                    <Button
+                      type="button"
+                      className={cn(
+                        "min-h-[44px] w-full gap-2",
+                        dark && "bg-orange-500 text-slate-950 hover:bg-orange-400"
+                      )}
+                      onClick={() => openCreateForDay(mobileSelectedDay)}
+                    >
+                      <Plus className="h-4 w-4" /> Nová schůzka
+                    </Button>
+                  ) : null}
+                  {canCreateInstallation ? (
+                    <Button
+                      type="button"
+                      className={cn(
+                        "min-h-[44px] w-full gap-2",
+                        dark
+                          ? "border border-violet-400/50 bg-violet-500/20 text-violet-50 hover:bg-violet-500/30"
+                          : "border border-violet-300 bg-violet-50 text-violet-950 hover:bg-violet-100"
+                      )}
+                      variant="outline"
+                      onClick={() => openCreateForDay(mobileSelectedDay, "installation")}
+                    >
+                      <Plus className="h-4 w-4" /> Nová montáž
+                    </Button>
+                  ) : null}
                 </div>
               ) : null}
 

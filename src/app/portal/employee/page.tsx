@@ -69,9 +69,26 @@ export default function EmployeeHomePage() {
     companyId,
     employeeId,
   });
-  const { canRead } = usePortalPermissions();
-  const showSchedule =
-    canRead("schedule") || canRead("jobs");
+  const { calendar, canRead } = usePortalPermissions();
+  const showCalendarBlock = calendar.anyView;
+  const calendarBlockTitle =
+    calendar.meetings.view && calendar.installations.view
+      ? "Můj kalendář"
+      : calendar.installations.view
+        ? "Moje montáže"
+        : "Moje schůzky";
+  const calendarBlockDescription =
+    calendar.meetings.view && calendar.installations.view
+      ? "Naplánované schůzky a montáže přiřazené vám."
+      : calendar.installations.view
+        ? "Naplánované montáže přiřazené vám. Klepnutím na událost otevřete detail."
+        : "Naplánované schůzky přiřazené vám. Klepnutím na událost otevřete detail.";
+  const calendarScheduleFilter =
+    calendar.meetings.view && !calendar.installations.view
+      ? "meetingsOnly"
+      : !calendar.meetings.view && calendar.installations.view
+        ? "installationsOnly"
+        : "all";
   const showTasks = canRead("jobs");
   const showAttendance = canRead("labor");
 
@@ -362,20 +379,18 @@ export default function EmployeeHomePage() {
         </div>
       </section>
 
-      {showSchedule ? (
+      {showCalendarBlock ? (
         <section className={cn(sectionCard, "mb-4")}>
-          <h2 className={cn(headTitle)}>Moje montáže</h2>
-          <p className={cn(headSub, "mb-3")}>
-            Naplánované montáže přiřazené vám. Klepnutím na událost otevřete detail.
-          </p>
+          <h2 className={cn(headTitle)}>{calendarBlockTitle}</h2>
+          <p className={cn(headSub, "mb-3")}>{calendarBlockDescription}</p>
           <CompanyScheduleCalendar
             companyId={companyId}
-            headingTitle="Moje montáže"
+            headingTitle={calendarBlockTitle}
             layout="full"
             appearance={belowLg ? "darkPortal" : "default"}
-            readOnly
+            readOnly={!calendar.anyWrite}
             restrictEmployeeEvents
-            scheduleFilter="installationsOnly"
+            scheduleFilter={calendarScheduleFilter}
           />
         </section>
       ) : null}

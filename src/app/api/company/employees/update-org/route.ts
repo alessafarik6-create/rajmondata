@@ -14,6 +14,11 @@ import {
   type PortalModuleId,
   ALL_PORTAL_MODULE_IDS,
 } from "@/lib/portal-permissions";
+import {
+  aggregateScheduleModuleLevel,
+  normalizeCalendarPermissionsForFirestore,
+  type CalendarPermissionsDoc,
+} from "@/lib/calendar/calendar-access";
 
 type Body = {
   employeeId?: string;
@@ -35,6 +40,8 @@ type Body = {
   };
   /** NONE / READ / WRITE po modulech sidebaru — merge na employees.portalModulePermissions. */
   portalModulePermissions?: Record<string, string>;
+  /** Schůzky / montáže v kalendáři — `employees.calendarPermissions`. */
+  calendarPermissions?: CalendarPermissionsDoc | null;
 };
 
 /**
@@ -213,6 +220,17 @@ export async function PATCH(request: NextRequest) {
     patch.canAccessWarehouse = flags.canAccessWarehouse;
     patch.canAccessProduction = flags.canAccessProduction;
     patch.canAccessMeetingNotes = flags.canAccessMeetingNotes;
+  }
+
+  if (body.calendarPermissions !== undefined) {
+    const normalized = normalizeCalendarPermissionsForFirestore(body.calendarPermissions ?? {});
+    if (normalized) patch.calendarPermissions = normalized;
+    else patch.calendarPermissions = FieldValue.delete();
+    if (hasPortalMatrix && patch.portalModulePermissions) {
+      const merged = patch.portalModulePermissions as Record<string, string>;
+      merged.schedule = aggregateScheduleModuleLevel(body.calendarPermissions ?? {});
+      patch.portalModulePermissions = merged;
+    }
   }
 
   await empRef.set(patch, { merge: true });

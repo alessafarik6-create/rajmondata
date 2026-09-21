@@ -164,12 +164,19 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     if (!isPortalEmployeeOnly) return true;
     if (isEmployeeAllowedBranchPath) return true;
     if (!portalPermissionsResolved) return false;
-    return employeeHasReadAccessToPath(pathname, portalPermissionsResolved);
+    return employeeHasReadAccessToPath(pathname, portalPermissionsResolved, {
+      role: String(profile?.role || "employee"),
+      globalRoles: profile?.globalRoles as string[] | undefined,
+      employeeDoc: profileEmployeeRow ?? null,
+    });
   }, [
     isPortalEmployeeOnly,
     isEmployeeAllowedBranchPath,
     pathname,
     portalPermissionsResolved,
+    profile?.role,
+    profile?.globalRoles,
+    profileEmployeeRow,
   ]);
 
   /** Načítání profilu z Firestore — bez automatického doplňování dokumentu (žádný nový auth účet). */

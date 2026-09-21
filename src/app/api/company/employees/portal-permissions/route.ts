@@ -3,6 +3,11 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { ALL_PORTAL_MODULE_IDS, type PortalAccessLevel } from "@/lib/portal-permissions";
 import { normalizeCameraPermissionsForFirestore } from "@/lib/hikvision/camera-access";
+import {
+  aggregateScheduleModuleLevel,
+  normalizeCalendarPermissionsForFirestore,
+  type CalendarPermissionsDoc,
+} from "@/lib/calendar/calendar-access";
 
 type Body = {
   employeeId?: string;
@@ -13,6 +18,7 @@ type Body = {
     playback?: boolean;
     admin?: boolean;
   } | null;
+  calendarPermissions?: CalendarPermissionsDoc | null;
 };
 
 function normalizeLevel(raw: unknown): PortalAccessLevel | null {
@@ -91,6 +97,21 @@ export async function PATCH(request: NextRequest) {
     const normalized = normalizeCameraPermissionsForFirestore(body.cameraPermissions ?? {});
     if (normalized) patch.cameraPermissions = normalized;
     else patch.cameraPermissions = FieldValue.delete();
+  }
+  if (body.calendarPermissions !== undefined) {
+    const normalized = normalizeCalendarPermissionsForFirestore(body.calendarPermissions ?? {});
+    if (normalized) {
+      patch.calendarPermissions = normalized;
+      portalModulePermissions.schedule = aggregateScheduleModuleLevel(
+        body.calendarPermissions ?? {}
+      );
+      if (portalModulePermissions.schedule === "none") {
+        delete portalModulePermissions.schedule;
+      }
+      patch.portalModulePermissions = portalModulePermissions;
+    } else {
+      patch.calendarPermissions = FieldValue.delete();
+    }
   }
 
   await empRef.set(patch, { merge: true });

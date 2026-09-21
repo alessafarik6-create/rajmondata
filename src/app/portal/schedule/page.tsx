@@ -4,6 +4,7 @@ import { Suspense, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useCompany, useUser } from "@/firebase";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
 import {
   CompanyScheduleCalendar,
   type ScheduleCalendarPendingAction,
@@ -17,6 +18,9 @@ function PortalSchedulePageInner() {
 
   const role = String((userProfile as { role?: string } | null)?.role ?? "");
   const isManagement = ["owner", "admin", "manager", "accountant"].includes(role);
+  const perm = usePortalPermissionsOptional();
+  const calendarWrite = perm?.calendar.anyWrite ?? isManagement;
+  const calendarView = perm?.calendar.anyView ?? isManagement;
 
   const pendingAction = useMemo((): ScheduleCalendarPendingAction | null => {
     const eventId = searchParams.get("event")?.trim();
@@ -44,6 +48,14 @@ function PortalSchedulePageInner() {
     );
   }
 
+  if (!calendarView) {
+    return (
+      <div className="mx-auto max-w-lg p-6 text-sm text-muted-foreground">
+        K kalendáři nemáte oprávnění. Kontaktujte administrátora organizace.
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <div>
@@ -55,7 +67,7 @@ function PortalSchedulePageInner() {
       <CompanyScheduleCalendar
         companyId={companyId}
         layout="auto"
-        readOnly={!isManagement}
+        readOnly={!isManagement && !calendarWrite}
         restrictEmployeeEvents={role === "employee" && !isManagement}
         pendingAction={pendingAction}
         onPendingActionConsumed={clearQuery}

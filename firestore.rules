@@ -91,6 +91,66 @@ service cloud.firestore {
       return portalModuleWriteOk(companyId, moduleId);
     }
 
+    /** Kalendář — schůzky / montáže (employees.calendarPermissions, fallback schedule). */
+    function calendarSubLevel(companyId, subKey) {
+      if (isPrivileged()) {
+        return 'write';
+      }
+      if (userRole() == 'employee' && ownEmployeeId() != null) {
+        let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+        if (!exists(empRef)) {
+          return 'none';
+        }
+        let data = get(empRef).data;
+        if ('calendarPermissions' in data && data.calendarPermissions is map && subKey in data.calendarPermissions) {
+          let l = data.calendarPermissions[subKey];
+          if (l == 'read' || l == 'write') {
+            return l;
+          }
+          return 'none';
+        }
+        if ('portalModulePermissions' in data &&
+            data.portalModulePermissions is map &&
+            'schedule' in data.portalModulePermissions) {
+          let s = data.portalModulePermissions['schedule'];
+          if (s == 'read' || s == 'write') {
+            return s;
+          }
+        }
+      }
+      return 'none';
+    }
+
+    function calendarMeetingsReadOk(companyId) {
+      let l = calendarSubLevel(companyId, 'meetings');
+      return l == 'read' || l == 'write';
+    }
+
+    function calendarInstallationsReadOk(companyId) {
+      let l = calendarSubLevel(companyId, 'installations');
+      return l == 'read' || l == 'write';
+    }
+
+    function calendarMeetingsWriteOk(companyId) {
+      return calendarSubLevel(companyId, 'meetings') == 'write';
+    }
+
+    function calendarInstallationsWriteOk(companyId) {
+      return calendarSubLevel(companyId, 'installations') == 'write';
+    }
+
+    function leadMeetingDocIsInstallation(data) {
+      return ('calendarEventType' in data && data.calendarEventType == 'installation') ||
+        ('eventType' in data && data.eventType == 'installation');
+    }
+
+    function leadMeetingEmployeeReadOk(companyId, data) {
+      if (leadMeetingDocIsInstallation(data)) {
+        return calendarInstallationsReadOk(companyId);
+      }
+      return calendarMeetingsReadOk(companyId);
+    }
+
     /**
      * Zaměstnanec smí na dokumentu změnit pouze podpisová pole + status.
      * (Nesmí měnit title/type/fileUrl/storagePath/employeeId/companyId ani mazat.)
@@ -2562,9 +2622,23 @@ service cloud.firestore {
        */
       match /lead_meetings/{meetingId} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'];
+          (
+            isPrivileged() ||
+            (userRole() == 'employee' && leadMeetingEmployeeReadOk(companyId, resource.data))
+          );
         allow create: if signedIn() && sameCompany(companyId) &&
-          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
+          (
+            (userRole() in ['owner', 'admin', 'manager', 'accountant']) ||
+            (
+              userRole() == 'employee' &&
+              (
+                (leadMeetingDocIsInstallation(request.resource.data) &&
+                  calendarInstallationsWriteOk(companyId)) ||
+                (!leadMeetingDocIsInstallation(request.resource.data) &&
+                  calendarMeetingsWriteOk(companyId))
+              )
+            )
+          ) &&
           request.resource.data.companyId == companyId &&
           request.resource.data.importLeadId is string &&
           request.resource.data.importLeadId.size() > 0 &&

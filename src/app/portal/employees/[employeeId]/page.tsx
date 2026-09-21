@@ -58,6 +58,12 @@ import {
   type PortalAccessLevel,
   type PortalModuleId,
 } from "@/lib/portal-permissions";
+import {
+  aggregateScheduleModuleLevel,
+  initialCalendarPermissionsForEmployee,
+  normalizeCalendarPermissionsForFirestore,
+  type CalendarSubPermissionKey,
+} from "@/lib/calendar/calendar-access";
 import { useToast } from "@/hooks/use-toast";
 import { getFirebaseStorage } from "@/firebase/storage";
 import {
@@ -491,16 +497,22 @@ export default function EmployeeDetailPage() {
   const [moduleLevels, setModuleLevels] = useState<Record<PortalModuleId, PortalAccessLevel>>(() =>
     initialPortalPermissionLevelsForEmployee(null, "employee")
   );
+  const [calendarLevels, setCalendarLevels] = useState<
+    Record<CalendarSubPermissionKey, PortalAccessLevel>
+  >(() => initialCalendarPermissionsForEmployee(null, "none"));
   const [visibleInTerminal, setVisibleInTerminal] = useState(true);
 
   useEffect(() => {
     if (!employeeDoc) return;
     const role = parseEmployeePortalRole((employeeDoc as Record<string, unknown>).role);
+    const row = employeeDoc as Record<string, unknown>;
     setPortalRole(role);
-    setModuleLevels(
-      initialPortalPermissionLevelsForEmployee(employeeDoc as Record<string, unknown>, role)
+    const levels = initialPortalPermissionLevelsForEmployee(row, role);
+    setModuleLevels(levels);
+    setCalendarLevels(
+      initialCalendarPermissionsForEmployee(row, levels.schedule ?? "none")
     );
-    setVisibleInTerminal((employeeDoc as Record<string, unknown>).visibleInAttendanceTerminal !== false);
+    setVisibleInTerminal(row.visibleInAttendanceTerminal !== false);
   }, [employeeDoc]);
 
   const saveOrg = async () => {
@@ -519,12 +531,15 @@ export default function EmployeeDetailPage() {
           role: portalRole,
           visibleInAttendanceTerminal: visibleInTerminal,
           portalModulePermissions: (() => {
+            const schedule = aggregateScheduleModuleLevel(calendarLevels);
             const full: Record<string, string> = {};
             for (const id of ALL_PORTAL_MODULE_IDS) {
-              full[id] = moduleLevels[id] ?? "none";
+              full[id] =
+                id === "schedule" ? schedule : moduleLevels[id] ?? "none";
             }
             return full;
           })(),
+          calendarPermissions: normalizeCalendarPermissionsForFirestore(calendarLevels),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1386,6 +1401,8 @@ export default function EmployeeDetailPage() {
                 onPortalRoleChange={setPortalRole}
                 levels={moduleLevels}
                 onLevelsChange={setModuleLevels}
+                calendarLevels={calendarLevels}
+                onCalendarLevelsChange={setCalendarLevels}
                 roleSelectClassName={selectCls}
               />
 

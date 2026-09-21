@@ -33,6 +33,13 @@ import {
   type PortalPermissionPresetId,
 } from "@/lib/portal-permissions";
 import { cn } from "@/lib/utils";
+import { EmployeeCalendarPermissionsBlock } from "@/components/employees/employee-calendar-permissions-block";
+import {
+  aggregateScheduleModuleLevel,
+  initialCalendarPermissionsForEmployee,
+  normalizeCalendarPermissionsForFirestore,
+  type CalendarSubPermissionKey,
+} from "@/lib/calendar/calendar-access";
 
 const ACCESS_LABELS: Record<PortalAccessLevel, string> = {
   none: "Bez přístupu",
@@ -50,6 +57,7 @@ export function EmployeePortalPermissionsDialog(props: {
   onSave: (payload: {
     permissions: Record<string, string>;
     cameraPermissions: ReturnType<typeof normalizeCameraPermissionsForFirestore>;
+    calendarPermissions: ReturnType<typeof normalizeCalendarPermissionsForFirestore>;
   }) => Promise<void>;
 }) {
   const { open, onOpenChange, employeeName, employeeDoc, userRoleLabel, busy, onSave } = props;
@@ -68,6 +76,14 @@ export function EmployeePortalPermissionsDialog(props: {
   }, [employeeDoc]);
 
   const [levels, setLevels] = useState(initial);
+
+  const initialCalendar = useMemo(
+    () =>
+      initialCalendarPermissionsForEmployee(employeeDoc, initial.schedule ?? "none"),
+    [employeeDoc, initial]
+  );
+  const [calendarLevels, setCalendarLevels] =
+    useState<Record<CalendarSubPermissionKey, PortalAccessLevel>>(initialCalendar);
 
   const initialCamera = useMemo(() => {
     const raw = employeeDoc?.cameraPermissions;
@@ -88,29 +104,40 @@ export function EmployeePortalPermissionsDialog(props: {
   useEffect(() => {
     if (open) {
       setLevels(initial);
+      setCalendarLevels(initialCalendar);
       setCameraFlags(initialCamera);
     }
-  }, [open, initial, initialCamera]);
+  }, [open, initial, initialCalendar, initialCamera]);
 
   const applyPreset = (preset: PortalPermissionPresetId) => {
-    setLevels(applyPermissionPreset(preset));
+    const next = applyPermissionPreset(preset);
+    setLevels(next);
+    setCalendarLevels(initialCalendarPermissionsForEmployee(null, next.schedule ?? "none"));
   };
 
   const setAll = (level: PortalAccessLevel) => {
     const m = emptyPermissionMap();
     for (const id of ALL_PORTAL_MODULE_IDS) m[id] = level;
     setLevels(m);
+    setCalendarLevels({ meetings: level, installations: level });
   };
+
+  const moduleRows = PORTAL_PERMISSION_MODULES.filter((m) => m.id !== "schedule");
 
   const handleSave = async () => {
     const cameraPermissions = normalizeCameraPermissionsForFirestore(cameraFlags);
-    let permissions = serializePortalModulePermissionsForFirestore(levels);
+    const calendarPermissions = normalizeCalendarPermissionsForFirestore(calendarLevels);
+    const levelsWithSchedule = {
+      ...levels,
+      schedule: aggregateScheduleModuleLevel(calendarLevels),
+    };
+    let permissions = serializePortalModulePermissionsForFirestore(levelsWithSchedule);
     if (cameraPermissions?.view) {
       permissions = { ...permissions, cameras: permissions.cameras ?? "read" };
     } else if (cameraPermissions?.admin) {
       permissions = { ...permissions, cameras: "write" };
     }
-    await onSave({ permissions, cameraPermissions });
+    await onSave({ permissions, cameraPermissions, calendarPermissions });
   };
 
   const setCameraFlag = (key: keyof typeof cameraFlags, checked: boolean) => {
@@ -179,7 +206,17 @@ export function EmployeePortalPermissionsDialog(props: {
         </div>
 
         <ul className="space-y-3 border-t border-slate-200 pt-3">
-          {PORTAL_PERMISSION_MODULES.map((mod) => (
+          <EmployeeCalendarPermissionsBlock
+            levels={calendarLevels}
+            onChange={(cal) => {
+              setCalendarLevels(cal);
+              setLevels((prev) => ({
+                ...prev,
+                schedule: aggregateScheduleModuleLevel(cal),
+              }));
+            }}
+          />
+          {moduleRows.map((mod) => (
             <li
               key={mod.id}
               className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between"

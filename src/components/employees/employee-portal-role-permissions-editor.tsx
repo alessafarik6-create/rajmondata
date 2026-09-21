@@ -24,6 +24,12 @@ import {
   type PortalModuleId,
 } from "@/lib/portal-permissions";
 import { cn } from "@/lib/utils";
+import { EmployeeCalendarPermissionsBlock } from "@/components/employees/employee-calendar-permissions-block";
+import {
+  aggregateScheduleModuleLevel,
+  initialCalendarPermissionsForEmployee,
+  type CalendarSubPermissionKey,
+} from "@/lib/calendar/calendar-access";
 
 const ACCESS_LABELS: Record<PortalAccessLevel, string> = {
   none: "Bez přístupu",
@@ -36,11 +42,21 @@ export function EmployeePortalRolePermissionsEditor(props: {
   onPortalRoleChange: (role: EmployeePortalRoleId) => void;
   levels: Record<PortalModuleId, PortalAccessLevel>;
   onLevelsChange: (levels: Record<PortalModuleId, PortalAccessLevel>) => void;
+  calendarLevels: Record<CalendarSubPermissionKey, PortalAccessLevel>;
+  onCalendarLevelsChange: (levels: Record<CalendarSubPermissionKey, PortalAccessLevel>) => void;
   disabled?: boolean;
   roleSelectClassName?: string;
 }) {
-  const { portalRole, onPortalRoleChange, levels, onLevelsChange, disabled, roleSelectClassName } =
-    props;
+  const {
+    portalRole,
+    onPortalRoleChange,
+    levels,
+    onLevelsChange,
+    calendarLevels,
+    onCalendarLevelsChange,
+    disabled,
+    roleSelectClassName,
+  } = props;
 
   const isOrgAdmin = portalRole === "orgAdmin";
 
@@ -54,8 +70,16 @@ export function EmployeePortalRolePermissionsEditor(props: {
     }
   };
 
+  const syncCalendarFromLevels = (next: Record<PortalModuleId, PortalAccessLevel>) => {
+    onCalendarLevelsChange(
+      initialCalendarPermissionsForEmployee(null, next.schedule ?? "none")
+    );
+  };
+
   const applyPreset = (preset: "accountant" | "employee" | "read_all" | "none_all") => {
-    onLevelsChange(applyPermissionPreset(preset));
+    const next = applyPermissionPreset(preset);
+    onLevelsChange(next);
+    syncCalendarFromLevels(next);
   };
 
   const setAll = (level: PortalAccessLevel) => {
@@ -64,7 +88,13 @@ export function EmployeePortalRolePermissionsEditor(props: {
       next[mod.id] = level;
     }
     onLevelsChange(next);
+    onCalendarLevelsChange({
+      meetings: level,
+      installations: level,
+    });
   };
+
+  const moduleRows = PORTAL_PERMISSION_MODULES.filter((m) => m.id !== "schedule");
 
   return (
     <div className="space-y-6">
@@ -149,7 +179,18 @@ export function EmployeePortalRolePermissionsEditor(props: {
               <span className="w-[168px] text-right">Přístup</span>
             </div>
             <ul className="mt-2 max-h-[min(420px,50vh)] space-y-2 overflow-y-auto pr-1">
-              {PORTAL_PERMISSION_MODULES.map((mod) => (
+              <EmployeeCalendarPermissionsBlock
+                levels={calendarLevels}
+                onChange={(cal) => {
+                  onCalendarLevelsChange(cal);
+                  onLevelsChange({
+                    ...levels,
+                    schedule: aggregateScheduleModuleLevel(cal),
+                  });
+                }}
+                disabled={disabled}
+              />
+              {moduleRows.map((mod) => (
                 <li
                   key={mod.id}
                   className="flex flex-col gap-1.5 border-b border-slate-50 pb-2 last:border-0 sm:flex-row sm:items-center sm:justify-between"
