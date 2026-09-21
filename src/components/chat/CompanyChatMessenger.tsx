@@ -41,7 +41,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
-import { formatDateSafe } from "@/lib/date-safe";
+import { formatChatTimestampDisplay } from "@/lib/format-chat-timestamp";
 import {
   buildDirectConversationId,
   chatAttachmentStoragePath,
@@ -88,9 +88,104 @@ type ConversationItem = {
   participantIds?: string[];
 };
 
-function formatMessageTime(createdAt: unknown): string {
-  const s = formatDateSafe(createdAt);
-  return s === "bez data" ? "" : s;
+function senderRoleLabel(senderRole?: string): string | null {
+  if (senderRole === "employee") return "Zaměstnanec";
+  return null;
+}
+
+type SenderDisplay = { name: string; photo: string; roleLabel: string | null };
+
+function resolveSenderDisplay(
+  m: ChatMessageDoc,
+  ctx: {
+    currentUserId?: string;
+    profile: Record<string, unknown> | null | undefined;
+    employeesById: Map<string, Record<string, unknown>>;
+    employeesByAuthUid: Map<string, Record<string, unknown>>;
+  }
+): SenderDisplay {
+  const nameStored = String(m.senderName ?? "").trim();
+  const photoStored = String(m.senderPhotoURL ?? "").trim();
+
+  if (m.senderId && m.senderId === ctx.currentUserId) {
+    const fromProfile = buildSenderNameFromProfile(ctx.profile);
+    const photo = String(
+      ctx.profile?.profileImage ??
+        ctx.profile?.photoURL ??
+        ctx.profile?.photoUrl ??
+        photoStored
+    );
+    return {
+      name: fromProfile || nameStored || "Já",
+      photo,
+      roleLabel: null,
+    };
+  }
+
+  if (nameStored) {
+    const emp =
+      (m.employeeId ? ctx.employeesById.get(m.employeeId) : undefined) ??
+      ctx.employeesByAuthUid.get(m.senderId);
+    const photo = emp
+      ? String(emp.profileImage ?? emp.photoURL ?? photoStored)
+      : photoStored;
+    return {
+      name: nameStored,
+      photo,
+      roleLabel: senderRoleLabel(m.senderRole),
+    };
+  }
+
+  const emp =
+    (m.employeeId ? ctx.employeesById.get(m.employeeId) : undefined) ??
+    ctx.employeesByAuthUid.get(m.senderId);
+  if (emp) {
+    const fn = String(emp.firstName ?? "").trim();
+    const ln = String(emp.lastName ?? "").trim();
+    const full = `${fn} ${ln}`.trim();
+    return {
+      name: full || String(emp.email ?? "Neznámý uživatel"),
+      photo: String(emp.profileImage ?? emp.photoURL ?? photoStored),
+      roleLabel: senderRoleLabel(m.senderRole),
+    };
+  }
+
+  return {
+    name: nameStored || "Neznámý uživatel",
+    photo: photoStored,
+    roleLabel: senderRoleLabel(m.senderRole),
+  };
+}
+
+function MessageAuthorMeta({
+  mine,
+  sender,
+  createdAt,
+  className,
+}: {
+  mine: boolean;
+  sender: SenderDisplay;
+  createdAt: unknown;
+  className?: string;
+}) {
+  const timeLabel = formatChatTimestampDisplay(createdAt);
+  return (
+    <div className={cn("text-[11px] leading-snug mb-1.5 space-y-0.5", className)}>
+      <div className="font-semibold">
+        {mine ? (
+          <>
+            {sender.name} · <span className="font-medium opacity-90">Já</span>
+          </>
+        ) : (
+          sender.name
+        )}
+      </div>
+      {!mine && sender.roleLabel ? (
+        <div className="opacity-75 font-normal">{sender.roleLabel}</div>
+      ) : null}
+      <div className="opacity-70 font-normal">{timeLabel}</div>
+    </div>
+  );
 }
 
 function buildSenderNameFromProfile(profile: Record<string, unknown> | null | undefined): string {
@@ -151,6 +246,25 @@ export function CompanyChatMessenger({
     }
     return m;
   }, [employeeRows]);
+
+  const employeesByAuthUid = useMemo(() => {
+    const m = new Map<string, Record<string, unknown>>();
+    for (const e of employeeRows ?? []) {
+      const uid = String(e.authUserId ?? "").trim();
+      if (uid) m.set(uid, e);
+    }
+    return m;
+  }, [employeeRows]);
+
+  const senderContext = useMemo(
+    () => ({
+      currentUserId: user?.uid,
+      profile,
+      employeesById,
+      employeesByAuthUid,
+    }),
+    [user?.uid, profile, employeesById, employeesByAuthUid]
+  );
 
   const groupConvQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !user?.uid) return null;
@@ -352,26 +466,6 @@ export function CompanyChatMessenger({
   const videoInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeConvMeta = conversations.find((c) => c.id === activeConversationId);
-
-  const resolveSenderDisplay = (m: ChatMessageDoc): { name: string; photo: string } => {
-    const nameStored = String(m.senderName ?? "").trim();
-    const photoStored = String(m.senderPhotoURL ?? "").trim();
-    if (m.senderRole === "employee") {
-      const emp = m.employeeId ? employeesById.get(m.employeeId) : undefined;
-      if (emp) {
-        const fn = String(emp.firstName ?? "").trim();
-        const ln = String(emp.lastName ?? "").trim();
-        return {
-          name: `${fn} ${ln}`.trim() || nameStored || "Zaměstnanec",
-          photo: String(emp.profileImage ?? emp.photoURL ?? photoStored),
-        };
-      }
-    }
-    return {
-      name: nameStored || (m.senderRole === "admin" ? "Administrace" : "Uživatel"),
-      photo: photoStored,
-    };
-  };
 
   const notifyRecipients = async (params: {
     recipientUserIds: string[];
@@ -738,7 +832,7 @@ export function CompanyChatMessenger({
                   <p className="text-[11px] text-muted-foreground truncate mt-0.5">
                     {prev.text?.slice(0, 60) || "📎 Média"}
                     {" · "}
-                    {formatMessageTime(prev.createdAt)}
+                    {formatChatTimestampDisplay(prev.createdAt)}
                   </p>
                 ) : null}
               </button>
@@ -751,7 +845,7 @@ export function CompanyChatMessenger({
 
   const thread = (
     <>
-      <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 pt-[max(0.5rem,env(safe-area-inset-top,0px))]">
+      <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-background">
         {mobileFull ? (
           <Button
             type="button"
@@ -763,9 +857,18 @@ export function CompanyChatMessenger({
             <ArrowLeft className="h-4 w-4" />
           </Button>
         ) : null}
-        <h2 className="text-sm font-semibold truncate flex-1">
-          {activeConvMeta?.label ?? "Chat"}
-        </h2>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold truncate">
+            {activeConvMeta?.label ?? "Chat"}
+          </h2>
+          {isActiveGroup ? (
+            <p className="text-[11px] text-muted-foreground truncate">Skupinový chat</p>
+          ) : activeConversationId === COMPANY_CHAT_CONVERSATION_ID ? (
+            <p className="text-[11px] text-muted-foreground truncate">Firemní konverzace</p>
+          ) : mobileFull ? (
+            <p className="text-[11px] text-muted-foreground truncate">Soukromý chat</p>
+          ) : null}
+        </div>
         {!mobileFull ? (
           <span className="text-xs text-muted-foreground truncate max-w-[40%]">
             {displayName}
@@ -789,8 +892,10 @@ export function CompanyChatMessenger({
           <p className="text-center text-sm text-muted-foreground py-8">Zatím žádné zprávy.</p>
         ) : (
           filteredMessages.map((m) => {
-            const mine = m.senderId === user?.uid;
-            const { name: senderLabel, photo: senderPhoto } = resolveSenderDisplay(m);
+            const mine = Boolean(user?.uid && m.senderId === user.uid);
+            const sender = resolveSenderDisplay(m, senderContext);
+            const senderLabel = sender.name;
+            const { photo: senderPhoto } = sender;
             return (
               <div key={m.id} className={cn("flex gap-2", mine ? "justify-end" : "justify-start")}>
                 {!mine && (
@@ -805,16 +910,7 @@ export function CompanyChatMessenger({
                     mine ? "bg-primary text-primary-foreground" : "bg-muted"
                   )}
                 >
-                  {(isActiveGroup || !mine) && (
-                    <div
-                      className={cn(
-                        "text-[11px] font-semibold mb-1",
-                        mine && isActiveGroup && "opacity-90"
-                      )}
-                    >
-                      {senderLabel}
-                    </div>
-                  )}
+                  <MessageAuthorMeta mine={mine} sender={sender} createdAt={m.createdAt} />
                   {m.text ? (
                     <p className="whitespace-pre-wrap break-words">{m.text}</p>
                   ) : null}
@@ -894,9 +990,6 @@ export function CompanyChatMessenger({
                       Přiřadit všechny k zakázce
                     </Button>
                   ) : null}
-                  <div className="text-[10px] opacity-70 mt-1 text-right">
-                    {formatMessageTime(m.createdAt)}
-                  </div>
                 </div>
               </div>
             );
@@ -994,7 +1087,7 @@ export function CompanyChatMessenger({
         className={cn(
           "flex flex-col overflow-hidden min-h-0",
           mobileFull
-            ? "h-[100dvh] max-h-[100dvh] rounded-none border-0 shadow-none flex-1"
+            ? "flex-1 min-h-0 max-h-none h-[calc(100dvh-3.5rem)] sm:h-[calc(100dvh-4rem)] rounded-none border-0 shadow-none"
             : "min-h-[420px] max-h-[calc(100vh-120px)] md:max-h-[calc(100vh-140px)]"
         )}
       >

@@ -52,8 +52,12 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   const isEmployeePortal = pathname?.startsWith('/portal/employee');
   const isCustomerPortal = pathname?.startsWith('/portal/customer');
   const isPortalDashboard = pathname === "/portal/dashboard";
+  const isPortalChatRoute =
+    pathname === "/portal/chat" || pathname === "/portal/employee/messages";
   const dashboardDark = isPortalDashboard && !isAdminArea;
-  const showCompanyChatShortcut = !isAdminArea && !isEmployeePortal;
+  const showMobilePortalLogo = dashboardDark || isPortalChatRoute;
+  const hideMobileGlobalSearch = isPortalChatRoute;
+  const showCompanyChatShortcut = !isAdminArea && !isCustomerPortal;
   const customerChatRef = useMemoFirebase(
     () =>
       firestore && profile?.companyId && user
@@ -63,7 +67,11 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   );
   const { data: customerChatDoc } = useDoc(customerChatRef);
   const customerUnread = Number((customerChatDoc as { unreadForCustomerCount?: unknown } | null)?.unreadForCustomerCount ?? 0) || 0;
-  const chatHref = isCustomerPortal ? "/portal/customer/chat" : "/portal/chat";
+  const chatHref = isCustomerPortal
+    ? "/portal/customer/chat"
+    : isEmployeePortal
+      ? "/portal/employee/messages"
+      : "/portal/chat";
   useEffect(() => {
     if (!isAdminArea) return;
     fetch('/api/superadmin/session')
@@ -164,16 +172,16 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
         <Link
           href={
             isAdminArea
-              ? '/admin/dashboard'
+              ? "/admin/dashboard"
               : isEmployeePortal
-                ? '/portal/employee'
-                : '/portal/dashboard'
+                ? "/portal/employee"
+                : "/portal/dashboard"
           }
           className={cn(
             "shrink-0 mr-1 items-center",
-            dashboardDark ? "hidden lg:flex" : "hidden sm:flex"
+            dashboardDark ? "hidden lg:flex" : showMobilePortalLogo ? "flex" : "hidden sm:flex"
           )}
-          aria-label="Přehled portálu"
+          aria-label="RAJMONDATA — přehled portálu"
         >
           <Logo variant="small" context="light" className="max-w-[140px] lg:max-w-[180px]" />
         </Link>
@@ -187,7 +195,8 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
       <div
         className={cn(
           "flex items-center justify-end sm:justify-start col-start-2 row-start-1 sm:col-start-3",
-          GLOBAL_SEARCH_TRIGGER_WIDTH_CLASS
+          GLOBAL_SEARCH_TRIGGER_WIDTH_CLASS,
+          hideMobileGlobalSearch && "max-lg:hidden"
         )}
       >
         <GlobalSearchBar dashboardDark={dashboardDark} className="w-full" />

@@ -55,10 +55,8 @@ export default function PortalChatPage() {
   return (
     <div
       className={cn(
-        "flex flex-col w-full",
-        isMobile
-          ? "fixed inset-0 z-30 bg-background flex flex-col min-h-0"
-          : "gap-4 max-w-5xl mx-auto"
+        "flex flex-col w-full min-h-0",
+        isMobile ? "flex-1 min-h-0" : "gap-4 max-w-5xl mx-auto"
       )}
     >
       {!isMobile ? (

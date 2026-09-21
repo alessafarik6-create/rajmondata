@@ -79,6 +79,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     (pathname === "/portal/tasks" ||
       pathname === "/portal/employees" ||
       pathname === "/portal/jobs");
+  const mobileChatFullBleed =
+    belowLg &&
+    (pathname === "/portal/chat" || pathname === "/portal/employee/messages");
 
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -787,10 +790,14 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         ) : null}
         <main
           className={cn(
-            "flex-1 overflow-x-hidden overflow-y-auto min-w-0 print:p-2",
-            hideMobileTopChrome
-              ? "px-0 py-0"
-              : "px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8"
+            "flex-1 overflow-x-hidden min-w-0 print:p-2",
+            mobileChatFullBleed
+              ? "flex flex-col min-h-0 overflow-hidden px-0 py-0"
+              : "overflow-y-auto",
+            !mobileChatFullBleed &&
+              (hideMobileTopChrome
+                ? "px-0 py-0"
+                : "px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8")
           )}
         >
           {trialBanner}
