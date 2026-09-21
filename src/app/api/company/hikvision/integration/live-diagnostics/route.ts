@@ -29,7 +29,15 @@ export async function POST(request: NextRequest) {
   const cams = await listHikvisionCameras(auth.db, companyId);
   const sample = cams.find((c) => c.online) ?? cams[0];
 
-  let liveApi: { status: "OK" | "Error"; code?: string; httpStatus?: number } = {
+  let liveApi: {
+    status: "OK" | "Error";
+    code?: string;
+    httpStatus?: number;
+    playbackType?: string;
+    streamUrlPresent?: boolean;
+    accessTokenPresent?: boolean;
+    expiresAt?: string | null;
+  } = {
     status: "Error",
     code: "NO_CAMERA",
   };
@@ -41,7 +49,13 @@ export async function POST(request: NextRequest) {
       userId: auth.caller.uid,
     });
     if (session.ok) {
-      liveApi = { status: "OK" };
+      liveApi = {
+        status: "OK",
+        playbackType: session.playbackType,
+        streamUrlPresent: session.streamUrlPresent,
+        accessTokenPresent: session.accessTokenPresent,
+        expiresAt: session.expiresAt ?? null,
+      };
     } else {
       liveApi = {
         status: "Error",

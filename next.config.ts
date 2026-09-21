@@ -6,13 +6,20 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "16mb",
     },
   },
-  async redirects() {
+  async headers() {
     return [
       {
-        source: "/hikvision-jssdk/ezUIKit.js",
-        destination: "/hikvision-jssdk/ezuikit.js",
-        permanent: false,
+        source: "/hikvision-jssdk/:path*.wasm",
+        headers: [{ key: "Content-Type", value: "application/wasm" }],
       },
+      {
+        source: "/hikvision-jssdk/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=86400, must-revalidate" }],
+      },
+    ];
+  },
+  async redirects() {
+    return [
       { source: "/dashboard", destination: "/portal/dashboard", permanent: false },
       { source: "/employee", destination: "/portal/employee", permanent: false },
       { source: "/employee/:path*", destination: "/portal/employee/:path*", permanent: false },

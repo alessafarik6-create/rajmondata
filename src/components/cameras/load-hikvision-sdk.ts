@@ -4,15 +4,22 @@ import {
   getHikvisionJssdkPublicConfig,
   type HikvisionJssdkPublicConfig,
 } from "@/lib/hikvision/jssdk-config-shared";
+import {
+  setHikvisionPlayerError,
+  setHikvisionPlayerPhase,
+  setHikvisionPlayerSdkMeta,
+} from "@/lib/hikvision/player-runtime-diagnostics";
 
 export type HikvisionSdkErrorCode =
+  | "SDK_FETCH_FAILED"
+  | "SDK_ASSET_FAILED"
   | "SDK_NOT_FOUND"
   | "SDK_LOAD_FAILED"
   | "SDK_LOAD_TIMEOUT"
   | "SDK_API_MISSING";
 
 export type HikvisionSdkLoadResult =
-  | { ok: true; config: HikvisionJssdkPublicConfig }
+  | { ok: true; config: HikvisionJssdkPublicConfig; scriptUrl: string }
   | { ok: false; code: HikvisionSdkErrorCode; message: string; scriptUrl: string };
 
 declare global {
@@ -56,9 +63,22 @@ export function isHikvisionSdkReady(): boolean {
   return Boolean(getHikvisionPlayerConstructor());
 }
 
+function sdkCacheBustQuery(): string {
+  const v =
+    String(process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA ?? "").trim() ||
+    String(process.env.NEXT_PUBLIC_BUILD_ID ?? "").trim();
+  return v ? `?v=${encodeURIComponent(v.slice(0, 12))}` : "";
+}
+
+function withCacheBust(src: string): string {
+  if (!src.startsWith("/") || src.includes("?")) return src;
+  return `${src}${sdkCacheBustQuery()}`;
+}
+
 function appendScript(src: string): Promise<void> {
+  const resolved = withCacheBust(src);
   return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-hik-jssdk="${src}"]`) as
+    const existing = document.querySelector(`script[data-hik-jssdk="${resolved}"]`) as
       | HTMLScriptElement
       | null;
     if (existing) {
@@ -71,9 +91,9 @@ function appendScript(src: string): Promise<void> {
       return;
     }
     const script = document.createElement("script");
-    script.src = src;
+    script.src = resolved;
     script.async = true;
-    script.dataset.hikJssdk = src;
+    script.dataset.hikJssdk = resolved;
     script.onload = () => {
       script.dataset.hikJssdkLoaded = "1";
       resolve();
@@ -85,28 +105,28 @@ function appendScript(src: string): Promise<void> {
 
 function appendStylesheet(href: string): Promise<void> {
   return new Promise((resolve) => {
-    if (document.querySelector(`link[data-hik-jssdk-css="${href}"]`)) {
+    const resolved = withCacheBust(href);
+    if (document.querySelector(`link[data-hik-jssdk-css="${resolved}"]`)) {
       resolve();
       return;
     }
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = href;
-    link.dataset.hikJssdkCss = href;
+    link.href = resolved;
+    link.dataset.hikJssdkCss = resolved;
     link.onload = () => resolve();
     link.onerror = () => resolve();
     document.head.appendChild(link);
   });
 }
 
-async function probeScriptUrl(scriptUrl: string): Promise<boolean> {
+async function tryLoadScriptCandidate(scriptUrl: string): Promise<boolean> {
+  const timeout = new Promise<never>((_, reject) => {
+    window.setTimeout(() => reject(new Error("timeout")), LOAD_TIMEOUT_MS);
+  });
   try {
-    const res = await fetch(scriptUrl, { method: "HEAD", cache: "no-store" });
-    if (res.status === 405) {
-      const getRes = await fetch(scriptUrl, { method: "GET", cache: "no-store" });
-      return getRes.ok;
-    }
-    return res.ok;
+    await Promise.race([appendScript(scriptUrl), timeout]);
+    return isHikvisionSdkReady();
   } catch {
     return false;
   }
@@ -130,70 +150,43 @@ async function loadHikvisionSdkInternal(): Promise<HikvisionSdkLoadResult> {
   ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
   if (isHikvisionSdkReady()) {
-    return { ok: true, config };
+    setHikvisionPlayerPhase("SDK_LOADED");
+    setHikvisionPlayerSdkMeta(scriptCandidates[0] ?? config.scriptUrl);
+    return { ok: true, config, scriptUrl: scriptCandidates[0] ?? config.scriptUrl };
   }
 
-  let scriptUrl = scriptCandidates[0] ?? config.scriptUrl;
-  let reachable = false;
-  for (const candidate of scriptCandidates) {
-    if (await probeScriptUrl(candidate)) {
-      scriptUrl = candidate;
-      reachable = true;
-      break;
-    }
-  }
-  if (!reachable) {
-    return {
-      ok: false,
-      code: "SDK_NOT_FOUND",
-      message: "Hikvision JSSDK soubor nebyl nalezen.",
-      scriptUrl: scriptCandidates[0] ?? config.scriptUrl,
-    };
-  }
+  setHikvisionPlayerPhase("SDK_LOADING");
+  setHikvisionPlayerError(null);
 
   if (config.cssUrl) {
     await appendStylesheet(config.cssUrl);
   }
 
-  const timeout = new Promise<never>((_, reject) => {
-    window.setTimeout(() => reject(new Error("timeout")), LOAD_TIMEOUT_MS);
-  });
-
-  try {
-    await Promise.race([appendScript(scriptUrl), timeout]);
-  } catch (e) {
-    if (e instanceof Error && e.message === "timeout") {
-      return {
-        ok: false,
-        code: "SDK_LOAD_TIMEOUT",
-        message: "Načtení Hikvision JSSDK vypršelo.",
-        scriptUrl,
-      };
+  for (const candidate of scriptCandidates) {
+    const ok = await tryLoadScriptCandidate(candidate);
+    if (ok) {
+      setHikvisionPlayerPhase("SDK_LOADED");
+      setHikvisionPlayerSdkMeta(candidate);
+      return { ok: true, config, scriptUrl: candidate };
     }
-    return {
-      ok: false,
-      code: "SDK_LOAD_FAILED",
-      message: "Načtení Hikvision JSSDK selhalo.",
-      scriptUrl,
-    };
   }
 
-  if (!isHikvisionSdkReady()) {
-    return {
-      ok: false,
-      code: "SDK_API_MISSING",
-      message: "Hikvision SDK bylo načteno, ale player API není dostupné.",
-      scriptUrl,
-    };
-  }
-
-  return { ok: true, config };
+  setHikvisionPlayerPhase("PLAY_ERROR");
+  setHikvisionPlayerError("SDK_FETCH_FAILED");
+  const scriptUrl = scriptCandidates[0] ?? config.scriptUrl;
+  return {
+    ok: false,
+    code: "SDK_FETCH_FAILED",
+    message: "Hikvision JSSDK se nepodařilo stáhnout (síť nebo 404).",
+    scriptUrl,
+  };
 }
 
 /** Jednorázové načtení oficiálního EZUIKit UMD (window.EZUIKit.EZUIKitPlayer). */
 export function loadHikvisionSdk(): Promise<HikvisionSdkLoadResult> {
   if (typeof window !== "undefined" && isHikvisionSdkReady()) {
-    return Promise.resolve({ ok: true, config: getHikvisionJssdkPublicConfig() });
+    const config = getHikvisionJssdkPublicConfig();
+    return Promise.resolve({ ok: true, config, scriptUrl: config.scriptUrl });
   }
   if (!loadFlight) {
     loadFlight = loadHikvisionSdkInternal().finally(() => {

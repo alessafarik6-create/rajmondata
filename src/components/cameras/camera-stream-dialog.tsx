@@ -14,6 +14,7 @@ import {
   type HikvisionLivePlayerErrorCode,
 } from "@/components/cameras/hikvision-ezopen-player";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { setHikvisionPlayerStreamMeta } from "@/lib/hikvision/player-runtime-diagnostics";
 
 type CameraRow = { id: string; name: string; online: boolean };
 
@@ -69,6 +70,10 @@ export function CameraLiveDialog(props: {
         accessToken: String(data.accessToken ?? ""),
         appKey: data.appKey,
         streamAreaDomain: data.streamAreaDomain,
+      });
+      setHikvisionPlayerStreamMeta({
+        streamUrlPresent: Boolean(data.streamUrlPresent ?? data.ezopenUrl ?? data.url),
+        expiresAt: data.expiresAt ? String(data.expiresAt) : null,
       });
     } catch {
       setSession(null);

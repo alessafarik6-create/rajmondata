@@ -7,7 +7,7 @@ Oficiální **ezuikit-js** (npm) se při `npm install` / Vercel buildu kopíruje
 | Soubor | URL |
 |--------|-----|
 | `ezuikit.js` | `/hikvision-jssdk/ezuikit.js` |
-| `ezUIKit.js` | `/hikvision-jssdk/ezUIKit.js` (alias, stejný obsah) |
+| `ezUIKit.js` | `/hikvision-jssdk/ezUIKit.js` (alias z postinstall — **bez** Next redirectu, kvůli case-insensitive smyčce na Vercelu) |
 | `ezuikit_static/` | `/hikvision-jssdk/ezuikit_static/` |
 
 Globální API: `window.EZUIKit.EZUIKitPlayer`.

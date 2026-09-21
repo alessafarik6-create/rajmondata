@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCompany, useUser } from "@/firebase";
 import { Loader2, Video, Cloud, Server, Plug, Stethoscope } from "lucide-react";
 import { loadHikvisionSdk } from "@/components/cameras/load-hikvision-sdk";
+import { getHikvisionPlayerRuntimeDiagnostics } from "@/lib/hikvision/player-runtime-diagnostics";
 
 type ConnectionMode = "HIKCONNECT_OPENAPI" | "DIRECT_ISAPI" | "LOCAL_CONNECTOR";
 
@@ -315,16 +316,22 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
       }
       const liveDiagData = await liveDiagRes.json();
       if (liveDiagData.ok && showDevDetail) {
+        const runtime = getHikvisionPlayerRuntimeDiagnostics();
+        const la = liveDiagData.liveApi;
         setLiveDiagDetail(
           [
             `Live view diagnostika`,
             `JSSDK URL: ${liveDiagData.jssdkUrl}`,
             `JSSDK HTTP: ${liveDiagData.jssdkHttp}`,
             `JSSDK static: ${liveDiagData.jssdkStatic}`,
-            `Live API: ${liveDiagData.liveApiRoute} → ${liveDiagData.liveApi?.status}`,
+            `Live API: ${liveDiagData.liveApiRoute} → ${la?.status}`,
+            la?.status === "OK"
+              ? `playbackType: ${la.playbackType ?? "—"}, streamUrlPresent: ${la.streamUrlPresent}, tokenPresent: ${la.accessTokenPresent}, expiresAt: ${la.expiresAt ?? "—"}`
+              : `live error: ${la?.code ?? "—"}`,
             `Stream token: ${liveDiagData.streamToken}`,
             `Player init: ${liveDiagData.playerInit}`,
-            sdkLoad.ok ? "JSSDK global: OK" : `JSSDK global: Missing (${sdkLoad.code})`,
+            sdkLoad.ok ? `JSSDK global: OK (${sdkLoad.scriptUrl})` : `JSSDK global: ${sdkLoad.code}`,
+            `Runtime phase: ${runtime.phase}${runtime.lastErrorCode ? ` (${runtime.lastErrorCode})` : ""}`,
           ].join("\n")
         );
       }

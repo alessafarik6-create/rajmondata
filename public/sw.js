@@ -1,4 +1,5 @@
-/* PWA + Web Push — Rajmondata */
+/* PWA + Web Push — Rajmondata (v3: neinterceptovat Hikvision SDK / live API) */
+
 self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
@@ -7,8 +8,22 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+/** Cesty, které musí jít přímo do sítě (bez respondWith — jinak ERR_FAILED u SDK/wasm). */
+function bypassServiceWorkerFetch(url) {
+  if (url.origin !== self.location.origin) return true;
+  const path = url.pathname;
+  return (
+    path.startsWith("/hikvision-jssdk/") ||
+    path.startsWith("/api/company/hikvision/") ||
+    path === "/sw.js"
+  );
+}
+
 self.addEventListener("fetch", (event) => {
-  event.respondWith(fetch(event.request));
+  if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
+  if (bypassServiceWorkerFetch(url)) return;
+  /* Ostatní GET: výchozí chování prohlížeče (žádný prázdný respondWith). */
 });
 
 self.addEventListener("push", (event) => {

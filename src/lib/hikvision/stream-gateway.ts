@@ -10,6 +10,7 @@ export class HikvisionStreamGateway {
     import("@/lib/hikvision/providers/types").ProviderLiveViewResult,
     { ok: true }
   >) {
+    const ezopenUrl = live.ezopenUrl ?? live.url ?? "";
     return {
       ok: true as const,
       success: true as const,
@@ -22,6 +23,8 @@ export class HikvisionStreamGateway {
       streamAreaDomain: live.streamAreaDomain,
       expiresAt: live.expiresAt,
       message: live.message,
+      streamUrlPresent: Boolean(ezopenUrl),
+      accessTokenPresent: Boolean(live.accessToken),
     };
   }
 
