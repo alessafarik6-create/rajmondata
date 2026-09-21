@@ -59,8 +59,23 @@ export function isPortalMenuItemVisible(
     if (Array.isArray(globalRoles) && globalRoles.includes("super_admin")) {
       // super admin vidí položku bez ohledu na příznak zaměstnance
     } else if (normalizedRole === "employee") {
-      const row = employeeRow as { canAccessMeetingNotes?: boolean } | null;
-      if (row?.canAccessMeetingNotes !== true) return false;
+      const row = employeeRow as {
+        canAccessMeetingNotes?: boolean;
+        portalModulePermissions?: Record<string, string>;
+      } | null;
+      const matrix = row?.portalModulePermissions;
+      if (matrix && typeof matrix === "object" && Object.keys(matrix).length > 0) {
+        const level = matrix.meetingRecords;
+        if (level === "read" || level === "write") {
+          // matrix řídí viditelnost
+        } else if (level === "none") {
+          return false;
+        } else if (row?.canAccessMeetingNotes !== true) {
+          return false;
+        }
+      } else if (row?.canAccessMeetingNotes !== true) {
+        return false;
+      }
     }
   }
 

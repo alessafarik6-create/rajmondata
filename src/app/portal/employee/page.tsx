@@ -41,6 +41,7 @@ import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-erro
 import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
 import { Badge } from "@/components/ui/badge";
 import { useEmployeeNotificationUnreadCount } from "@/hooks/use-employee-notification-unread-count";
+import { usePortalPermissions } from "@/contexts/portal-permissions-context";
 
 const DEBUG_EMPLOYEE_HOME = process.env.NODE_ENV === "development";
 
@@ -68,6 +69,11 @@ export default function EmployeeHomePage() {
     companyId,
     employeeId,
   });
+  const { canRead } = usePortalPermissions();
+  const showSchedule =
+    canRead("schedule") || canRead("jobs");
+  const showTasks = canRead("jobs");
+  const showAttendance = canRead("labor");
 
   const employeeRef = useMemoFirebase(
     () =>
@@ -356,28 +362,32 @@ export default function EmployeeHomePage() {
         </div>
       </section>
 
-      <section className={cn(sectionCard, "mb-4")}>
-        <h2 className={cn(headTitle)}>Moje montáže</h2>
-        <p className={cn(headSub, "mb-3")}>
-          Naplánované montáže přiřazené vám. Klepnutím na událost otevřete detail.
-        </p>
-        <CompanyScheduleCalendar
-          companyId={companyId}
-          headingTitle="Moje montáže"
-          layout="full"
-          appearance={belowLg ? "darkPortal" : "default"}
-          readOnly
-          restrictEmployeeEvents
-          scheduleFilter="installationsOnly"
-        />
-      </section>
+      {showSchedule ? (
+        <section className={cn(sectionCard, "mb-4")}>
+          <h2 className={cn(headTitle)}>Moje montáže</h2>
+          <p className={cn(headSub, "mb-3")}>
+            Naplánované montáže přiřazené vám. Klepnutím na událost otevřete detail.
+          </p>
+          <CompanyScheduleCalendar
+            companyId={companyId}
+            headingTitle="Moje montáže"
+            layout="full"
+            appearance={belowLg ? "darkPortal" : "default"}
+            readOnly
+            restrictEmployeeEvents
+            scheduleFilter="installationsOnly"
+          />
+        </section>
+      ) : null}
 
-      <section className={cn(sectionCard, "mb-4 space-y-3")}>
-        <h2 className={cn(headTitle)}>Moje úkoly</h2>
-        <DashboardOpenTasks companyId={companyId} employeeId={employeeId} isPrivileged={false} />
-      </section>
+      {showTasks ? (
+        <section className={cn(sectionCard, "mb-4 space-y-3")}>
+          <h2 className={cn(headTitle)}>Moje úkoly</h2>
+          <DashboardOpenTasks companyId={companyId} employeeId={employeeId} isPrivileged={false} />
+        </section>
+      ) : null}
 
-      {user ? (
+      {user && showAttendance ? (
         <section className={cn(sectionCard, "mb-4")}>
           <h2 className={cn(headTitle, "mb-3")}>Docházka</h2>
           <EmployeeAttendanceOverview

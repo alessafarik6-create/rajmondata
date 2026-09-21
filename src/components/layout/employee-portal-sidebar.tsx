@@ -1,54 +1,28 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  LayoutDashboard,
-  Clock,
-  CalendarDays,
-  UserCircle,
-  Wallet,
-  MessageSquare,
-  Package,
-  Factory,
-  Briefcase,
-  Bell,
-  ClipboardList,
-} from "lucide-react";
+import { Bell, LayoutDashboard } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/ui/logo";
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
-import { isDailyWorkLogEnabled, isWorkLogEnabled } from "@/lib/employee-report-flags";
-import {
-  canAccessCompanyModule,
-  getEffectiveModulesMerged,
-} from "@/lib/platform-access";
-import { isModuleKeyEnabled } from "@/lib/license-modules";
-import {
-  userCanAccessProductionPortal,
-  userCanAccessWarehousePortal,
-} from "@/lib/warehouse-production-access";
+import { getEffectiveModulesMerged } from "@/lib/platform-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
-import {
-  DEFAULT_EMPLOYEE_PORTAL_MODULES,
-  type EmployeePortalModules,
-} from "@/lib/employee-portal-modules";
 import { Badge } from "@/components/ui/badge";
 import { useEmployeeNotificationUnreadCount } from "@/hooks/use-employee-notification-unread-count";
+import { resolveEffectivePortalPermissions } from "@/lib/portal-permissions";
+import { resolveEmployeePortalMenuItems } from "@/lib/employee-portal-menu-resolver";
+import { portalMenuIcon } from "@/lib/portal-menu-icons";
+import { normalizeCompanyRole } from "@/lib/company-privilege";
 
 export type EmployeePortalSidebarProps = {
   mobileSheetClose?: () => void;
-  /** Sloučení licence organizace a příznaků na employees/{id} (počítá portal layout). */
-  visibleEmployeeModules?: EmployeePortalModules;
 };
 
-export function EmployeePortalSidebar({
-  mobileSheetClose,
-  visibleEmployeeModules: visibilityProp,
-}: EmployeePortalSidebarProps) {
+export function EmployeePortalSidebar({ mobileSheetClose }: EmployeePortalSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user } = useUser();
@@ -81,7 +55,7 @@ export function EmployeePortalSidebar({
     companyId: companyIdStr,
     employeeId: employeeIdStr,
   });
-  const portalRole = String(profile?.role || "employee");
+  const role = normalizeCompanyRole(String(profile?.role || "employee"));
   const platformCatalog = useMergedPlatformModuleCatalog();
 
   const effectiveModules = useMemo(
@@ -89,113 +63,87 @@ export function EmployeePortalSidebar({
     [company]
   );
 
-  const v = useMemo(
-    () => ({ ...DEFAULT_EMPLOYEE_PORTAL_MODULES, ...visibilityProp }),
-    [visibilityProp]
+  const portalPermissions = useMemo(
+    () =>
+      resolveEffectivePortalPermissions({
+        role,
+        globalRoles: profile?.globalRoles,
+        employeeDoc: (employeeDoc as Record<string, unknown> | null) ?? null,
+      }),
+    [role, profile?.globalRoles, employeeDoc]
   );
 
-  const links = useMemo(() => {
-    const apOk =
-      company &&
-      canAccessCompanyModule(company, "attendance_payroll", platformCatalog);
-    const showAttendance =
-      v.dochazka &&
-      apOk &&
-      isModuleKeyEnabled(effectiveModules, "dochazka");
-    const showWorklogSection =
-      v.dochazka &&
-      apOk &&
-      (isModuleKeyEnabled(effectiveModules, "dochazka") ||
-        isModuleKeyEnabled(effectiveModules, "reporty"));
-    const showDaily = showWorklogSection && isDailyWorkLogEnabled(employeeDoc);
-    const showLegacyWorklog =
-      showWorklogSection && !showDaily && isWorkLogEnabled(employeeDoc);
-    const showSklad =
-      company &&
-      isModuleKeyEnabled(effectiveModules, "sklad") &&
-      canAccessCompanyModule(company, "sklad", platformCatalog) &&
-      userCanAccessWarehousePortal({
-        role: portalRole,
-        globalRoles: profile?.globalRoles,
-        employeeRow: employeeDoc,
-      });
-    const showVyroba =
-      company &&
-      isModuleKeyEnabled(effectiveModules, "vyroba") &&
-      canAccessCompanyModule(company, "vyroba", platformCatalog) &&
-      userCanAccessProductionPortal({
-        role: portalRole,
-        globalRoles: profile?.globalRoles,
-        employeeRow: employeeDoc,
-      });
+  const visibilityCtx = useMemo(
+    () => ({
+      role,
+      globalRoles: profile?.globalRoles,
+      company,
+      effectiveModules,
+      platformCatalog,
+      employeeRow: (employeeDoc as Record<string, unknown> | null) ?? null,
+    }),
+    [role, profile?.globalRoles, company, effectiveModules, platformCatalog, employeeDoc]
+  );
 
-    const all = [
-      { label: t("home"), href: "/portal/employee", icon: LayoutDashboard },
-      ...(v.zakazky
-        ? [
-            {
-              label: "Zakázky",
-              href: "/portal/employee/jobs",
-              icon: Briefcase,
-            },
-          ]
-        : []),
-      ...(showAttendance
-        ? [{ label: t("attendance"), href: "/portal/labor/dochazka", icon: Clock }]
-        : []),
-      ...(showDaily
-        ? [
-            {
-              label: t("workReport"),
-              href: "/portal/employee/daily-reports",
-              icon: CalendarDays,
-            },
-          ]
-        : showLegacyWorklog
-          ? [
-              {
-                label: t("workReport"),
-                href: "/portal/employee/worklogs",
-                icon: CalendarDays,
-              },
-            ]
-          : []),
-      ...(showSklad ? [{ label: "Sklad", href: "/portal/sklad", icon: Package }] : []),
-      ...(showVyroba
-        ? [
-            { label: "Výroba", href: "/portal/vyroba", icon: Factory },
-            {
-              label: "Zakázky ve výrobě",
-              href: "/portal/vyroba/zakazky",
-              icon: ClipboardList,
-            },
-          ]
-        : []),
-      ...(v.penize
-        ? [{ label: t("money"), href: "/portal/employee/money", icon: Wallet }]
-        : []),
-      ...(v.zpravy
-        ? [
-            {
-              label: t("messages"),
-              href: "/portal/employee/messages",
-              icon: MessageSquare,
-            },
-          ]
-        : []),
-      { label: "Oznámení", href: "/portal/notifications", icon: Bell },
-      { label: t("profile"), href: "/portal/employee/profile", icon: UserCircle },
-    ];
-    return all;
+  const navItems = useMemo(
+    () =>
+      resolveEmployeePortalMenuItems({
+        visibilityCtx,
+        permissions: portalPermissions,
+        role,
+        globalRoles: profile?.globalRoles,
+        employeeDoc: (employeeDoc as Record<string, unknown> | null) ?? null,
+        labels: {
+          home: t("home"),
+          workReport: t("workReport"),
+          attendance: t("attendance"),
+          money: t("money"),
+          notifications: "Oznámení",
+          profile: t("profile"),
+        },
+      }),
+    [
+      visibilityCtx,
+      portalPermissions,
+      role,
+      profile?.globalRoles,
+      employeeDoc,
+      t,
+    ]
+  );
+
+  const links = useMemo(
+    () =>
+      navItems.map((item) => ({
+        id: item.id,
+        label: item.label,
+        href: item.href,
+        icon:
+          item.id === "_home"
+            ? LayoutDashboard
+            : item.id === "_notifications"
+              ? Bell
+              : portalMenuIcon(item.id),
+      })),
+    [navItems]
+  );
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    if (!profile?.employeeId || !companyIdStr) return;
+    console.log("[EmployeePortalSidebar] menu", {
+      employeeId: profile.employeeId,
+      companyId: companyIdStr,
+      portalModulePermissions: employeeDoc?.portalModulePermissions ?? null,
+      resolvedPermissions: portalPermissions,
+      menuItems: navItems.map((i) => ({ id: i.id, href: i.href, label: i.label })),
+    });
   }, [
-    t,
-    employeeDoc,
-    company,
-    portalRole,
-    profile?.globalRoles,
-    platformCatalog,
-    effectiveModules,
-    v,
+    profile?.employeeId,
+    companyIdStr,
+    employeeDoc?.portalModulePermissions,
+    portalPermissions,
+    navItems,
   ]);
 
   const linkClass = (href: string) =>
@@ -238,7 +186,7 @@ export function EmployeePortalSidebar({
         {links.map((link) =>
           mobileSheetClose ? (
             <button
-              key={link.href}
+              key={`${link.id}-${link.href}`}
               type="button"
               className={cn(
                 linkClass(link.href),
@@ -258,7 +206,11 @@ export function EmployeePortalSidebar({
               ) : null}
             </button>
           ) : (
-            <Link key={link.href} href={link.href} className={linkClass(link.href)}>
+            <Link
+              key={`${link.id}-${link.href}`}
+              href={link.href}
+              className={linkClass(link.href)}
+            >
               <link.icon className="w-5 h-5 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{link.label}</span>
               {link.href === "/portal/employee" && employeeNotifUnread > 0 ? (

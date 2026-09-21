@@ -38,11 +38,9 @@ import {
 } from "@/contexts/platform-module-catalog-context";
 import { isBindableFirestoreInstance } from "@/lib/firestore-instance-guard";
 import {
-  computeVisibleEmployeePortalModules,
-  getOrgEmployeePortalModuleFlags,
-  parseEmployeePortalModules,
-} from "@/lib/employee-portal-modules";
-import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
+  employeeHasReadAccessToPath,
+  resolveEmployeePortalMenuItems,
+} from "@/lib/employee-portal-menu-resolver";
 import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
 import { MobilePushPromptSheet } from "@/components/pwa/mobile-push-prompt-sheet";
 import { ChatAssistant } from "@/components/portal/ChatAssistant";
@@ -51,11 +49,7 @@ import { useIsBelowLg } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import { PortalPermissionsProvider } from "@/contexts/portal-permissions-context";
 import { PortalModuleAccessGate } from "@/components/portal/portal-module-access-gate";
-import {
-  canAccessPortalModule,
-  portalModuleIdFromPathname,
-  resolveEffectivePortalPermissions,
-} from "@/lib/portal-permissions";
+import { resolveEffectivePortalPermissions } from "@/lib/portal-permissions";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -128,25 +122,6 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   }, [areServicesAvailable, firestore, companyId, profile?.employeeId]);
   const { data: profileEmployeeRow } = useDoc<Record<string, unknown>>(profileEmployeeRef);
 
-  const orgPortalModules = useMemo(
-    () => getOrgEmployeePortalModuleFlags(company, platformCatalog),
-    [company, platformCatalog]
-  );
-
-  const employeePortalModulesParsed = useMemo(
-    () => parseEmployeePortalModules(profileEmployeeRow),
-    [profileEmployeeRow]
-  );
-
-  const visibleEmployeeModules = useMemo(
-    () =>
-      computeVisibleEmployeePortalModules(
-        orgPortalModules,
-        employeePortalModulesParsed
-      ),
-    [orgPortalModules, employeePortalModulesParsed]
-  );
-
   const portalPermissionsResolved = useMemo(() => {
     if (!profile?.role) return null;
     return resolveEffectivePortalPermissions({
@@ -185,6 +160,18 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     pathname.startsWith("/portal/notifications") ||
     pathname.startsWith("/portal/help");
 
+  const employeePortalPathAllowed = useMemo(() => {
+    if (!isPortalEmployeeOnly) return true;
+    if (isEmployeeAllowedBranchPath) return true;
+    if (!portalPermissionsResolved) return false;
+    return employeeHasReadAccessToPath(pathname, portalPermissionsResolved);
+  }, [
+    isPortalEmployeeOnly,
+    isEmployeeAllowedBranchPath,
+    pathname,
+    portalPermissionsResolved,
+  ]);
+
   /** Načítání profilu z Firestore — bez automatického doplňování dokumentu (žádný nový auth účet). */
   const waitingForProfileResolution = isProfileLoading;
 
@@ -222,23 +209,13 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!profile || isProfileLoading) return;
     if (!isPortalEmployeeOnly) return;
-    if (isEmployeeAllowedBranchPath) return;
-    const mod = portalModuleIdFromPathname(pathname);
-    if (
-      mod &&
-      portalPermissionsResolved &&
-      canAccessPortalModule(portalPermissionsResolved, mod, "read")
-    ) {
-      return;
-    }
+    if (employeePortalPathAllowed) return;
     router.replace("/portal/employee");
   }, [
     profile,
     isProfileLoading,
     isPortalEmployeeOnly,
-    isEmployeeAllowedBranchPath,
-    pathname,
-    portalPermissionsResolved,
+    employeePortalPathAllowed,
     router,
   ]);
 
@@ -255,9 +232,12 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     const skladPath = pathname.startsWith("/portal/sklad");
     const vyrobaPath = pathname.startsWith("/portal/vyroba");
     if (!skladPath && !vyrobaPath) return;
+    const deniedHome =
+      profile.role === "employee" ? "/portal/employee" : "/portal/dashboard";
+
     if (skladPath) {
       if (!canAccessCompanyModule(company, "sklad", platformCatalog)) {
-        router.replace("/portal/dashboard");
+        router.replace(deniedHome);
         return;
       }
       if (
@@ -267,13 +247,13 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
           employeeRow: profileEmployeeRow as { canAccessWarehouse?: boolean } | null,
         })
       ) {
-        router.replace("/portal/dashboard");
+        router.replace(deniedHome);
         return;
       }
     }
     if (vyrobaPath) {
       if (!canAccessCompanyModule(company, "vyroba", platformCatalog)) {
-        router.replace("/portal/dashboard");
+        router.replace(deniedHome);
         return;
       }
       if (
@@ -283,13 +263,13 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
           employeeRow: profileEmployeeRow as { canAccessProduction?: boolean } | null,
         })
       ) {
-        router.replace("/portal/dashboard");
+        router.replace(deniedHome);
         return;
       }
     }
     if (pathname.startsWith("/portal/cameras")) {
       if (!canAccessCompanyModule(company, "cameras", platformCatalog)) {
-        router.replace("/portal/dashboard");
+        router.replace(deniedHome);
         return;
       }
       const cam = resolveCameraPermissions({
@@ -299,7 +279,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         portalModuleCamerasLevel: portalPermissionsResolved?.cameras ?? "none",
       });
       if (!cam.view) {
-        router.replace("/portal/dashboard");
+        router.replace(deniedHome);
       }
     }
   }, [
@@ -313,63 +293,56 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     portalPermissionsResolved,
   ]);
 
-  /** Zaměstnanecké moduly (Peníze, Zprávy, Docházka, Zakázky) — skryté položky + blokace přímého URL. */
+  /** Blokace přímého URL podle portalModulePermissions (stejná logika jako menu). */
   useEffect(() => {
     if (!profile || isProfileLoading || !company) return;
-    if (!isPortalEmployeeOnly) return;
-    const v = visibleEmployeeModules;
-
-    if (pathname.startsWith("/portal/employee/money") && !v.penize) {
-      router.replace("/portal/employee");
-      return;
-    }
-    if (pathname.startsWith("/portal/employee/messages") && !v.zpravy) {
-      router.replace("/portal/employee");
-      return;
-    }
-    if (pathname.startsWith("/portal/employee/jobs") && !v.zakazky) {
-      router.replace("/portal/employee");
-      return;
-    }
-    const needsDochazkaModule =
-      pathname.startsWith("/portal/employee/daily-reports") ||
-      pathname.startsWith("/portal/employee/worklogs") ||
-      pathname.startsWith("/portal/employee/work-log") ||
-      pathname.startsWith("/portal/employee/attendance") ||
-      pathname.startsWith("/portal/labor");
-    if (needsDochazkaModule && !v.dochazka) {
-      router.replace("/portal/employee");
-    }
+    if (!isPortalEmployeeOnly || !portalPermissionsResolved) return;
+    if (employeePortalPathAllowed) return;
+    router.replace("/portal/employee");
   }, [
     profile,
     isProfileLoading,
     company,
     isPortalEmployeeOnly,
-    pathname,
+    portalPermissionsResolved,
+    employeePortalPathAllowed,
     router,
-    visibleEmployeeModules,
   ]);
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
-    if (!isPortalEmployeeOnly || !company) return;
-    console.log("orgModules", orgPortalModules);
-    console.log("employeeModules", employeePortalModulesParsed);
-    console.log("visibleEmployeeModules", visibleEmployeeModules);
-    console.log(
-      "assignedJobIds",
-      parseAssignedWorklogJobIds(
-        (profileEmployeeRow ?? undefined) as Parameters<
-          typeof parseAssignedWorklogJobIds
-        >[0]
-      )
-    );
+    if (!isPortalEmployeeOnly || !company || !portalPermissionsResolved) return;
+    const effectiveModules = getEffectiveModulesMerged(company);
+    const menuItems = resolveEmployeePortalMenuItems({
+      visibilityCtx: {
+        role: String(profile?.role || "employee"),
+        globalRoles: profile?.globalRoles as string[] | undefined,
+        company,
+        effectiveModules,
+        platformCatalog,
+        employeeRow: profileEmployeeRow ?? null,
+      },
+      permissions: portalPermissionsResolved,
+      role: String(profile?.role || "employee"),
+      globalRoles: profile?.globalRoles as string[] | undefined,
+      employeeDoc: profileEmployeeRow ?? null,
+    });
+    console.log("[PortalLayout] employee permissions", {
+      employeeId: profile?.employeeId ?? null,
+      companyId,
+      portalModulePermissions: profileEmployeeRow?.portalModulePermissions ?? null,
+      resolvedPermissions: portalPermissionsResolved,
+      menuItems: menuItems.map((i) => i.label),
+    });
   }, [
     isPortalEmployeeOnly,
     company,
-    orgPortalModules,
-    employeePortalModulesParsed,
-    visibleEmployeeModules,
+    companyId,
+    platformCatalog,
+    portalPermissionsResolved,
+    profile?.employeeId,
+    profile?.role,
+    profile?.globalRoles,
     profileEmployeeRow,
   ]);
 
@@ -666,7 +639,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (isPortalEmployeeOnly && !isEmployeeAllowedBranchPath) {
+  if (isPortalEmployeeOnly && !employeePortalPathAllowed) {
     if (shellTimedOut) {
       return (
         <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4">
@@ -711,10 +684,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   const renderSidebar = (mobileClose?: () => void) =>
     isPortalEmployeeOnly ? (
-      <EmployeePortalSidebar
-        visibleEmployeeModules={visibleEmployeeModules}
-        mobileSheetClose={mobileClose}
-      />
+      <EmployeePortalSidebar mobileSheetClose={mobileClose} />
     ) : isPortalCustomerOnly ? (
       <CustomerPortalSidebar mobileSheetClose={mobileClose} />
     ) : (

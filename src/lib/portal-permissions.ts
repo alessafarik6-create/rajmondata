@@ -306,6 +306,17 @@ export function portalPermissionsAllowMutation(
 export function portalModuleIdFromPathname(pathname: string): PortalModuleId | null {
   const path = String(pathname ?? "").trim() || "/";
   if (!path.startsWith("/portal")) return null;
+  if (path.startsWith("/portal/employee/jobs")) return "jobs";
+  if (path.startsWith("/portal/employee/messages")) return "chat";
+  if (path.startsWith("/portal/employee/money")) return "finance";
+  if (
+    path.startsWith("/portal/employee/daily-reports") ||
+    path.startsWith("/portal/employee/worklogs") ||
+    path.startsWith("/portal/employee/work-log") ||
+    path.startsWith("/portal/employee/attendance")
+  ) {
+    return "labor";
+  }
   if (path.startsWith("/portal/employee")) return null;
 
   const sorted = [...PORTAL_SIDEBAR_MENU_DEFS].sort(
