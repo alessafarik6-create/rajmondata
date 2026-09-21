@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
 
   const { provider } = await resolveHikvisionProviderForOrg(auth.db, companyId);
   const integration = await loadHikvisionIntegration(auth.db, companyId);
-  const providerKind = providerKindForOrgIntegration(integration);
+  const providerKind = await providerKindForOrgIntegration(auth.db, companyId, integration);
 
   const result = await provider.syncCameras(
     { db: auth.db, organizationId: companyId },

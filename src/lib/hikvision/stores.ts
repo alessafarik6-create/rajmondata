@@ -17,7 +17,9 @@ import {
   type HikvisionIntegrationDoc,
   type HikvisionProviderKind,
 } from "@/lib/hikvision/types";
-import { providerIdFromConnectionMode, normalizeConnectionMode } from "@/lib/hikvision/providers/resolver";
+import { providerIdFromConnectionMode } from "@/lib/hikvision/providers/resolver";
+import { normalizeConnectionMode } from "@/lib/hikvision/connection-mode";
+import { resolveEffectiveConnectionMode } from "@/lib/hikvision/resolve-effective-connection-mode";
 import type { HikvisionIsapiConfig } from "@/lib/hikvision/isapi-client";
 
 export function hikvisionIntegrationRef(db: Firestore, companyId: string) {
@@ -165,7 +167,7 @@ export async function buildIsapiConfigForOrg(
   if (integration.active === false) {
     return { ok: false, error: "Integrace Hikvision není aktivní." };
   }
-  const mode = normalizeConnectionMode(integration.connectionMode);
+  const mode = await resolveEffectiveConnectionMode(integration, db, companyId);
   if (mode === "HIKCONNECT_OPENAPI") {
     return {
       ok: false,
@@ -259,10 +261,13 @@ export async function listHikvisionDevices(
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as HikvisionDeviceDoc) }));
 }
 
-export function providerKindForOrgIntegration(
+export async function providerKindForOrgIntegration(
+  db: Firestore,
+  organizationId: string,
   integration: HikvisionIntegrationDoc | null
-): HikvisionProviderKind {
-  return providerIdFromConnectionMode(normalizeConnectionMode(integration?.connectionMode));
+): Promise<HikvisionProviderKind> {
+  const mode = await resolveEffectiveConnectionMode(integration, db, organizationId);
+  return providerIdFromConnectionMode(mode);
 }
 
 export async function upsertHikvisionCameras(

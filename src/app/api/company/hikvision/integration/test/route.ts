@@ -18,9 +18,9 @@ import {
 import { hikvisionErrorMessage } from "@/lib/hikvision/errors";
 import {
   isIntegrationActiveFlag,
-  normalizeConnectionMode,
   providerNameForMode,
 } from "@/lib/hikvision/connection-mode";
+import { resolveEffectiveConnectionMode } from "@/lib/hikvision/resolve-effective-connection-mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const integration = await loadHikvisionIntegration(auth.db, companyId);
-    const mode = normalizeConnectionMode(integration?.connectionMode);
+    const mode = await resolveEffectiveConnectionMode(integration, auth.db, companyId);
     const active = isIntegrationActiveFlag(integration?.active);
     const hasApiKey = await hasHikConnectApiKey(auth.db, companyId);
     const hasApiSecret = await hasHikConnectApiSecret(auth.db, companyId);

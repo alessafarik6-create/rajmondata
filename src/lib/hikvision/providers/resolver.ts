@@ -4,6 +4,7 @@ import {
   normalizeConnectionMode,
   type HikvisionConnectionModeCanonical,
 } from "@/lib/hikvision/connection-mode";
+import { resolveEffectiveConnectionMode } from "@/lib/hikvision/resolve-effective-connection-mode";
 import type { HikvisionProvider, HikvisionProviderId } from "@/lib/hikvision/providers/types";
 import { directIsapiProvider } from "@/lib/hikvision/providers/direct-isapi-provider";
 import { hikConnectOpenApiProvider } from "@/lib/hikvision/providers/hikconnect-openapi-provider";
@@ -30,6 +31,6 @@ export async function resolveHikvisionProviderForOrg(
   organizationId: string
 ): Promise<{ provider: HikvisionProvider; mode: HikvisionConnectionModeCanonical }> {
   const integration = await loadHikvisionIntegration(db, organizationId);
-  const mode = normalizeConnectionMode(integration?.connectionMode);
+  const mode = await resolveEffectiveConnectionMode(integration, db, organizationId);
   return { provider: resolveHikvisionProviderByMode(mode), mode };
 }

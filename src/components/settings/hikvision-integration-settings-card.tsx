@@ -124,9 +124,9 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
   const [apiSecret, setApiSecret] = useState("");
   const [registrationToken, setRegistrationToken] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!user || !companyId) return;
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     try {
       const token = await user.getIdToken();
       const res = await fetch(
@@ -144,7 +144,7 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
         });
       }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [user, companyId]);
 
@@ -188,7 +188,7 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
       toast({ title: "Uloženo", description: data.message });
       setPassword("");
       setApiSecret("");
-      await load();
+      await load({ silent: true });
     } finally {
       setBusy(false);
     }
@@ -212,7 +212,7 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
           ? data.message ?? `${data.provider ?? ""} ${data.latencyMs != null ? `${data.latencyMs} ms` : ""}`
           : data.message ?? data.error,
       });
-      await load();
+      await load({ silent: true });
     } finally {
       setBusy(false);
     }
@@ -306,10 +306,12 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
       </CardHeader>
       <CardContent className="space-y-4">
         {loading ? (
-          <p className="text-sm text-muted-foreground flex items-center gap-2">
+          <p className="text-sm text-muted-foreground flex items-center gap-2 min-h-[1.25rem]">
             <Loader2 className="h-4 w-4 animate-spin" /> Načítání…
           </p>
-        ) : null}
+        ) : (
+          <span className="sr-only">Načteno</span>
+        )}
 
         <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
           <p>

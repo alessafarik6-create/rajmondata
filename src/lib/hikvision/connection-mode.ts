@@ -47,3 +47,27 @@ export function providerNameForMode(mode: HikvisionConnectionModeCanonical): str
 export function isIntegrationActiveFlag(active: boolean | undefined | null): boolean {
   return active !== false;
 }
+
+const DIRECT_ISAPI_LAST_ERROR_MARKERS = [
+  "host/ip nvr",
+  "host/ip",
+  "heslo nvr",
+  "uživatelské jméno nvr",
+  "isapi",
+  "192.168",
+];
+
+/** Chyby z Direct ISAPI nezobrazovat v cloud režimu (starý lastError). */
+export function filterLastErrorForConnectionMode(
+  mode: HikvisionConnectionModeCanonical,
+  lastError: string | null | undefined
+): string | null {
+  const err = String(lastError ?? "").trim();
+  if (!err) return null;
+  if (mode !== "HIKCONNECT_OPENAPI") return err;
+  const lower = err.toLowerCase();
+  if (DIRECT_ISAPI_LAST_ERROR_MARKERS.some((m) => lower.includes(m))) {
+    return null;
+  }
+  return err;
+}

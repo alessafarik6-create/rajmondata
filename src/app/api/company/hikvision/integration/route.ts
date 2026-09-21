@@ -22,9 +22,11 @@ import {
   resolveHikvisionIntegrationLifecycle,
 } from "@/lib/hikvision/integration-status";
 import {
+  filterLastErrorForConnectionMode,
   isIntegrationActiveFlag,
   normalizeConnectionMode,
 } from "@/lib/hikvision/connection-mode";
+import { resolveEffectiveConnectionMode } from "@/lib/hikvision/resolve-effective-connection-mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -42,7 +44,9 @@ function safeIntegrationPublic(
   integrationConfigured: boolean,
   lifecycle: string
 ) {
-  const mode = normalizeConnectionMode(integration?.connectionMode);
+  const mode = integration
+    ? normalizeConnectionMode(integration.connectionMode)
+    : "HIKCONNECT_OPENAPI";
   if (!integration) {
     return {
       deviceLabel: "",
@@ -106,7 +110,7 @@ function safeIntegrationPublic(
     lastSyncAt: firestoreTimestampToIso(integration.lastSyncAt),
     lastCommunicationAt: firestoreTimestampToIso(integration.lastCommunicationAt),
     lastConnectorHeartbeatAt: firestoreTimestampToIso(integration.lastConnectorHeartbeatAt),
-    lastError: integration.lastError ?? null,
+    lastError: filterLastErrorForConnectionMode(mode, integration.lastError),
     allowInsecureTls: Boolean(integration.allowInsecureTls),
   };
 }
@@ -128,22 +132,30 @@ export async function GET(request: NextRequest) {
   const hasApiSecret = await hasHikConnectApiSecret(auth.db, companyId);
   const hasApiKey = await hasHikConnectApiKey(auth.db, companyId);
   const apiKey = String(credData?.apiKey ?? "").trim();
+  const effectiveMode = integration
+    ? await resolveEffectiveConnectionMode(integration, auth.db, companyId)
+    : "HIKCONNECT_OPENAPI";
   const configuredCheck = integration
     ? await isHikvisionIntegrationConfigured(integration, auth.db, companyId)
     : { configured: false as const };
   const lifecycleResult = await resolveHikvisionIntegrationLifecycle(auth.db, companyId);
+  const publicIntegration = safeIntegrationPublic(
+    integration,
+    hasPassword,
+    hasApiSecret,
+    hasApiKey,
+    apiKey,
+    configuredCheck.configured,
+    lifecycleResult.lifecycle
+  );
   return NextResponse.json(
     {
       ok: true,
-      integration: safeIntegrationPublic(
-        integration,
-        hasPassword,
-        hasApiSecret,
-        hasApiKey,
-        apiKey,
-        configuredCheck.configured,
-        lifecycleResult.lifecycle
-      ),
+      integration: {
+        ...publicIntegration,
+        connectionMode: effectiveMode,
+        lastError: filterLastErrorForConnectionMode(effectiveMode, publicIntegration.lastError),
+      },
       encryptionConfigured: isHikvisionIntegrationEncryptionConfigured(),
     },
     { headers: { "Cache-Control": "no-store" } }
@@ -184,6 +196,23 @@ export async function PATCH(request: NextRequest) {
       ? parseConnectionMode(body.connectionMode)
       : undefined;
 
+  if (connectionMode === "HIKCONNECT_OPENAPI") {
+    if (!apiKey && !(await hasHikConnectApiKey(auth.db, companyId))) {
+      return NextResponse.json(
+        { ok: false, error: "Chybí API Key pro Hik-Connect." },
+        { status: 400 }
+      );
+    }
+    const hasSecretAfter =
+      Boolean(apiSecret) || (await hasHikConnectApiSecret(auth.db, companyId));
+    if (!hasSecretAfter) {
+      return NextResponse.json(
+        { ok: false, error: "Chybí API Secret pro Hik-Connect." },
+        { status: 400 }
+      );
+    }
+  }
+
   const ref = hikvisionIntegrationRef(auth.db, companyId);
   const patch: Record<string, unknown> = {
     organizationId: companyId,
@@ -199,6 +228,9 @@ export async function PATCH(request: NextRequest) {
   if (body.username !== undefined) patch.username = String(body.username ?? "").trim();
   if (connectionMode !== undefined) {
     patch.connectionMode = connectionMode;
+    if (connectionMode === "HIKCONNECT_OPENAPI") {
+      patch.lastError = null;
+    }
   }
   if (body.active !== undefined) {
     patch.active = Boolean(body.active);

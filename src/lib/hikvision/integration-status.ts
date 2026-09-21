@@ -6,10 +6,11 @@ import {
   loadHikvisionIntegration,
   loadHikvisionPassword,
 } from "@/lib/hikvision/stores";
-import { normalizeConnectionMode } from "@/lib/hikvision/connection-mode";
 import type { HikvisionIntegrationLifecycle } from "@/lib/hikvision/connection-mode";
 import { isIntegrationActiveFlag } from "@/lib/hikvision/connection-mode";
+import type { HikvisionConnectionModeCanonical } from "@/lib/hikvision/connection-mode";
 import type { HikvisionIntegrationDoc } from "@/lib/hikvision/types";
+import { resolveEffectiveConnectionMode } from "@/lib/hikvision/resolve-effective-connection-mode";
 
 export type IntegrationConfiguredCheck = {
   configured: boolean;
@@ -24,14 +25,21 @@ export type IntegrationLifecycleResult = {
 function lifecycleFromDoc(
   integration: HikvisionIntegrationDoc | null,
   configured: boolean,
-  reason?: string
+  reason?: string,
+  effectiveMode?: HikvisionConnectionModeCanonical
 ): IntegrationLifecycleResult {
   if (!integration || !configured) {
     return { lifecycle: "NOT_CONFIGURED", reason };
   }
   const st = String(integration.status ?? "").toLowerCase();
   if (st === "online") return { lifecycle: "CONNECTED" };
-  if (st === "error" || st === "offline") return { lifecycle: "ERROR", reason: integration.lastError ?? reason };
+  if (st === "error" || st === "offline") {
+    const err =
+      effectiveMode === "HIKCONNECT_OPENAPI"
+        ? integration.lastError ?? reason
+        : integration.lastError ?? reason;
+    return { lifecycle: "ERROR", reason: err };
+  }
   return { lifecycle: "CONFIGURED" };
 }
 
@@ -41,7 +49,8 @@ export async function resolveHikvisionIntegrationLifecycle(
 ): Promise<IntegrationLifecycleResult> {
   const integration = await loadHikvisionIntegration(db, organizationId);
   const configured = await isHikvisionIntegrationConfigured(integration, db, organizationId);
-  return lifecycleFromDoc(integration, configured.configured, configured.reason);
+  const mode = await resolveEffectiveConnectionMode(integration, db, organizationId);
+  return lifecycleFromDoc(integration, configured.configured, configured.reason, mode);
 }
 
 export async function isHikvisionIntegrationConfiguredForOrg(
@@ -64,7 +73,16 @@ export async function isHikvisionIntegrationConfigured(
     return { configured: false, reason: "Integrace není aktivní." };
   }
 
-  const mode = normalizeConnectionMode(integration.connectionMode);
+  const mode = await resolveEffectiveConnectionMode(integration, db, organizationId);
+  return validateConfiguredForMode(mode, integration, db, organizationId);
+}
+
+async function validateConfiguredForMode(
+  mode: HikvisionConnectionModeCanonical,
+  integration: HikvisionIntegrationDoc,
+  db: Firestore,
+  organizationId: string
+): Promise<IntegrationConfiguredCheck> {
   if (mode === "HIKCONNECT_OPENAPI") {
     const hasKey = await hasHikConnectApiKey(db, organizationId);
     const hasSecret = await hasHikConnectApiSecret(db, organizationId);
@@ -88,6 +106,7 @@ export async function isHikvisionIntegrationConfigured(
     return { configured: true };
   }
 
+  // DIRECT_ISAPI only below
   const password = await loadHikvisionPassword(db, organizationId);
   if (!integration.host?.trim()) {
     return { configured: false, reason: "Chybí host/IP NVR." };
