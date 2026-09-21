@@ -1,10 +1,14 @@
 import type { Firestore } from "firebase-admin/firestore";
 import {
+  hasHikConnectApiKey,
+  hasHikConnectApiSecret,
   loadHikConnectApiCredentials,
   loadHikvisionIntegration,
   loadHikvisionPassword,
 } from "@/lib/hikvision/stores";
-import { normalizeConnectionMode } from "@/lib/hikvision/providers/resolver";
+import { normalizeConnectionMode } from "@/lib/hikvision/connection-mode";
+import type { HikvisionIntegrationLifecycle } from "@/lib/hikvision/connection-mode";
+import { isIntegrationActiveFlag } from "@/lib/hikvision/connection-mode";
 import type { HikvisionIntegrationDoc } from "@/lib/hikvision/types";
 
 export type IntegrationConfiguredCheck = {
@@ -12,39 +16,78 @@ export type IntegrationConfiguredCheck = {
   reason?: string;
 };
 
+export type IntegrationLifecycleResult = {
+  lifecycle: HikvisionIntegrationLifecycle;
+  reason?: string;
+};
+
+function lifecycleFromDoc(
+  integration: HikvisionIntegrationDoc | null,
+  configured: boolean,
+  reason?: string
+): IntegrationLifecycleResult {
+  if (!integration || !configured) {
+    return { lifecycle: "NOT_CONFIGURED", reason };
+  }
+  const st = String(integration.status ?? "").toLowerCase();
+  if (st === "online") return { lifecycle: "CONNECTED" };
+  if (st === "error" || st === "offline") return { lifecycle: "ERROR", reason: integration.lastError ?? reason };
+  return { lifecycle: "CONFIGURED" };
+}
+
+export async function resolveHikvisionIntegrationLifecycle(
+  db: Firestore,
+  organizationId: string
+): Promise<IntegrationLifecycleResult> {
+  const integration = await loadHikvisionIntegration(db, organizationId);
+  const configured = await isHikvisionIntegrationConfigured(integration, db, organizationId);
+  return lifecycleFromDoc(integration, configured.configured, configured.reason);
+}
+
 export async function isHikvisionIntegrationConfiguredForOrg(
   db: Firestore,
   organizationId: string
 ): Promise<IntegrationConfiguredCheck> {
   const integration = await loadHikvisionIntegration(db, organizationId);
-  if (!integration?.active) {
-    return { configured: false, reason: "Integrace není aktivní." };
-  }
   return isHikvisionIntegrationConfigured(integration, db, organizationId);
 }
 
 export async function isHikvisionIntegrationConfigured(
-  integration: HikvisionIntegrationDoc,
+  integration: HikvisionIntegrationDoc | null,
   db: Firestore,
   organizationId: string
 ): Promise<IntegrationConfiguredCheck> {
-  if (!integration.active) {
+  if (!integration) {
+    return { configured: false, reason: "Integrace není nastavena." };
+  }
+  if (!isIntegrationActiveFlag(integration.active)) {
     return { configured: false, reason: "Integrace není aktivní." };
   }
+
   const mode = normalizeConnectionMode(integration.connectionMode);
-  if (mode === "hikconnect_openapi") {
-    const creds = await loadHikConnectApiCredentials(db, organizationId);
-    if (!creds?.apiKey || !creds.apiSecret) {
+  if (mode === "HIKCONNECT_OPENAPI") {
+    const hasKey = await hasHikConnectApiKey(db, organizationId);
+    const hasSecret = await hasHikConnectApiSecret(db, organizationId);
+    if (!hasKey || !hasSecret) {
       return { configured: false, reason: "Chybí API Key nebo API Secret pro Hik-Connect." };
+    }
+    const creds = await loadHikConnectApiCredentials(db, organizationId);
+    if (!creds.ok && creds.reason === "DECRYPT_FAILED") {
+      return {
+        configured: false,
+        reason:
+          "API Secret nelze dešifrovat (HIKCONNECT_CREDENTIAL_DECRYPT_FAILED). Zkontrolujte EMAIL_CREDENTIALS_ENCRYPTION_KEY na serveru.",
+      };
     }
     return { configured: true };
   }
-  if (mode === "local_connector") {
+  if (mode === "LOCAL_CONNECTOR") {
     if (!integration.connectorOnline) {
       return { configured: false, reason: "Local Connector není online." };
     }
     return { configured: true };
   }
+
   const password = await loadHikvisionPassword(db, organizationId);
   if (!integration.host?.trim()) {
     return { configured: false, reason: "Chybí host/IP NVR." };
@@ -56,4 +99,13 @@ export async function isHikvisionIntegrationConfigured(
     return { configured: false, reason: "Chybí heslo NVR." };
   }
   return { configured: true };
+}
+
+/** Pro test — Hik-Connect: credentials stačí i když OpenAPI spec ještě není na serveru. */
+export async function hasHikConnectCredentialsReady(
+  db: Firestore,
+  organizationId: string
+): Promise<boolean> {
+  const creds = await loadHikConnectApiCredentials(db, organizationId);
+  return creds.ok;
 }

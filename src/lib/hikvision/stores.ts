@@ -94,22 +94,41 @@ export async function saveHikConnectApiCredentials(
   await hikvisionCredentialsRef(db, companyId).set(patch, { merge: true });
 }
 
+export type HikConnectCredentialsLoadResult =
+  | { ok: true; apiKey: string; apiSecret: string }
+  | { ok: false; reason: "MISSING" | "DECRYPT_FAILED" };
+
+export async function hasHikConnectApiKey(db: Firestore, companyId: string): Promise<boolean> {
+  const snap = await hikvisionCredentialsRef(db, companyId).get();
+  if (!snap.exists) return false;
+  return Boolean(String((snap.data() as { apiKey?: string })?.apiKey ?? "").trim());
+}
+
 export async function loadHikConnectApiCredentials(
   db: Firestore,
   companyId: string
-): Promise<{ apiKey: string; apiSecret: string } | null> {
+): Promise<HikConnectCredentialsLoadResult> {
   const snap = await hikvisionCredentialsRef(db, companyId).get();
-  if (!snap.exists) return null;
+  if (!snap.exists) return { ok: false, reason: "MISSING" };
   const data = snap.data() as { apiKey?: string; encryptedApiSecret?: string };
   const apiKey = String(data.apiKey ?? "").trim();
   const enc = String(data.encryptedApiSecret ?? "").trim();
-  if (!apiKey || !enc) return null;
+  if (!apiKey || !enc) return { ok: false, reason: "MISSING" };
   try {
     const apiSecret = decryptHikvisionSecret(enc);
-    return { apiKey, apiSecret };
+    return { ok: true, apiKey, apiSecret };
   } catch {
-    return null;
+    return { ok: false, reason: "DECRYPT_FAILED" };
   }
+}
+
+/** @deprecated Prefer loadHikConnectApiCredentials with explicit reason. */
+export async function loadHikConnectApiCredentialsOrNull(
+  db: Firestore,
+  companyId: string
+): Promise<{ apiKey: string; apiSecret: string } | null> {
+  const r = await loadHikConnectApiCredentials(db, companyId);
+  return r.ok ? { apiKey: r.apiKey, apiSecret: r.apiSecret } : null;
 }
 
 export async function hasHikConnectApiSecret(db: Firestore, companyId: string): Promise<boolean> {
@@ -140,17 +159,20 @@ export async function buildIsapiConfigForOrg(
   companyId: string
 ): Promise<{ ok: true; config: HikvisionIsapiConfig } | { ok: false; error: string }> {
   const integration = await loadHikvisionIntegration(db, companyId);
-  if (!integration?.active) {
+  if (!integration) {
+    return { ok: false, error: "Integrace Hikvision není nastavena." };
+  }
+  if (integration.active === false) {
     return { ok: false, error: "Integrace Hikvision není aktivní." };
   }
   const mode = normalizeConnectionMode(integration.connectionMode);
-  if (mode === "hikconnect_openapi") {
+  if (mode === "HIKCONNECT_OPENAPI") {
     return {
       ok: false,
       error: "Režim Hik-Connect Cloud: ISAPI se nepoužívá (cloud OpenAPI provider).",
     };
   }
-  if (mode === "local_connector") {
+  if (mode === "LOCAL_CONNECTOR") {
     return {
       ok: false,
       error:

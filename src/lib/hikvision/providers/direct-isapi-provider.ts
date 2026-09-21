@@ -54,7 +54,7 @@ export const directIsapiProvider: HikvisionProvider = {
 
   async syncDevices(ctx): Promise<ProviderSyncDevicesResult> {
     const integration = await loadHikvisionIntegration(ctx.db, ctx.organizationId);
-    if (!integration?.active) {
+    if (!integration || integration.active === false) {
       return {
         ok: false,
         code: "INTEGRATION_NOT_CONFIGURED",

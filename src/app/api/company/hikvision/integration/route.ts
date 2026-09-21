@@ -8,6 +8,7 @@ import {
   saveHikvisionPassword,
   saveHikConnectApiCredentials,
   hasHikConnectApiSecret,
+  hasHikConnectApiKey,
 } from "@/lib/hikvision/stores";
 import {
   hikvisionTenantOk,
@@ -18,25 +19,28 @@ import type { HikvisionConnectionMode } from "@/lib/hikvision/types";
 import {
   isHikvisionIntegrationConfiguredForOrg,
   isHikvisionIntegrationConfigured,
+  resolveHikvisionIntegrationLifecycle,
 } from "@/lib/hikvision/integration-status";
-import { normalizeConnectionMode } from "@/lib/hikvision/providers/resolver";
+import {
+  isIntegrationActiveFlag,
+  normalizeConnectionMode,
+} from "@/lib/hikvision/connection-mode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 function parseConnectionMode(raw: unknown): HikvisionConnectionMode {
-  const v = String(raw ?? "").trim().toLowerCase();
-  if (v === "hikconnect_openapi" || v === "hikconnect") return "hikconnect_openapi";
-  if (v === "local_connector") return "local_connector";
-  return "direct";
+  return normalizeConnectionMode(typeof raw === "string" ? raw : String(raw ?? ""));
 }
 
 function safeIntegrationPublic(
   integration: Awaited<ReturnType<typeof loadHikvisionIntegration>>,
   hasPassword: boolean,
   hasApiSecret: boolean,
+  hasApiKey: boolean,
   apiKey: string,
-  integrationConfigured: boolean
+  integrationConfigured: boolean,
+  lifecycle: string
 ) {
   const mode = normalizeConnectionMode(integration?.connectionMode);
   if (!integration) {
@@ -48,11 +52,13 @@ function safeIntegrationPublic(
       rtspPort: 554,
       useHttps: false,
       username: "",
-      connectionMode: "hikconnect_openapi" as HikvisionConnectionMode,
-      active: false,
+      connectionMode: "HIKCONNECT_OPENAPI" as HikvisionConnectionMode,
+      active: true,
       status: "not_connected",
+      lifecycle: "NOT_CONFIGURED",
       hasPassword: false,
       hasApiSecret: false,
+      hasApiKey: false,
       apiKey: "",
       integrationConfigured: false,
       model: null,
@@ -80,10 +86,12 @@ function safeIntegrationPublic(
     useHttps: Boolean(integration.useHttps),
     username: integration.username ?? "",
     connectionMode: mode,
-    active: Boolean(integration.active),
+    active: isIntegrationActiveFlag(integration.active),
     status: integration.status ?? "not_connected",
+    lifecycle,
     hasPassword,
     hasApiSecret,
+    hasApiKey,
     apiKey,
     integrationConfigured,
     model: integration.model ?? null,
@@ -118,10 +126,12 @@ export async function GET(request: NextRequest) {
   const credData = credSnap.data() as { encryptedPassword?: string; apiKey?: string };
   const hasPassword = Boolean(String(credData?.encryptedPassword ?? "").trim());
   const hasApiSecret = await hasHikConnectApiSecret(auth.db, companyId);
+  const hasApiKey = await hasHikConnectApiKey(auth.db, companyId);
   const apiKey = String(credData?.apiKey ?? "").trim();
   const configuredCheck = integration
     ? await isHikvisionIntegrationConfigured(integration, auth.db, companyId)
     : { configured: false as const };
+  const lifecycleResult = await resolveHikvisionIntegrationLifecycle(auth.db, companyId);
   return NextResponse.json(
     {
       ok: true,
@@ -129,8 +139,10 @@ export async function GET(request: NextRequest) {
         integration,
         hasPassword,
         hasApiSecret,
+        hasApiKey,
         apiKey,
-        configuredCheck.configured
+        configuredCheck.configured,
+        lifecycleResult.lifecycle
       ),
       encryptionConfigured: isHikvisionIntegrationEncryptionConfigured(),
     },
@@ -167,6 +179,11 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
+  const connectionMode =
+    body.connectionMode !== undefined
+      ? parseConnectionMode(body.connectionMode)
+      : undefined;
+
   const ref = hikvisionIntegrationRef(auth.db, companyId);
   const patch: Record<string, unknown> = {
     organizationId: companyId,
@@ -180,13 +197,22 @@ export async function PATCH(request: NextRequest) {
   if (body.rtspPort !== undefined) patch.rtspPort = Number(body.rtspPort) || 554;
   if (body.useHttps !== undefined) patch.useHttps = Boolean(body.useHttps);
   if (body.username !== undefined) patch.username = String(body.username ?? "").trim();
-  if (body.connectionMode !== undefined) {
-    patch.connectionMode = parseConnectionMode(body.connectionMode);
+  if (connectionMode !== undefined) {
+    patch.connectionMode = connectionMode;
   }
-  if (body.active !== undefined) patch.active = Boolean(body.active);
+  if (body.active !== undefined) {
+    patch.active = Boolean(body.active);
+  } else if (connectionMode === "HIKCONNECT_OPENAPI" && (apiKey || apiSecret)) {
+    patch.active = true;
+  }
   if (body.allowInsecureTls !== undefined) patch.allowInsecureTls = Boolean(body.allowInsecureTls);
-  if (body.active === false) patch.status = "disabled";
-  else patch.status = "configured";
+
+  const activeAfter = body.active !== undefined ? Boolean(body.active) : patch.active !== false;
+  if (activeAfter === false) {
+    patch.status = "disabled";
+  } else {
+    patch.status = "configured";
+  }
 
   await ref.set(patch, { merge: true });
   if (password) {
@@ -203,12 +229,26 @@ export async function PATCH(request: NextRequest) {
   const configured = integration
     ? await isHikvisionIntegrationConfigured(integration, auth.db, companyId)
     : await isHikvisionIntegrationConfiguredForOrg(auth.db, companyId);
+  const lifecycle = await resolveHikvisionIntegrationLifecycle(auth.db, companyId);
+
+  if (process.env.NODE_ENV === "development") {
+    const mode = normalizeConnectionMode(integration?.connectionMode);
+    console.info("HIKVISION SAVE:", {
+      organizationId: companyId,
+      connectionMode: mode,
+      active: isIntegrationActiveFlag(integration?.active),
+      hasApiKey: await hasHikConnectApiKey(auth.db, companyId),
+      hasApiSecret: await hasHikConnectApiSecret(auth.db, companyId),
+      lifecycle: lifecycle.lifecycle,
+    });
+  }
 
   return NextResponse.json(
     {
       ok: true,
       message: "Integrace Hikvision uložena.",
       integrationConfigured: configured.configured,
+      lifecycle: lifecycle.lifecycle,
     },
     { headers: { "Cache-Control": "no-store" } }
   );

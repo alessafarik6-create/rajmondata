@@ -7,6 +7,7 @@ import {
   loadHikConnectApiCredentials,
   loadHikvisionIntegration,
 } from "@/lib/hikvision/stores";
+import { isIntegrationActiveFlag } from "@/lib/hikvision/connection-mode";
 import type {
   HikvisionProvider,
   ProviderLiveViewResult,
@@ -29,19 +30,31 @@ async function requireOpenApiCredentials(
   | { ok: false; fail: OpenApiCredFail }
 > {
   const integration = await loadHikvisionIntegration(db, organizationId);
-  if (!integration?.active) {
+  if (!integration || !isIntegrationActiveFlag(integration.active)) {
     return {
       ok: false,
       fail: {
         ok: false,
         provider: "HIKCONNECT_OPENAPI",
         code: "INTEGRATION_NOT_CONFIGURED",
-        error: "Integrace Hik-Connect není aktivní.",
+        error: "Integrace Hik-Connect není aktivní (active=false).",
       },
     };
   }
   const creds = await loadHikConnectApiCredentials(db, organizationId);
-  if (!creds?.apiKey || !creds.apiSecret) {
+  if (!creds.ok) {
+    if (creds.reason === "DECRYPT_FAILED") {
+      return {
+        ok: false,
+        fail: {
+          ok: false,
+          provider: "HIKCONNECT_OPENAPI",
+          code: "INTEGRATION_NOT_CONFIGURED",
+          error:
+            "API Secret nelze dešifrovat (HIKCONNECT_CREDENTIAL_DECRYPT_FAILED). Zkontrolujte šifrovací klíč serveru.",
+        },
+      };
+    }
     return {
       ok: false,
       fail: {

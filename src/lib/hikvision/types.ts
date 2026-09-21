@@ -11,7 +11,11 @@ export const HIKVISION_EVENTS_SUBCOLLECTION = "hikvision_camera_events";
 export const HIKVISION_STREAM_SESSIONS_SUBCOLLECTION = "hikvision_stream_sessions";
 export const HIKVISION_EMPLOYEE_CAMERA_ACCESS_SUBCOLLECTION = "hikvision_employee_camera_access";
 
-export type HikvisionConnectionMode = "hikconnect_openapi" | "direct" | "local_connector";
+/** Kanonické ukládání v DB (viz connection-mode.ts pro normalizaci legacy hodnot). */
+export type HikvisionConnectionMode =
+  | "HIKCONNECT_OPENAPI"
+  | "DIRECT_ISAPI"
+  | "LOCAL_CONNECTOR";
 
 export type HikvisionProviderKind = "HIKCONNECT_OPENAPI" | "DIRECT_ISAPI" | "LOCAL_CONNECTOR";
 
