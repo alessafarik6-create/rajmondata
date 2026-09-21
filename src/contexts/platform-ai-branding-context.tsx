@@ -1,8 +1,10 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
-import type { PlatformAiBranding } from "@/lib/platform-ai-branding";
-import { DEFAULT_PLATFORM_AI_BRANDING } from "@/lib/platform-ai-branding";
+import {
+  DEFAULT_PLATFORM_AI_BRANDING,
+  type PlatformAiBranding,
+} from "@/lib/platform-ai-branding-shared";
 
 type Ctx = {
   branding: PlatformAiBranding;

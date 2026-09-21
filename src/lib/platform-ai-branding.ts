@@ -1,25 +1,14 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { PLATFORM_SETTINGS_COLLECTION } from "@/lib/firestore-collections";
-import { PLATFORM_SETTINGS_DOC } from "@/lib/platform-config";
+import {
+  DEFAULT_PLATFORM_AI_BRANDING,
+  PLATFORM_AI_BRANDING_DOC,
+  type PlatformAiBranding,
+} from "@/lib/platform-ai-branding-shared";
 
-export const PLATFORM_AI_BRANDING_DOC = "aiAssistant";
-
-export type PlatformAiBranding = {
-  assistantName: string;
-  assistantSubtitle: string;
-  avatarUrl: string | null;
-  avatarStoragePath: string | null;
-  updatedAt?: unknown;
-  updatedBy?: string | null;
-};
-
-const DEFAULTS: PlatformAiBranding = {
-  assistantName: "RAJMONDATA AI",
-  assistantSubtitle: "Vaše firemní sekretářka",
-  avatarUrl: null,
-  avatarStoragePath: null,
-};
+export type { PlatformAiBranding } from "@/lib/platform-ai-branding-shared";
+export { PLATFORM_AI_BRANDING_DOC, DEFAULT_PLATFORM_AI_BRANDING } from "@/lib/platform-ai-branding-shared";
 
 function brandingRef(db: Firestore) {
   return db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_AI_BRANDING_DOC);
@@ -27,11 +16,14 @@ function brandingRef(db: Firestore) {
 
 export async function loadPlatformAiBranding(db: Firestore): Promise<PlatformAiBranding> {
   const snap = await brandingRef(db).get();
-  if (!snap.exists) return { ...DEFAULTS };
+  if (!snap.exists) return { ...DEFAULT_PLATFORM_AI_BRANDING };
   const d = snap.data() as Record<string, unknown>;
   return {
-    assistantName: String(d.assistantName ?? DEFAULTS.assistantName).slice(0, 80),
-    assistantSubtitle: String(d.assistantSubtitle ?? DEFAULTS.assistantSubtitle).slice(0, 120),
+    assistantName: String(d.assistantName ?? DEFAULT_PLATFORM_AI_BRANDING.assistantName).slice(0, 80),
+    assistantSubtitle: String(d.assistantSubtitle ?? DEFAULT_PLATFORM_AI_BRANDING.assistantSubtitle).slice(
+      0,
+      120
+    ),
     avatarUrl: d.avatarUrl ? String(d.avatarUrl) : null,
     avatarStoragePath: d.avatarStoragePath ? String(d.avatarStoragePath) : null,
     updatedAt: d.updatedAt,
@@ -53,5 +45,3 @@ export async function savePlatformAiBranding(
   if (patch.avatarStoragePath !== undefined) body.avatarStoragePath = patch.avatarStoragePath;
   await brandingRef(db).set(body, { merge: true });
 }
-
-export { DEFAULTS as DEFAULT_PLATFORM_AI_BRANDING };
