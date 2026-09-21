@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import {
-  loadPlatformAiBranding,
+  getPlatformAiBranding,
   savePlatformAiBranding,
   DEFAULT_PLATFORM_AI_BRANDING,
+  PLATFORM_AI_BRANDING_CACHE_TAG,
 } from "@/lib/platform-ai-branding";
 import { PLATFORM_SECURITY_AUDIT_COLLECTION } from "@/lib/firestore-collections";
 
@@ -15,7 +17,7 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getAdminFirestore();
   if (!db) return NextResponse.json({ error: "DB unavailable" }, { status: 503 });
-  const branding = await loadPlatformAiBranding(db);
+  const branding = await getPlatformAiBranding(db);
   return NextResponse.json({ ok: true, branding, defaults: DEFAULT_PLATFORM_AI_BRANDING });
 }
 
@@ -43,6 +45,7 @@ export async function PUT(request: NextRequest) {
   }
 
   await savePlatformAiBranding(db, patch);
+  revalidateTag(PLATFORM_AI_BRANDING_CACHE_TAG);
 
   await db.collection(PLATFORM_SECURITY_AUDIT_COLLECTION).add({
     actionType: "PLATFORM_AI_BRANDING_CHANGED",

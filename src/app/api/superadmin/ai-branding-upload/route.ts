@@ -1,8 +1,9 @@
 import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { getAdminStorageBucket, getAdminFirestore } from "@/lib/firebase-admin";
-import { savePlatformAiBranding } from "@/lib/platform-ai-branding";
+import { savePlatformAiBranding, PLATFORM_AI_BRANDING_CACHE_TAG } from "@/lib/platform-ai-branding";
 import { PLATFORM_SECURITY_AUDIT_COLLECTION } from "@/lib/firestore-collections";
 
 const MAX = 2 * 1024 * 1024;
@@ -44,6 +45,7 @@ export async function POST(request: NextRequest) {
     avatarStoragePath: objectPath,
     updatedBy: session.username,
   });
+  revalidateTag(PLATFORM_AI_BRANDING_CACHE_TAG);
 
   await db.collection(PLATFORM_SECURITY_AUDIT_COLLECTION).add({
     actionType: "PLATFORM_AI_AVATAR_CHANGED",

@@ -50,7 +50,10 @@ export function checkHikvisionJssdkLocalFiles(): HikvisionJssdkLocalCheck {
   }
 
   const scriptRel = scriptUrl.replace(/^\//, "");
-  const scriptFileExists = publicFileExists(scriptRel);
+  const scriptFileExists =
+    publicFileExists(scriptRel) ||
+    publicFileExists("hikvision-jssdk/ezuikit.js") ||
+    publicFileExists("hikvision-jssdk/ezUIKit.js");
   const staticRel = cfg.staticPath.replace(/^\//, "");
   const staticDirExists = publicDirExists(staticRel);
   const cssRel = cfg.cssUrl?.replace(/^\//, "") ?? "";

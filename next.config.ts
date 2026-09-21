@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
+      {
+        source: "/hikvision-jssdk/ezUIKit.js",
+        destination: "/hikvision-jssdk/ezuikit.js",
+        permanent: false,
+      },
       { source: "/dashboard", destination: "/portal/dashboard", permanent: false },
       { source: "/employee", destination: "/portal/employee", permanent: false },
       { source: "/employee/:path*", destination: "/portal/employee/:path*", permanent: false },

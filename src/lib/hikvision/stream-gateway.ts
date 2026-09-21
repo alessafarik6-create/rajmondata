@@ -38,7 +38,7 @@ export class HikvisionStreamGateway {
       .doc(params.cameraId)
       .get();
     if (!camSnap.exists) {
-      return { ok: false, error: "Kamera nenalezena." };
+      return { ok: false, error: "Kamera nenalezena.", code: "CAMERA_NOT_FOUND" };
     }
 
     const { provider } = await resolveHikvisionProviderForOrg(this.db, params.organizationId);
@@ -69,7 +69,7 @@ export class HikvisionStreamGateway {
       .doc(params.cameraId)
       .get();
     if (!camSnap.exists) {
-      return { ok: false, error: "Kamera nenalezena." };
+      return { ok: false, error: "Kamera nenalezena.", code: "CAMERA_NOT_FOUND" };
     }
 
     const { provider } = await resolveHikvisionProviderForOrg(this.db, params.organizationId);

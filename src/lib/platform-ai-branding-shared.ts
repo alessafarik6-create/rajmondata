@@ -2,6 +2,9 @@
 
 export const PLATFORM_AI_BRANDING_DOC = "aiAssistant";
 
+/** Next.js cache tag — invalidace po změně superadmin brandingu. */
+export const PLATFORM_AI_BRANDING_CACHE_TAG = "platform-ai-branding";
+
 export type PlatformAiBranding = {
   assistantName: string;
   assistantSubtitle: string;

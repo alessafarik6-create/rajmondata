@@ -23,6 +23,8 @@ function mapStreamApiError(data: {
 }): HikvisionLivePlayerErrorCode {
   const code = String(data.code ?? "").trim();
   if (code === "CAMERA_OFFLINE" || code === "DEVICE_OFFLINE") return "DEVICE_OFFLINE";
+  if (code === "HIKVISION_TOKEN_FAILED" || code === "HIKVISION_STREAM_UNAVAILABLE")
+    return "STREAM_TOKEN_FAILED";
   return "STREAM_TOKEN_FAILED";
 }
 
@@ -95,11 +97,11 @@ export function CameraLiveDialog(props: {
         className={
           isMobile
             ? "max-w-none w-screen h-[100dvh] p-0 gap-0 rounded-none border-0"
-            : "max-w-4xl w-[95vw] p-0 gap-0 overflow-hidden"
+            : "max-w-[1100px] w-[95vw] p-0 gap-0 overflow-hidden"
         }
       >
         {!isMobile ? (
-          <DialogHeader className="px-4 pt-4">
+          <DialogHeader className="px-4 pt-3 pb-0">
             <DialogTitle>Živý obraz — {camera.name}</DialogTitle>
           </DialogHeader>
         ) : null}
@@ -108,7 +110,7 @@ export function CameraLiveDialog(props: {
           cameraName={camera.name}
           online={camera.online}
           mode="live"
-          className={isMobile ? "h-[100dvh] rounded-none" : "min-h-[420px]"}
+          className={isMobile ? "h-[100dvh] rounded-none" : "w-full"}
           onClose={() => onOpenChange(false)}
           onRetry={() => void load()}
           streamErrorCode={streamErrorCode}

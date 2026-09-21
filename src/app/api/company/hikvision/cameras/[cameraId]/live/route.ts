@@ -38,7 +38,15 @@ export async function POST(request: NextRequest, { params }: Params) {
     permission: "live",
   });
   if (!access.ok) {
-    return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
+    const status = access.status === 404 ? 404 : access.status;
+    return NextResponse.json(
+      {
+        ok: false,
+        code: status === 404 ? "CAMERA_NOT_FOUND" : "HIKVISION_PERMISSION_DENIED",
+        error: access.error,
+      },
+      { status }
+    );
   }
 
   const gateway = new HikvisionStreamGateway(auth.db);
@@ -50,11 +58,23 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   if (!session.ok) {
     const code = session.code as HikvisionErrorCode | undefined;
-    const status = code === "LIVE_VIEW_NOT_SUPPORTED" ? 501 : 502;
+    let apiCode = "HIKVISION_STREAM_UNAVAILABLE";
+    if (session.code === "CAMERA_NOT_FOUND") apiCode = "CAMERA_NOT_FOUND";
+    else if (code === "CAMERA_OFFLINE" || code === "DEVICE_OFFLINE") apiCode = "DEVICE_OFFLINE";
+    else if (code === "HIKCONNECT_AUTH_FAILED" || code === "HIKCONNECT_API_ERROR")
+      apiCode = "HIKVISION_TOKEN_FAILED";
+    else if (code === "LIVE_VIEW_NOT_SUPPORTED") apiCode = "HIKVISION_STREAM_UNAVAILABLE";
+    const status =
+      code === "LIVE_VIEW_NOT_SUPPORTED"
+        ? 501
+        : code === "CAMERA_OFFLINE" || code === "DEVICE_OFFLINE"
+          ? 503
+          : 502;
     return NextResponse.json(
       {
         ok: false,
-        code,
+        code: apiCode,
+        hikCode: code,
         error: session.error,
         message: code ? hikvisionErrorMessage(code) : session.error,
       },

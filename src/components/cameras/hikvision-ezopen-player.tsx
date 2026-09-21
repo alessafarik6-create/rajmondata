@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useId, useRef, useState } from "react";
-import { Loader2, Volume2, VolumeX, Maximize, X } from "lucide-react";
+import { Loader2, Volume2, VolumeX, Maximize, Minimize, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,7 @@ export type HikvisionLivePlayerErrorCode =
 export type HikvisionLivePlayerState =
   | "LOADING_SDK"
   | "LOADING_STREAM"
+  | "INITIALIZING_PLAYER"
   | "PLAYING"
   | "ERROR"
   | "OFFLINE";
@@ -46,7 +47,6 @@ export function HikvisionEzopenPlayer(props: {
   onRetry?: () => void;
   compact?: boolean;
   streamErrorCode?: HikvisionLivePlayerErrorCode | null;
-  /** Diagnostika — pouze pro admin UI, ne pro běžné uživatele. */
   showDeveloperDetail?: boolean;
 }) {
   const {
@@ -62,6 +62,7 @@ export function HikvisionEzopenPlayer(props: {
     showDeveloperDetail,
   } = props;
   const containerId = useId().replace(/:/g, "");
+  const shellRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<{
     stop: () => void;
     destroy?: () => void;
@@ -73,7 +74,14 @@ export function HikvisionEzopenPlayer(props: {
   const [muted, setMuted] = useState(true);
   const [uiState, setUiState] = useState<HikvisionLivePlayerState>("LOADING_SDK");
   const [errorCode, setErrorCode] = useState<HikvisionLivePlayerErrorCode | null>(null);
+  const [fsActive, setFsActive] = useState(false);
   const { ready: sdkReady, errorCode: sdkErrorCode } = useHikConnectJssdk(true);
+
+  useEffect(() => {
+    const onFs = () => setFsActive(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
 
   useEffect(() => {
     if (online === false) {
@@ -112,7 +120,7 @@ export function HikvisionEzopenPlayer(props: {
       return;
     }
 
-    setUiState("LOADING_STREAM");
+    setUiState("INITIALIZING_PLAYER");
     setErrorCode(null);
 
     try {
@@ -187,6 +195,14 @@ export function HikvisionEzopenPlayer(props: {
     streamRetriedRef.current = false;
   }, [session?.ezopenUrl, session?.accessToken]);
 
+  useEffect(() => {
+    return () => {
+      if (document.fullscreenElement === shellRef.current) {
+        void document.exitFullscreen().catch(() => undefined);
+      }
+    };
+  }, []);
+
   const now = new Date().toLocaleTimeString("cs-CZ", {
     hour: "2-digit",
     minute: "2-digit",
@@ -194,7 +210,25 @@ export function HikvisionEzopenPlayer(props: {
   });
 
   const loadingLabel =
-    uiState === "LOADING_SDK" ? "Načítám Hikvision player…" : "Připojuji živý obraz…";
+    uiState === "LOADING_SDK"
+      ? "Načítám přehrávač…"
+      : uiState === "LOADING_STREAM"
+        ? "Připojuji živý obraz…"
+        : "Inicializuji přehrávač…";
+
+  async function toggleFullscreen() {
+    const el = shellRef.current;
+    if (!el) return;
+    try {
+      if (!document.fullscreenElement) {
+        await el.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch {
+      playerRef.current?.fullScreen?.();
+    }
+  }
 
   async function retryAll() {
     setUiState("LOADING_SDK");
@@ -211,9 +245,27 @@ export function HikvisionEzopenPlayer(props: {
   const showErrorOverlay =
     uiState === "ERROR" || uiState === "OFFLINE" || (uiState === "LOADING_SDK" && sdkErrorCode);
 
+  const showLoadingOverlay =
+    (uiState === "LOADING_SDK" ||
+      uiState === "LOADING_STREAM" ||
+      uiState === "INITIALIZING_PLAYER") &&
+    !showErrorOverlay;
+
   return (
-    <div className={cn("relative flex flex-col bg-black text-white rounded-md overflow-hidden", className)}>
-      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-black/80 text-xs">
+    <div
+      ref={shellRef}
+      className={cn(
+        "relative flex flex-col bg-black text-white overflow-hidden",
+        fsActive ? "w-screen h-screen rounded-none" : "rounded-md",
+        className
+      )}
+    >
+      <div
+        className={cn(
+          "flex items-center justify-between gap-2 px-3 py-2 bg-black/80 text-xs z-10",
+          fsActive && "absolute top-0 left-0 right-0"
+        )}
+      >
         <div className="min-w-0">
           <p className="font-medium truncate">{cameraName}</p>
           <p className="text-white/70">{now}</p>
@@ -256,9 +308,9 @@ export function HikvisionEzopenPlayer(props: {
             size="icon"
             variant="ghost"
             className="h-8 w-8 text-white hover:bg-white/10"
-            onClick={() => playerRef.current?.fullScreen()}
+            onClick={() => void toggleFullscreen()}
           >
-            <Maximize className="h-4 w-4" />
+            {fsActive ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
           </Button>
           {onClose ? (
             <Button
@@ -274,20 +326,24 @@ export function HikvisionEzopenPlayer(props: {
         </div>
       </div>
 
-      <div className="relative flex-1 min-h-[200px] bg-black">
-        <div id={containerId} className="w-full h-full min-h-[200px]" />
-        {(uiState === "LOADING_SDK" || uiState === "LOADING_STREAM") && !showErrorOverlay ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60">
+      <div
+        className={cn(
+          "relative flex-1 bg-black min-h-[200px]",
+          !compact && !fsActive && "aspect-video w-full",
+          fsActive && "w-full h-full min-h-0"
+        )}
+      >
+        <div id={containerId} className="absolute inset-0 w-full h-full" />
+        {showLoadingOverlay ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 z-20">
             <Loader2 className="h-8 w-8 animate-spin" />
             <p className="text-sm">{loadingLabel}</p>
           </div>
         ) : null}
         {showErrorOverlay ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center bg-black/80">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center bg-black/80 z-20">
             <p className="text-sm">
-              {uiState === "OFFLINE"
-                ? "Kamera je offline."
-                : USER_ERROR_MESSAGE}
+              {uiState === "OFFLINE" ? "Kamera je offline." : USER_ERROR_MESSAGE}
             </p>
             {showDeveloperDetail && errorCode ? (
               <p className="text-xs text-white/60 font-mono">Detail: {errorCode}</p>

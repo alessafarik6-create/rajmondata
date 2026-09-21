@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePlatformAiBranding } from "@/contexts/platform-ai-branding-context";
@@ -14,12 +15,22 @@ const SIZE: Record<"xs" | "sm" | "md" | "lg", string> = {
 export function AiAssistantAvatar(props: {
   size?: "xs" | "sm" | "md" | "lg";
   className?: string;
+  /** Volitelný override (admin preview). */
+  src?: string | null;
+  alt?: string;
 }) {
-  const { size = "md", className } = props;
+  const { size = "md", className, src, alt } = props;
   const { branding } = usePlatformAiBranding();
+  const [imgFailed, setImgFailed] = useState(false);
   const dim = SIZE[size];
+  const avatarSrc = src ?? branding.avatarUrl;
+  const avatarAlt = alt ?? branding.assistantName;
 
-  if (branding.avatarUrl) {
+  useEffect(() => {
+    setImgFailed(false);
+  }, [avatarSrc]);
+
+  if (avatarSrc && !imgFailed) {
     return (
       <div
         className={cn(
@@ -30,12 +41,10 @@ export function AiAssistantAvatar(props: {
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={branding.avatarUrl}
-          alt=""
+          src={avatarSrc}
+          alt={avatarAlt}
           className="h-full w-full object-cover"
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = "none";
-          }}
+          onError={() => setImgFailed(true)}
         />
       </div>
     );
@@ -48,6 +57,7 @@ export function AiAssistantAvatar(props: {
         dim,
         className
       )}
+      aria-label={avatarAlt}
     >
       <Sparkles
         className={

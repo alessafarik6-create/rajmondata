@@ -123,19 +123,31 @@ async function loadHikvisionSdkInternal(): Promise<HikvisionSdkLoadResult> {
   }
 
   const config = getHikvisionJssdkPublicConfig();
-  const scriptUrl = config.scriptUrl;
+  const scriptCandidates = [
+    config.scriptUrl,
+    "/hikvision-jssdk/ezuikit.js",
+    "/hikvision-jssdk/ezUIKit.js",
+  ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
   if (isHikvisionSdkReady()) {
     return { ok: true, config };
   }
 
-  const reachable = await probeScriptUrl(scriptUrl);
+  let scriptUrl = scriptCandidates[0] ?? config.scriptUrl;
+  let reachable = false;
+  for (const candidate of scriptCandidates) {
+    if (await probeScriptUrl(candidate)) {
+      scriptUrl = candidate;
+      reachable = true;
+      break;
+    }
+  }
   if (!reachable) {
     return {
       ok: false,
       code: "SDK_NOT_FOUND",
       message: "Hikvision JSSDK soubor nebyl nalezen.",
-      scriptUrl,
+      scriptUrl: scriptCandidates[0] ?? config.scriptUrl,
     };
   }
 

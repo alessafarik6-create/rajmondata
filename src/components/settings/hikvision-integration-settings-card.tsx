@@ -127,6 +127,7 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
   const [diagRows, setDiagRows] = useState<CapRow[] | null>(null);
   const [jssdkBrowserOk, setJssdkBrowserOk] = useState<boolean | null>(null);
   const [jssdkDevDetail, setJssdkDevDetail] = useState<string | null>(null);
+  const [liveDiagDetail, setLiveDiagDetail] = useState<string | null>(null);
   const [form, setForm] = useState(emptyIntegration);
   const [password, setPassword] = useState("");
   const [apiSecret, setApiSecret] = useState("");
@@ -276,9 +277,10 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
     setDiagRows(null);
     setJssdkBrowserOk(null);
     setJssdkDevDetail(null);
+    setLiveDiagDetail(null);
     try {
       const token = await user.getIdToken();
-      const [capRes, cfgRes, sdkLoad] = await Promise.all([
+      const [capRes, cfgRes, liveDiagRes, sdkLoad] = await Promise.all([
         fetch("/api/company/hikvision/integration/capabilities", {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -287,6 +289,11 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
         fetch(`/api/company/hikvision/jssdk-config?companyId=${encodeURIComponent(companyId)}`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
+        }),
+        fetch("/api/company/hikvision/integration/live-diagnostics", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId }),
         }),
         loadHikvisionSdk(),
       ]);
@@ -305,6 +312,21 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
         setJssdkDevDetail(`Expected URL: ${cfgData.local.expectedScriptUrl ?? cfgData.config?.scriptUrl}`);
       } else if (cfgData.ok?.config?.scriptUrl) {
         setJssdkDevDetail(`Script URL: ${cfgData.config.scriptUrl}`);
+      }
+      const liveDiagData = await liveDiagRes.json();
+      if (liveDiagData.ok && showDevDetail) {
+        setLiveDiagDetail(
+          [
+            `Live view diagnostika`,
+            `JSSDK URL: ${liveDiagData.jssdkUrl}`,
+            `JSSDK HTTP: ${liveDiagData.jssdkHttp}`,
+            `JSSDK static: ${liveDiagData.jssdkStatic}`,
+            `Live API: ${liveDiagData.liveApiRoute} → ${liveDiagData.liveApi?.status}`,
+            `Stream token: ${liveDiagData.streamToken}`,
+            `Player init: ${liveDiagData.playerInit}`,
+            sdkLoad.ok ? "JSSDK global: OK" : `JSSDK global: Missing (${sdkLoad.code})`,
+          ].join("\n")
+        );
       }
       setJssdkBrowserOk(sdkLoad.ok);
       if (!sdkLoad.ok && showDevDetail) {
@@ -672,6 +694,9 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
             )}
             {showDevDetail && jssdkDevDetail ? (
               <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap">{jssdkDevDetail}</pre>
+            ) : null}
+            {showDevDetail && liveDiagDetail ? (
+              <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap">{liveDiagDetail}</pre>
             ) : null}
           </div>
         ) : null}
