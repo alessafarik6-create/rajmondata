@@ -5,7 +5,7 @@ import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-cont
 export function useCameraPermissions() {
   const ctx = usePortalPermissionsOptional();
   if (!ctx) {
-    return { view: true, live: true, playback: true, admin: true };
+    return { view: true, live: true, playback: true, control: true, admin: true };
   }
   return ctx.cameras;
 }

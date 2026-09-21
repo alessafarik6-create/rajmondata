@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { hikvisionCamerasCol } from "@/lib/hikvision/stores";
+import {
+  firestoreTimestampToIso,
+  hikvisionCamerasCol,
+  listHikvisionDevices,
+} from "@/lib/hikvision/stores";
 import { hikvisionTenantOk, requireCamerasView } from "@/lib/hikvision/api-auth";
 import { assertCallerCameraAccess } from "@/lib/hikvision/camera-access-guard";
-import { resolveHikvisionProviderForOrg } from "@/lib/hikvision/providers/resolver";
+import { HikvisionEventService } from "@/lib/hikvision/event-service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -33,25 +37,32 @@ export async function GET(request: NextRequest, { params }: Params) {
     return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   }
 
-  const camSnap = await hikvisionCamerasCol(auth.db, companyId).doc(cameraId).get();
-  if (!camSnap.exists) {
+  const snap = await hikvisionCamerasCol(auth.db, companyId).doc(cameraId).get();
+  if (!snap.exists) {
     return NextResponse.json({ ok: false, error: "Kamera nenalezena." }, { status: 404 });
   }
+  const cam = snap.data()!;
+  const devices = await listHikvisionDevices(auth.db, companyId);
+  const device = devices.find((d) => d.id === cam.deviceId || d.externalDeviceId === cam.externalDeviceId);
 
-  const { provider } = await resolveHikvisionProviderForOrg(auth.db, companyId);
-  const pic = await provider.getSnapshot(
-    { db: auth.db, organizationId: companyId },
-    cameraId
-  );
-  if (!pic.ok) {
-    return NextResponse.json({ ok: false, code: pic.code, error: pic.error }, { status: 502 });
-  }
+  const eventsSvc = new HikvisionEventService(auth.db, companyId);
+  const allEvents = await eventsSvc.listEvents(50);
+  const recentEvents = allEvents.filter((e) => e.cameraId === cameraId).slice(0, 8);
 
-  return new NextResponse(new Uint8Array(pic.buffer), {
-    status: 200,
-    headers: {
-      "Content-Type": pic.contentType,
-      "Cache-Control": "private, max-age=15",
+  return NextResponse.json({
+    ok: true,
+    camera: {
+      id: cameraId,
+      name: cam.name,
+      channelId: cam.channelId,
+      online: cam.online,
+      deviceId: cam.deviceId ?? null,
+      deviceName: device?.name ?? null,
+      externalDeviceId: cam.externalDeviceId ?? null,
+      capabilities: cam.capabilities ?? null,
+      lastCheckedAt: firestoreTimestampToIso(cam.lastCheckedAt),
+      trackStreamId: cam.trackStreamId,
     },
+    recentEvents,
   });
 }

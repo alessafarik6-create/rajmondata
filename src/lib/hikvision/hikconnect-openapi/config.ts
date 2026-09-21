@@ -20,6 +20,12 @@ export const HCC_DEVICES_GET_PATH = "/api/hccgw/resource/v1/devices/get";
 export const HCC_CAMERAS_GET_PATH = "/api/hccgw/resource/v1/areas/cameras/get";
 export const HCC_STREAM_TOKEN_PATH = "/api/hccgw/platform/v1/streamtoken/get";
 export const HCC_CAPTURE_PIC_PATH = "/api/hccgw/resource/v1/device/capturePic";
+export const HCC_LIVE_ADDRESS_PATH = "/api/hccgw/video/v1/live/address/get";
+export const HCC_RECORD_SETTINGS_PATH = "/api/hccgw/video/v1/recordsettings/get";
+export const HCC_ALARM_MQ_SUBSCRIBE_PATH = "/api/hccgw/alarm/v1/mq/subscribe";
+export const HCC_ALARM_MQ_MESSAGES_PATH = "/api/hccgw/alarm/v1/mq/messages";
+export const HCC_ALARM_MQ_MESSAGES_COMPLETE_PATH = "/api/hccgw/alarm/v1/mq/messages/complete";
+export const HCC_ISAPI_PROXY_PASS_PATH = "/api/hccgw/video/v1/isapi/proxypass";
 
 export function resolveHikConnectApiBaseUrl(areaDomain?: string | null): string {
   const fromEnv = String(process.env.HIKCONNECT_OPENAPI_BASE_URL ?? "").trim();

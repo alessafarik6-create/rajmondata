@@ -4,6 +4,11 @@ import {
   HCC_CAMERAS_GET_PATH,
   HCC_CAPTURE_PIC_PATH,
   HCC_DEVICES_GET_PATH,
+  HCC_ALARM_MQ_MESSAGES_COMPLETE_PATH,
+  HCC_ALARM_MQ_MESSAGES_PATH,
+  HCC_ALARM_MQ_SUBSCRIBE_PATH,
+  HCC_LIVE_ADDRESS_PATH,
+  HCC_RECORD_SETTINGS_PATH,
   HCC_STREAM_TOKEN_PATH,
   HCC_SYSTEM_PROPERTIES_PATH,
   HCC_TOKEN_PATH,
@@ -351,6 +356,146 @@ export async function hccGetStreamToken(input: {
         ? String(data.streamAreaDomain)
         : undefined,
   };
+}
+
+export type HccVideoAddressType = "1" | "2" | "3";
+
+export async function hccGetVideoAddress(input: {
+  organizationId: string;
+  db: Firestore;
+  apiKey: string;
+  apiSecret: string;
+  resourceId: string;
+  deviceSerial: string;
+  type: HccVideoAddressType;
+  code?: string;
+  startTime?: string;
+  stopTime?: string;
+}): Promise<{ id?: string; url?: string }> {
+  const body: HccJson = {
+    type: input.type,
+    deviceSerial: input.deviceSerial,
+    resourceId: input.resourceId,
+  };
+  if (input.code) body.code = input.code;
+  if (input.startTime) body.startTime = input.startTime;
+  if (input.stopTime) body.stopTime = input.stopTime;
+
+  const json = await hccAuthorizedRequest({
+    organizationId: input.organizationId,
+    db: input.db,
+    apiKey: input.apiKey,
+    apiSecret: input.apiSecret,
+    method: "POST",
+    path: HCC_LIVE_ADDRESS_PATH,
+    body,
+  });
+  const data = (json.data ?? {}) as HccJson;
+  return {
+    id: data.id != null ? String(data.id) : undefined,
+    url: data.url != null ? String(data.url) : undefined,
+  };
+}
+
+export async function hccGetRecordSettings(input: {
+  organizationId: string;
+  db: Firestore;
+  apiKey: string;
+  apiSecret: string;
+  cameraIds: string[];
+}): Promise<HccJson[]> {
+  const json = await hccAuthorizedRequest({
+    organizationId: input.organizationId,
+    db: input.db,
+    apiKey: input.apiKey,
+    apiSecret: input.apiSecret,
+    method: "POST",
+    path: HCC_RECORD_SETTINGS_PATH,
+    body: { cameraId: input.cameraIds },
+  });
+  const data = (json.data ?? {}) as HccJson;
+  const settings = Array.isArray(data.recordSetting) ? data.recordSetting : [];
+  return settings as HccJson[];
+}
+
+export async function hccAlarmSubscribe(input: {
+  organizationId: string;
+  db: Firestore;
+  apiKey: string;
+  apiSecret: string;
+  subscribe: boolean;
+  eventTypes?: number[];
+}): Promise<void> {
+  const body: HccJson = {
+    subscribeType: input.subscribe ? 1 : 0,
+    subscribeMode: input.eventTypes?.length ? 1 : 0,
+  };
+  if (input.eventTypes?.length) body.eventType = input.eventTypes;
+  await hccAuthorizedRequest({
+    organizationId: input.organizationId,
+    db: input.db,
+    apiKey: input.apiKey,
+    apiSecret: input.apiSecret,
+    method: "POST",
+    path: HCC_ALARM_MQ_SUBSCRIBE_PATH,
+    body,
+  });
+}
+
+export type HccAlarmMessage = {
+  guid: string;
+  raw: HccJson;
+};
+
+export async function hccAlarmPullMessages(input: {
+  organizationId: string;
+  db: Firestore;
+  apiKey: string;
+  apiSecret: string;
+  maxNumberPerTime?: number;
+}): Promise<{ batchId?: string; remainingNumber?: number; messages: HccAlarmMessage[] }> {
+  const json = await hccAuthorizedRequest({
+    organizationId: input.organizationId,
+    db: input.db,
+    apiKey: input.apiKey,
+    apiSecret: input.apiSecret,
+    method: "POST",
+    path: HCC_ALARM_MQ_MESSAGES_PATH,
+    body: {
+      maxNumberPerTime: input.maxNumberPerTime ?? 300,
+    },
+  });
+  const data = (json.data ?? {}) as HccJson;
+  const batchId = data.batchId != null ? String(data.batchId) : undefined;
+  const remainingNumber =
+    data.remainingNumber != null ? Number(data.remainingNumber) : undefined;
+  const alarmMsg = Array.isArray(data.alarmMsg) ? data.alarmMsg : [];
+  const messages: HccAlarmMessage[] = [];
+  for (const row of alarmMsg) {
+    const m = row as HccJson;
+    const guid = String(m.guid ?? m.systemId ?? "");
+    if (!guid) continue;
+    messages.push({ guid, raw: m });
+  }
+  return { batchId, remainingNumber, messages };
+}
+
+export async function hccAlarmCompleteBatch(input: {
+  organizationId: string;
+  db: Firestore;
+  apiKey: string;
+  apiSecret: string;
+  batchId: string;
+}): Promise<void> {
+  await hccAuthorizedRequest({
+    organizationId: input.organizationId,
+    db: input.db,
+    apiKey: input.apiKey,
+    apiSecret: input.apiSecret,
+    method: "POST",
+    path: HCC_ALARM_MQ_MESSAGES_COMPLETE_PATH,
+    body: { batchId: input.batchId },
+  });
 }
 
 export async function hccCapturePicture(input: {

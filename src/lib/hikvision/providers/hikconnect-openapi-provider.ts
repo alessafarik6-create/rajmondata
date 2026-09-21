@@ -2,7 +2,9 @@ import { isIntegrationActiveFlag } from "@/lib/hikvision/connection-mode";
 import {
   HccApiError,
   hccCapturePicture,
+  hccGetRecordSettings,
   hccGetStreamToken,
+  hccGetVideoAddress,
   hccListCameras,
   hccListDevices,
   hccTestConnection,
@@ -15,6 +17,8 @@ import {
 import type {
   HikvisionProvider,
   ProviderLiveViewResult,
+  ProviderPlaybackResult,
+  ProviderRecordScheduleResult,
   ProviderSnapshotResult,
   ProviderSyncCamerasResult,
   ProviderSyncDevicesResult,
@@ -67,6 +71,103 @@ async function requireOpenApiCredentials(
     };
   }
   return { ok: true, apiKey: creds.apiKey, apiSecret: creds.apiSecret };
+}
+
+async function loadCameraForStream(
+  ctx: { db: import("firebase-admin/firestore").Firestore; organizationId: string },
+  cameraDocId: string
+): Promise<
+  | {
+      ok: true;
+      resourceId: string;
+      deviceSerial: string;
+      externalCameraId: string;
+    }
+  | { ok: false; code: "CAMERA_OFFLINE"; error: string }
+> {
+  const camSnap = await hikvisionCamerasCol(ctx.db, ctx.organizationId).doc(cameraDocId).get();
+  if (!camSnap.exists) {
+    return { ok: false, code: "CAMERA_OFFLINE", error: "Kamera nenalezena." };
+  }
+  const cam = camSnap.data() as {
+    serialNumber?: string | null;
+    trackStreamId?: string;
+    externalCameraId?: string | null;
+  };
+  const deviceSerial = String(cam.serialNumber ?? "").trim();
+  const resourceId = String(cam.externalCameraId ?? cam.trackStreamId ?? "").trim();
+  if (!deviceSerial || !resourceId) {
+    return {
+      ok: false,
+      code: "CAMERA_OFFLINE",
+      error: "Chybí identifikátor kamery — synchronizujte kamery z Hik-Connect.",
+    };
+  }
+  return {
+    ok: true,
+    resourceId,
+    deviceSerial,
+    externalCameraId: resourceId,
+  };
+}
+
+async function buildEzopenSession(
+  ctx: { db: import("firebase-admin/firestore").Firestore; organizationId: string },
+  cred: { apiKey: string; apiSecret: string },
+  cameraDocId: string,
+  addressType: "1" | "2" | "3",
+  times?: { startTime: string; stopTime: string; code?: string }
+): Promise<ProviderLiveViewResult> {
+  const cam = await loadCameraForStream(ctx, cameraDocId);
+  if (!cam.ok) return { ok: false, code: cam.code, error: cam.error };
+
+  const stream = await hccGetStreamToken({
+    organizationId: ctx.organizationId,
+    db: ctx.db,
+    apiKey: cred.apiKey,
+    apiSecret: cred.apiSecret,
+  });
+  if (!stream.appToken) {
+    return {
+      ok: false,
+      code: "LIVE_VIEW_NOT_SUPPORTED",
+      error: "Hik-Connect nevrátil stream token (streamtoken/get).",
+    };
+  }
+
+  const address = await hccGetVideoAddress({
+    organizationId: ctx.organizationId,
+    db: ctx.db,
+    apiKey: cred.apiKey,
+    apiSecret: cred.apiSecret,
+    resourceId: cam.resourceId,
+    deviceSerial: cam.deviceSerial,
+    type: addressType,
+    code: times?.code,
+    startTime: times?.startTime,
+    stopTime: times?.stopTime,
+  });
+
+  if (!address.url) {
+    return {
+      ok: false,
+      code: "LIVE_VIEW_NOT_SUPPORTED",
+      error: "Hik-Connect nevrátil ezopen URL (live/address/get).",
+    };
+  }
+
+  const expireMs = stream.appToken ? Date.now() + 6 * 3600 * 1000 : Date.now() + 3600 * 1000;
+  return {
+    ok: true,
+    playbackType: "ezopen",
+    sessionType: "sdk",
+    ezopenUrl: address.url,
+    accessToken: stream.appToken,
+    appKey: stream.appKey,
+    streamAreaDomain: stream.streamAreaDomain,
+    expiresAt: new Date(expireMs).toISOString(),
+    message: "Přehrávání přes oficiální Hik-Connect JSSDK (ezopen).",
+  };
 }
 
 function fromHccError(e: unknown): OpenApiCredFail {
@@ -233,32 +334,74 @@ export const hikConnectOpenApiProvider: HikvisionProvider = {
     }
   },
 
-  async getLiveView(ctx, _cameraDocId): Promise<ProviderLiveViewResult> {
+  async getLiveView(ctx, cameraDocId): Promise<ProviderLiveViewResult> {
     const cred = await requireOpenApiCredentials(ctx.db, ctx.organizationId);
     if (!cred.ok) {
       return { ok: false, code: cred.fail.code, error: cred.fail.error };
     }
     try {
-      const stream = await hccGetStreamToken({
+      return await buildEzopenSession(
+        ctx,
+        { apiKey: cred.apiKey, apiSecret: cred.apiSecret },
+        cameraDocId,
+        "1"
+      );
+    } catch (e) {
+      const fail = fromHccError(e);
+      return { ok: false, code: fail.code, error: fail.error };
+    }
+  },
+
+  async getPlayback(ctx, cameraDocId, params): Promise<ProviderPlaybackResult> {
+    const cred = await requireOpenApiCredentials(ctx.db, ctx.organizationId);
+    if (!cred.ok) {
+      return { ok: false, code: cred.fail.code, error: cred.fail.error };
+    }
+    const type = params.source === "cloud" ? "3" : "2";
+    try {
+      return await buildEzopenSession(
+        ctx,
+        { apiKey: cred.apiKey, apiSecret: cred.apiSecret },
+        cameraDocId,
+        type,
+        {
+          startTime: params.startTime,
+          stopTime: params.stopTime,
+          code: params.code,
+        }
+      );
+    } catch (e) {
+      const fail = fromHccError(e);
+      return { ok: false, code: fail.code, error: fail.error };
+    }
+  },
+
+  async getRecordSchedule(ctx, cameraDocId): Promise<ProviderRecordScheduleResult> {
+    const cred = await requireOpenApiCredentials(ctx.db, ctx.organizationId);
+    if (!cred.ok) {
+      return { ok: false, code: cred.fail.code, error: cred.fail.error };
+    }
+    const cam = await loadCameraForStream(ctx, cameraDocId);
+    if (!cam.ok) {
+      return { ok: false, code: cam.code, error: cam.error };
+    }
+    try {
+      const rows = await hccGetRecordSettings({
         organizationId: ctx.organizationId,
         db: ctx.db,
         apiKey: cred.apiKey,
         apiSecret: cred.apiSecret,
+        cameraIds: [cam.externalCameraId],
       });
-      if (!stream.appToken) {
-        return {
-          ok: false,
-          code: "LIVE_VIEW_NOT_SUPPORTED",
-          error: "Hik-Connect nevrátil stream token — použijte Hikvision JSSDK dle dokumentace.",
-        };
-      }
+      const row = rows[0] as Record<string, unknown> | undefined;
+      const enableLocal = Number(row?.enableLocalStorage) === 1;
+      const enableCloud = Number(row?.enableCloudStorage) === 1;
       return {
         ok: true,
-        sessionType: "sdk",
-        token: stream.appToken,
-        message:
-          "Stream token pro Hik-Connect SDK (GET /api/hccgw/platform/v1/streamtoken/get). Přehrávač doplnit dle JSSDK.",
-        expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+        enableLocalStorage: enableLocal,
+        enableCloudStorage: enableCloud,
+        note:
+          "Hik-Connect OpenAPI neposkytuje vyhledání jednotlivých záznamů — lze získat plán nahrávání a adresu přehrání pro zvolený interval (live/address/get).",
       };
     } catch (e) {
       const fail = fromHccError(e);

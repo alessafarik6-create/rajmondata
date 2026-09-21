@@ -58,15 +58,33 @@ export type ProviderSnapshotResult =
   | { ok: true; buffer: Buffer; contentType: string }
   | { ok: false; code: HikvisionErrorCode; error: string };
 
-export type ProviderLiveViewResult =
+export type ProviderStreamSessionResult =
   | {
       ok: true;
       /** Krátkodobé — neukládat do DB */
-      sessionType: "webrtc" | "hls" | "url" | "sdk";
+      playbackType: "ezopen" | "hls" | "webrtc" | "url";
+      sessionType: "sdk" | "hls" | "webrtc" | "url";
+      ezopenUrl?: string;
       url?: string;
-      token?: string;
+      accessToken?: string;
+      appKey?: string;
+      streamAreaDomain?: string;
       expiresAt?: string;
       message?: string;
+    }
+  | { ok: false; code: HikvisionErrorCode; error: string };
+
+export type ProviderLiveViewResult = ProviderStreamSessionResult;
+
+export type ProviderPlaybackResult = ProviderStreamSessionResult;
+
+export type ProviderRecordScheduleResult =
+  | {
+      ok: true;
+      enableLocalStorage: boolean;
+      enableCloudStorage: boolean;
+      /** OpenAPI neposkytuje seznam souborů — jen plán nahrávání */
+      note: string;
     }
   | { ok: false; code: HikvisionErrorCode; error: string };
 
@@ -86,4 +104,18 @@ export interface HikvisionProvider {
     ctx: HikvisionProviderContext,
     cameraDocId: string
   ): Promise<ProviderLiveViewResult>;
+  getPlayback?(
+    ctx: HikvisionProviderContext,
+    cameraDocId: string,
+    params: {
+      startTime: string;
+      stopTime: string;
+      source: "local" | "cloud";
+      code?: string;
+    }
+  ): Promise<ProviderPlaybackResult>;
+  getRecordSchedule?(
+    ctx: HikvisionProviderContext,
+    cameraDocId: string
+  ): Promise<ProviderRecordScheduleResult>;
 }

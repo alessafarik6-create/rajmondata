@@ -3,6 +3,8 @@ import { hikvisionTenantOk, requireCamerasLive } from "@/lib/hikvision/api-auth"
 import { HikvisionStreamGateway } from "@/lib/hikvision/stream-gateway";
 import { hikvisionErrorMessage } from "@/lib/hikvision/errors";
 import type { HikvisionErrorCode } from "@/lib/hikvision/errors";
+import { assertCallerCameraAccess } from "@/lib/hikvision/camera-access-guard";
+import { logHikvisionAuditSafe } from "@/lib/hikvision/hikvision-audit-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,9 +17,28 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
   }
   const { cameraId } = await params;
-  const companyId = auth.caller.companyId;
+  let bodyCompanyId = "";
+  try {
+    const body = await request.json();
+    bodyCompanyId = String(body?.companyId ?? "").trim();
+  } catch {
+    bodyCompanyId = "";
+  }
+  const companyId = bodyCompanyId || auth.caller.companyId;
   if (!hikvisionTenantOk(auth.caller, companyId)) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
+  }
+
+  const access = await assertCallerCameraAccess({
+    db: auth.db,
+    organizationId: companyId,
+    caller: auth.caller,
+    employeeDoc: auth.employeeDoc,
+    cameraId,
+    permission: "live",
+  });
+  if (!access.ok) {
+    return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   }
 
   const gateway = new HikvisionStreamGateway(auth.db);
@@ -40,6 +61,15 @@ export async function POST(request: NextRequest, { params }: Params) {
       { status, headers: { "Cache-Control": "no-store" } }
     );
   }
+
+  await logHikvisionAuditSafe(auth.db, companyId, {
+    userId: auth.caller.uid,
+    actionType: "HIKVISION_LIVE_OPEN",
+    actionLabel: "Otevření živého obrazu kamery",
+    entityType: "camera",
+    entityId: cameraId,
+    metadata: { playbackType: session.playbackType },
+  });
 
   return NextResponse.json(session, { headers: { "Cache-Control": "no-store" } });
 }

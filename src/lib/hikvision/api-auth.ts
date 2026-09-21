@@ -95,6 +95,10 @@ export async function requireCamerasPlayback(request: NextRequest | Request) {
   return requireCameraApiAccess(request, "playback");
 }
 
+export async function requireCamerasControl(request: NextRequest | Request) {
+  return requireCameraApiAccess(request, "control");
+}
+
 export async function requireCamerasAdmin(request: NextRequest | Request) {
   return requireCameraApiAccess(request, "admin");
 }

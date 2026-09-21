@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { useCompany } from "@/firebase/firestore/use-company";
-import { CamerasGrid } from "@/components/cameras/cameras-grid";
+import { PortalCamerasHub } from "@/components/cameras/portal-cameras-hub";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { useCameraPermissions } from "@/hooks/use-camera-permissions";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
@@ -80,7 +80,11 @@ export default function PortalCamerasPage() {
           </Button>
         ) : null}
       </div>
-      <CamerasGrid companyId={companyId} canLive={cameraPerms.live} canPlayback={cameraPerms.playback} />
+      <PortalCamerasHub
+        companyId={companyId}
+        canLive={cameraPerms.live}
+        canPlayback={cameraPerms.playback}
+      />
     </div>
   );
 }

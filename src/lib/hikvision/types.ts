@@ -104,9 +104,27 @@ export type HikvisionEmployeeCameraAccessDoc = {
   organizationId: string;
   employeeId: string;
   cameraId: string;
+  /** Náhled / seznam — default true pokud live nebo playback */
+  canView?: boolean;
   canViewLive: boolean;
   canPlayback: boolean;
+  canControl?: boolean;
   updatedAt?: unknown;
+};
+
+export type HikvisionCameraEventNormalized = {
+  id: string;
+  organizationId: string;
+  deviceId: string;
+  cameraId: string | null;
+  hikvisionEventId: string;
+  type: string;
+  title: string;
+  occurredAt: string;
+  receivedAt: string;
+  snapshotUrl?: string | null;
+  metadata?: Record<string, unknown>;
+  acknowledged: boolean;
 };
 
 export type HikvisionConnectorDoc = {

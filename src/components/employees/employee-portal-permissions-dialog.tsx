@@ -93,10 +93,11 @@ export function EmployeePortalPermissionsDialog(props: {
         view: o.view === true,
         live: o.live === true,
         playback: o.playback === true,
+        control: o.control === true,
         admin: o.admin === true,
       };
     }
-    return { view: false, live: false, playback: false, admin: false };
+    return { view: false, live: false, playback: false, control: false, admin: false };
   }, [employeeDoc]);
 
   const [cameraFlags, setCameraFlags] = useState(initialCamera);
@@ -147,12 +148,14 @@ export function EmployeePortalPermissionsDialog(props: {
         next.view = true;
         next.live = true;
         next.playback = true;
+        next.control = true;
       }
       if (key === "view" && !checked) {
         next.live = false;
         next.playback = false;
+        next.control = false;
       }
-      if ((key === "live" || key === "playback") && checked) {
+      if ((key === "live" || key === "playback" || key === "control") && checked) {
         next.view = true;
       }
       return next;
@@ -265,6 +268,7 @@ export function EmployeePortalPermissionsDialog(props: {
                 ["view", "Zobrazit kamery", "Seznam kamer a snapshoty."],
                 ["live", "Živý obraz", "Sledování live streamu."],
                 ["playback", "Záznamy", "Historické záznamy."],
+                ["control", "PTZ / ovládání", "Aktivní ovládání kamery (PTZ)."],
                 ["admin", "Správa kamer", "Integrace Hikvision a synchronizace."],
               ] as const
             ).map(([key, label, hint]) => (

@@ -13,12 +13,13 @@ import {
 import { normalizeCompanyRole } from "@/lib/company-privilege";
 import { HIKVISION_PERMISSION } from "@/lib/hikvision/permissions";
 
-export type CameraPermissionFlag = "view" | "live" | "playback" | "admin";
+export type CameraPermissionFlag = "view" | "live" | "playback" | "control" | "admin";
 
 export type CameraPermissionsResolved = {
   view: boolean;
   live: boolean;
   playback: boolean;
+  control: boolean;
   admin: boolean;
 };
 
@@ -26,6 +27,7 @@ export type CameraPermissionsDoc = {
   view?: boolean;
   live?: boolean;
   playback?: boolean;
+  control?: boolean;
   admin?: boolean;
 };
 
@@ -39,6 +41,7 @@ function parseCameraPermissionsDoc(
     view: o.view === true,
     live: o.live === true,
     playback: o.playback === true,
+    control: o.control === true,
     admin: o.admin === true,
   };
 }
@@ -79,7 +82,7 @@ export function resolveCameraPermissions(input: {
     "none";
 
   if (isOrgCameraPrivilegedRole(input.role, input.globalRoles)) {
-    return { view: true, live: true, playback: true, admin: true };
+    return { view: true, live: true, playback: true, control: true, admin: true };
   }
 
   const flags = parseCameraPermissionsDoc(input.employeeDoc);
@@ -90,6 +93,7 @@ export function resolveCameraPermissions(input: {
     view: view || admin,
     live: (view && flags.live === true) || admin,
     playback: (view && flags.playback === true) || admin,
+    control: (view && flags.control === true) || admin,
     admin,
   };
 }
@@ -113,6 +117,8 @@ export function callerHasCameraPermission(
       return perms.live;
     case "playback":
       return perms.playback;
+    case "control":
+      return perms.control;
     case "admin":
       return perms.admin;
     default:
@@ -133,12 +139,14 @@ export function normalizeCameraPermissionsForFirestore(input: {
   view?: boolean;
   live?: boolean;
   playback?: boolean;
+  control?: boolean;
   admin?: boolean;
 }): CameraPermissionsDoc | null {
   const admin = input.admin === true;
   const view = admin || input.view === true;
   const live = admin || (view && input.live === true);
   const playback = admin || (view && input.playback === true);
-  if (!view && !live && !playback && !admin) return null;
-  return { view, live, playback, admin };
+  const control = admin || (view && input.control === true);
+  if (!view && !live && !playback && !control && !admin) return null;
+  return { view, live, playback, control, admin };
 }
