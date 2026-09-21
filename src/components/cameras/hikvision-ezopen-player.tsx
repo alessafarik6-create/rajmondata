@@ -6,6 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useHikConnectJssdk } from "@/components/cameras/use-hikconnect-jssdk";
+import {
+  getHikvisionPlayerConstructor,
+  loadHikvisionSdk,
+  type HikvisionSdkErrorCode,
+} from "@/components/cameras/load-hikvision-sdk";
+import { getHikvisionJssdkPublicConfig } from "@/lib/hikvision/jssdk-config-shared";
 
 export type EzopenSession = {
   ezopenUrl: string;
@@ -13,6 +19,22 @@ export type EzopenSession = {
   appKey?: string;
   streamAreaDomain?: string;
 };
+
+export type HikvisionLivePlayerErrorCode =
+  | HikvisionSdkErrorCode
+  | "STREAM_TOKEN_FAILED"
+  | "STREAM_EXPIRED"
+  | "DEVICE_OFFLINE"
+  | "PLAYER_INIT_FAILED";
+
+export type HikvisionLivePlayerState =
+  | "LOADING_SDK"
+  | "LOADING_STREAM"
+  | "PLAYING"
+  | "ERROR"
+  | "OFFLINE";
+
+const USER_ERROR_MESSAGE = "Živý obraz se nyní nepodařilo načíst.";
 
 export function HikvisionEzopenPlayer(props: {
   session: EzopenSession | null;
@@ -23,33 +45,76 @@ export function HikvisionEzopenPlayer(props: {
   onClose?: () => void;
   onRetry?: () => void;
   compact?: boolean;
+  streamErrorCode?: HikvisionLivePlayerErrorCode | null;
+  /** Diagnostika — pouze pro admin UI, ne pro běžné uživatele. */
+  showDeveloperDetail?: boolean;
 }) {
-  const { session, cameraName, online, mode, className, onClose, onRetry, compact } = props;
+  const {
+    session,
+    cameraName,
+    online,
+    mode,
+    className,
+    onClose,
+    onRetry,
+    compact,
+    streamErrorCode,
+    showDeveloperDetail,
+  } = props;
   const containerId = useId().replace(/:/g, "");
-  const playerRef = useRef<{ stop: () => void; destroy?: () => void; openSound: () => void; closeSound: () => void; fullScreen: () => void } | null>(null);
+  const playerRef = useRef<{
+    stop: () => void;
+    destroy?: () => void;
+    openSound: () => void;
+    closeSound: () => void;
+    fullScreen: () => void;
+  } | null>(null);
+  const streamRetriedRef = useRef(false);
   const [muted, setMuted] = useState(true);
-  const [state, setState] = useState<"idle" | "connecting" | "live" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const { ready: sdkReady, error: sdkError } = useHikConnectJssdk();
+  const [uiState, setUiState] = useState<HikvisionLivePlayerState>("LOADING_SDK");
+  const [errorCode, setErrorCode] = useState<HikvisionLivePlayerErrorCode | null>(null);
+  const { ready: sdkReady, errorCode: sdkErrorCode } = useHikConnectJssdk(true);
 
   useEffect(() => {
-    if (!session?.ezopenUrl || !session.accessToken) {
-      setState("idle");
-      return;
-    }
-    if (!sdkReady) {
-      setState("connecting");
-      return;
-    }
-    const EZUIKitPlayer = window.EZUIKit?.EZUIKitPlayer;
-    if (!EZUIKitPlayer) {
-      setState("error");
-      setErrorMsg(sdkError ?? "JSSDK není k dispozici.");
+    if (online === false) {
+      setUiState("OFFLINE");
+      setErrorCode("DEVICE_OFFLINE");
       return;
     }
 
-    setState("connecting");
-    setErrorMsg(null);
+    if (streamErrorCode) {
+      setUiState("ERROR");
+      setErrorCode(streamErrorCode);
+      return;
+    }
+
+    if (!sdkReady) {
+      if (sdkErrorCode) {
+        setUiState("ERROR");
+        setErrorCode(sdkErrorCode);
+      } else {
+        setUiState("LOADING_SDK");
+        setErrorCode(null);
+      }
+      return;
+    }
+
+    if (!session?.ezopenUrl || !session.accessToken) {
+      setUiState("LOADING_STREAM");
+      setErrorCode(null);
+      return;
+    }
+
+    const EZUIKitPlayer = getHikvisionPlayerConstructor();
+    if (!EZUIKitPlayer) {
+      setUiState("ERROR");
+      setErrorCode("SDK_API_MISSING");
+      return;
+    }
+
+    setUiState("LOADING_STREAM");
+    setErrorCode(null);
+
     try {
       playerRef.current?.destroy?.();
       playerRef.current?.stop();
@@ -57,26 +122,47 @@ export function HikvisionEzopenPlayer(props: {
       /* ignore */
     }
 
+    const jssdkCfg = getHikvisionJssdkPublicConfig();
+    let cancelled = false;
+
     try {
       const player = new EZUIKitPlayer({
         id: containerId,
         url: session.ezopenUrl,
         accessToken: session.accessToken,
-        template: "simple",
-        plugin: ["talk"],
-        header: ["capture"],
+        staticPath: jssdkCfg.staticPath,
+        template: mode === "live" ? "simple" : "pcRec",
+        plugin: mode === "live" ? ["talk"] : [],
+        header: mode === "live" ? ["capture"] : [],
         audio: 0,
-        width: compact ? 320 : undefined,
-        height: compact ? 180 : undefined,
+        width: compact ? 320 : "100%",
+        height: compact ? 180 : "100%",
+        handleError: () => {
+          if (cancelled) return;
+          if (!streamRetriedRef.current && onRetry) {
+            streamRetriedRef.current = true;
+            setUiState("LOADING_STREAM");
+            onRetry();
+            return;
+          }
+          setUiState("ERROR");
+          setErrorCode("STREAM_EXPIRED");
+        },
+        handleSuccess: () => {
+          if (cancelled) return;
+          setUiState("PLAYING");
+          setErrorCode(null);
+        },
       });
       playerRef.current = player;
-      setState("live");
-    } catch (e) {
-      setState("error");
-      setErrorMsg(e instanceof Error ? e.message : "Přehrávač selhal.");
+      setUiState("PLAYING");
+    } catch {
+      setUiState("ERROR");
+      setErrorCode("PLAYER_INIT_FAILED");
     }
 
     return () => {
+      cancelled = true;
       try {
         playerRef.current?.destroy?.();
         playerRef.current?.stop();
@@ -85,9 +171,45 @@ export function HikvisionEzopenPlayer(props: {
       }
       playerRef.current = null;
     };
-  }, [session, sdkReady, sdkError, containerId, compact]);
+  }, [
+    session,
+    sdkReady,
+    sdkErrorCode,
+    streamErrorCode,
+    containerId,
+    compact,
+    mode,
+    online,
+    onRetry,
+  ]);
 
-  const now = new Date().toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  useEffect(() => {
+    streamRetriedRef.current = false;
+  }, [session?.ezopenUrl, session?.accessToken]);
+
+  const now = new Date().toLocaleTimeString("cs-CZ", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
+  const loadingLabel =
+    uiState === "LOADING_SDK" ? "Načítám Hikvision player…" : "Připojuji živý obraz…";
+
+  async function retryAll() {
+    setUiState("LOADING_SDK");
+    setErrorCode(null);
+    const sdk = await loadHikvisionSdk();
+    if (!sdk.ok) {
+      setUiState("ERROR");
+      setErrorCode(sdk.code);
+      return;
+    }
+    onRetry?.();
+  }
+
+  const showErrorOverlay =
+    uiState === "ERROR" || uiState === "OFFLINE" || (uiState === "LOADING_SDK" && sdkErrorCode);
 
   return (
     <div className={cn("relative flex flex-col bg-black text-white rounded-md overflow-hidden", className)}>
@@ -154,17 +276,24 @@ export function HikvisionEzopenPlayer(props: {
 
       <div className="relative flex-1 min-h-[200px] bg-black">
         <div id={containerId} className="w-full h-full min-h-[200px]" />
-        {state === "connecting" ? (
+        {(uiState === "LOADING_SDK" || uiState === "LOADING_STREAM") && !showErrorOverlay ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60">
             <Loader2 className="h-8 w-8 animate-spin" />
-            <p className="text-sm">Připojuji stream…</p>
+            <p className="text-sm">{loadingLabel}</p>
           </div>
         ) : null}
-        {state === "error" || sdkError ? (
+        {showErrorOverlay ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center bg-black/80">
-            <p className="text-sm">{errorMsg ?? sdkError ?? "Živý obraz se nepodařilo načíst."}</p>
+            <p className="text-sm">
+              {uiState === "OFFLINE"
+                ? "Kamera je offline."
+                : USER_ERROR_MESSAGE}
+            </p>
+            {showDeveloperDetail && errorCode ? (
+              <p className="text-xs text-white/60 font-mono">Detail: {errorCode}</p>
+            ) : null}
             {onRetry ? (
-              <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void retryAll()}>
                 Zkusit znovu
               </Button>
             ) : null}

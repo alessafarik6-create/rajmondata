@@ -9,8 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
-import { useUser } from "@/firebase";
-import { Loader2, Video, Cloud, Server, Plug } from "lucide-react";
+import { useCompany, useUser } from "@/firebase";
+import { Loader2, Video, Cloud, Server, Plug, Stethoscope } from "lucide-react";
+import { loadHikvisionSdk } from "@/components/cameras/load-hikvision-sdk";
 
 type ConnectionMode = "HIKCONNECT_OPENAPI" | "DIRECT_ISAPI" | "LOCAL_CONNECTOR";
 
@@ -114,11 +115,18 @@ function lifecycleLabel(lifecycle: IntegrationLifecycle, isCloud: boolean): stri
   return "Nepřipojeno";
 }
 
+type CapRow = { id: string; label: string; status: "ok" | "fail" | "unsupported"; detail?: string };
+
 export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: string | null }) {
   const { user } = useUser();
+  const { userProfile } = useCompany();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [diagBusy, setDiagBusy] = useState(false);
+  const [diagRows, setDiagRows] = useState<CapRow[] | null>(null);
+  const [jssdkBrowserOk, setJssdkBrowserOk] = useState<boolean | null>(null);
+  const [jssdkDevDetail, setJssdkDevDetail] = useState<string | null>(null);
   const [form, setForm] = useState(emptyIntegration);
   const [password, setPassword] = useState("");
   const [apiSecret, setApiSecret] = useState("");
@@ -262,6 +270,53 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
     }
   }
 
+  async function runCloudDiagnostics() {
+    if (!user || !companyId) return;
+    setDiagBusy(true);
+    setDiagRows(null);
+    setJssdkBrowserOk(null);
+    setJssdkDevDetail(null);
+    try {
+      const token = await user.getIdToken();
+      const [capRes, cfgRes, sdkLoad] = await Promise.all([
+        fetch("/api/company/hikvision/integration/capabilities", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId }),
+        }),
+        fetch(`/api/company/hikvision/jssdk-config?companyId=${encodeURIComponent(companyId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }),
+        loadHikvisionSdk(),
+      ]);
+      const capData = await capRes.json();
+      if (capData.ok && Array.isArray(capData.capabilities)) {
+        setDiagRows(capData.capabilities as CapRow[]);
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Diagnostika",
+          description: capData.error ?? "Nepodařilo se načíst diagnostiku.",
+        });
+      }
+      const cfgData = await cfgRes.json();
+      if (cfgData.ok && cfgData.local?.mode === "local") {
+        setJssdkDevDetail(`Expected URL: ${cfgData.local.expectedScriptUrl ?? cfgData.config?.scriptUrl}`);
+      } else if (cfgData.ok?.config?.scriptUrl) {
+        setJssdkDevDetail(`Script URL: ${cfgData.config.scriptUrl}`);
+      }
+      setJssdkBrowserOk(sdkLoad.ok);
+      if (!sdkLoad.ok && showDevDetail) {
+        setJssdkDevDetail(
+          (prev) => `${prev ?? ""}\nBrowser: ${sdkLoad.code} — ${sdkLoad.scriptUrl}`.trim()
+        );
+      }
+    } finally {
+      setDiagBusy(false);
+    }
+  }
+
   async function createConnectorToken() {
     if (!user || !companyId) return;
     setBusy(true);
@@ -298,6 +353,9 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
   const canTest = isCloud ? cloudCredentialsOk : true;
   const canSyncDevices = isCloud && cloudApiConnected;
   const canSyncCameras = isCloud && cloudApiConnected && form.deviceCount > 0;
+  const showDevDetail =
+    Array.isArray(userProfile?.globalRoles) &&
+    userProfile.globalRoles.includes("super_admin");
 
   return (
     <Card>
@@ -566,6 +624,55 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
           <div className="rounded border border-orange-200 bg-orange-50 p-3 text-xs break-all">
             <p className="font-semibold text-orange-900 mb-1">Registrační token (1× zobrazení)</p>
             <code>{registrationToken}</code>
+          </div>
+        ) : null}
+
+        {isCloud ? (
+          <div className="rounded-md border p-3 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="font-medium text-sm flex items-center gap-1">
+                <Stethoscope className="h-4 w-4" /> Hik-Connect Cloud — diagnostika
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={diagBusy || !cloudCredentialsOk}
+                onClick={() => void runCloudDiagnostics()}
+              >
+                {diagBusy ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                Spustit diagnostiku
+              </Button>
+            </div>
+            {diagRows ? (
+              <ul className="text-sm space-y-1">
+                {diagRows.map((row) => (
+                  <li key={row.id} className="flex flex-wrap gap-x-2">
+                    <span>{row.status === "ok" ? "✓" : row.status === "fail" ? "✕" : "–"}</span>
+                    <span className="font-medium">{row.label}</span>
+                    {row.status === "fail" && row.id === "jssdk" ? (
+                      <span className="text-destructive text-xs">Soubor nebyl nalezen.</span>
+                    ) : null}
+                    {showDevDetail && row.detail ? (
+                      <span className="text-xs text-muted-foreground w-full pl-5">{row.detail}</span>
+                    ) : null}
+                  </li>
+                ))}
+                {jssdkBrowserOk !== null ? (
+                  <li className="flex flex-wrap gap-x-2">
+                    <span>{jssdkBrowserOk ? "✓" : "✕"}</span>
+                    <span className="font-medium">JSSDK načteno (prohlížeč)</span>
+                  </li>
+                ) : null}
+              </ul>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Ověří API, zařízení, kamery, snapshot, stream token a dostupnost JSSDK.
+              </p>
+            )}
+            {showDevDetail && jssdkDevDetail ? (
+              <pre className="text-xs bg-muted/50 p-2 rounded whitespace-pre-wrap">{jssdkDevDetail}</pre>
+            ) : null}
           </div>
         ) : null}
       </CardContent>

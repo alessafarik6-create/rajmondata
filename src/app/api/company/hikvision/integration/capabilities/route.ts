@@ -4,8 +4,11 @@ import {
   hccGetStreamToken,
   hccGetVideoAddress,
   hccListCameras,
+  hccListDevices,
   hccTestConnection,
 } from "@/lib/hikvision/hikconnect-openapi/client";
+import { checkHikvisionJssdkLocalFiles } from "@/lib/hikvision/jssdk-local-check";
+import { getHikvisionJssdkPublicConfig } from "@/lib/hikvision/jssdk-config-shared";
 import {
   hikvisionTenantOk,
   requireHikvisionIntegrationAdmin,
@@ -84,6 +87,23 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    await hccListDevices({
+      organizationId: companyId,
+      db: auth.db,
+      apiKey: creds.apiKey,
+      apiSecret: creds.apiSecret,
+    });
+    capabilities.push({ id: "devices", label: "Zařízení", status: "ok" });
+  } catch (e) {
+    capabilities.push({
+      id: "devices",
+      label: "Zařízení",
+      status: "fail",
+      detail: e instanceof Error ? e.message : "Selhalo",
+    });
+  }
+
+  try {
     await hccListCameras({
       organizationId: companyId,
       db: auth.db,
@@ -148,27 +168,59 @@ export async function POST(request: NextRequest) {
         type: "1",
       });
       capabilities.push({
-        id: "live",
-        label: "Live (ezopen + JSSDK)",
+        id: "live_token",
+        label: "Live stream token",
         status: "ok",
-        detail: "Vyžaduje Hik-Connect JSSDK v prohlížeči.",
       });
     } else {
       capabilities.push({
-        id: "live",
-        label: "Live stream",
+        id: "live_token",
+        label: "Live stream token",
         status: "fail",
         detail: "Chybí stream token nebo ukázková kamera.",
       });
     }
   } catch (e) {
     capabilities.push({
-      id: "live",
-      label: "Live stream",
+      id: "live_token",
+      label: "Live stream token",
       status: "fail",
       detail: e instanceof Error ? e.message : "Selhalo",
     });
   }
+
+  const jssdkCfg = getHikvisionJssdkPublicConfig();
+  const jssdkLocal = checkHikvisionJssdkLocalFiles();
+  if (jssdkLocal.mode === "external") {
+    capabilities.push({
+      id: "jssdk",
+      label: "Hikvision JSSDK",
+      status: "ok",
+      detail: `Externí URL: ${jssdkCfg.scriptUrl}`,
+    });
+  } else if (jssdkLocal.scriptFileExists && jssdkLocal.staticDirExists) {
+    capabilities.push({
+      id: "jssdk",
+      label: "Hikvision JSSDK",
+      status: "ok",
+      detail: jssdkCfg.scriptUrl,
+    });
+  } else {
+    capabilities.push({
+      id: "jssdk",
+      label: "Hikvision JSSDK",
+      status: "fail",
+      detail: `Soubor nebyl nalezen. Expected URL: ${jssdkLocal.expectedScriptUrl}`,
+    });
+  }
+
+  capabilities.push({
+    id: "live_player",
+    label: "Live player (prohlížeč)",
+    status: jssdkLocal.mode === "external" || jssdkLocal.scriptFileExists ? "ok" : "fail",
+    detail:
+      "Ověření přehrání probíhá v prohlížeči po načtení JSSDK a otevření živého obrazu.",
+  });
 
   capabilities.push({
     id: "playback",

@@ -8,10 +8,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { HikvisionEzopenPlayer, type EzopenSession } from "@/components/cameras/hikvision-ezopen-player";
+import {
+  HikvisionEzopenPlayer,
+  type EzopenSession,
+  type HikvisionLivePlayerErrorCode,
+} from "@/components/cameras/hikvision-ezopen-player";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 type CameraRow = { id: string; name: string; online: boolean };
+
+function mapStreamApiError(data: {
+  code?: string;
+  error?: string;
+}): HikvisionLivePlayerErrorCode {
+  const code = String(data.code ?? "").trim();
+  if (code === "CAMERA_OFFLINE" || code === "DEVICE_OFFLINE") return "DEVICE_OFFLINE";
+  return "STREAM_TOKEN_FAILED";
+}
 
 export function CameraLiveDialog(props: {
   open: boolean;
@@ -23,11 +36,13 @@ export function CameraLiveDialog(props: {
   const { user } = useUser();
   const isMobile = useIsMobile();
   const [session, setSession] = useState<EzopenSession | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingStream, setLoadingStream] = useState(false);
+  const [streamErrorCode, setStreamErrorCode] = useState<HikvisionLivePlayerErrorCode | null>(null);
 
   const load = useCallback(async () => {
     if (!user || !camera) return;
-    setLoading(true);
+    setLoadingStream(true);
+    setStreamErrorCode(null);
     try {
       const token = await user.getIdToken();
       const res = await fetch(
@@ -44,6 +59,7 @@ export function CameraLiveDialog(props: {
       const data = await res.json();
       if (!res.ok || !data.ok) {
         setSession(null);
+        setStreamErrorCode(mapStreamApiError(data));
         return;
       }
       setSession({
@@ -52,17 +68,22 @@ export function CameraLiveDialog(props: {
         appKey: data.appKey,
         streamAreaDomain: data.streamAreaDomain,
       });
+    } catch {
+      setSession(null);
+      setStreamErrorCode("STREAM_TOKEN_FAILED");
     } finally {
-      setLoading(false);
+      setLoadingStream(false);
     }
   }, [user, camera, companyId]);
 
   React.useEffect(() => {
     if (open && camera) {
       setSession(null);
+      setStreamErrorCode(null);
       void load();
     } else {
       setSession(null);
+      setStreamErrorCode(null);
     }
   }, [open, camera, load]);
 
@@ -83,13 +104,14 @@ export function CameraLiveDialog(props: {
           </DialogHeader>
         ) : null}
         <HikvisionEzopenPlayer
-          session={loading ? null : session}
+          session={loadingStream ? null : session}
           cameraName={camera.name}
           online={camera.online}
           mode="live"
           className={isMobile ? "h-[100dvh] rounded-none" : "min-h-[420px]"}
           onClose={() => onOpenChange(false)}
           onRetry={() => void load()}
+          streamErrorCode={streamErrorCode}
         />
       </DialogContent>
     </Dialog>
