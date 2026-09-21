@@ -36,6 +36,7 @@ import {
   PlatformModuleCatalogProvider,
   useMergedPlatformModuleCatalog,
 } from "@/contexts/platform-module-catalog-context";
+import { PlatformAiBrandingProvider } from "@/contexts/platform-ai-branding-context";
 import { isBindableFirestoreInstance } from "@/lib/firestore-instance-guard";
 import {
   employeeHasReadAccessToPath,
@@ -57,9 +58,11 @@ const SHELL_LOADING_TIMEOUT_MS = 30000;
 
 export default function PortalLayoutClient({ children }: { children: React.ReactNode }) {
   return (
-    <PlatformModuleCatalogProvider>
-      <PortalLayoutContent>{children}</PortalLayoutContent>
-    </PlatformModuleCatalogProvider>
+    <PlatformAiBrandingProvider>
+      <PlatformModuleCatalogProvider>
+        <PortalLayoutContent>{children}</PortalLayoutContent>
+      </PlatformModuleCatalogProvider>
+    </PlatformAiBrandingProvider>
   );
 }
 

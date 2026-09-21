@@ -57,6 +57,7 @@ const adminLinksStatic: PortalNavLink[] = [
   { label: 'Ceník', href: '/admin/pricing', icon: Tags },
   { label: 'SEO', href: '/admin/seo', icon: FileText },
   { label: 'Nastavení platformy', href: '/admin/platform-settings', icon: Settings },
+  { label: 'AI RAJMONDATA', href: '/admin/ai-branding', icon: Sparkles },
   { label: 'Provozovatel / fakturace', href: '/admin/billing-provider', icon: Landmark },
   { label: 'Licence', href: '/admin/licenses', icon: ShieldCheck },
   { label: 'Fakturace', href: '/admin/billing', icon: CreditCard },

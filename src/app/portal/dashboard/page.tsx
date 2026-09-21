@@ -81,6 +81,8 @@ import { MeetingRecordFormDialog } from "@/components/meeting-records/meeting-re
 import type { ActivityActorProfile } from "@/lib/activity-log";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { MobileDashboard } from "@/components/portal/mobile-dashboard/MobileDashboard";
+import { DashboardAiSecretaryPanel } from "@/components/portal/dashboard-ai-secretary-panel";
+import { czechTimeGreeting } from "@/lib/ai/organization-ai-briefing";
 import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
 import { MobileSchedulePreviewCard } from "@/components/portal/mobile-dashboard/MobileSchedulePreviewCard";
 import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
@@ -995,6 +997,11 @@ export default function CompanyDashboard() {
 
   return (
     <>
+      {belowLg && showAdminDashboard && companyId ? (
+        <div className="lg:hidden px-3 pt-2 pb-1 max-w-full overflow-x-hidden">
+          <DashboardAiSecretaryPanel companyId={companyId} />
+        </div>
+      ) : null}
       <MobileDashboard
         displayName={String(typedProfile.displayName || user?.email?.split("@")[0] || "")}
         companyLabel={String(companyName || companyId || "Organizace")}
@@ -1075,7 +1082,7 @@ export default function CompanyDashboard() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h1 className="portal-page-title truncate text-2xl sm:text-3xl">
-            Dobré ráno, {typedProfile.displayName || user?.email?.split("@")[0]}
+            {czechTimeGreeting()}, {typedProfile.displayName || user?.email?.split("@")[0]}
           </h1>
           <p className="portal-page-description">
             {isCustomer
@@ -1183,9 +1190,10 @@ export default function CompanyDashboard() {
       ) : null}
 
       {showAdminDashboard ? (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-5">
           {companyId ? (
             <>
+              <DashboardAiSecretaryPanel companyId={companyId} />
               <PortalDashboardCompactGrid
                 companyId={companyId}
                 todayIso={todayIso}

@@ -432,6 +432,76 @@ export function DashboardPendingDocumentsCompact({
   );
 }
 
+function DashboardCameraThumb({
+  cam,
+  companyId,
+  refreshKey,
+}: {
+  cam: { id: string; name: string; online: boolean };
+  companyId: string;
+  refreshKey: number;
+}) {
+  const { user } = useUser();
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!user || !cam.online) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    let url: string | null = null;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/hikvision/cameras/${encodeURIComponent(cam.id)}/snapshot?companyId=${encodeURIComponent(companyId)}&t=${Date.now()}`,
+          { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" }
+        );
+        if (!res.ok) {
+          if (!cancelled) setFailed(true);
+          return;
+        }
+        const blob = await res.blob();
+        url = URL.createObjectURL(blob);
+        if (!cancelled) {
+          setSrc((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+          setFailed(false);
+        }
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [user, companyId, cam.id, cam.online, refreshKey]);
+
+  return (
+    <Link
+      href={`/portal/cameras?camera=${encodeURIComponent(cam.id)}`}
+      className="block aspect-video rounded-md overflow-hidden bg-muted border relative"
+    >
+      {!cam.online ? (
+        <span className="absolute inset-0 flex items-center justify-center text-[10px] text-muted-foreground px-1 text-center">
+          Kamera offline
+        </span>
+      ) : failed || !src ? (
+        <span className="absolute inset-0 animate-pulse bg-muted" />
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt={cam.name} className="w-full h-full object-cover" />
+      )}
+      <span className="absolute bottom-0 left-0 right-0 bg-black/50 text-[10px] text-white truncate px-1 py-0.5">
+        {cam.name}
+      </span>
+    </Link>
+  );
+}
+
 export function DashboardCamerasCompact({ companyId }: { companyId: string }) {
   const { user } = useUser();
   const [summary, setSummary] = useState<{
@@ -440,36 +510,64 @@ export function DashboardCamerasCompact({ companyId }: { companyId: string }) {
     offline: number;
     nvrStatus: string;
   } | null>(null);
+  const [previews, setPreviews] = useState<Array<{ id: string; name: string; online: boolean }>>(
+    []
+  );
   const [loading, setLoading] = useState(false);
+  const [tick, setTick] = useState(0);
 
-  useEffect(() => {
+  const load = React.useCallback(async () => {
     if (!user || !companyId) return;
-    let cancelled = false;
     setLoading(true);
-    void (async () => {
-      try {
-        const token = await user.getIdToken();
-        const res = await fetch(
+    try {
+      const token = await user.getIdToken();
+      const [sumRes, listRes] = await Promise.all([
+        fetch(
           `/api/company/hikvision/cameras/summary?companyId=${encodeURIComponent(companyId)}`,
           { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const j = await res.json();
-        if (!cancelled && j?.ok) {
-          setSummary({
-            total: j.total ?? 0,
-            online: j.online ?? 0,
-            offline: j.offline ?? 0,
-            nvrStatus: j.nvrStatus ?? "not_connected",
-          });
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+        ),
+        fetch(`/api/company/hikvision/cameras?companyId=${encodeURIComponent(companyId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+      const j = await sumRes.json();
+      const list = await listRes.json();
+      if (j?.ok) {
+        setSummary({
+          total: j.total ?? 0,
+          online: j.online ?? 0,
+          offline: j.offline ?? 0,
+          nvrStatus: j.nvrStatus ?? "not_connected",
+        });
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      if (list?.ok && Array.isArray(list.cameras)) {
+        setPreviews(
+          list.cameras.slice(0, 4).map((c: { id: string; name: string; online: boolean }) => ({
+            id: c.id,
+            name: c.name,
+            online: c.online,
+          }))
+        );
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [user, companyId]);
+
+  useEffect(() => {
+    void load();
+    const onVis = () => {
+      if (document.visibilityState === "visible") setTick((t) => t + 1);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") setTick((t) => t + 1);
+    }, 25_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      clearInterval(interval);
+    };
+  }, [load]);
 
   return (
     <DashboardCompactCard
@@ -477,25 +575,31 @@ export function DashboardCamerasCompact({ companyId }: { companyId: string }) {
       icon={<Cctv className="h-4 w-4 text-orange-600" />}
       accentClass="border-l-orange-500"
       href="/portal/cameras"
-      footerLabel="Otevřít kamery"
+      footerLabel="Všechny →"
     >
       {loading && !summary ? (
-        <p className="text-xs text-muted-foreground">Načítání…</p>
+        <div className="grid grid-cols-2 gap-2">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="aspect-video rounded-md bg-muted animate-pulse" />
+          ))}
+        </div>
       ) : (
-        <div className="space-y-1 text-xs text-muted-foreground">
-          <p>
-            Celkem: <strong className="text-foreground">{summary?.total ?? 0}</strong>
-          </p>
-          <p>
-            Online: <strong className="text-foreground">{summary?.online ?? 0}</strong>
-            {" · "}
-            Offline: <strong className="text-foreground">{summary?.offline ?? 0}</strong>
-          </p>
-          <p>
-            NVR:{" "}
-            <strong className="text-foreground">
-              {summary?.nvrStatus === "online" ? "Online" : "Nepřipojeno / offline"}
-            </strong>
+        <div className="space-y-2">
+          {previews.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2">
+              {previews.map((cam) => (
+                <DashboardCameraThumb
+                  key={cam.id}
+                  cam={cam}
+                  companyId={companyId}
+                  refreshKey={tick}
+                />
+              ))}
+            </div>
+          ) : null}
+          <p className="text-xs text-muted-foreground">
+            {summary?.total ?? 0} kamer · {summary?.online ?? 0} online · {summary?.offline ?? 0}{" "}
+            offline
           </p>
         </div>
       )}
