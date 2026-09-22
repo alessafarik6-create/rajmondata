@@ -37,6 +37,11 @@ export async function POST(request: NextRequest) {
     streamUrlPresent?: boolean;
     accessTokenPresent?: boolean;
     expiresAt?: string | null;
+    protocol?: string | null;
+    channelNo?: string | null;
+    streamType?: string | null;
+    deviceSerialMasked?: string | null;
+    codecHint?: string | null;
   } = {
     status: "Error",
     code: "NO_CAMERA",
@@ -55,6 +60,11 @@ export async function POST(request: NextRequest) {
         streamUrlPresent: session.streamUrlPresent,
         accessTokenPresent: session.accessTokenPresent,
         expiresAt: session.expiresAt ?? null,
+        protocol: session.protocol ?? null,
+        channelNo: session.channelNo ?? null,
+        streamType: session.streamType ?? null,
+        deviceSerialMasked: session.deviceSerialMasked ?? null,
+        codecHint: session.codecHint ?? null,
       };
     } else {
       liveApi = {

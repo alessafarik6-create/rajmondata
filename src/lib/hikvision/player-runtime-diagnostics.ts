@@ -4,8 +4,15 @@ import type { StreamCodecHint } from "@/lib/hikvision/ezopen-stream-meta";
 
 export type HikvisionLivePipelineStage =
   | "IDLE"
+  | "CONFIG_LOADING"
+  | "CONFIG_READY"
+  | "SDK_LOADING"
+  | "SDK_READY"
   | "CONFIG_OK"
+  | "PLAYER_CREATING"
   | "PLAYER_CREATED"
+  | "PLAY_REQUESTED"
+  | "PLAY_SUCCESS"
   | "STREAM_CONNECTED"
   | "DECODER_STARTED"
   | "FIRST_FRAME"
@@ -61,6 +68,7 @@ let liveConfigFetchCount = 0;
 let playerCreateCount = 0;
 let playerDestroyCount = 0;
 let playStartCount = 0;
+let playRequestCount = 0;
 let streamConnectCount = 0;
 let decoderStartCount = 0;
 let firstFrameCount = 0;
@@ -78,6 +86,7 @@ export function resetHikvisionPlayerDebugCounters(): void {
   playerCreateCount = 0;
   playerDestroyCount = 0;
   playStartCount = 0;
+  playRequestCount = 0;
   streamConnectCount = 0;
   decoderStartCount = 0;
   firstFrameCount = 0;
@@ -176,6 +185,10 @@ export function bumpHikvisionPlayStartCount(): void {
   playStartCount += 1;
 }
 
+export function bumpHikvisionPlayRequestCount(): void {
+  playRequestCount += 1;
+}
+
 export function setHikvisionPlayerPhase(next: HikvisionPlayerRuntimePhase): void {
   phase = next;
 }
@@ -235,6 +248,7 @@ export function getHikvisionPlayerRuntimeDiagnostics() {
     playerCreateCount,
     playerDestroyCount,
     playStartCount,
+    playRequestCount,
     streamConnectCount,
     decoderStartCount,
     firstFrameCount,

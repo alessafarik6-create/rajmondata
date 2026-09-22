@@ -7,6 +7,7 @@ import {
 import {
   bumpHikvisionSdkLoadCount,
   hikLiveLog,
+  setHikvisionLivePipelineStage,
   setHikvisionPlayerError,
   setHikvisionPlayerPhase,
   setHikvisionPlayerSdkMeta,
@@ -117,7 +118,10 @@ function appendStylesheet(href: string): Promise<void> {
     link.href = resolved;
     link.dataset.hikJssdkCss = resolved;
     link.onload = () => resolve();
-    link.onerror = () => resolve();
+    link.onerror = () => {
+      hikLiveLog("SDK CSS missing (non-fatal)", { href: resolved });
+      resolve();
+    };
     document.head.appendChild(link);
   });
 }
@@ -154,12 +158,14 @@ async function loadHikvisionSdkInternal(): Promise<HikvisionSdkLoadResult> {
   if (isHikvisionSdkReady()) {
     setHikvisionPlayerPhase("SDK_LOADED");
     setHikvisionPlayerSdkMeta(scriptCandidates[0] ?? config.scriptUrl);
+    setHikvisionLivePipelineStage("SDK_READY");
     hikLiveLog("SDK READY");
     return { ok: true, config, scriptUrl: scriptCandidates[0] ?? config.scriptUrl };
   }
 
   bumpHikvisionSdkLoadCount();
   setHikvisionPlayerPhase("SDK_LOADING");
+  setHikvisionLivePipelineStage("SDK_LOADING");
   setHikvisionPlayerError(null);
 
   if (config.cssUrl) {
@@ -171,6 +177,7 @@ async function loadHikvisionSdkInternal(): Promise<HikvisionSdkLoadResult> {
     if (ok) {
       setHikvisionPlayerPhase("SDK_LOADED");
       setHikvisionPlayerSdkMeta(candidate);
+      setHikvisionLivePipelineStage("SDK_READY");
       hikLiveLog("SDK READY");
       return { ok: true, config, scriptUrl: candidate };
     }

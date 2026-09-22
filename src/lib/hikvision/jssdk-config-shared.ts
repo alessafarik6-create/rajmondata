@@ -17,6 +17,7 @@ export function getHikvisionJssdkPublicConfig(): HikvisionJssdkPublicConfig {
     String(process.env.NEXT_PUBLIC_HIKCONNECT_JSSDK_URL ?? "").trim() ||
     HIKVISION_JSSDK_DEFAULT_SCRIPT;
   const cssEnv = String(process.env.NEXT_PUBLIC_HIKCONNECT_JSSDK_CSS_URL ?? "").trim();
+  /** v9 ezuikit-js nemá samostatný CSS bundle — volitelný stub v public pro alias ezUIKit.css. */
   const cssUrl =
     cssEnv ||
     (scriptUrl.startsWith("/") && !process.env.NEXT_PUBLIC_HIKCONNECT_JSSDK_URL
