@@ -22,11 +22,14 @@ import {
   setHikvisionPlayerStreamMeta,
 } from "@/lib/hikvision/player-runtime-diagnostics";
 import {
+  applyHikPlayerContainStyles,
   hikPlayerContainerHasVideo,
   isLikelyHikStreamFatalError,
   waitForNonZeroContainerSize,
   watchHikPlayerFirstFrame,
 } from "@/components/cameras/hikvision-player-utils";
+import "@/components/cameras/hikvision-player-styles.css";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export type EzopenSession = {
   ezopenUrl: string;
@@ -90,6 +93,8 @@ export function HikvisionEzopenPlayer(props: {
   compact?: boolean;
   streamErrorCode?: HikvisionLivePlayerErrorCode | null;
   showDeveloperDetail?: boolean;
+  /** Mobil: 16:9 přes šířku, contain — bez natažení na celou výšku obrazovky. */
+  mobileLayout?: boolean;
 }) {
   const {
     cameraId,
@@ -104,7 +109,11 @@ export function HikvisionEzopenPlayer(props: {
     compact,
     streamErrorCode,
     showDeveloperDetail,
+    mobileLayout,
   } = props;
+
+  const isMobileHook = useIsMobile();
+  const mobileFit = mobileLayout ?? isMobileHook;
 
   const containerId = useMemo(() => `hik-ezopen-${cameraId.replace(/[^a-zA-Z0-9_-]/g, "_")}`, [cameraId]);
   const playerContainerRef = useRef<HTMLDivElement>(null);
@@ -319,8 +328,10 @@ export function HikvisionEzopenPlayer(props: {
 
         stopFrameWatch = watchHikPlayerFirstFrame(containerEl, () => {
           hikLiveLog("FIRST FRAME (dom)");
+          applyHikPlayerContainStyles(containerEl);
           markPlaying();
         });
+        applyHikPlayerContainStyles(containerEl);
       } catch {
         setUiState("ERROR");
         setErrorCode("PLAYER_INIT_FAILED");
@@ -352,6 +363,23 @@ export function HikvisionEzopenPlayer(props: {
       }
     };
   }, [cameraId]);
+
+  useEffect(() => {
+    const el = playerContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      applyHikPlayerContainStyles(el);
+    });
+    ro.observe(el);
+    const onOrient = () => applyHikPlayerContainStyles(el);
+    window.addEventListener("orientationchange", onOrient);
+    window.addEventListener("resize", onOrient);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("orientationchange", onOrient);
+      window.removeEventListener("resize", onOrient);
+    };
+  }, [streamKey, uiState]);
 
   const loadingLabel =
     uiState === "LOADING_SDK"
@@ -405,14 +433,23 @@ export function HikvisionEzopenPlayer(props: {
       ref={shellRef}
       className={cn(
         "relative flex flex-col bg-black text-white overflow-hidden",
+        mobileFit && !fsActive && "hik-ezopen-shell--mobile-fit",
         fsActive ? "w-screen h-screen rounded-none" : "rounded-md",
         className
       )}
+      style={
+        mobileFit && !fsActive
+          ? {
+              paddingTop: "env(safe-area-inset-top)",
+              paddingBottom: "env(safe-area-inset-bottom)",
+            }
+          : undefined
+      }
     >
       <div
         className={cn(
-          "flex items-center justify-between gap-2 px-3 py-2 bg-black/80 text-xs z-10",
-          fsActive && "absolute top-0 left-0 right-0"
+          "flex items-center justify-between gap-2 px-3 py-2 bg-black/80 text-xs z-10 shrink-0",
+          fsActive && "absolute top-0 left-0 right-0 pt-[max(0.5rem,env(safe-area-inset-top))]"
         )}
       >
         <div className="min-w-0">
@@ -481,15 +518,20 @@ export function HikvisionEzopenPlayer(props: {
 
       <div
         className={cn(
-          "relative flex-1 bg-black min-h-[200px]",
-          !compact && !fsActive && "aspect-video w-full",
-          fsActive && "w-full h-full min-h-0"
+          "hik-ezopen-viewport",
+          fsActive
+            ? "hik-ezopen-viewport--fullscreen flex-1 min-h-0"
+            : mobileFit && !compact
+              ? "hik-ezopen-viewport--mobile"
+              : compact
+                ? "min-h-[180px] flex-1"
+                : "hik-ezopen-viewport--desktop"
         )}
       >
         <div
           ref={playerContainerRef}
           id={containerId}
-          className="absolute inset-0 w-full h-full"
+          className="hik-ezopen-player-host"
         />
         {showLoadingOverlay ? (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 z-20">

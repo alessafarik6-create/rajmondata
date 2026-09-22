@@ -129,7 +129,7 @@ export function CameraLiveDialog(props: {
       <DialogContent
         className={
           isMobile
-            ? "max-w-none w-screen h-[100dvh] p-0 gap-0 rounded-none border-0"
+            ? "max-w-none w-screen max-h-[100dvh] h-full p-0 gap-0 rounded-none border-0 flex flex-col overflow-hidden"
             : "max-w-[1100px] w-[95vw] p-0 gap-0 overflow-hidden"
         }
       >
@@ -146,7 +146,8 @@ export function CameraLiveDialog(props: {
           cameraName={camera.name}
           online={camera.online}
           mode="live"
-          className={isMobile ? "h-[100dvh] rounded-none" : "w-full"}
+          className={isMobile ? "flex-1 min-h-0 w-full rounded-none" : "w-full"}
+          mobileLayout={isMobile}
           onClose={() => onOpenChange(false)}
           onRetry={handleRetry}
           streamErrorCode={streamErrorCode}

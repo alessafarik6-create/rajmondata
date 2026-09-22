@@ -34,6 +34,20 @@ export function waitForNonZeroContainerSize(
   });
 }
 
+/** Vynutí contain na video/canvas uvnitř EZUIKit DOM (mobil / orientace). */
+export function applyHikPlayerContainStyles(container: HTMLElement | null): void {
+  if (!container) return;
+  container.querySelectorAll("video, canvas").forEach((el) => {
+    const node = el as HTMLElement;
+    node.style.objectFit = "contain";
+    node.style.maxWidth = "100%";
+    node.style.maxHeight = "100%";
+    node.style.width = "auto";
+    node.style.height = "auto";
+    node.style.margin = "auto";
+  });
+}
+
 export function watchHikPlayerFirstFrame(
   container: HTMLElement,
   onFrame: () => void,

@@ -17,6 +17,22 @@ export function formatChatTimestamp(value: unknown): string | null {
   return `${datePart} · ${hh}:${min}`;
 }
 
+/** Oddělovač dnů v chatu (lokální timezone). */
+export function formatChatDaySeparator(value: unknown): string | null {
+  if (value == null || isFirestoreServerTimestampPlaceholder(value)) return null;
+  const ms = safeTime(value);
+  if (!ms) return null;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const today = startOfDay(new Date());
+  const day = startOfDay(d);
+  const diffDays = Math.round((today - day) / 86_400_000);
+  if (diffDays === 0) return "Dnes";
+  if (diffDays === 1) return "Včera";
+  return `${d.getDate()}. ${d.getMonth() + 1}. ${d.getFullYear()}`;
+}
+
 /** Pro UI bubliny — pending → „Odesílám…“, jinak formátovaný čas nebo pomlčka. */
 export function formatChatTimestampDisplay(value: unknown): string {
   const formatted = formatChatTimestamp(value);

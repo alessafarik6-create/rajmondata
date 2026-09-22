@@ -789,7 +789,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
           className={cn(
             "flex-1 overflow-x-hidden min-w-0 print:p-2",
             mobileChatFullBleed
-              ? "flex flex-col min-h-0 overflow-hidden px-0 py-0"
+              ? "flex flex-col flex-1 min-h-0 overflow-hidden px-0 py-0"
               : "overflow-y-auto",
             !mobileChatFullBleed &&
               (hideMobileTopChrome

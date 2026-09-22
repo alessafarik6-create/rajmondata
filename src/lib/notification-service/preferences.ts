@@ -25,6 +25,8 @@ export function mergeNotificationPreferences(
     tasks: b("tasks", d.tasks),
     meetings: b("meetings", d.meetings),
     attendance: b("attendance", d.attendance),
+    messages: b("messages", d.messages),
+    adminMessages: b("adminMessages", d.adminMessages),
     urgent: b("urgent", d.urgent),
     quietHoursEnabled: b("quietHoursEnabled", d.quietHoursEnabled),
     quietHoursStart: s("quietHoursStart", d.quietHoursStart),
@@ -54,6 +56,10 @@ function preferenceGroupForEvent(type: NotificationEventType): keyof Notificatio
       return "meetings";
     case "ATTENDANCE_REMINDER":
       return "attendance";
+    case "CHAT_MESSAGE":
+      return "messages";
+    case "CHAT_ADMIN_MESSAGE":
+      return "adminMessages";
     case "SYSTEM_ALERT":
       return null;
     default:

@@ -14,6 +14,8 @@ export type NotificationEventType =
   | "TASK_DUE"
   | "MEETING_REMINDER"
   | "ATTENDANCE_REMINDER"
+  | "CHAT_MESSAGE"
+  | "CHAT_ADMIN_MESSAGE"
   | "SYSTEM_ALERT";
 
 export type NotificationPriority = "NORMAL" | "HIGH" | "URGENT";
@@ -39,6 +41,8 @@ export type NotificationPreferenceGroups = {
   tasks: boolean;
   meetings: boolean;
   attendance: boolean;
+  messages: boolean;
+  adminMessages: boolean;
   urgent: boolean;
   /** Budoucí tiché hodiny — zatím neplánované odesílání */
   quietHoursEnabled: boolean;
@@ -56,6 +60,8 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferenceGroups = {
   tasks: true,
   meetings: true,
   attendance: true,
+  messages: true,
+  adminMessages: true,
   urgent: true,
   quietHoursEnabled: false,
   quietHoursStart: "22:00",

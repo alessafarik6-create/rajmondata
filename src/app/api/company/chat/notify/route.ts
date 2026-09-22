@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCompanyPortalMutation } from "@/lib/portal-api-mutation";
 import { createNotification } from "@/lib/notification-service/notification-service";
+import { getAdminFirestore } from "@/lib/firebase-admin";
+import { resolveCompanyChatPushRecipientIds } from "@/lib/company-chat-push-recipients";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +17,12 @@ export async function POST(request: NextRequest) {
     recipientUserId?: string;
     recipientUserIds?: string[];
     senderName?: string;
+    senderRole?: "employee" | "admin";
     previewText?: string;
     conversationId?: string;
     hasAttachment?: boolean;
     groupTitle?: string;
+    companyBroadcast?: boolean;
   };
   try {
     body = await request.json();
@@ -31,13 +35,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
-  const recipients = [
+  let recipients = [
     ...(Array.isArray(body.recipientUserIds) ? body.recipientUserIds : []),
     ...(body.recipientUserId ? [body.recipientUserId] : []),
   ]
     .map(String)
     .filter(Boolean)
     .filter((uid) => uid !== perm.caller.uid);
+
+  if (body.companyBroadcast) {
+    const db = getAdminFirestore();
+    if (db) {
+      const senderRole = body.senderRole === "admin" ? "admin" : "employee";
+      const resolved = await resolveCompanyChatPushRecipientIds(
+        db,
+        companyId,
+        perm.caller.uid,
+        senderRole
+      );
+      recipients = [...recipients, ...resolved];
+    }
+  }
 
   const uniqueRecipients = [...new Set(recipients)];
   if (!uniqueRecipients.length) {
@@ -49,31 +67,48 @@ export async function POST(request: NextRequest) {
   const groupTitle = String(body.groupTitle ?? "").trim();
   const attachmentLine = body.hasAttachment ? "Poslal fotografii." : "";
   const preview = String(body.previewText ?? "").slice(0, 160) || "Nová zpráva.";
+  const senderIsAdmin = body.senderRole === "admin";
+  const notifType = senderIsAdmin ? "CHAT_ADMIN_MESSAGE" : "CHAT_MESSAGE";
+  const eventBase = `chat-${body.conversationId ?? "c"}-${Date.now()}`;
+
+  const db = getAdminFirestore();
 
   let sent = 0;
+  let pushOk = 0;
   for (const recipientUserId of uniqueRecipients) {
+    let chatUrl = `/portal/chat?c=${conv}`;
+    if (db) {
+      const userSnap = await db.collection("users").doc(recipientUserId).get();
+      const role = String(userSnap.data()?.role ?? "").trim();
+      if (role === "employee") {
+        chatUrl = `/portal/employee/messages?c=${conv}`;
+      }
+    }
     const title = groupTitle
       ? groupTitle
-      : `Nová zpráva od ${senderName}`;
+      : senderIsAdmin
+        ? `Nová zpráva od ${senderName}`
+        : `Nová zpráva od ${senderName}`;
     const bodyText = groupTitle
       ? `${senderName}: ${attachmentLine || preview}`
       : attachmentLine || preview;
 
-    await createNotification({
+    const result = await createNotification({
       recipientUserId,
       organizationId: companyId,
-      type: "SYSTEM_ALERT",
+      type: notifType,
       title,
       body: bodyText,
-      url: `/portal/chat?c=${conv}`,
+      url: chatUrl,
       entityType: "system",
       entityId: body.conversationId ?? "company",
       category: "message",
-      eventId: `chat-${recipientUserId}-${body.conversationId ?? "c"}-${Date.now()}`,
+      eventId: `${eventBase}:${recipientUserId}`,
       source: "chat",
     });
     sent += 1;
+    pushOk += result.pushOk;
   }
 
-  return NextResponse.json({ ok: true, sent });
+  return NextResponse.json({ ok: true, sent, pushOk });
 }

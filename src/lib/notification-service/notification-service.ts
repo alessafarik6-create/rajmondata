@@ -188,7 +188,7 @@ export async function createNotification(
       isActive?: boolean;
       failedCount?: number;
     };
-    if (data.isActive === false) continue;
+    if (data.isActive === false || (data as { enabled?: boolean }).enabled === false) continue;
     const endpoint = data.endpoint;
     if (!endpoint || !data.keys?.p256dh || !data.keys?.auth) {
       await doc.ref.delete().catch(() => {});

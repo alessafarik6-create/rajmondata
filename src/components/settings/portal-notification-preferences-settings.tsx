@@ -20,6 +20,8 @@ const GROUPS: { key: keyof NotificationPreferenceGroups; label: string; hint?: s
   { key: "tasks", label: "Úkoly a připomínky" },
   { key: "meetings", label: "Schůzky" },
   { key: "attendance", label: "Docházka" },
+  { key: "messages", label: "Zprávy (interní chat)" },
+  { key: "adminMessages", label: "Zprávy od administrátora" },
   { key: "urgent", label: "Urgentní oznámení" },
 ];
 

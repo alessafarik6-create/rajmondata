@@ -42,7 +42,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { isEmployeeActive } from "@/lib/employee-active";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
-import { formatChatTimestampDisplay } from "@/lib/format-chat-timestamp";
+import {
+  formatChatDaySeparator,
+  formatChatTimestampDisplay,
+} from "@/lib/format-chat-timestamp";
 import {
   buildDirectConversationId,
   chatAttachmentStoragePath,
@@ -170,21 +173,13 @@ function MessageAuthorMeta({
   className?: string;
 }) {
   const timeLabel = formatChatTimestampDisplay(createdAt);
+  const authorLine = mine ? `${sender.name} · ${timeLabel}` : `${sender.name} · ${timeLabel}`;
   return (
-    <div className={cn("text-[11px] leading-snug mb-1.5 space-y-0.5", className)}>
-      <div className="font-semibold">
-        {mine ? (
-          <>
-            {sender.name} · <span className="font-medium opacity-90">Já</span>
-          </>
-        ) : (
-          sender.name
-        )}
-      </div>
+    <div className={cn("text-[11px] leading-snug mb-1.5", className)}>
+      <div className="font-semibold">{authorLine}</div>
       {!mine && sender.roleLabel ? (
-        <div className="opacity-75 font-normal">{sender.roleLabel}</div>
+        <div className="opacity-75 font-normal text-[10px] mt-0.5">{sender.roleLabel}</div>
       ) : null}
-      <div className="opacity-70 font-normal">{timeLabel}</div>
     </div>
   );
 }
@@ -456,8 +451,19 @@ export function CompanyChatMessenger({
   }, [activeConversationId, filteredMessages.length, markConversationRead, mobileFull, mobileShowThread]);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null);
+  const [showNewBelow, setShowNewBelow] = useState(false);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+    if (nearBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      setShowNewBelow(false);
+    } else if (filteredMessages.length > 0) {
+      setShowNewBelow(true);
+    }
   }, [filteredMessages.length, activeConversationId]);
 
   const [draft, setDraft] = useState("");
@@ -470,12 +476,14 @@ export function CompanyChatMessenger({
   const activeConvMeta = conversations.find((c) => c.id === activeConversationId);
 
   const notifyRecipients = async (params: {
-    recipientUserIds: string[];
+    recipientUserIds?: string[];
     hasAttachment: boolean;
     preview: string;
     groupTitle?: string;
+    companyBroadcast?: boolean;
   }) => {
-    if (!user || !params.recipientUserIds.length) return;
+    if (!user) return;
+    if (!params.companyBroadcast && !params.recipientUserIds?.length) return;
     try {
       const token = await user.getIdToken();
       await fetch("/api/company/chat/notify", {
@@ -486,12 +494,14 @@ export function CompanyChatMessenger({
         },
         body: JSON.stringify({
           companyId,
-          recipientUserIds: params.recipientUserIds,
+          recipientUserIds: params.recipientUserIds ?? [],
           senderName: buildSenderNameFromProfile(profile) || "RAJMONDATA",
+          senderRole: mode === "employee" ? "employee" : "admin",
           previewText: params.preview,
           conversationId: activeConversationId,
           hasAttachment: params.hasAttachment,
           groupTitle: params.groupTitle,
+          companyBroadcast: Boolean(params.companyBroadcast),
         }),
       });
     } catch {
@@ -619,6 +629,11 @@ export function CompanyChatMessenger({
               : "Nová interní zpráva",
           lines: [senderName, (text || "Příloha").slice(0, 240)].filter(Boolean),
           actionPath: "/portal/chat",
+        });
+        void notifyRecipients({
+          companyBroadcast: true,
+          hasAttachment: attachments.length > 0,
+          preview: text || "Nová zpráva",
         });
       } else if (groupDoc) {
         void notifyRecipients({
@@ -801,7 +816,7 @@ export function CompanyChatMessenger({
           </Button>
         ) : null}
       </div>
-      <ul className="flex-1 overflow-y-auto text-sm overscroll-contain">
+      <ul className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y text-sm [-webkit-overflow-scrolling:touch]">
         {conversations.map((c) => {
           const prev = lastPreviewByConv.get(c.id);
           const unread = unreadByConv.get(c.id) ?? 0;
@@ -885,7 +900,10 @@ export function CompanyChatMessenger({
         </Alert>
       ) : null}
 
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
+      <div
+        ref={messagesScrollRef}
+        className="relative flex-1 min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y px-3 py-3 space-y-3 [-webkit-overflow-scrolling:touch]"
+      >
         {isLoading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -893,13 +911,26 @@ export function CompanyChatMessenger({
         ) : filteredMessages.length === 0 ? (
           <p className="text-center text-sm text-muted-foreground py-8">Zatím žádné zprávy.</p>
         ) : (
-          filteredMessages.map((m) => {
+          (() => {
+            let lastDayLabel: string | null = null;
+            return filteredMessages.map((m) => {
+            const dayLabel = formatChatDaySeparator(m.createdAt);
+            const showDay = Boolean(dayLabel && dayLabel !== lastDayLabel);
+            if (showDay && dayLabel) lastDayLabel = dayLabel;
             const mine = Boolean(user?.uid && m.senderId === user.uid);
             const sender = resolveSenderDisplay(m, senderContext);
             const senderLabel = sender.name;
             const { photo: senderPhoto } = sender;
             return (
-              <div key={m.id} className={cn("flex gap-2", mine ? "justify-end" : "justify-start")}>
+              <React.Fragment key={m.id}>
+                {showDay && dayLabel ? (
+                  <div className="sticky top-0 z-[1] flex justify-center py-1">
+                    <span className="rounded-full bg-muted px-3 py-0.5 text-[11px] text-muted-foreground">
+                      {dayLabel}
+                    </span>
+                  </div>
+                ) : null}
+              <div className={cn("flex gap-2", mine ? "justify-end" : "justify-start")}>
                 {!mine && (
                   <Avatar className="h-8 w-8 shrink-0">
                     <AvatarImage src={senderPhoto || undefined} />
@@ -994,9 +1025,27 @@ export function CompanyChatMessenger({
                   ) : null}
                 </div>
               </div>
+              </React.Fragment>
             );
-          })
+          });
+          })()
         )}
+        {showNewBelow ? (
+          <div className="sticky bottom-2 flex justify-center pointer-events-none">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="pointer-events-auto shadow-md h-8 text-xs"
+              onClick={() => {
+                bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+                setShowNewBelow(false);
+              }}
+            >
+              Nové zprávy ↓
+            </Button>
+          </div>
+        ) : null}
         <div ref={bottomRef} />
       </div>
 
@@ -1089,7 +1138,7 @@ export function CompanyChatMessenger({
         className={cn(
           "flex flex-col overflow-hidden min-h-0",
           mobileFull
-            ? "flex-1 min-h-0 max-h-none h-[calc(100dvh-3.5rem)] sm:h-[calc(100dvh-4rem)] rounded-none border-0 shadow-none"
+            ? "flex-1 min-h-0 h-full max-h-none rounded-none border-0 shadow-none"
             : "min-h-[420px] max-h-[calc(100vh-120px)] md:max-h-[calc(100vh-140px)]"
         )}
       >
