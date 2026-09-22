@@ -1,45 +1,8 @@
-.hik-ezopen-shell--mobile-fit {
-  max-height: 100dvh;
-  min-height: 0;
-}
+/**
+ * EZUIKit live — bez globálních override canvas/video.
+ * Formát videa se řeší až na vnějším wrapperu (.live-player-shell).
+ */
 
-.hik-ezopen-viewport {
-  position: relative;
-  width: 100%;
-  background: #000;
-  overflow: hidden;
-}
-
-.hik-ezopen-viewport--desktop {
-  flex: 1 1 auto;
-  min-height: 240px;
-  aspect-ratio: 16 / 9;
-}
-
-.hik-ezopen-viewport--mobile {
-  flex: 0 0 auto;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-}
-
-.hik-ezopen-viewport--fullscreen {
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-  height: 100%;
-  aspect-ratio: unset;
-}
-
-.hik-ezopen-player-host {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-
-/* Neaplikovat globální !important na všechny canvas — EZUIKit má více vrstev (video + overlay). */
-.hik-ezopen-player-host > div:first-child {
-  width: 100%;
-  height: 100%;
+.live-player-shell {
+  width: min(100%, 1000px);
 }
