@@ -80,6 +80,14 @@ let domCanvasHeight = 0;
 let domHasVideo = false;
 let domHasCanvas = false;
 
+let receivedBytes = 0;
+let dataEvents = 0;
+let videoPackets = 0;
+let decodedFrames = 0;
+let websocketOpen = false;
+let playAcknowledged = false;
+let decoderReady = false;
+
 export function resetHikvisionPlayerDebugCounters(): void {
   sdkLoadCount = 0;
   liveConfigFetchCount = 0;
@@ -103,6 +111,31 @@ export function resetHikvisionPlayerDebugCounters(): void {
   domCanvasHeight = 0;
   domHasVideo = false;
   domHasCanvas = false;
+  receivedBytes = 0;
+  dataEvents = 0;
+  videoPackets = 0;
+  decodedFrames = 0;
+  websocketOpen = false;
+  playAcknowledged = false;
+  decoderReady = false;
+}
+
+export function setHikvisionStreamTelemetry(meta: {
+  receivedBytes?: number;
+  dataEvents?: number;
+  videoPackets?: number;
+  decodedFrames?: number;
+  websocketOpen?: boolean;
+  playAcknowledged?: boolean;
+  decoderReady?: boolean;
+}): void {
+  if (meta.receivedBytes !== undefined) receivedBytes = meta.receivedBytes;
+  if (meta.dataEvents !== undefined) dataEvents = meta.dataEvents;
+  if (meta.videoPackets !== undefined) videoPackets = meta.videoPackets;
+  if (meta.decodedFrames !== undefined) decodedFrames = meta.decodedFrames;
+  if (meta.websocketOpen !== undefined) websocketOpen = meta.websocketOpen;
+  if (meta.playAcknowledged !== undefined) playAcknowledged = meta.playAcknowledged;
+  if (meta.decoderReady !== undefined) decoderReady = meta.decoderReady;
 }
 
 export function setHikvisionLiveStreamContext(meta: {
@@ -258,6 +291,13 @@ export function getHikvisionPlayerRuntimeDiagnostics() {
     domCanvasHeight,
     domHasVideo,
     domHasCanvas,
+    receivedBytes,
+    dataEvents,
+    videoPackets,
+    decodedFrames,
+    websocketOpen,
+    playAcknowledged,
+    decoderReady,
     updatedAt: new Date().toISOString(),
   };
 }

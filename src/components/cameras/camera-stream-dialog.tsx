@@ -49,13 +49,13 @@ export function CameraLiveDialog(props: {
   const [loadingStream, setLoadingStream] = useState(false);
   const [streamErrorCode, setStreamErrorCode] = useState<HikvisionLivePlayerErrorCode | null>(null);
   const fetchGenRef = useRef(0);
-  const streamVariantRef = useRef<"main" | "sub">("main");
+  const streamVariantRef = useRef<"main" | "sub">("sub");
 
   const fetchLiveConfig = useCallback(
     async (reason: "open" | "retry" | "substream", streamVariant?: "main" | "sub") => {
       if (!user || !cameraId) return;
       if (streamVariant) streamVariantRef.current = streamVariant;
-      if (reason === "open") streamVariantRef.current = "main";
+      if (reason === "open") streamVariantRef.current = "sub";
       const gen = ++fetchGenRef.current;
       bumpHikvisionLiveConfigFetchCount();
       hikLiveLog("CONFIG FETCH", {
@@ -157,6 +157,10 @@ export function CameraLiveDialog(props: {
     void fetchLiveConfig("substream", "sub");
   }, [fetchLiveConfig]);
 
+  const handleMainStreamFallback = useCallback(() => {
+    void fetchLiveConfig("substream", "main");
+  }, [fetchLiveConfig]);
+
   if (!camera || !cameraId) return null;
 
   return (
@@ -186,6 +190,7 @@ export function CameraLiveDialog(props: {
           onClose={() => onOpenChange(false)}
           onRetry={handleRetry}
           onSubStreamFallback={handleSubStreamFallback}
+          onMainStreamFallback={handleMainStreamFallback}
           streamErrorCode={streamErrorCode}
         />
       </DialogContent>

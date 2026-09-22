@@ -168,7 +168,7 @@ async function buildEzopenSession(
   }
 
   let ezopenUrl = address.url;
-  const streamVariant = liveOpts?.streamVariant ?? "main";
+  const streamVariant = liveOpts?.streamVariant ?? "sub";
   if (streamVariant === "sub") {
     const subUrl = ezopenSubStreamFallbackUrl(ezopenUrl);
     if (subUrl) ezopenUrl = subUrl;
@@ -185,7 +185,10 @@ async function buildEzopenSession(
       cameraIds: [cam.resourceId],
     });
     if (settings[0]) {
-      codecHint = codecHintFromRecordSetting(settings[0] as Record<string, unknown>);
+      codecHint = codecHintFromRecordSetting(
+        settings[0] as Record<string, unknown>,
+        streamVariant
+      );
     }
   } catch {
     /* optional */
@@ -387,7 +390,7 @@ export const hikConnectOpenApiProvider: HikvisionProvider = {
         cameraDocId,
         "1",
         undefined,
-        { streamVariant: options?.streamVariant ?? "main" }
+        { streamVariant: options?.streamVariant ?? "sub" }
       );
     } catch (e) {
       const fail = fromHccError(e);

@@ -334,6 +334,7 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
             `Pipeline: ${runtime.pipelineStage}${runtime.lastErrorCode ? ` (${runtime.lastErrorCode})` : ""}`,
             `Stream — serial: ${runtime.deviceSerial ?? "—"}, channel: ${runtime.channelNo ?? "—"}, type: ${runtime.streamType ?? "—"}, variant: ${runtime.streamVariant ?? "—"}, codec: ${runtime.codec ?? "unknown"}`,
             `Flags — connected: ${runtime.streamConnected}, decoder: ${runtime.decoderStarted}, firstFrame: ${runtime.firstFrameReceived}, rendered: ${runtime.videoRendered}`,
+            `Stream data — bytes: ${runtime.receivedBytes}, packets: ${runtime.videoPackets}, decoded: ${runtime.decodedFrames}, ws: ${runtime.websocketOpen}, playAck: ${runtime.playAcknowledged}`,
             `DOM video: ${runtime.domVideoWidth}x${runtime.domVideoHeight}, canvas: ${runtime.domCanvasWidth}x${runtime.domCanvasHeight}`,
             `Counts — SDK: ${runtime.sdkLoadCount}, fetch: ${runtime.liveConfigFetchCount}, create: ${runtime.playerCreateCount}, destroy: ${runtime.playerDestroyCount}, connect: ${runtime.streamConnectCount}, decoder: ${runtime.decoderStartCount}, firstFrame: ${runtime.firstFrameCount}, play: ${runtime.playStartCount}`,
           ].join("\n")

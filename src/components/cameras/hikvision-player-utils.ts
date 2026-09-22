@@ -7,8 +7,15 @@ export type HikPlayerDomInspect = {
   videoHeight: number;
   canvasWidth: number;
   canvasHeight: number;
+  canvasClientWidth: number;
+  canvasClientHeight: number;
   videoVisible: boolean;
   firstFrameLikely: boolean;
+};
+
+export type HikPlayerDomInspectOptions = {
+  /** Po decodeStart EZUIKit často kreslí na canvas jen přes CSS rozměry. */
+  allowClientSizeCanvas?: boolean;
 };
 
 function elementVisible(el: HTMLElement): boolean {
@@ -18,7 +25,37 @@ function elementVisible(el: HTMLElement): boolean {
   return true;
 }
 
-export function inspectHikPlayerDom(container: HTMLElement | null): HikPlayerDomInspect {
+/** Vzorek pixelů — funguje pro 2D canvas; WebGL/WASM často vrátí false. */
+export function hikCanvasHasNonBlackPixels(canvas: HTMLCanvasElement): boolean {
+  try {
+    const w = Math.min(canvas.width || canvas.clientWidth, 48);
+    const h = Math.min(canvas.height || canvas.clientHeight, 48);
+    if (w < 2 || h < 2) return false;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return false;
+    const data = ctx.getImageData(0, 0, w, h).data;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > 10 || data[i + 1] > 10 || data[i + 2] > 10) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function hikContainerHasRenderedFrame(container: HTMLElement | null): boolean {
+  if (!container) return false;
+  const video = container.querySelector("video") as HTMLVideoElement | null;
+  if (video && video.videoWidth > 0 && video.videoHeight > 0) return true;
+  const canvas = container.querySelector("canvas") as HTMLCanvasElement | null;
+  if (canvas && hikCanvasHasNonBlackPixels(canvas)) return true;
+  return false;
+}
+
+export function inspectHikPlayerDom(
+  container: HTMLElement | null,
+  opts?: HikPlayerDomInspectOptions
+): HikPlayerDomInspect {
   const empty: HikPlayerDomInspect = {
     hasVideo: false,
     hasCanvas: false,
@@ -26,6 +63,8 @@ export function inspectHikPlayerDom(container: HTMLElement | null): HikPlayerDom
     videoHeight: 0,
     canvasWidth: 0,
     canvasHeight: 0,
+    canvasClientWidth: 0,
+    canvasClientHeight: 0,
     videoVisible: false,
     firstFrameLikely: false,
   };
@@ -36,17 +75,25 @@ export function inspectHikPlayerDom(container: HTMLElement | null): HikPlayerDom
   const videoHeight = video?.videoHeight ?? 0;
   const canvasWidth = canvas?.width ?? 0;
   const canvasHeight = canvas?.height ?? 0;
+  const canvasClientWidth = canvas?.clientWidth ?? 0;
+  const canvasClientHeight = canvas?.clientHeight ?? 0;
   const videoVisible = video ? elementVisible(video) : false;
   const videoReady =
     Boolean(video) &&
     videoVisible &&
     video!.readyState >= 2 &&
-    (videoWidth > 0 || (video!.clientWidth > 0 && !video!.paused));
-  const canvasReady =
+    (videoWidth > 0 || video!.currentTime > 0 || (video!.clientWidth > 0 && !video!.paused));
+  const canvasAttrReady =
     Boolean(canvas) &&
     canvasWidth > 0 &&
     canvasHeight > 0 &&
     elementVisible(canvas as HTMLCanvasElement);
+  const canvasClientReady =
+    Boolean(opts?.allowClientSizeCanvas && canvas) &&
+    elementVisible(canvas as HTMLCanvasElement) &&
+    canvasClientWidth >= 48 &&
+    canvasClientHeight >= 48;
+  const canvasReady = canvasAttrReady || canvasClientReady;
   return {
     hasVideo: Boolean(video),
     hasCanvas: Boolean(canvas),
@@ -54,8 +101,10 @@ export function inspectHikPlayerDom(container: HTMLElement | null): HikPlayerDom
     videoHeight,
     canvasWidth,
     canvasHeight,
+    canvasClientWidth,
+    canvasClientHeight,
     videoVisible,
-    firstFrameLikely: videoReady || canvasReady,
+    firstFrameLikely: videoReady || canvasReady || hikContainerHasRenderedFrame(container),
   };
 }
 
@@ -149,7 +198,10 @@ export function watchHikPlayerFirstFrame(
   let raf = 0;
   const tick = () => {
     if (Date.now() > deadline) return;
-    if (hikPlayerContainerHasVideo(container)) {
+    if (
+      hikContainerHasRenderedFrame(container) ||
+      inspectHikPlayerDom(container, { allowClientSizeCanvas: true }).firstFrameLikely
+    ) {
       onFrame();
       return;
     }

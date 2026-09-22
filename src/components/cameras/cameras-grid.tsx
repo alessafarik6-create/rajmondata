@@ -126,6 +126,8 @@ export function CamerasGrid({
   const [tick, setTick] = useState(0);
   const [updatedAt, setUpdatedAt] = useState<Record<string, string>>({});
   const [liveCam, setLiveCam] = useState<PortalCameraRow | null>(null);
+  const liveCamOpenRef = React.useRef(false);
+  liveCamOpenRef.current = liveCam != null;
   const [playbackCam, setPlaybackCam] = useState<PortalCameraRow | null>(null);
   const [detailCam, setDetailCam] = useState<PortalCameraRow | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -134,11 +136,14 @@ export function CamerasGrid({
 
   useEffect(() => {
     const onVis = () => {
-      if (document.visibilityState === "visible") setTick((t) => t + 1);
+      if (document.visibilityState === "visible" && !liveCamOpenRef.current) {
+        setTick((t) => t + 1);
+      }
     };
     document.addEventListener("visibilitychange", onVis);
     const interval = setInterval(() => {
-      if (document.visibilityState === "visible") setTick((t) => t + 1);
+      if (document.visibilityState !== "visible" || liveCamOpenRef.current) return;
+      setTick((t) => t + 1);
     }, SNAPSHOT_INTERVAL_MS);
     return () => {
       document.removeEventListener("visibilitychange", onVis);

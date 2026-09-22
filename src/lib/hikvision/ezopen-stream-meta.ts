@@ -54,8 +54,20 @@ export function ezopenSubStreamFallbackUrl(mainUrl: string): string | null {
   return null;
 }
 
-export function codecHintFromRecordSetting(row: Record<string, unknown> | null | undefined): StreamCodecHint {
+export function codecHintFromRecordSetting(
+  row: Record<string, unknown> | null | undefined,
+  variant: "main" | "sub" = "main"
+): StreamCodecHint {
   if (!row) return "unknown";
+  if (variant === "sub") {
+    for (const key of ["subStream", "substream", "SubStream", "sub"]) {
+      const nested = row[key];
+      if (nested && typeof nested === "object") {
+        const hint = codecHintFromRecordSetting(nested as Record<string, unknown>, "main");
+        if (hint !== "unknown") return hint;
+      }
+    }
+  }
   const keys = [
     "videoEncodingType",
     "videoCodecType",
@@ -69,9 +81,12 @@ export function codecHintFromRecordSetting(row: Record<string, unknown> | null |
     if (v.includes("265") || v.includes("HEVC")) return "H265";
     if (v.includes("264") || v.includes("AVC")) return "H264";
   }
-  const nested = row.streamInfo ?? row.videoInfo ?? row.mainStream;
+  const nested =
+    variant === "sub"
+      ? (row.subStreamInfo ?? row.substreamInfo ?? row.streamInfo ?? row.videoInfo)
+      : (row.streamInfo ?? row.videoInfo ?? row.mainStream);
   if (nested && typeof nested === "object") {
-    return codecHintFromRecordSetting(nested as Record<string, unknown>);
+    return codecHintFromRecordSetting(nested as Record<string, unknown>, "main");
   }
   return "unknown";
 }
