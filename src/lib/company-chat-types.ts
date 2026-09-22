@@ -25,6 +25,14 @@ export function newGroupConversationId(): string {
   return `group_${id}`;
 }
 
+export type ChatAttachmentAnalysisStatus =
+  | "idle"
+  | "analyzing"
+  | "recognized"
+  | "needs_review"
+  | "saved"
+  | "error";
+
 export type ChatAttachmentMeta = {
   id: string;
   fileName: string;
@@ -37,6 +45,10 @@ export type ChatAttachmentMeta = {
   linkedJobName?: string | null;
   linkedFolderId?: string | null;
   linkedJobMediaImageId?: string | null;
+  /** AI doklad — bez opakované analýzy */
+  aiDocumentAnalysisId?: string | null;
+  analysisStatus?: ChatAttachmentAnalysisStatus;
+  linkedDocumentId?: string | null;
 };
 
 export type ChatMessageDoc = {

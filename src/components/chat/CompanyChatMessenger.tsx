@@ -80,6 +80,7 @@ import {
 } from "@/components/chat/chat-new-conversation-dialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { ChatAttachmentDocumentPanel } from "@/components/chat/chat-attachment-document-panel";
 
 export type CompanyChatSenderMode = "employee" | "admin";
 
@@ -1121,6 +1122,15 @@ export function CompanyChatMessenger({
                         >
                           Přiřadit k zakázce
                         </Button>
+                      ) : null}
+                      {att.mimeType.startsWith("image/") ||
+                      att.mimeType.includes("pdf") ? (
+                        <ChatAttachmentDocumentPanel
+                          companyId={companyId}
+                          messageId={m.id}
+                          attachment={att}
+                          conversationId={activeConversationId}
+                        />
                       ) : null}
                     </div>
                   ))}
