@@ -25,6 +25,12 @@ export class HikvisionStreamGateway {
       message: live.message,
       streamUrlPresent: Boolean(ezopenUrl),
       accessTokenPresent: Boolean(live.accessToken),
+      deviceSerialMasked: live.deviceSerialMasked,
+      channelNo: live.channelNo,
+      streamType: live.streamType,
+      streamVariant: live.streamVariant,
+      protocol: live.protocol,
+      codecHint: live.codecHint,
     };
   }
 
@@ -32,6 +38,7 @@ export class HikvisionStreamGateway {
     organizationId: string;
     cameraId: string;
     userId: string;
+    streamVariant?: "main" | "sub";
   }): Promise<
     | ReturnType<HikvisionStreamGateway["mapSession"]>
     | { ok: false; error: string; code?: string }
@@ -47,7 +54,8 @@ export class HikvisionStreamGateway {
     const { provider } = await resolveHikvisionProviderForOrg(this.db, params.organizationId);
     const live = await provider.getLiveView(
       { db: this.db, organizationId: params.organizationId },
-      params.cameraId
+      params.cameraId,
+      { streamVariant: params.streamVariant ?? "main" }
     );
     if (!live.ok) {
       return { ok: false, error: live.error, code: live.code };

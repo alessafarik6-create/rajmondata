@@ -71,6 +71,12 @@ export type ProviderStreamSessionResult =
       streamAreaDomain?: string;
       expiresAt?: string;
       message?: string;
+      deviceSerialMasked?: string;
+      channelNo?: string;
+      streamType?: string;
+      streamVariant?: "main" | "sub";
+      protocol?: string;
+      codecHint?: "H264" | "H265" | "unknown";
     }
   | { ok: false; code: HikvisionErrorCode; error: string };
 
@@ -102,7 +108,8 @@ export interface HikvisionProvider {
   ): Promise<ProviderSnapshotResult>;
   getLiveView(
     ctx: HikvisionProviderContext,
-    cameraDocId: string
+    cameraDocId: string,
+    options?: { streamVariant?: "main" | "sub" }
   ): Promise<ProviderLiveViewResult>;
   getPlayback?(
     ctx: HikvisionProviderContext,

@@ -18,6 +18,7 @@ import {
   bumpHikvisionLiveConfigFetchCount,
   hikLiveLog,
   resetHikvisionPlayerDebugCounters,
+  setHikvisionLiveStreamContext,
   setHikvisionPlayerStreamMeta,
 } from "@/lib/hikvision/player-runtime-diagnostics";
 
@@ -48,13 +49,20 @@ export function CameraLiveDialog(props: {
   const [loadingStream, setLoadingStream] = useState(false);
   const [streamErrorCode, setStreamErrorCode] = useState<HikvisionLivePlayerErrorCode | null>(null);
   const fetchGenRef = useRef(0);
+  const streamVariantRef = useRef<"main" | "sub">("main");
 
   const fetchLiveConfig = useCallback(
-    async (reason: "open" | "retry") => {
+    async (reason: "open" | "retry" | "substream", streamVariant?: "main" | "sub") => {
       if (!user || !cameraId) return;
+      if (streamVariant) streamVariantRef.current = streamVariant;
+      if (reason === "open") streamVariantRef.current = "main";
       const gen = ++fetchGenRef.current;
       bumpHikvisionLiveConfigFetchCount();
-      hikLiveLog("CONFIG FETCH", { reason, camera: cameraId });
+      hikLiveLog("CONFIG FETCH", {
+        reason,
+        camera: cameraId,
+        streamVariant: streamVariantRef.current,
+      });
       setLoadingStream(true);
       if (reason === "open") {
         setStreamErrorCode(null);
@@ -69,7 +77,10 @@ export function CameraLiveDialog(props: {
               Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ companyId }),
+            body: JSON.stringify({
+              companyId,
+              streamVariant: streamVariantRef.current,
+            }),
           }
         );
         const data = await res.json();
@@ -86,10 +97,30 @@ export function CameraLiveDialog(props: {
           accessToken: String(data.accessToken ?? ""),
           appKey: data.appKey,
           streamAreaDomain: data.streamAreaDomain,
+          expiresAt: data.expiresAt ? String(data.expiresAt) : undefined,
+          streamVariant: data.streamVariant === "sub" ? "sub" : "main",
+          deviceSerialMasked: data.deviceSerialMasked,
+          channelNo: data.channelNo,
+          streamType: data.streamType,
+          protocol: data.protocol,
+          codecHint: data.codecHint,
         });
         setStreamErrorCode(null);
         setHikvisionPlayerStreamMeta({
           streamUrlPresent: Boolean(data.streamUrlPresent ?? data.ezopenUrl ?? data.url),
+          expiresAt: data.expiresAt ? String(data.expiresAt) : null,
+          tokenPresent: Boolean(data.accessTokenPresent ?? data.accessToken),
+        });
+        setHikvisionLiveStreamContext({
+          cameraId,
+          deviceSerialMasked: data.deviceSerialMasked,
+          channelNo: data.channelNo,
+          streamType: data.streamType,
+          streamVariant: data.streamVariant === "sub" ? "sub" : "main",
+          protocol: data.protocol ?? "ezopen",
+          codecHint: data.codecHint ?? "unknown",
+          tokenPresent: Boolean(data.accessTokenPresent ?? data.accessToken),
+          urlPresent: Boolean(data.streamUrlPresent ?? data.ezopenUrl ?? data.url),
           expiresAt: data.expiresAt ? String(data.expiresAt) : null,
         });
       } catch {
@@ -122,6 +153,10 @@ export function CameraLiveDialog(props: {
     void fetchLiveConfig("retry");
   }, [fetchLiveConfig]);
 
+  const handleSubStreamFallback = useCallback(() => {
+    void fetchLiveConfig("substream", "sub");
+  }, [fetchLiveConfig]);
+
   if (!camera || !cameraId) return null;
 
   return (
@@ -150,6 +185,7 @@ export function CameraLiveDialog(props: {
           mobileLayout={isMobile}
           onClose={() => onOpenChange(false)}
           onRetry={handleRetry}
+          onSubStreamFallback={handleSubStreamFallback}
           streamErrorCode={streamErrorCode}
         />
       </DialogContent>

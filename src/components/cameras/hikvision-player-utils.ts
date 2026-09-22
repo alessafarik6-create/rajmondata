@@ -1,15 +1,66 @@
 /** Detekce skutečného přehrávání v DOM kontejneru EZUIKit (bez závislosti na telemetry). */
 
+export type HikPlayerDomInspect = {
+  hasVideo: boolean;
+  hasCanvas: boolean;
+  videoWidth: number;
+  videoHeight: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  videoVisible: boolean;
+  firstFrameLikely: boolean;
+};
+
+function elementVisible(el: HTMLElement): boolean {
+  const st = window.getComputedStyle(el);
+  if (st.display === "none" || st.visibility === "hidden") return false;
+  if (Number(st.opacity) === 0) return false;
+  return true;
+}
+
+export function inspectHikPlayerDom(container: HTMLElement | null): HikPlayerDomInspect {
+  const empty: HikPlayerDomInspect = {
+    hasVideo: false,
+    hasCanvas: false,
+    videoWidth: 0,
+    videoHeight: 0,
+    canvasWidth: 0,
+    canvasHeight: 0,
+    videoVisible: false,
+    firstFrameLikely: false,
+  };
+  if (!container) return empty;
+  const video = container.querySelector("video") as HTMLVideoElement | null;
+  const canvas = container.querySelector("canvas") as HTMLCanvasElement | null;
+  const videoWidth = video?.videoWidth ?? 0;
+  const videoHeight = video?.videoHeight ?? 0;
+  const canvasWidth = canvas?.width ?? 0;
+  const canvasHeight = canvas?.height ?? 0;
+  const videoVisible = video ? elementVisible(video) : false;
+  const videoReady =
+    Boolean(video) &&
+    videoVisible &&
+    video!.readyState >= 2 &&
+    (videoWidth > 0 || (video!.clientWidth > 0 && !video!.paused));
+  const canvasReady =
+    Boolean(canvas) &&
+    canvasWidth > 0 &&
+    canvasHeight > 0 &&
+    elementVisible(canvas as HTMLCanvasElement);
+  return {
+    hasVideo: Boolean(video),
+    hasCanvas: Boolean(canvas),
+    videoWidth,
+    videoHeight,
+    canvasWidth,
+    canvasHeight,
+    videoVisible,
+    firstFrameLikely: videoReady || canvasReady,
+  };
+}
+
 export function hikPlayerContainerHasVideo(container: HTMLElement | null): boolean {
-  if (!container) return false;
-  const video = container.querySelector("video");
-  if (video) {
-    if (video.readyState >= 2 && video.videoWidth > 0) return true;
-    if (!video.paused && video.currentTime > 0) return true;
-  }
-  const canvas = container.querySelector("canvas");
-  if (canvas && canvas.width > 0 && canvas.height > 0) return true;
-  return false;
+  return inspectHikPlayerDom(container).firstFrameLikely;
 }
 
 export function waitForNonZeroContainerSize(

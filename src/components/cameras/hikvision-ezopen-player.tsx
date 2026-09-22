@@ -17,12 +17,16 @@ import {
   bumpHikvisionPlayerCreateCount,
   bumpHikvisionPlayerDestroyCount,
   hikLiveLog,
+  setHikvisionLivePipelineStage,
+  setHikvisionLiveStreamContext,
+  setHikvisionPlayerDomInspect,
   setHikvisionPlayerError,
   setHikvisionPlayerPhase,
   setHikvisionPlayerStreamMeta,
 } from "@/lib/hikvision/player-runtime-diagnostics";
 import {
   hikPlayerContainerHasVideo,
+  inspectHikPlayerDom,
   resizePlayerToContainer,
   isLikelyHikStreamFatalError,
   waitForNonZeroContainerSize,
@@ -36,6 +40,13 @@ export type EzopenSession = {
   accessToken: string;
   appKey?: string;
   streamAreaDomain?: string;
+  expiresAt?: string;
+  streamVariant?: "main" | "sub";
+  deviceSerialMasked?: string;
+  channelNo?: string;
+  streamType?: string;
+  protocol?: string;
+  codecHint?: "H264" | "H265" | "unknown";
 };
 
 export type HikvisionLivePlayerErrorCode =
@@ -45,7 +56,9 @@ export type HikvisionLivePlayerErrorCode =
   | "STREAM_EXPIRED"
   | "DEVICE_OFFLINE"
   | "PLAYER_INIT_FAILED"
-  | "PLAY_FAILED";
+  | "PLAY_FAILED"
+  | "NO_VIDEO_FRAME"
+  | "PLAYER_RENDER_FAILED";
 
 export type HikvisionLivePlayerState =
   | "LOADING_SDK"
@@ -56,7 +69,8 @@ export type HikvisionLivePlayerState =
   | "ERROR"
   | "OFFLINE";
 
-const USER_ERROR_MESSAGE = "Živý obraz se nyní nepodařilo načíst.";
+const USER_ERROR_MESSAGE = "Živý obraz se nepodařilo zobrazit.";
+const FIRST_FRAME_TIMEOUT_MS = 18_000;
 
 type PlayerInstance = {
   stop: () => void;
@@ -90,6 +104,8 @@ export function HikvisionEzopenPlayer(props: {
   className?: string;
   onClose?: () => void;
   onRetry?: () => void;
+  /** Jednorázový fallback main → sub stream (nová session z API). */
+  onSubStreamFallback?: () => void;
   compact?: boolean;
   streamErrorCode?: HikvisionLivePlayerErrorCode | null;
   showDeveloperDetail?: boolean;
@@ -106,6 +122,7 @@ export function HikvisionEzopenPlayer(props: {
     className,
     onClose,
     onRetry,
+    onSubStreamFallback,
     compact,
     streamErrorCode,
     showDeveloperDetail,
@@ -122,8 +139,12 @@ export function HikvisionEzopenPlayer(props: {
   const initStreamKeyRef = useRef<string | null>(null);
   const initInFlightRef = useRef(false);
   const streamRetriedRef = useRef(false);
+  const subStreamFallbackTriedRef = useRef(false);
+  const playingConfirmedRef = useRef(false);
   const onRetryRef = useRef(onRetry);
+  const onSubStreamFallbackRef = useRef(onSubStreamFallback);
   onRetryRef.current = onRetry;
+  onSubStreamFallbackRef.current = onSubStreamFallback;
 
   const [muted, setMuted] = useState(true);
   const [uiState, setUiState] = useState<HikvisionLivePlayerState>("LOADING_SDK");
@@ -142,7 +163,27 @@ export function HikvisionEzopenPlayer(props: {
 
   useEffect(() => {
     hikLiveLog("OPEN", { camera: cameraId });
+    setHikvisionLiveStreamContext({ cameraId });
   }, [cameraId]);
+
+  useEffect(() => {
+    const s = sessionRef.current;
+    if (!s) return;
+    setHikvisionLiveStreamContext({
+      cameraId,
+      deviceSerialMasked: s.deviceSerialMasked,
+      channelNo: s.channelNo,
+      streamType: s.streamType,
+      streamVariant: s.streamVariant,
+      protocol: s.protocol ?? "ezopen",
+      codecHint: s.codecHint,
+      tokenPresent: Boolean(s.accessToken),
+      urlPresent: Boolean(s.ezopenUrl),
+      expiresAt: s.expiresAt ?? null,
+    });
+    setHikvisionLivePipelineStage("CONFIG_OK");
+    hikLiveLog("CONFIG_OK");
+  }, [streamKey, cameraId]);
 
   useEffect(() => {
     const tick = () =>
@@ -218,15 +259,75 @@ export function HikvisionEzopenPlayer(props: {
 
     let cancelled = false;
     let stopFrameWatch: (() => void) | null = null;
+    let firstFrameTimer: number | null = null;
 
-    const markPlaying = () => {
-      if (cancelled) return;
+    const markPlaying = (containerEl: HTMLElement) => {
+      if (cancelled || playingConfirmedRef.current) return;
+      const inspect = inspectHikPlayerDom(containerEl);
+      setHikvisionPlayerDomInspect({
+        videoWidth: inspect.videoWidth,
+        videoHeight: inspect.videoHeight,
+        canvasWidth: inspect.canvasWidth,
+        canvasHeight: inspect.canvasHeight,
+        hasVideo: inspect.hasVideo,
+        hasCanvas: inspect.hasCanvas,
+      });
+      if (!inspect.firstFrameLikely) {
+        if (inspect.hasVideo || inspect.hasCanvas) {
+          setHikvisionLivePipelineStage("DECODER_STARTED");
+        }
+        return;
+      }
+      playingConfirmedRef.current = true;
+      if (firstFrameTimer) {
+        clearTimeout(firstFrameTimer);
+        firstFrameTimer = null;
+      }
+      setHikvisionLivePipelineStage("FIRST_FRAME");
+      hikLiveLog("FIRST_FRAME");
       bumpHikvisionPlayStartCount();
+      setHikvisionLivePipelineStage("PLAYING");
       hikLiveLog("PLAYING");
       setUiState("PLAYING");
       setErrorCode(null);
       setHikvisionPlayerPhase("PLAY_STARTED");
       setHikvisionPlayerError(null);
+      resizePlayerToContainer(containerEl, playerRef.current);
+    };
+
+    const failNoFirstFrame = (containerEl: HTMLElement) => {
+      if (cancelled || playingConfirmedRef.current) return;
+      const inspect = inspectHikPlayerDom(containerEl);
+      setHikvisionPlayerDomInspect({
+        videoWidth: inspect.videoWidth,
+        videoHeight: inspect.videoHeight,
+        canvasWidth: inspect.canvasWidth,
+        canvasHeight: inspect.canvasHeight,
+        hasVideo: inspect.hasVideo,
+        hasCanvas: inspect.hasCanvas,
+      });
+      if (
+        !subStreamFallbackTriedRef.current &&
+        onSubStreamFallbackRef.current &&
+        sessionRef.current?.streamVariant !== "sub"
+      ) {
+        subStreamFallbackTriedRef.current = true;
+        hikLiveLog("NO_FIRST_FRAME — try substream");
+        destroyHikPlayer(playerRef);
+        initStreamKeyRef.current = null;
+        playingConfirmedRef.current = false;
+        onSubStreamFallbackRef.current();
+        return;
+      }
+      setUiState("ERROR");
+      setErrorCode("NO_VIDEO_FRAME");
+      setHikvisionPlayerError("NO_FIRST_FRAME");
+      setHikvisionPlayerPhase("PLAY_ERROR");
+      hikLiveLog("NO_VIDEO_FRAME", {
+        channel: sessionRef.current?.channelNo ?? "?",
+        stream: sessionRef.current?.streamType ?? "?",
+        codec: sessionRef.current?.codecHint ?? "unknown",
+      });
     };
 
     async function createPlayer() {
@@ -289,7 +390,7 @@ export function HikvisionEzopenPlayer(props: {
         handleError: (info: unknown) => {
           if (cancelled) return;
           if (hikPlayerContainerHasVideo(containerEl)) {
-            markPlaying();
+            markPlaying(containerEl);
             return;
           }
           if (!isLikelyHikStreamFatalError(info)) {
@@ -311,9 +412,16 @@ export function HikvisionEzopenPlayer(props: {
         },
         handleSuccess: () => {
           if (cancelled) return;
-          hikLiveLog("PLAY START");
+          hikLiveLog("STREAM_CONNECTED");
+          setHikvisionLivePipelineStage("STREAM_CONNECTED");
+          setUiState("CONNECTING");
           resizePlayerToContainer(containerEl, playerRef.current);
-          markPlaying();
+          try {
+            (playerRef.current as { play?: () => void })?.play?.();
+          } catch {
+            /* ignore */
+          }
+          markPlaying(containerEl);
         },
       };
       if (domain) {
@@ -326,24 +434,50 @@ export function HikvisionEzopenPlayer(props: {
         playerRef.current = player;
         initStreamKeyRef.current = streamKey;
         setHikvisionPlayerPhase("PLAYER_CREATED");
+        setHikvisionLivePipelineStage("PLAYER_CREATED");
         setUiState("CONNECTING");
 
-        player.on?.("play", () => {
-          resizePlayerToContainer(containerEl, player);
-          markPlaying();
-        });
-        player.on?.("firstFrame", () => {
-          hikLiveLog("FIRST FRAME");
-          resizePlayerToContainer(containerEl, player);
-          markPlaying();
-        });
+        const sdkEvents = [
+          "play",
+          "firstFrame",
+          "firstframe",
+          "decodeStart",
+          "streamSuccess",
+          "streamStart",
+        ] as const;
+        for (const ev of sdkEvents) {
+          player.on?.(ev, () => {
+            if (ev === "decodeStart") {
+              setHikvisionLivePipelineStage("DECODER_STARTED");
+              hikLiveLog("DECODER_STARTED");
+            }
+            if (ev === "streamSuccess" || ev === "streamStart") {
+              setHikvisionLivePipelineStage("STREAM_CONNECTED");
+            }
+            if (ev === "firstFrame" || ev === "firstframe") {
+              hikLiveLog("FIRST_FRAME (sdk event)");
+            }
+            resizePlayerToContainer(containerEl, player);
+            markPlaying(containerEl);
+          });
+        }
 
         stopFrameWatch = watchHikPlayerFirstFrame(containerEl, () => {
-          hikLiveLog("FIRST FRAME (dom)");
+          hikLiveLog("FIRST_FRAME (dom)");
           resizePlayerToContainer(containerEl, player);
-          markPlaying();
+          markPlaying(containerEl);
         });
+
+        firstFrameTimer = window.setTimeout(() => {
+          if (!playingConfirmedRef.current) failNoFirstFrame(containerEl);
+        }, FIRST_FRAME_TIMEOUT_MS);
+
         requestAnimationFrame(() => resizePlayerToContainer(containerEl, player));
+        try {
+          (player as { play?: () => void }).play?.();
+        } catch {
+          /* muted autoplay */
+        }
       } catch {
         setUiState("ERROR");
         setErrorCode("PLAYER_INIT_FAILED");
@@ -359,11 +493,14 @@ export function HikvisionEzopenPlayer(props: {
     return () => {
       cancelled = true;
       stopFrameWatch?.();
+      if (firstFrameTimer) clearTimeout(firstFrameTimer);
     };
   }, [streamKey, sdkReady, online, streamErrorCode, containerId, compact, mode]);
 
   useEffect(() => {
     streamRetriedRef.current = false;
+    subStreamFallbackTriedRef.current = false;
+    playingConfirmedRef.current = false;
   }, [streamKey]);
 
   useEffect(() => {
@@ -543,10 +680,10 @@ export function HikvisionEzopenPlayer(props: {
         <div
           ref={playerContainerRef}
           id={containerId}
-          className="hik-ezopen-player-host"
+          className="hik-ezopen-player-host z-0"
         />
         {showLoadingOverlay ? (
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 z-20">
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 z-10">
             <Loader2 className="h-8 w-8 animate-spin" />
             <p className="text-sm">{loadingLabel}</p>
           </div>

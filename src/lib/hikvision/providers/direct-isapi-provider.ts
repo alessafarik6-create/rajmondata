@@ -130,7 +130,7 @@ export const directIsapiProvider: HikvisionProvider = {
     return { ok: true, buffer: pic.buffer, contentType: pic.contentType };
   },
 
-  async getLiveView(_ctx, _cameraDocId): Promise<ProviderLiveViewResult> {
+  async getLiveView(_ctx, _cameraDocId, _options?): Promise<ProviderLiveViewResult> {
     return {
       ok: false,
       code: "LIVE_VIEW_NOT_SUPPORTED",

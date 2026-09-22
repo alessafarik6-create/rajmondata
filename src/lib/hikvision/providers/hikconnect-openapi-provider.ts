@@ -14,6 +14,12 @@ import {
   loadHikvisionIntegration,
   hikvisionCamerasCol,
 } from "@/lib/hikvision/stores";
+import {
+  codecHintFromRecordSetting,
+  ezopenSubStreamFallbackUrl,
+  maskDeviceSerial,
+  parseEzopenLiveUrl,
+} from "@/lib/hikvision/ezopen-stream-meta";
 import type {
   HikvisionProvider,
   ProviderLiveViewResult,
@@ -82,6 +88,7 @@ async function loadCameraForStream(
       resourceId: string;
       deviceSerial: string;
       externalCameraId: string;
+      channelNo: string;
     }
   | { ok: false; code: "CAMERA_OFFLINE"; error: string }
 > {
@@ -93,6 +100,7 @@ async function loadCameraForStream(
     serialNumber?: string | null;
     trackStreamId?: string;
     externalCameraId?: string | null;
+    channelId?: string | null;
   };
   const deviceSerial = String(cam.serialNumber ?? "").trim();
   const resourceId = String(cam.externalCameraId ?? cam.trackStreamId ?? "").trim();
@@ -103,11 +111,13 @@ async function loadCameraForStream(
       error: "Chybí identifikátor kamery — synchronizujte kamery z Hik-Connect.",
     };
   }
+  const channelNo = String(cam.channelId ?? "1").trim() || "1";
   return {
     ok: true,
     resourceId,
     deviceSerial,
     externalCameraId: resourceId,
+    channelNo,
   };
 }
 
@@ -116,7 +126,8 @@ async function buildEzopenSession(
   cred: { apiKey: string; apiSecret: string },
   cameraDocId: string,
   addressType: "1" | "2" | "3",
-  times?: { startTime: string; stopTime: string; code?: string }
+  times?: { startTime: string; stopTime: string; code?: string },
+  liveOpts?: { streamVariant?: "main" | "sub" }
 ): Promise<ProviderLiveViewResult> {
   const cam = await loadCameraForStream(ctx, cameraDocId);
   if (!cam.ok) return { ok: false, code: cam.code, error: cam.error };
@@ -156,17 +167,47 @@ async function buildEzopenSession(
     };
   }
 
+  let ezopenUrl = address.url;
+  const streamVariant = liveOpts?.streamVariant ?? "main";
+  if (streamVariant === "sub") {
+    const subUrl = ezopenSubStreamFallbackUrl(ezopenUrl);
+    if (subUrl) ezopenUrl = subUrl;
+  }
+  const parsed = parseEzopenLiveUrl(ezopenUrl);
+
+  let codecHint: "H264" | "H265" | "unknown" = "unknown";
+  try {
+    const settings = await hccGetRecordSettings({
+      organizationId: ctx.organizationId,
+      db: ctx.db,
+      apiKey: cred.apiKey,
+      apiSecret: cred.apiSecret,
+      cameraIds: [cam.resourceId],
+    });
+    if (settings[0]) {
+      codecHint = codecHintFromRecordSetting(settings[0] as Record<string, unknown>);
+    }
+  } catch {
+    /* optional */
+  }
+
   const expireMs = stream.appToken ? Date.now() + 6 * 3600 * 1000 : Date.now() + 3600 * 1000;
   return {
     ok: true,
     playbackType: "ezopen",
     sessionType: "sdk",
-    ezopenUrl: address.url,
+    ezopenUrl,
     accessToken: stream.appToken,
     appKey: stream.appKey,
     streamAreaDomain: stream.streamAreaDomain,
     expiresAt: new Date(expireMs).toISOString(),
     message: "Přehrávání přes oficiální Hik-Connect JSSDK (ezopen).",
+    deviceSerialMasked: maskDeviceSerial(cam.deviceSerial),
+    channelNo: parsed?.channelNo ?? cam.channelNo,
+    streamType: parsed?.streamSuffix ?? (streamVariant === "sub" ? "substream" : "main"),
+    streamVariant,
+    protocol: parsed?.protocol ?? "ezopen",
+    codecHint,
   };
 }
 
@@ -334,7 +375,7 @@ export const hikConnectOpenApiProvider: HikvisionProvider = {
     }
   },
 
-  async getLiveView(ctx, cameraDocId): Promise<ProviderLiveViewResult> {
+  async getLiveView(ctx, cameraDocId, options): Promise<ProviderLiveViewResult> {
     const cred = await requireOpenApiCredentials(ctx.db, ctx.organizationId);
     if (!cred.ok) {
       return { ok: false, code: cred.fail.code, error: cred.fail.error };
@@ -344,7 +385,9 @@ export const hikConnectOpenApiProvider: HikvisionProvider = {
         ctx,
         { apiKey: cred.apiKey, apiSecret: cred.apiSecret },
         cameraDocId,
-        "1"
+        "1",
+        undefined,
+        { streamVariant: options?.streamVariant ?? "main" }
       );
     } catch (e) {
       const fail = fromHccError(e);
