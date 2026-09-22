@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { collection, doc } from "firebase/firestore";
+import { collection, doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import {
   useUser,
   useFirestore,
@@ -40,6 +40,17 @@ import { useToast } from "@/hooks/use-toast";
 import { PORTAL_MANUAL_INVOICE_TYPE } from "@/lib/portal-manual-invoice";
 import { PortalManualInvoiceForm } from "@/components/invoices/portal-manual-invoice-form";
 import { canManagePortalInvoices } from "@/lib/portal-invoice-permissions";
+import { Checkbox } from "@/components/ui/checkbox";
+import type {
+  InvoiceCustomerSnapshot,
+  InvoiceRecipientType,
+} from "@/lib/invoice-customer-snapshot";
+import {
+  invoiceRecipientAddressLines,
+  invoiceRecipientDisplayName,
+  snapshotFromCustomerDoc,
+  snapshotFromInvoiceRecord,
+} from "@/lib/invoice-customer-snapshot";
 
 const VAT_OPTIONS = [0, 12, 21] as const;
 
@@ -148,6 +159,92 @@ export default function EditAdvanceInvoicePage() {
 
   const [editCustomerName, setEditCustomerName] = useState("");
   const [editCustomerAddress, setEditCustomerAddress] = useState("");
+  const [taxRecipientType, setTaxRecipientType] = useState<InvoiceRecipientType>("person");
+  const [taxSelectedCustomerId, setTaxSelectedCustomerId] = useState("");
+  const [taxCompanyName, setTaxCompanyName] = useState("");
+  const [taxFirstName, setTaxFirstName] = useState("");
+  const [taxLastName, setTaxLastName] = useState("");
+  const [taxStreet, setTaxStreet] = useState("");
+  const [taxCity, setTaxCity] = useState("");
+  const [taxPostalCode, setTaxPostalCode] = useState("");
+  const [taxCountry, setTaxCountry] = useState("CZ");
+  const [taxEditPhone, setTaxEditPhone] = useState("");
+  const [taxEditEmail, setTaxEditEmail] = useState("");
+  const [taxCustomerSearch, setTaxCustomerSearch] = useState("");
+  const [taxUpdateMasterCustomer, setTaxUpdateMasterCustomer] = useState(false);
+
+  const customersColRef = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? collection(firestore, "companies", companyId, "customers")
+        : null,
+    [firestore, companyId]
+  );
+  const { data: customersRaw } = useCollection(customersColRef);
+  const customers = useMemo(
+    () => (Array.isArray(customersRaw) ? customersRaw : []) as { id: string }[],
+    [customersRaw]
+  );
+
+  const filteredTaxCustomers = useMemo(() => {
+    const q = taxCustomerSearch.trim().toLowerCase();
+    if (!q) return customers.slice(0, 40);
+    return customers
+      .filter((c) => {
+        const row = c as Record<string, unknown>;
+        const hay = [
+          row.companyName,
+          row.firstName,
+          row.lastName,
+          row.ico,
+          row.ic,
+          row.email,
+          row.phone,
+        ]
+          .map((x) => String(x ?? "").toLowerCase())
+          .join(" ");
+        return hay.includes(q);
+      })
+      .slice(0, 40);
+  }, [customers, taxCustomerSearch]);
+
+  const applyTaxCustomerFromDoc = (row: Record<string, unknown> & { id: string }) => {
+    const snap = snapshotFromCustomerDoc(row.id, row);
+    setTaxSelectedCustomerId(row.id);
+    setTaxRecipientType(snap.type);
+    setTaxCompanyName(String(snap.companyName ?? ""));
+    setTaxFirstName(String(snap.firstName ?? ""));
+    setTaxLastName(String(snap.lastName ?? ""));
+    setTaxStreet(String(snap.street ?? ""));
+    setTaxCity(String(snap.city ?? ""));
+    setTaxPostalCode(String(snap.postalCode ?? ""));
+    setTaxCountry(String(snap.country ?? "CZ"));
+    setTaxEditPhone(String(snap.phone ?? ""));
+    setTaxEditEmail(String(snap.email ?? ""));
+    setCustomerIco(String(snap.ico ?? ""));
+    setCustomerDic(String(snap.dic ?? ""));
+    setEditCustomerName(invoiceRecipientDisplayName(snap));
+    setEditCustomerAddress(invoiceRecipientAddressLines(snap));
+  };
+
+  const buildTaxCustomerSnapshot = (): InvoiceCustomerSnapshot => ({
+    customerId: taxSelectedCustomerId.trim() || null,
+    type: taxRecipientType,
+    companyName:
+      taxRecipientType === "company" ? taxCompanyName.trim() || null : null,
+    firstName:
+      taxRecipientType === "person" ? taxFirstName.trim() || null : null,
+    lastName:
+      taxRecipientType === "person" ? taxLastName.trim() || null : null,
+    street: taxStreet.trim() || null,
+    city: taxCity.trim() || null,
+    postalCode: taxPostalCode.trim() || null,
+    country: taxCountry.trim() || "CZ",
+    ico: customerIco.trim() || null,
+    dic: customerDic.trim() || null,
+    email: taxEditEmail.trim() || null,
+    phone: taxEditPhone.trim() || null,
+  });
 
   const supplierName = useMemo(() => {
     return (
@@ -208,15 +305,40 @@ export default function EditAdvanceInvoicePage() {
     setCustomerIco(String(inv.customerIco ?? ""));
     setCustomerDic(String(inv.customerDic ?? ""));
 
+    if (t === JOB_INVOICE_TYPES.TAX_RECEIPT) {
+      const snap = snapshotFromInvoiceRecord(inv);
+      setTaxRecipientType(snap.type);
+      setTaxSelectedCustomerId(
+        String(snap.customerId ?? inv.customerId ?? customerId ?? "").trim()
+      );
+      setTaxCompanyName(String(snap.companyName ?? ""));
+      setTaxFirstName(String(snap.firstName ?? ""));
+      setTaxLastName(String(snap.lastName ?? ""));
+      setTaxStreet(String(snap.street ?? ""));
+      setTaxCity(String(snap.city ?? ""));
+      setTaxPostalCode(String(snap.postalCode ?? ""));
+      setTaxCountry(String(snap.country ?? "CZ"));
+      setTaxEditPhone(
+        String(snap.phone ?? inv.customerPhone ?? "").trim()
+      );
+      setTaxEditEmail(
+        String(snap.email ?? inv.customerEmail ?? "").trim()
+      );
+      setEditCustomerName(
+        invoiceRecipientDisplayName(snap) || String(inv.customerName ?? "").trim()
+      );
+      setEditCustomerAddress(
+        invoiceRecipientAddressLines(snap) ||
+          String(inv.customerAddressLines ?? inv.customerAddress ?? "").trim()
+      );
+      setInitialized(true);
+      return;
+    }
+
     const fromCust = buildCustomerAddressMultiline(customerDoc);
     setEditCustomerAddress(
       fromCust.trim() || String(inv.customerName ?? "").trim()
     );
-
-    if (t === JOB_INVOICE_TYPES.TAX_RECEIPT) {
-      setInitialized(true);
-      return;
-    }
     if (t === JOB_INVOICE_TYPES.ADVANCE) {
       setLines(invoiceItemsToManualLines(inv));
       setInitialized(true);
@@ -253,8 +375,16 @@ export default function EditAdvanceInvoicePage() {
       ? String((invoice as { type?: string }).type ?? "")
       : "";
     if (!user || !companyId || !invoiceId) return;
-    const custName = editCustomerName.trim() || "Odběratel";
-    const custAddr = editCustomerAddress.trim() || custName;
+    const taxSnap =
+      invType === JOB_INVOICE_TYPES.TAX_RECEIPT ? buildTaxCustomerSnapshot() : null;
+    const custName =
+      taxSnap != null
+        ? invoiceRecipientDisplayName(taxSnap) || "Odběratel"
+        : editCustomerName.trim() || "Odběratel";
+    const custAddr =
+      taxSnap != null
+        ? invoiceRecipientAddressLines(taxSnap) || custName
+        : editCustomerAddress.trim() || custName;
     setSaving(true);
     try {
       if (invType === JOB_INVOICE_TYPES.TAX_RECEIPT) {
@@ -265,8 +395,9 @@ export default function EditAdvanceInvoicePage() {
           jobName,
           customerName: custName,
           customerAddressLines: custAddr,
-          customerPhone,
-          customerEmail,
+          customerSnapshot: taxSnap,
+          customerPhone: taxEditPhone.trim() || null,
+          customerEmail: taxEditEmail.trim() || null,
           supplierName,
           supplierAddressLines: supplierAddressLines || supplierName,
           userId: user.uid,
@@ -284,6 +415,36 @@ export default function EditAdvanceInvoicePage() {
           legacyCompanyBankAccount: legacyCompanyBank,
           note: taxNote.trim() || undefined,
         });
+        if (
+          taxUpdateMasterCustomer &&
+          taxSelectedCustomerId.trim() &&
+          firestore
+        ) {
+          const custRef = doc(
+            firestore,
+            "companies",
+            companyId,
+            "customers",
+            taxSelectedCustomerId.trim()
+          );
+          await updateDoc(custRef, {
+            updatedAt: serverTimestamp(),
+            companyName:
+              taxRecipientType === "company" ? taxCompanyName.trim() : "",
+            firstName:
+              taxRecipientType === "person" ? taxFirstName.trim() : "",
+            lastName:
+              taxRecipientType === "person" ? taxLastName.trim() : "",
+            street: taxStreet.trim(),
+            city: taxCity.trim(),
+            postalCode: taxPostalCode.trim(),
+            country: taxCountry.trim() || "CZ",
+            ico: customerIco.trim(),
+            dic: customerDic.trim(),
+            email: taxEditEmail.trim(),
+            phone: taxEditPhone.trim(),
+          });
+        }
       } else if (invType === JOB_INVOICE_TYPES.FINAL_INVOICE) {
         await updateFinalSettlementInvoice({
           firestore,
@@ -482,39 +643,206 @@ export default function EditAdvanceInvoicePage() {
 
       <div className="space-y-4 rounded-lg border border-neutral-200 bg-white p-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="sm:col-span-2">
-            <Label>Odběratel (název)</Label>
-            <Input
-              value={editCustomerName}
-              onChange={(e) => setEditCustomerName(e.target.value)}
-              className="border-neutral-950"
-            />
-          </div>
-          <div className="sm:col-span-2">
-            <Label>Adresa odběratele</Label>
-            <Textarea
-              value={editCustomerAddress}
-              onChange={(e) => setEditCustomerAddress(e.target.value)}
-              rows={3}
-              className="border-neutral-950"
-            />
-          </div>
-          <div>
-            <Label>IČO odběratele</Label>
-            <Input
-              value={customerIco}
-              onChange={(e) => setCustomerIco(e.target.value)}
-              className="border-neutral-950"
-            />
-          </div>
-          <div>
-            <Label>DIČ odběratele</Label>
-            <Input
-              value={customerDic}
-              onChange={(e) => setCustomerDic(e.target.value)}
-              className="border-neutral-950"
-            />
-          </div>
+          {isTax ? (
+            <>
+              <div className="sm:col-span-2 space-y-2 rounded-md border border-neutral-100 bg-neutral-50/80 p-3">
+                <Label>Vybrat zákazníka</Label>
+                <Input
+                  value={taxCustomerSearch}
+                  onChange={(e) => setTaxCustomerSearch(e.target.value)}
+                  placeholder="Hledat jméno, firmu, IČO, e-mail, telefon…"
+                  className="border-neutral-950 bg-white"
+                />
+                {filteredTaxCustomers.length > 0 ? (
+                  <ul className="max-h-40 overflow-y-auto rounded border border-neutral-200 bg-white text-sm">
+                    {filteredTaxCustomers.map((c) => {
+                      const row = c as Record<string, unknown>;
+                      const label =
+                        String(row.companyName ?? "").trim() ||
+                        `${String(row.firstName ?? "")} ${String(row.lastName ?? "")}`.trim() ||
+                        c.id;
+                      return (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            className="w-full px-3 py-2 text-left hover:bg-neutral-100"
+                            onClick={() =>
+                              applyTaxCustomerFromDoc(
+                                row as Record<string, unknown> & { id: string }
+                              )
+                            }
+                          >
+                            {label}
+                            {row.ico ? (
+                              <span className="text-neutral-500"> · IČ {String(row.ico)}</span>
+                            ) : null}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+                <p className="text-xs text-neutral-600">
+                  Údaje se uloží jako snapshot na dokladu; kartu zákazníka měníte volitelně níže.
+                </p>
+              </div>
+              <div className="sm:col-span-2">
+                <Label>Typ odběratele</Label>
+                <Select
+                  value={taxRecipientType}
+                  onValueChange={(v) => setTaxRecipientType(v as InvoiceRecipientType)}
+                >
+                  <SelectTrigger className="border-neutral-950">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="person">Fyzická osoba</SelectItem>
+                    <SelectItem value="company">Firma / podnikatel</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {taxRecipientType === "company" ? (
+                <div className="sm:col-span-2">
+                  <Label>Název firmy</Label>
+                  <Input
+                    value={taxCompanyName}
+                    onChange={(e) => setTaxCompanyName(e.target.value)}
+                    className="border-neutral-950"
+                  />
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <Label>Jméno</Label>
+                    <Input
+                      value={taxFirstName}
+                      onChange={(e) => setTaxFirstName(e.target.value)}
+                      className="border-neutral-950"
+                    />
+                  </div>
+                  <div>
+                    <Label>Příjmení</Label>
+                    <Input
+                      value={taxLastName}
+                      onChange={(e) => setTaxLastName(e.target.value)}
+                      className="border-neutral-950"
+                    />
+                  </div>
+                </>
+              )}
+              <div className="sm:col-span-2">
+                <Label>Ulice a číslo</Label>
+                <Input
+                  value={taxStreet}
+                  onChange={(e) => setTaxStreet(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>Město</Label>
+                <Input
+                  value={taxCity}
+                  onChange={(e) => setTaxCity(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>PSČ</Label>
+                <Input
+                  value={taxPostalCode}
+                  onChange={(e) => setTaxPostalCode(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>Stát</Label>
+                <Input
+                  value={taxCountry}
+                  onChange={(e) => setTaxCountry(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>E-mail</Label>
+                <Input
+                  type="email"
+                  value={taxEditEmail}
+                  onChange={(e) => setTaxEditEmail(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>Telefon</Label>
+                <Input
+                  value={taxEditPhone}
+                  onChange={(e) => setTaxEditPhone(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>IČO odběratele</Label>
+                <Input
+                  value={customerIco}
+                  onChange={(e) => setCustomerIco(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>DIČ odběratele</Label>
+                <Input
+                  value={customerDic}
+                  onChange={(e) => setCustomerDic(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div className="sm:col-span-2 flex items-start gap-2 pt-1">
+                <Checkbox
+                  id="tax-update-master"
+                  checked={taxUpdateMasterCustomer}
+                  onCheckedChange={(v) => setTaxUpdateMasterCustomer(v === true)}
+                />
+                <Label htmlFor="tax-update-master" className="font-normal leading-snug">
+                  Aktualizovat také kartu zákazníka (výchozí: pouze snapshot na dokladu)
+                </Label>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="sm:col-span-2">
+                <Label>Odběratel (název)</Label>
+                <Input
+                  value={editCustomerName}
+                  onChange={(e) => setEditCustomerName(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <Label>Adresa odběratele</Label>
+                <Textarea
+                  value={editCustomerAddress}
+                  onChange={(e) => setEditCustomerAddress(e.target.value)}
+                  rows={3}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>IČO odběratele</Label>
+                <Input
+                  value={customerIco}
+                  onChange={(e) => setCustomerIco(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>DIČ odběratele</Label>
+                <Input
+                  value={customerDic}
+                  onChange={(e) => setCustomerDic(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+            </>
+          )}
           <div>
             <Label>IČO dodavatele</Label>
             <Input

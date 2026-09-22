@@ -44,8 +44,13 @@ import { isEmployeeActive } from "@/lib/employee-active";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import {
   formatChatDaySeparator,
+  formatMessageAuthorDateTime,
   formatChatTimestampDisplay,
 } from "@/lib/format-chat-timestamp";
+import {
+  buildMessageTimestampClientFields,
+  messageTimestampFromRecord,
+} from "@/lib/format-message-date";
 import {
   buildDirectConversationId,
   chatAttachmentStoragePath,
@@ -164,19 +169,22 @@ function resolveSenderDisplay(
 function MessageAuthorMeta({
   mine,
   sender,
-  createdAt,
+  message,
   className,
 }: {
   mine: boolean;
   sender: SenderDisplay;
-  createdAt: unknown;
+  message: ChatMessageDoc;
   className?: string;
 }) {
-  const timeLabel = formatChatTimestampDisplay(createdAt);
-  const authorLine = mine ? `${sender.name} · ${timeLabel}` : `${sender.name} · ${timeLabel}`;
+  const timeLabel = formatMessageAuthorDateTime(
+    messageTimestampFromRecord(message as Record<string, unknown>)
+  );
+  const authorLabel = mine ? "Vy" : sender.name;
+  const authorLine = `${authorLabel} · ${timeLabel}`;
   return (
     <div className={cn("text-[11px] leading-snug mb-1.5", className)}>
-      <div className="font-semibold">{authorLine}</div>
+      <div className={cn("font-semibold", mine && "text-primary-foreground")}>{authorLine}</div>
       {!mine && sender.roleLabel ? (
         <div className="opacity-75 font-normal text-[10px] mt-0.5">{sender.roleLabel}</div>
       ) : null}
@@ -445,6 +453,29 @@ export function CompanyChatMessenger({
   ]);
 
   const mobileFull = isMobile || fullScreenMobile;
+  const [mobileViewportHeight, setMobileViewportHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!mobileFull) {
+      setMobileViewportHeight(null);
+      return;
+    }
+    const sync = () => {
+      const vv = window.visualViewport;
+      setMobileViewportHeight(Math.floor(vv?.height ?? window.innerHeight));
+    };
+    sync();
+    window.visualViewport?.addEventListener("resize", sync);
+    window.visualViewport?.addEventListener("scroll", sync);
+    window.addEventListener("orientationchange", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", sync);
+      window.visualViewport?.removeEventListener("scroll", sync);
+      window.removeEventListener("orientationchange", sync);
+      window.removeEventListener("resize", sync);
+    };
+  }, [mobileFull]);
 
   useEffect(() => {
     if (mobileShowThread || !mobileFull) void markConversationRead();
@@ -615,6 +646,7 @@ export function CompanyChatMessenger({
         recipientUserId: dmRecipient,
         attachments,
         createdAt: serverTimestamp(),
+        ...buildMessageTimestampClientFields(),
       });
 
       if (isCompany) {
@@ -861,7 +893,7 @@ export function CompanyChatMessenger({
   );
 
   const thread = (
-    <>
+    <div className="flex flex-col flex-1 min-h-0 w-full h-full overflow-hidden">
       <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-background">
         {mobileFull ? (
           <Button
@@ -914,7 +946,9 @@ export function CompanyChatMessenger({
           (() => {
             let lastDayLabel: string | null = null;
             return filteredMessages.map((m) => {
-            const dayLabel = formatChatDaySeparator(m.createdAt);
+            const dayLabel = formatChatDaySeparator(
+              messageTimestampFromRecord(m as Record<string, unknown>)
+            );
             const showDay = Boolean(dayLabel && dayLabel !== lastDayLabel);
             if (showDay && dayLabel) lastDayLabel = dayLabel;
             const mine = Boolean(user?.uid && m.senderId === user.uid);
@@ -943,7 +977,7 @@ export function CompanyChatMessenger({
                     mine ? "bg-primary text-primary-foreground" : "bg-muted"
                   )}
                 >
-                  <MessageAuthorMeta mine={mine} sender={sender} createdAt={m.createdAt} />
+                  <MessageAuthorMeta mine={mine} sender={sender} message={m} />
                   {m.text ? (
                     <p className="whitespace-pre-wrap break-words">{m.text}</p>
                   ) : null}
@@ -1129,7 +1163,7 @@ export function CompanyChatMessenger({
           </div>
         </div>
       ) : null}
-    </>
+    </div>
   );
 
   return (
@@ -1141,6 +1175,11 @@ export function CompanyChatMessenger({
             ? "flex-1 min-h-0 h-full max-h-none rounded-none border-0 shadow-none"
             : "min-h-[420px] max-h-[calc(100vh-120px)] md:max-h-[calc(100vh-140px)]"
         )}
+        style={
+          mobileFull && mobileViewportHeight
+            ? { height: mobileViewportHeight, maxHeight: mobileViewportHeight }
+            : undefined
+        }
       >
         <div className="flex flex-1 min-h-0 w-full overflow-hidden">
           {mobileFull ? (

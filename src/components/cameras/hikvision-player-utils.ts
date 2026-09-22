@@ -14,18 +14,18 @@ export function hikPlayerContainerHasVideo(container: HTMLElement | null): boole
 
 export function waitForNonZeroContainerSize(
   el: HTMLElement,
-  maxWaitMs = 5000
-): Promise<boolean> {
+  maxWaitMs = 8000
+): Promise<{ width: number; height: number } | null> {
   return new Promise((resolve) => {
     const start = Date.now();
     const check = () => {
       const rect = el.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
-        resolve(true);
+        resolve({ width: Math.floor(rect.width), height: Math.floor(rect.height) });
         return;
       }
       if (Date.now() - start >= maxWaitMs) {
-        resolve(false);
+        resolve(null);
         return;
       }
       requestAnimationFrame(check);
@@ -34,18 +34,59 @@ export function waitForNonZeroContainerSize(
   });
 }
 
-/** Vynutí contain na video/canvas uvnitř EZUIKit DOM (mobil / orientace). */
-export function applyHikPlayerContainStyles(container: HTMLElement | null): void {
+/** Přizpůsobí EZUIKit player + video/canvas skutečné velikosti wrapperu. */
+export function resizePlayerToContainer(
+  container: HTMLElement | null,
+  player: unknown | null
+): void {
   if (!container) return;
-  container.querySelectorAll("video, canvas").forEach((el) => {
-    const node = el as HTMLElement;
-    node.style.objectFit = "contain";
-    node.style.maxWidth = "100%";
-    node.style.maxHeight = "100%";
-    node.style.width = "auto";
-    node.style.height = "auto";
-    node.style.margin = "auto";
+  const rect = container.getBoundingClientRect();
+  const width = Math.floor(rect.width);
+  const height = Math.floor(rect.height);
+  if (width <= 0 || height <= 0) return;
+
+  const p = player as Record<string, unknown> | null;
+  if (p) {
+    for (const method of ["resize", "reSize", "changeSize", "setSize", "updateSize"]) {
+      const fn = p[method];
+      if (typeof fn !== "function") continue;
+      try {
+        (fn as (w: number, h: number) => void).call(player, width, height);
+      } catch {
+        try {
+          (fn as (opts: { width: number; height: number }) => void).call(player, {
+            width,
+            height,
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  container.querySelectorAll("div").forEach((node) => {
+    const el = node as HTMLElement;
+    if (el === container) return;
+    el.style.width = "100%";
+    el.style.height = "100%";
+    el.style.maxWidth = "100%";
+    el.style.maxHeight = "100%";
   });
+
+  container.querySelectorAll("video, canvas").forEach((node) => {
+    const el = node as HTMLElement;
+    el.style.width = "100%";
+    el.style.height = "100%";
+    el.style.maxWidth = "100%";
+    el.style.maxHeight = "100%";
+    el.style.objectFit = "contain";
+  });
+}
+
+/** @deprecated use resizePlayerToContainer */
+export function applyHikPlayerContainStyles(container: HTMLElement | null): void {
+  resizePlayerToContainer(container, null);
 }
 
 export function watchHikPlayerFirstFrame(
@@ -69,7 +110,6 @@ export function watchHikPlayerFirstFrame(
   };
 }
 
-/** Chyby, které opravdu vyžadují nový stream token — ne telemetry 404. */
 export function isLikelyHikStreamFatalError(info: unknown): boolean {
   if (info == null) return false;
   const text =

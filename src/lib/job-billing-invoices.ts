@@ -4,6 +4,7 @@
 
 import type { Firestore } from "firebase/firestore";
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
@@ -16,6 +17,12 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
+import type { InvoiceCustomerSnapshot } from "@/lib/invoice-customer-snapshot";
+import {
+  invoiceRecipientAddressLines,
+  invoiceRecipientDisplayName,
+  snapshotFromInvoiceRecord,
+} from "@/lib/invoice-customer-snapshot";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { softDeleteLinkedDocumentsForInvoice } from "@/lib/portal-invoice-documents-sync";
 import {
@@ -1206,6 +1213,15 @@ export async function createTaxReceiptForAdvancePayment(params: {
       supplierDic: params.supplierDic ?? null,
       customerIco: recipient.customerIco,
       customerDic: recipient.customerDic,
+      customerSnapshot: snapshotFromInvoiceRecord({
+        customerId: params.customerId,
+        customerName: recipient.customerName,
+        customerAddressLines: recipient.customerAddressLines,
+        customerPhone: recipient.customerPhone,
+        customerEmail: recipient.customerEmail,
+        customerIco: recipient.customerIco,
+        customerDic: recipient.customerDic,
+      }),
       createdAt: serverTimestamp(),
       createdBy: params.userId,
     });
@@ -1857,6 +1873,7 @@ export async function updateTaxReceiptDocument(params: {
   jobName: string;
   customerName: string;
   customerAddressLines: string;
+  customerSnapshot?: InvoiceCustomerSnapshot | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
   supplierName: string;
@@ -1885,7 +1902,7 @@ export async function updateTaxReceiptDocument(params: {
   );
   const snap = await getDoc(invRef);
   if (!snap.exists()) throw new Error("Doklad neexistuje.");
-  const inv = snap.data() as {
+  const invBefore = snap.data() as {
     type?: string;
     documentNumber?: string;
     relatedInvoiceId?: string;
@@ -1903,8 +1920,15 @@ export async function updateTaxReceiptDocument(params: {
     supplierDic?: string | null;
     customerIco?: string | null;
     customerDic?: string | null;
+    customerId?: string | null;
+    customerName?: string;
+    customerAddressLines?: string;
+    customerPhone?: string | null;
+    customerEmail?: string | null;
+    customerSnapshot?: InvoiceCustomerSnapshot | null;
     note?: string;
   };
+  const inv = invBefore;
   if (inv.type !== JOB_INVOICE_TYPES.TAX_RECEIPT) {
     throw new Error("Upravit lze jen daňový doklad k platbě.");
   }
@@ -1992,13 +2016,43 @@ export async function updateTaxReceiptDocument(params: {
   });
   const bankText = formatBankBlockPlainLines(bankSnap);
 
+  const snapRecipient: InvoiceCustomerSnapshot =
+    params.customerSnapshot ??
+    snapshotFromInvoiceRecord({
+      ...(invBefore as Record<string, unknown>),
+      customerName: params.customerName,
+      customerAddressLines: params.customerAddressLines,
+      customerIco: custIco,
+      customerDic: custDic,
+      customerPhone: params.customerPhone ?? invBefore.customerPhone,
+      customerEmail: params.customerEmail ?? invBefore.customerEmail,
+    });
+
+  const resolvedName =
+    invoiceRecipientDisplayName(snapRecipient) || params.customerName.trim() || "Odběratel";
+  const resolvedAddr =
+    String(params.customerAddressLines ?? "").trim() ||
+    invoiceRecipientAddressLines(snapRecipient);
+  const resolvedPhone =
+    params.customerPhone ??
+    snapRecipient.phone ??
+    invBefore.customerPhone ??
+    null;
+  const resolvedEmail =
+    params.customerEmail ??
+    snapRecipient.email ??
+    invBefore.customerEmail ??
+    null;
+  const resolvedIco = custIco ?? snapRecipient.ico ?? null;
+  const resolvedDic = custDic ?? snapRecipient.dic ?? null;
+
   const recipient = resolveInvoiceRecipient({
-    fallbackCustomerName: params.customerName,
-    customerAddressLines: params.customerAddressLines,
-    customerPhone: params.customerPhone,
-    customerEmail: params.customerEmail,
-    customerIco: custIco,
-    customerDic: custDic,
+    fallbackCustomerName: resolvedName,
+    customerAddressLines: resolvedAddr,
+    customerPhone: resolvedPhone,
+    customerEmail: resolvedEmail,
+    customerIco: resolvedIco,
+    customerDic: resolvedDic,
     supplierNameToAvoid: params.supplierName,
   });
   const customerParty = formatCustomerPartyLines(
@@ -2052,11 +2106,31 @@ export async function updateTaxReceiptDocument(params: {
     note: params.note ?? inv.note,
   });
 
+  const nextSnapshot: InvoiceCustomerSnapshot = {
+    ...snapRecipient,
+    customerId:
+      snapRecipient.customerId ??
+      (params.customerSnapshot?.customerId ?? invBefore.customerId ?? null),
+    companyName: snapRecipient.companyName ?? null,
+    firstName: snapRecipient.firstName ?? null,
+    lastName: snapRecipient.lastName ?? null,
+    street: snapRecipient.street ?? null,
+    city: snapRecipient.city ?? null,
+    postalCode: snapRecipient.postalCode ?? null,
+    country: snapRecipient.country ?? "CZ",
+    ico: resolvedIco,
+    dic: resolvedDic,
+    email: resolvedEmail ?? null,
+    phone: resolvedPhone ?? null,
+  };
+
   await updateDoc(invRef, {
     customerName: recipient.customerName,
     customerAddressLines: recipient.customerAddressLines,
     customerPhone: recipient.customerPhone,
     customerEmail: recipient.customerEmail,
+    customerId: nextSnapshot?.customerId ?? invBefore.customerId ?? null,
+    customerSnapshot: nextSnapshot,
     issueDate,
     taxSupplyDate,
     paymentDate,
@@ -2075,6 +2149,27 @@ export async function updateTaxReceiptDocument(params: {
     updatedAt: serverTimestamp(),
     updatedBy: params.userId,
   });
+
+  try {
+    await addDoc(collection(params.firestore, "companies", params.companyId, "activityLogs"), {
+      organizationId: params.companyId,
+      companyId: params.companyId,
+      userId: params.userId,
+      actionType: "TAX_DOCUMENT_UPDATED",
+      actionLabel: "Úprava daňového dokladu k platbě",
+      entityType: "invoice",
+      entityId: params.invoiceId,
+      jobId: inv.jobId ?? null,
+      metadata: {
+        documentNumber,
+        oldCustomerSnapshot: invBefore.customerSnapshot ?? null,
+        newCustomerSnapshot: nextSnapshot,
+      },
+      createdAt: serverTimestamp(),
+    });
+  } catch {
+    /* audit must not block save */
+  }
 
   return { pdfHtml: html };
 }

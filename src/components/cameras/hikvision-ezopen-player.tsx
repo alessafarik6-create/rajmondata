@@ -22,8 +22,8 @@ import {
   setHikvisionPlayerStreamMeta,
 } from "@/lib/hikvision/player-runtime-diagnostics";
 import {
-  applyHikPlayerContainStyles,
   hikPlayerContainerHasVideo,
+  resizePlayerToContainer,
   isLikelyHikStreamFatalError,
   waitForNonZeroContainerSize,
   watchHikPlayerFirstFrame,
@@ -159,7 +159,12 @@ export function HikvisionEzopenPlayer(props: {
   }, []);
 
   useEffect(() => {
-    const onFs = () => setFsActive(Boolean(document.fullscreenElement));
+    const onFs = () => {
+      setFsActive(Boolean(document.fullscreenElement));
+      requestAnimationFrame(() =>
+        resizePlayerToContainer(playerContainerRef.current, playerRef.current)
+      );
+    };
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
@@ -243,6 +248,8 @@ export function HikvisionEzopenPlayer(props: {
         initInFlightRef.current = false;
         return;
       }
+      const playerW = sized.width;
+      const playerH = sized.height;
 
       const EZUIKitPlayer = getHikvisionPlayerConstructor();
       if (!EZUIKitPlayer || cancelled) {
@@ -277,8 +284,8 @@ export function HikvisionEzopenPlayer(props: {
         plugin: [],
         header: mode === "live" ? ["capture"] : [],
         audio: 0,
-        width: compact ? 320 : "100%",
-        height: compact ? 180 : "100%",
+        width: compact ? 320 : playerW,
+        height: compact ? 180 : playerH,
         handleError: (info: unknown) => {
           if (cancelled) return;
           if (hikPlayerContainerHasVideo(containerEl)) {
@@ -305,6 +312,7 @@ export function HikvisionEzopenPlayer(props: {
         handleSuccess: () => {
           if (cancelled) return;
           hikLiveLog("PLAY START");
+          resizePlayerToContainer(containerEl, playerRef.current);
           markPlaying();
         },
       };
@@ -320,18 +328,22 @@ export function HikvisionEzopenPlayer(props: {
         setHikvisionPlayerPhase("PLAYER_CREATED");
         setUiState("CONNECTING");
 
-        player.on?.("play", () => markPlaying());
+        player.on?.("play", () => {
+          resizePlayerToContainer(containerEl, player);
+          markPlaying();
+        });
         player.on?.("firstFrame", () => {
           hikLiveLog("FIRST FRAME");
+          resizePlayerToContainer(containerEl, player);
           markPlaying();
         });
 
         stopFrameWatch = watchHikPlayerFirstFrame(containerEl, () => {
           hikLiveLog("FIRST FRAME (dom)");
-          applyHikPlayerContainStyles(containerEl);
+          resizePlayerToContainer(containerEl, player);
           markPlaying();
         });
-        applyHikPlayerContainStyles(containerEl);
+        requestAnimationFrame(() => resizePlayerToContainer(containerEl, player));
       } catch {
         setUiState("ERROR");
         setErrorCode("PLAYER_INIT_FAILED");
@@ -368,10 +380,10 @@ export function HikvisionEzopenPlayer(props: {
     const el = playerContainerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      applyHikPlayerContainStyles(el);
+      resizePlayerToContainer(el, playerRef.current);
     });
     ro.observe(el);
-    const onOrient = () => applyHikPlayerContainStyles(el);
+    const onOrient = () => resizePlayerToContainer(el, playerRef.current);
     window.addEventListener("orientationchange", onOrient);
     window.addEventListener("resize", onOrient);
     return () => {

@@ -1055,6 +1055,7 @@ export function JobBillingInvoicesSection({
                         </Button>
                         {(t === JOB_INVOICE_TYPES.ADVANCE ||
                           t === JOB_INVOICE_TYPES.FINAL_INVOICE ||
+                          t === JOB_INVOICE_TYPES.TAX_RECEIPT ||
                           t === PORTAL_MANUAL_INVOICE_TYPE ||
                           isWorkBudgetSourceInvoice(row)) &&
                         canManage ? (

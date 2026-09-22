@@ -1,21 +1,18 @@
-/* EZUIKit video/canvas — bez deformace (object-fit: contain) */
 .hik-ezopen-shell--mobile-fit {
   max-height: 100dvh;
   min-height: 0;
 }
 
 .hik-ezopen-viewport {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #000;
   position: relative;
   width: 100%;
+  background: #000;
+  overflow: hidden;
 }
 
 .hik-ezopen-viewport--desktop {
-  flex: 1;
-  min-height: 200px;
+  flex: 1 1 auto;
+  min-height: 240px;
   aspect-ratio: 16 / 9;
 }
 
@@ -23,31 +20,14 @@
   flex: 0 0 auto;
   width: 100%;
   aspect-ratio: 16 / 9;
-  max-height: min(56vw, 70vh);
 }
 
 .hik-ezopen-viewport--fullscreen {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
   height: 100%;
-  max-height: none;
   aspect-ratio: unset;
-}
-
-.hik-ezopen-viewport video,
-.hik-ezopen-viewport canvas,
-.hik-ezopen-viewport .ezplayer-container,
-.hik-ezopen-viewport [id^="hik-ezopen-"] {
-  object-fit: contain !important;
-}
-
-.hik-ezopen-viewport video,
-.hik-ezopen-viewport canvas {
-  max-width: 100% !important;
-  max-height: 100% !important;
-  width: auto !important;
-  height: auto !important;
-  margin: auto;
 }
 
 .hik-ezopen-player-host {
@@ -56,6 +36,24 @@
   width: 100%;
   height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.hik-ezopen-player-host > div {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+.hik-ezopen-player-host video,
+.hik-ezopen-player-host canvas {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
+  display: block;
+  margin: 0 auto;
 }

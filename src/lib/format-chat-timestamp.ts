@@ -3,6 +3,27 @@ import {
   safeTime,
 } from "@/lib/date-safe";
 
+/** Normalizuje timestamp zprávy (Firestore / ISO / ms). */
+export function normalizeMessageDate(value: unknown): Date | null {
+  if (value == null || isFirestoreServerTimestampPlaceholder(value)) return null;
+  const ms = safeTime(value);
+  if (!ms) return null;
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Řádek autor · datum · čas pro chat bubliny. */
+export function formatMessageAuthorDateTime(value: unknown): string {
+  const d = normalizeMessageDate(value);
+  if (!d) {
+    if (value != null && isFirestoreServerTimestampPlaceholder(value)) return "Odesílám…";
+    return "—";
+  }
+  const datePart = `${d.getDate()}. ${d.getMonth() + 1}. ${d.getFullYear()}`;
+  const timePart = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${datePart} · ${timePart}`;
+}
+
 /** Vrací null, pokud čas ještě není k dispozici (serverTimestamp placeholder). */
 export function formatChatTimestamp(value: unknown): string | null {
   if (value == null) return null;
