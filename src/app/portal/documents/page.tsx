@@ -44,6 +44,8 @@ import {
   Printer,
   Mail,
   Send,
+  Check,
+  MoreVertical,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -108,6 +110,16 @@ import {
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { canManagePortalInvoices } from "@/lib/portal-invoice-permissions";
+import { MarkInvoicePaidDialog } from "@/components/invoices/mark-invoice-paid-dialog";
+import { getPortalInvoicePaymentState } from "@/lib/invoice-payment-state";
+import { isIssuedInvoiceEligibleForQuickPay } from "@/lib/portal-invoice-payment-eligibility";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { JOB_EXPENSE_DOCUMENT_SOURCE } from "@/lib/job-expense-document-sync";
 import {
@@ -1099,6 +1111,11 @@ function DocumentsPageContent() {
   );
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
   const companyId = profile?.companyId as string | undefined;
+  const canRecordInvoicePayment = useMemo(() => {
+    if (documentsReadOnly) return false;
+    const r = String((profile as { role?: string } | null | undefined)?.role ?? "employee");
+    return canManagePortalInvoices(r);
+  }, [documentsReadOnly, profile]);
 
   const companyDocRef = useMemoFirebase(
     () => (firestore && companyId ? doc(firestore, "companies", companyId) : null),
@@ -4024,6 +4041,7 @@ function DocumentsPageContent() {
                 paymentFilter={documentsPaymentFilter}
                 onPaymentFilterChange={setDocumentsPaymentFilter}
                 costCategoryFilter={documentsCostCategoryFilter}
+                canRecordInvoicePayment={canRecordInvoicePayment}
               />
             </section>
           )}
@@ -4081,6 +4099,7 @@ function DocumentsPageContent() {
             paymentFilter={documentsPaymentFilter}
             onPaymentFilterChange={setDocumentsPaymentFilter}
             costCategoryFilter={documentsCostCategoryFilter}
+            canRecordInvoicePayment={canRecordInvoicePayment}
           />
         </TabsContent>
 
@@ -6201,6 +6220,7 @@ function DocumentTableIssued({
   flashDomScope,
   paymentFlashRowKey = null,
   costCategoryFilter = "__all__",
+  canRecordInvoicePayment = false,
 }: {
   data: CompanyDocumentRow[];
   invoices?: Array<Record<string, unknown> & { id: string }>;
@@ -6225,10 +6245,14 @@ function DocumentTableIssued({
   flashDomScope: string;
   paymentFlashRowKey?: string | null;
   costCategoryFilter?: string;
+  canRecordInvoicePayment?: boolean;
 }) {
   const firestore = useFirestore();
   const { toast } = useToast();
   const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
+  const [markPaidInv, setMarkPaidInv] = useState<
+    (Record<string, unknown> & { id: string }) | null
+  >(null);
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailInv, setEmailInv] = useState<(Record<string, unknown> & { id: string }) | null>(null);
   const [emailIssuedDoc, setEmailIssuedDoc] = useState<CompanyDocumentRow | null>(null);
@@ -6496,6 +6520,7 @@ function DocumentTableIssued({
   const loading = isLoading || isLoadingInvoices;
 
   return (
+    <>
     <Card className="min-w-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
       <div className="flex flex-col justify-between gap-2 border-b border-gray-200 p-2 sm:flex-row sm:items-center sm:p-3">
         <div className="relative w-full max-w-xs">
@@ -6909,6 +6934,11 @@ function DocumentTableIssued({
               const flashIssuedInv =
                 paymentFlashRowKey === `inv:${inv.id}` &&
                 paymentFlashRowKey !== null;
+              const invPayState = getPortalInvoicePaymentState(inv, todayIso);
+              const showMarkPaidBtn =
+                canRecordInvoicePayment &&
+                !readOnlyTrash &&
+                isIssuedInvoiceEligibleForQuickPay(inv, todayIso);
               return (
                 <div
                   key={`inv-${inv.id}`}
@@ -6971,6 +7001,40 @@ function DocumentTableIssued({
                     >
                       <Mail className="h-3.5 w-3.5" />
                     </Button>
+                    {showMarkPaidBtn ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="hidden h-8 gap-1 px-2 text-xs text-emerald-950 lg:inline-flex"
+                        title="Označit jako uhrazeno"
+                        onClick={() => setMarkPaidInv(inv)}
+                      >
+                        <Check className="h-3.5 w-3.5 shrink-0" />
+                        Uhrazeno
+                      </Button>
+                    ) : null}
+                    {showMarkPaidBtn ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className={cn(ib, "lg:hidden")}
+                            title="Další akce"
+                          >
+                            <MoreVertical className="h-3.5 w-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => setMarkPaidInv(inv)}>
+                            <Check className="h-4 w-4 mr-2" />
+                            Označit jako uhrazeno
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : null}
                     {showDeleteButton && !readOnlyTrash ? (
                       <Button
                         type="button"
@@ -6993,7 +7057,17 @@ function DocumentTableIssued({
                       <Badge className="h-5 bg-emerald-700/90 px-1 text-[9px] text-white">
                         {invoiceDocTypeLabel(inv)}
                       </Badge>
-                      {invoiceStatusBadge(String(inv.status ?? ""))}
+                      {invPayState.isPaid || invPayState.remainingAmount <= 0 ? (
+                        <Badge className="h-5 bg-emerald-700 px-1.5 text-[10px] text-white">
+                          Uhrazeno
+                        </Badge>
+                      ) : invPayState.isPartiallyPaid ? (
+                        <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                          Částečně uhrazeno
+                        </Badge>
+                      ) : (
+                        invoiceStatusBadge(String(inv.status ?? "unpaid"))
+                      )}
                       {readOnlyTrash ? (
                         <Badge className="h-5 bg-red-700 px-1 text-[9px] text-white hover:bg-red-700">
                           Smazáno
@@ -7089,6 +7163,18 @@ function DocumentTableIssued({
         )}
       </CardContent>
     </Card>
+    {markPaidInv && companyId ? (
+      <MarkInvoicePaidDialog
+        open={Boolean(markPaidInv)}
+        onOpenChange={(o) => {
+          if (!o) setMarkPaidInv(null);
+        }}
+        companyId={companyId}
+        invoice={markPaidInv}
+        todayIso={todayIso}
+      />
+    ) : null}
+    </>
   );
 }
 

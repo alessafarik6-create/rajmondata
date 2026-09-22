@@ -20,6 +20,7 @@ import { PortalInvoicePreviewViewer } from "@/components/invoices/portal-invoice
 import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice-preview-dialog";
 import { formatCsDateTimeDot } from "@/lib/date-safe";
 import { canManagePortalInvoices } from "@/lib/portal-invoice-permissions";
+import { PortalInvoicePaymentsPanel } from "@/components/invoices/portal-invoice-payments-panel";
 
 export default function InvoiceDocumentPage() {
   const params = useParams();
@@ -293,6 +294,13 @@ export default function InvoiceDocumentPage() {
       <p className="text-sm text-neutral-700">
         Náhled odpovídá exportu PDF. U portálových faktur lze stáhnout PDF přímo nebo použít tisk.
       </p>
+      {companyId && invoiceId ? (
+        <PortalInvoicePaymentsPanel
+          companyId={companyId}
+          invoiceId={invoiceId}
+          invoice={invoice as Record<string, unknown>}
+        />
+      ) : null}
       {isPortalManual && emailHistory.length > 0 ? (
         <div className="rounded-lg border border-neutral-200 bg-white p-3">
           <h2 className="text-sm font-semibold text-neutral-900">Historie odeslání e-mailem</h2>
