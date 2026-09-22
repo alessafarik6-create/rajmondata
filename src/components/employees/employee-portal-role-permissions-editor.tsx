@@ -24,6 +24,7 @@ import {
   type PortalModuleId,
 } from "@/lib/portal-permissions";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
 import { EmployeeCalendarPermissionsBlock } from "@/components/employees/employee-calendar-permissions-block";
 import {
   aggregateScheduleModuleLevel,
@@ -44,6 +45,8 @@ export function EmployeePortalRolePermissionsEditor(props: {
   onLevelsChange: (levels: Record<PortalModuleId, PortalAccessLevel>) => void;
   calendarLevels: Record<CalendarSubPermissionKey, PortalAccessLevel>;
   onCalendarLevelsChange: (levels: Record<CalendarSubPermissionKey, PortalAccessLevel>) => void;
+  dashboardAiAssistantEnabled?: boolean;
+  onDashboardAiAssistantEnabledChange?: (enabled: boolean) => void;
   disabled?: boolean;
   roleSelectClassName?: string;
 }) {
@@ -54,6 +57,8 @@ export function EmployeePortalRolePermissionsEditor(props: {
     onLevelsChange,
     calendarLevels,
     onCalendarLevelsChange,
+    dashboardAiAssistantEnabled = true,
+    onDashboardAiAssistantEnabledChange,
     disabled,
     roleSelectClassName,
   } = props;
@@ -228,6 +233,25 @@ export function EmployeePortalRolePermissionsEditor(props: {
                 </li>
               ))}
             </ul>
+          </div>
+
+          <div className="rounded-md border border-slate-200 p-4 space-y-2">
+            <p className="text-sm font-semibold text-black">Dashboard</p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <Label className="text-sm font-medium text-slate-900">
+                  Zobrazovat AI sekretářku na hlavní stránce
+                </Label>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Widget RAJMONDATA AI na přehledu. Neovlivňuje modul AI centrum v menu.
+                </p>
+              </div>
+              <Switch
+                checked={dashboardAiAssistantEnabled}
+                disabled={disabled || !onDashboardAiAssistantEnabledChange}
+                onCheckedChange={(v) => onDashboardAiAssistantEnabledChange?.(v)}
+              />
+            </div>
           </div>
         </>
       ) : (

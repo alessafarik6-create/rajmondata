@@ -4,6 +4,7 @@ import React, { createContext, useContext, useMemo } from "react";
 import {
   canAccessPortalModule,
   portalPermissionsAllowMutation,
+  parseDashboardAiAssistantEnabled,
   resolveEffectivePortalPermissions,
   roleIsReadOnlyPortal,
   type PortalModuleId,
@@ -23,6 +24,7 @@ type PortalPermissionsContextValue = {
   canRead: (moduleId: PortalModuleId) => boolean;
   canWrite: (moduleId: PortalModuleId) => boolean;
   readOnlyPortal: boolean;
+  dashboardAiAssistantEnabled: boolean;
   cameras: CameraPermissionsResolved;
   calendar: CalendarPermissionsResolved;
 };
@@ -42,6 +44,7 @@ export function PortalPermissionsProvider(props: {
       employeeDoc: props.employeeDoc,
     });
     const readOnlyPortal = roleIsReadOnlyPortal(props.role);
+    const dashboardAiAssistantEnabled = parseDashboardAiAssistantEnabled(props.employeeDoc);
 
     const cameras = resolveCameraPermissions({
       role: props.role,
@@ -68,6 +71,7 @@ export function PortalPermissionsProvider(props: {
         return portalPermissionsAllowMutation(permissions, moduleId, props.role);
       },
       readOnlyPortal,
+      dashboardAiAssistantEnabled,
       cameras,
       calendar,
     };

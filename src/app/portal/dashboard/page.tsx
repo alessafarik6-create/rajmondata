@@ -89,6 +89,7 @@ import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
 import { useInstallationCalendarBadgeCount } from "@/hooks/use-installation-calendar-badge-count";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
 
@@ -202,6 +203,8 @@ export default function CompanyDashboard() {
   const isAccountant = role === "accountant";
   const isEmployee = role === "employee";
   const isCustomer = role === "customer";
+  const portalPerms = usePortalPermissionsOptional();
+  const showAiSecretary = portalPerms?.dashboardAiAssistantEnabled !== false;
 
   useEffect(() => {
     if (isProfileLoading) return;
@@ -997,7 +1000,7 @@ export default function CompanyDashboard() {
 
   return (
     <>
-      {belowLg && showAdminDashboard && companyId ? (
+      {belowLg && showAdminDashboard && companyId && showAiSecretary ? (
         <div className="lg:hidden px-3 pt-2 pb-1 max-w-full overflow-x-hidden">
           <DashboardAiSecretaryPanel companyId={companyId} />
         </div>
@@ -1193,7 +1196,7 @@ export default function CompanyDashboard() {
         <div className="space-y-4 sm:space-y-5">
           {companyId ? (
             <>
-              <DashboardAiSecretaryPanel companyId={companyId} />
+              {showAiSecretary ? <DashboardAiSecretaryPanel companyId={companyId} /> : null}
               <PortalDashboardCompactGrid
                 companyId={companyId}
                 todayIso={todayIso}
@@ -1202,6 +1205,8 @@ export default function CompanyDashboard() {
                 jobsLoading={isJobsLoading}
                 importLeadsRows={importLeadsRows}
                 importLeadsLoading={importLeadsLoading}
+                leadPortfolioStats={leadPortfolioStats}
+                leadPortfolioLoading={leadPortfolioLoading}
                 latestLeads={latestFiveDashboardLeads}
                 importLeadOverlayByKey={
                   importLeadOverlayByKey as Map<string, InquiryTypeOverlayFields>

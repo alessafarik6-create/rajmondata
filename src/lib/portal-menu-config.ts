@@ -330,6 +330,15 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
   },
 ];
 
+/** Jednotný registr modulů portálu (sidebar + oprávnění). `permissionKey` = `id`. */
+export const PORTAL_MODULES = PORTAL_SIDEBAR_MENU_DEFS.map((d) => ({
+  key: d.id,
+  permissionKey: d.id,
+  label: d.label,
+  route: d.href,
+  type: d.type,
+}));
+
 export function licenseKeysSatisfied(
   keys: readonly CanonicalModuleKey[] | undefined,
   effectiveModules: Record<string, boolean | null | undefined>

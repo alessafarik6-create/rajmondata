@@ -16,11 +16,28 @@ import {
 } from "@/lib/portal-menu-config";
 import { normalizeCompanyRole } from "@/lib/company-privilege";
 import {
+  canAccessPortalModule,
+  resolveEffectivePortalPermissions,
+  type PortalModuleId,
+} from "@/lib/portal-permissions";
+import {
   explainFleetMenuHiddenReason,
   FLEET_PORTAL_MODULE_ID,
   isFleetMenuLicensed,
 } from "@/lib/portal-menu-fleet-access";
 import { resolveCameraPermissions } from "@/lib/hikvision/camera-access";
+
+function portalMenuPermissionReadOk(
+  def: PortalSidebarMenuDef,
+  ctx: PortalMenuVisibilityCtx
+): boolean {
+  const perms = resolveEffectivePortalPermissions({
+    role: ctx.role,
+    globalRoles: ctx.globalRoles,
+    employeeDoc: ctx.employeeRow,
+  });
+  return canAccessPortalModule(perms, def.id as PortalModuleId, "read");
+}
 
 function portalMenuRoleAllowed(def: PortalSidebarMenuDef, role: string): boolean {
   const r = normalizeCompanyRole(role);
@@ -79,7 +96,16 @@ export function isPortalMenuItemVisible(
     }
   }
 
-  if (def.type === "system") return true;
+  if (def.type === "system" && def.id === "overview") {
+    return portalMenuPermissionReadOk(def, ctx);
+  }
+
+  if (def.type === "system") {
+    if (!portalMenuPermissionReadOk(def, ctx)) return false;
+    return true;
+  }
+
+  if (!portalMenuPermissionReadOk(def, ctx)) return false;
 
   if (!company) return false;
 

@@ -7,6 +7,8 @@ import { ArrowRight } from "lucide-react";
 
 type Props = {
   title: string;
+  /** Vedle nadpisu (např. součet v Kč). */
+  titleAddon?: React.ReactNode;
   icon: React.ReactNode;
   accentClass?: string;
   href?: string;
@@ -18,6 +20,7 @@ type Props = {
 /** Kompaktní dashboard karta — inspirace blokům v detailu zakázky. */
 export function DashboardCompactCard({
   title,
+  titleAddon,
   icon,
   accentClass = "border-l-sky-500",
   href,
@@ -34,11 +37,16 @@ export function DashboardCompactCard({
         className
       )}
     >
-      <header className="flex items-center gap-2 px-3.5 pt-3.5 pb-1">
+      <header className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 pt-3.5 pb-1">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-foreground">
           {icon}
         </span>
-        <h2 className="text-sm font-semibold leading-tight text-foreground">{title}</h2>
+        <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <h2 className="text-sm font-semibold leading-tight text-foreground">{title}</h2>
+          {titleAddon ? (
+            <span className="text-sm font-semibold tabular-nums text-violet-800">{titleAddon}</span>
+          ) : null}
+        </div>
       </header>
       <div className="min-h-0 flex-1 overflow-hidden px-3.5 pb-2 text-sm">{children}</div>
       {href ? (

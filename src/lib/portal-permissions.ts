@@ -35,6 +35,19 @@ const SENSITIVE_MODULE_IDS = new Set<PortalModuleId>([
   "fleet",
 ]);
 
+/** Individuální widget AI sekretářky na dashboardu (≠ modul AI centrum). */
+export const DASHBOARD_AI_ASSISTANT_EMPLOYEE_FIELD = "dashboardAiAssistantEnabled";
+
+export function parseDashboardAiAssistantEnabled(
+  employeeDoc: Record<string, unknown> | null | undefined
+): boolean {
+  if (!employeeDoc) return true;
+  if (!Object.prototype.hasOwnProperty.call(employeeDoc, DASHBOARD_AI_ASSISTANT_EMPLOYEE_FIELD)) {
+    return true;
+  }
+  return employeeDoc[DASHBOARD_AI_ASSISTANT_EMPLOYEE_FIELD] !== false;
+}
+
 export const PORTAL_PERMISSION_MODULES: readonly PortalPermissionModuleMeta[] =
   PORTAL_SIDEBAR_MENU_DEFS.map((d) => ({
     id: d.id as PortalModuleId,
@@ -227,7 +240,10 @@ export function resolveEffectivePortalPermissions(
 
   if (role === "accountant") {
     const base = buildAccountantPermissionPreset();
-    return applyOverridesCapReadOnly(base, overrides);
+    if (Object.keys(overrides).length > 0) {
+      return applyOverrides(base, overrides, "write");
+    }
+    return base;
   }
 
   if (role === "manager") {
@@ -298,7 +314,6 @@ export function portalPermissionsAllowMutation(
   moduleId: PortalModuleId,
   role: string
 ): boolean {
-  if (roleIsReadOnlyPortal(role)) return false;
   return canAccessPortalModule(permissions, moduleId, "write");
 }
 

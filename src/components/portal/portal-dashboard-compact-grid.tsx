@@ -25,6 +25,8 @@ import { useActiveJobTasksFromJobList } from "@/components/jobs/use-active-job-t
 import { useFirestore } from "@/firebase";
 import { buildMergedDashboardTaskItems } from "@/lib/dashboard-task-items-merge";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
+import type { LeadPortfolioStats } from "@/lib/lead-portfolio-value";
+import { formatMoneyKc } from "@/lib/job-payment-summary";
 import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
 import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
 import {
@@ -67,6 +69,8 @@ export type PortalDashboardCompactGridProps = {
   jobsLoading: boolean;
   importLeadsRows: LeadImportRow[];
   importLeadsLoading: boolean;
+  leadPortfolioStats?: LeadPortfolioStats | null;
+  leadPortfolioLoading?: boolean;
   latestLeads: LeadImportRow[];
   importLeadOverlayByKey: Map<string, InquiryTypeOverlayFields & { receivedAt?: unknown }>;
   employees: Record<string, unknown>[] | undefined;
@@ -113,6 +117,8 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
   const vyrobaAccess = usePortalModuleAccess("vyroba");
   const offersAccess = usePortalModuleAccess("offers");
   const meetingsAccess = usePortalModuleAccess("meetingRecords");
+  const chatAccess = usePortalModuleAccess("chat");
+  const activityAccess = usePortalModuleAccess("activity");
 
   const jobNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -255,11 +261,19 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
       });
     }
     if (leadsAccess.canRead) {
+      const portfolioGross = props.leadPortfolioStats?.totalGrossKc ?? 0;
+      const portfolioTitleAddon =
+        props.leadPortfolioLoading && !props.leadPortfolioStats
+          ? "…"
+          : portfolioGross > 0
+            ? formatMoneyKc(portfolioGross)
+            : null;
       list.push({
         id: "leads",
         node: (
           <DashboardCompactCard
             title="Poptávky"
+            titleAddon={portfolioTitleAddon}
             icon={<Inbox className="h-4 w-4 text-violet-600" />}
             accentClass="border-l-violet-500"
             href="/portal/leads"
@@ -272,6 +286,15 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
                 <p className="text-muted-foreground">
                   Celkem <strong className="text-foreground">{leadStats.total}</strong> · otevřené{" "}
                   <strong className="text-foreground">{leadStats.open}</strong>
+                  {props.leadPortfolioStats ? (
+                    <>
+                      {" "}
+                      · aktivní s hodnotou{" "}
+                      <strong className="text-foreground">
+                        {props.leadPortfolioStats.activeCount}
+                      </strong>
+                    </>
+                  ) : null}
                 </p>
                 <ul className="space-y-1">
                   {leadStats.latest.map((r) => {
@@ -390,7 +413,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
         node: <DashboardOffersCompact companyId={props.companyId} />,
       });
     }
-    if (!props.chatLoading && props.unreadChatCount > 0) {
+    if (chatAccess.canRead && !props.chatLoading && props.unreadChatCount > 0) {
       list.push({
         id: "messages",
         node: (
@@ -443,7 +466,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
         node: <DashboardPendingDocumentsCompact pendingDocuments={props.pendingDocuments} />,
       });
     }
-    if (activityItems.length > 0) {
+    if (activityAccess.canRead && activityItems.length > 0) {
       list.push({
         id: "activity",
         node: (
@@ -495,6 +518,10 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
     user?.uid,
     viewerEmployeeId,
     leadsAccess.canWrite,
+    chatAccess.canRead,
+    activityAccess.canRead,
+    props.leadPortfolioStats,
+    props.leadPortfolioLoading,
   ]);
 
   return (

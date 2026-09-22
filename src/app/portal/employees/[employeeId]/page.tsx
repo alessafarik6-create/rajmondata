@@ -57,6 +57,7 @@ import {
   initialPortalPermissionLevelsForEmployee,
   type PortalAccessLevel,
   type PortalModuleId,
+  parseDashboardAiAssistantEnabled,
 } from "@/lib/portal-permissions";
 import {
   aggregateScheduleModuleLevel,
@@ -501,6 +502,7 @@ export default function EmployeeDetailPage() {
     Record<CalendarSubPermissionKey, PortalAccessLevel>
   >(() => initialCalendarPermissionsForEmployee(null, "none"));
   const [visibleInTerminal, setVisibleInTerminal] = useState(true);
+  const [dashboardAiAssistantEnabled, setDashboardAiAssistantEnabled] = useState(true);
 
   useEffect(() => {
     if (!employeeDoc) return;
@@ -513,6 +515,7 @@ export default function EmployeeDetailPage() {
       initialCalendarPermissionsForEmployee(row, levels.schedule ?? "none")
     );
     setVisibleInTerminal(row.visibleInAttendanceTerminal !== false);
+    setDashboardAiAssistantEnabled(parseDashboardAiAssistantEnabled(row));
   }, [employeeDoc]);
 
   const saveOrg = async () => {
@@ -540,6 +543,7 @@ export default function EmployeeDetailPage() {
             return full;
           })(),
           calendarPermissions: normalizeCalendarPermissionsForFirestore(calendarLevels),
+          dashboardAiAssistantEnabled,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1403,6 +1407,8 @@ export default function EmployeeDetailPage() {
                 onLevelsChange={setModuleLevels}
                 calendarLevels={calendarLevels}
                 onCalendarLevelsChange={setCalendarLevels}
+                dashboardAiAssistantEnabled={dashboardAiAssistantEnabled}
+                onDashboardAiAssistantEnabledChange={setDashboardAiAssistantEnabled}
                 roleSelectClassName={selectCls}
               />
 

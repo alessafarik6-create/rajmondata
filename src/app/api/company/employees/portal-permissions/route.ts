@@ -19,6 +19,7 @@ type Body = {
     admin?: boolean;
   } | null;
   calendarPermissions?: CalendarPermissionsDoc | null;
+  dashboardAiAssistantEnabled?: boolean;
 };
 
 function normalizeLevel(raw: unknown): PortalAccessLevel | null {
@@ -87,7 +88,9 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Zaměstnanec neexistuje." }, { status: 404 });
   }
 
-  const before = (empSnap.data()?.portalModulePermissions ?? {}) as Record<string, string>;
+  const empData = empSnap.data() as Record<string, unknown>;
+  const before = (empData?.portalModulePermissions ?? {}) as Record<string, string>;
+  const beforeAi = empData?.dashboardAiAssistantEnabled;
 
   const patch: Record<string, unknown> = {
     portalModulePermissions,
@@ -114,15 +117,24 @@ export async function PATCH(request: NextRequest) {
     }
   }
 
+  if (typeof body.dashboardAiAssistantEnabled === "boolean") {
+    patch.dashboardAiAssistantEnabled = body.dashboardAiAssistantEnabled;
+  }
+
   await empRef.set(patch, { merge: true });
 
   try {
     await db.collection("companies").doc(companyId).collection("activity_log").add({
-      actionType: "employee.portal_permissions_updated",
+      actionType: "USER_PERMISSIONS_UPDATED",
       actionLabel: "Změna oprávnění portálu",
       entityType: "employee",
       entityId: employeeId,
-      details: JSON.stringify({ before, after: portalModulePermissions }),
+      details: JSON.stringify({
+        oldPermissions: before,
+        newPermissions: portalModulePermissions,
+        oldDashboardAiAssistant: beforeAi,
+        newDashboardAiAssistant: patch.dashboardAiAssistantEnabled ?? beforeAi,
+      }),
       createdBy: callerUid,
       createdAt: FieldValue.serverTimestamp(),
     });

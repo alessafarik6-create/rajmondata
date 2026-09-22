@@ -42,6 +42,8 @@ type Body = {
   portalModulePermissions?: Record<string, string>;
   /** Schůzky / montáže v kalendáři — `employees.calendarPermissions`. */
   calendarPermissions?: CalendarPermissionsDoc | null;
+  /** Widget RAJMONDATA AI na /portal/dashboard (user-scoped). */
+  dashboardAiAssistantEnabled?: boolean;
 };
 
 /**
@@ -132,6 +134,7 @@ export async function PATCH(request: NextRequest) {
   const hasPortalMatrix =
     body.portalModulePermissions != null &&
     typeof body.portalModulePermissions === "object";
+  const hasAiToggle = typeof body.dashboardAiAssistantEnabled === "boolean";
 
   if (
     !hasOrgRole &&
@@ -140,7 +143,8 @@ export async function PATCH(request: NextRequest) {
     !hasPr &&
     !hasMn &&
     !hasPortalMods &&
-    !hasPortalMatrix
+    !hasPortalMatrix &&
+    !hasAiToggle
   ) {
     return NextResponse.json(
       {
@@ -233,7 +237,35 @@ export async function PATCH(request: NextRequest) {
     }
   }
 
+  if (typeof body.dashboardAiAssistantEnabled === "boolean") {
+    patch.dashboardAiAssistantEnabled = body.dashboardAiAssistantEnabled;
+  }
+
+  const beforePermissions = (emp.portalModulePermissions ?? {}) as Record<string, string>;
+  const beforeAi = emp.dashboardAiAssistantEnabled;
+
   await empRef.set(patch, { merge: true });
+
+  if (hasPortalMatrix || typeof body.dashboardAiAssistantEnabled === "boolean") {
+    try {
+      await db.collection("companies").doc(companyId).collection("activity_log").add({
+        actionType: "USER_PERMISSIONS_UPDATED",
+        actionLabel: "Změna oprávnění portálu",
+        entityType: "employee",
+        entityId: employeeId,
+        details: JSON.stringify({
+          oldPermissions: beforePermissions,
+          newPermissions: patch.portalModulePermissions ?? beforePermissions,
+          oldDashboardAiAssistant: beforeAi,
+          newDashboardAiAssistant: patch.dashboardAiAssistantEnabled ?? beforeAi,
+        }),
+        createdBy: callerUid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    } catch {
+      /* audit volitelný */
+    }
+  }
 
   const authUserId = String(emp.authUserId || "").trim();
   if (authUserId && hasOrgRole) {
