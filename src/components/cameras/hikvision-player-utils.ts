@@ -1,5 +1,18 @@
 /** Detekce skutečného přehrávání v DOM kontejneru EZUIKit (bez závislosti na telemetry). */
 
+export type HikPlayerDomLayer = {
+  tag: "video" | "canvas" | "iframe";
+  width: number;
+  height: number;
+  clientWidth: number;
+  clientHeight: number;
+  display: string;
+  visibility: string;
+  opacity: string;
+  zIndex: string;
+  hasContent: boolean;
+};
+
 export type HikPlayerDomInspect = {
   hasVideo: boolean;
   hasCanvas: boolean;
@@ -11,10 +24,12 @@ export type HikPlayerDomInspect = {
   canvasClientHeight: number;
   videoVisible: boolean;
   firstFrameLikely: boolean;
+  renderedFrameLikely: boolean;
+  layers: HikPlayerDomLayer[];
 };
 
 export type HikPlayerDomInspectOptions = {
-  /** Po decodeStart EZUIKit často kreslí na canvas jen přes CSS rozměry. */
+  /** @deprecated Nepoužívat pro potvrzení PLAYING — může falešně detekovat prázdný canvas. */
   allowClientSizeCanvas?: boolean;
 };
 
@@ -25,7 +40,7 @@ function elementVisible(el: HTMLElement): boolean {
   return true;
 }
 
-/** Vzorek pixelů — funguje pro 2D canvas; WebGL/WASM často vrátí false. */
+/** Vzorek pixelů — funguje pro 2D canvas; WebGL/WASM často vrátí false bez readPixels. */
 export function hikCanvasHasNonBlackPixels(canvas: HTMLCanvasElement): boolean {
   try {
     const w = Math.min(canvas.width || canvas.clientWidth, 48);
@@ -43,13 +58,64 @@ export function hikCanvasHasNonBlackPixels(canvas: HTMLCanvasElement): boolean {
   }
 }
 
+export function hikWebGlCanvasHasContent(canvas: HTMLCanvasElement): boolean {
+  try {
+    const gl =
+      (canvas.getContext("webgl2") as WebGL2RenderingContext | null) ??
+      (canvas.getContext("webgl") as WebGLRenderingContext | null);
+    if (!gl) return false;
+    const pixels = new Uint8Array(4);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    return pixels[0] > 12 || pixels[1] > 12 || pixels[2] > 12;
+  } catch {
+    return false;
+  }
+}
+
+function canvasHasRenderedContent(canvas: HTMLCanvasElement): boolean {
+  return hikCanvasHasNonBlackPixels(canvas) || hikWebGlCanvasHasContent(canvas);
+}
+
 export function hikContainerHasRenderedFrame(container: HTMLElement | null): boolean {
   if (!container) return false;
   const video = container.querySelector("video") as HTMLVideoElement | null;
-  if (video && video.videoWidth > 0 && video.videoHeight > 0) return true;
-  const canvas = container.querySelector("canvas") as HTMLCanvasElement | null;
-  if (canvas && hikCanvasHasNonBlackPixels(canvas)) return true;
+  if (video && video.videoWidth > 0 && video.videoHeight > 0 && elementVisible(video)) {
+    return true;
+  }
+  const canvases = container.querySelectorAll("canvas");
+  for (const node of canvases) {
+    const canvas = node as HTMLCanvasElement;
+    if (!elementVisible(canvas)) continue;
+    if (canvasHasRenderedContent(canvas)) return true;
+  }
   return false;
+}
+
+function layerFromElement(
+  el: HTMLVideoElement | HTMLCanvasElement | HTMLIFrameElement,
+  tag: HikPlayerDomLayer["tag"]
+): HikPlayerDomLayer {
+  const st = window.getComputedStyle(el);
+  let hasContent = false;
+  if (tag === "video") {
+    const v = el as HTMLVideoElement;
+    hasContent = v.videoWidth > 0 && v.videoHeight > 0;
+  } else if (tag === "canvas") {
+    hasContent = canvasHasRenderedContent(el as HTMLCanvasElement);
+  }
+  return {
+    tag,
+    width: tag === "video" ? (el as HTMLVideoElement).videoWidth : (el as HTMLCanvasElement).width,
+    height:
+      tag === "video" ? (el as HTMLVideoElement).videoHeight : (el as HTMLCanvasElement).height,
+    clientWidth: el.clientWidth,
+    clientHeight: el.clientHeight,
+    display: st.display,
+    visibility: st.visibility,
+    opacity: st.opacity,
+    zIndex: st.zIndex,
+    hasContent,
+  };
 }
 
 export function inspectHikPlayerDom(
@@ -67,8 +133,22 @@ export function inspectHikPlayerDom(
     canvasClientHeight: 0,
     videoVisible: false,
     firstFrameLikely: false,
+    renderedFrameLikely: false,
+    layers: [],
   };
   if (!container) return empty;
+
+  const layers: HikPlayerDomLayer[] = [];
+  container.querySelectorAll("video").forEach((node) => {
+    layers.push(layerFromElement(node as HTMLVideoElement, "video"));
+  });
+  container.querySelectorAll("canvas").forEach((node) => {
+    layers.push(layerFromElement(node as HTMLCanvasElement, "canvas"));
+  });
+  container.querySelectorAll("iframe").forEach((node) => {
+    layers.push(layerFromElement(node as HTMLIFrameElement, "iframe"));
+  });
+
   const video = container.querySelector("video") as HTMLVideoElement | null;
   const canvas = container.querySelector("canvas") as HTMLCanvasElement | null;
   const videoWidth = video?.videoWidth ?? 0;
@@ -78,22 +158,18 @@ export function inspectHikPlayerDom(
   const canvasClientWidth = canvas?.clientWidth ?? 0;
   const canvasClientHeight = canvas?.clientHeight ?? 0;
   const videoVisible = video ? elementVisible(video) : false;
+  const renderedFrameLikely = hikContainerHasRenderedFrame(container);
   const videoReady =
     Boolean(video) &&
     videoVisible &&
-    video!.readyState >= 2 &&
-    (videoWidth > 0 || video!.currentTime > 0 || (video!.clientWidth > 0 && !video!.paused));
-  const canvasAttrReady =
-    Boolean(canvas) &&
-    canvasWidth > 0 &&
-    canvasHeight > 0 &&
-    elementVisible(canvas as HTMLCanvasElement);
+    videoWidth > 0 &&
+    videoHeight > 0;
   const canvasClientReady =
     Boolean(opts?.allowClientSizeCanvas && canvas) &&
     elementVisible(canvas as HTMLCanvasElement) &&
     canvasClientWidth >= 48 &&
     canvasClientHeight >= 48;
-  const canvasReady = canvasAttrReady || canvasClientReady;
+
   return {
     hasVideo: Boolean(video),
     hasCanvas: Boolean(canvas),
@@ -104,12 +180,14 @@ export function inspectHikPlayerDom(
     canvasClientWidth,
     canvasClientHeight,
     videoVisible,
-    firstFrameLikely: videoReady || canvasReady || hikContainerHasRenderedFrame(container),
+    renderedFrameLikely,
+    firstFrameLikely: videoReady || renderedFrameLikely || canvasClientReady,
+    layers,
   };
 }
 
 export function hikPlayerContainerHasVideo(container: HTMLElement | null): boolean {
-  return inspectHikPlayerDom(container).firstFrameLikely;
+  return hikContainerHasRenderedFrame(container);
 }
 
 export function waitForNonZeroContainerSize(
@@ -134,7 +212,7 @@ export function waitForNonZeroContainerSize(
   });
 }
 
-/** Přizpůsobí EZUIKit player + video/canvas skutečné velikosti wrapperu. */
+/** Přizpůsobí EZUIKit player skutečné velikosti wrapperu (bez přepisování interních canvas vrstev). */
 export function resizePlayerToContainer(
   container: HTMLElement | null,
   player: unknown | null
@@ -164,24 +242,6 @@ export function resizePlayerToContainer(
       }
     }
   }
-
-  container.querySelectorAll("div").forEach((node) => {
-    const el = node as HTMLElement;
-    if (el === container) return;
-    el.style.width = "100%";
-    el.style.height = "100%";
-    el.style.maxWidth = "100%";
-    el.style.maxHeight = "100%";
-  });
-
-  container.querySelectorAll("video, canvas").forEach((node) => {
-    const el = node as HTMLElement;
-    el.style.width = "100%";
-    el.style.height = "100%";
-    el.style.maxWidth = "100%";
-    el.style.maxHeight = "100%";
-    el.style.objectFit = "contain";
-  });
 }
 
 /** @deprecated use resizePlayerToContainer */
@@ -198,10 +258,7 @@ export function watchHikPlayerFirstFrame(
   let raf = 0;
   const tick = () => {
     if (Date.now() > deadline) return;
-    if (
-      hikContainerHasRenderedFrame(container) ||
-      inspectHikPlayerDom(container, { allowClientSizeCanvas: true }).firstFrameLikely
-    ) {
+    if (hikContainerHasRenderedFrame(container)) {
       onFrame();
       return;
     }

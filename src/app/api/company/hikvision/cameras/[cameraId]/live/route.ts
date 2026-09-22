@@ -19,11 +19,14 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { cameraId } = await params;
   let bodyCompanyId = "";
   let streamVariant: "main" | "sub" = "sub";
+  let subCandidateIndex = 0;
   try {
     const body = await request.json();
     bodyCompanyId = String(body?.companyId ?? "").trim();
     const sv = String(body?.streamVariant ?? "sub").trim();
     if (sv === "main") streamVariant = "main";
+    const idx = Number(body?.subCandidateIndex);
+    if (Number.isFinite(idx) && idx >= 0) subCandidateIndex = Math.floor(idx);
   } catch {
     bodyCompanyId = "";
   }
@@ -58,6 +61,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     cameraId,
     userId: auth.caller.uid,
     streamVariant,
+    subCandidateIndex,
   });
 
   if (!session.ok) {

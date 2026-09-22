@@ -7,6 +7,7 @@ export type HikStreamTelemetry = {
   dataEvents: number;
   videoPackets: number;
   decodedFrames: number;
+  renderedFrames: number;
   websocketOpen: boolean;
   lastEvent: string | null;
   playAcknowledged: boolean;
@@ -19,6 +20,7 @@ export function createHikStreamTelemetry(): HikStreamTelemetry {
     dataEvents: 0,
     videoPackets: 0,
     decodedFrames: 0,
+    renderedFrames: 0,
     websocketOpen: false,
     lastEvent: null,
     playAcknowledged: false,
@@ -172,6 +174,7 @@ export function syncTelemetryToDiagnostics(
     dataEvents: telemetry.dataEvents,
     videoPackets: telemetry.videoPackets,
     decodedFrames: telemetry.decodedFrames,
+    renderedFrames: telemetry.renderedFrames,
     websocketOpen: telemetry.websocketOpen,
     playAcknowledged: telemetry.playAcknowledged,
     decoderReady: telemetry.decoderReady,

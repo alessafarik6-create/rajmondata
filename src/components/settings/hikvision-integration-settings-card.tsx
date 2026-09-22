@@ -315,29 +315,58 @@ export function HikvisionIntegrationSettingsCard({ companyId }: { companyId: str
         setJssdkDevDetail(`Script URL: ${cfgData.config.scriptUrl}`);
       }
       const liveDiagData = await liveDiagRes.json();
+      let streamDiagBlock = "";
+      if (liveDiagData.ok && liveDiagData.sampleCameraId) {
+        const streamRes = await fetch(
+          `/api/company/hikvision/cameras/${encodeURIComponent(liveDiagData.sampleCameraId)}/stream-diagnostics`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ companyId }),
+          }
+        );
+        const streamData = await streamRes.json();
+        if (streamData.ok) {
+          streamDiagBlock = [
+            `Kamera: ${streamData.cameraName}`,
+            `Online: ${streamData.online ? "Ano" : "Ne"} · Snapshot: ${streamData.snapshot}`,
+            `Main stream: ${streamData.mainStreamLabel ?? "—"}`,
+            `Sub stream: ${streamData.subStreamLabel ?? "—"}`,
+            streamData.webLive
+              ? `Web live: ${streamData.webLive.codec ?? "?"} · channel ${streamData.webLive.channelNo ?? "?"} · ${streamData.webLive.streamType ?? "?"} · ${streamData.webLive.selectionReason ?? ""}`
+              : "",
+            streamData.webLive?.warning ? `Varování: ${streamData.webLive.warning}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n");
+        }
+      }
       if (liveDiagData.ok && showDevDetail) {
         const runtime = getHikvisionPlayerRuntimeDiagnostics();
         const la = liveDiagData.liveApi;
         setLiveDiagDetail(
           [
             `Live view diagnostika`,
+            streamDiagBlock,
             `JSSDK URL: ${liveDiagData.jssdkUrl}`,
             `JSSDK HTTP: ${liveDiagData.jssdkHttp}`,
             `JSSDK static: ${liveDiagData.jssdkStatic}`,
             `Live API: ${liveDiagData.liveApiRoute} → ${la?.status}`,
             la?.status === "OK"
-              ? `playbackType: ${la.playbackType ?? "—"}, streamUrlPresent: ${la.streamUrlPresent}, tokenPresent: ${la.accessTokenPresent}, expiresAt: ${la.expiresAt ?? "—"}`
+              ? `playbackType: ${la.playbackType ?? "—"}, streamUrlPresent: ${la.streamUrlPresent}, tokenPresent: ${la.accessTokenPresent}, expiresAt: ${la.expiresAt ?? "—"}, codecHint: ${la.codecHint ?? "—"}`
               : `live error: ${la?.code ?? "—"}`,
             `Stream token: ${liveDiagData.streamToken}`,
             `Player init: ${liveDiagData.playerInit}`,
             sdkLoad.ok ? `JSSDK global: OK (${sdkLoad.scriptUrl})` : `JSSDK global: ${sdkLoad.code}`,
             `Pipeline: ${runtime.pipelineStage}${runtime.lastErrorCode ? ` (${runtime.lastErrorCode})` : ""}`,
-            `Stream — serial: ${runtime.deviceSerial ?? "—"}, channel: ${runtime.channelNo ?? "—"}, type: ${runtime.streamType ?? "—"}, variant: ${runtime.streamVariant ?? "—"}, codec: ${runtime.codec ?? "unknown"}`,
+            `Stream — serial: ${runtime.deviceSerial ?? "—"}, channel: ${runtime.channelNo ?? "—"}, type: ${runtime.streamType ?? "—"}, variant: ${runtime.streamVariant ?? "—"}, codec: ${runtime.codec ?? "unknown"}, main: ${runtime.mainStreamCodec ?? "?"}, sub: ${runtime.subStreamCodec ?? "?"}`,
             `Flags — connected: ${runtime.streamConnected}, decoder: ${runtime.decoderStarted}, firstFrame: ${runtime.firstFrameReceived}, rendered: ${runtime.videoRendered}`,
-            `Stream data — bytes: ${runtime.receivedBytes}, packets: ${runtime.videoPackets}, decoded: ${runtime.decodedFrames}, ws: ${runtime.websocketOpen}, playAck: ${runtime.playAcknowledged}`,
+            `Stream data — bytes: ${runtime.receivedBytes}, packets: ${runtime.videoPackets}, decoded: ${runtime.decodedFrames}, rendered: ${runtime.renderedFrames}, ws: ${runtime.websocketOpen}, playAck: ${runtime.playAcknowledged}`,
             `DOM video: ${runtime.domVideoWidth}x${runtime.domVideoHeight}, canvas: ${runtime.domCanvasWidth}x${runtime.domCanvasHeight}`,
             `Counts — SDK: ${runtime.sdkLoadCount}, fetch: ${runtime.liveConfigFetchCount}, create: ${runtime.playerCreateCount}, destroy: ${runtime.playerDestroyCount}, connect: ${runtime.streamConnectCount}, decoder: ${runtime.decoderStartCount}, firstFrame: ${runtime.firstFrameCount}, play: ${runtime.playStartCount}`,
-          ].join("\n")
+          ]
+            .filter(Boolean)
+            .join("\n")
         );
       }
       setJssdkBrowserOk(sdkLoad.ok);

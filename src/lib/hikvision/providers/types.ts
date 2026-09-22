@@ -77,6 +77,24 @@ export type ProviderStreamSessionResult =
       streamVariant?: "main" | "sub";
       protocol?: string;
       codecHint?: "H264" | "H265" | "unknown";
+      openapiEzopenUrl?: string;
+      mainStream?: {
+        codec: "H264" | "H265" | "unknown";
+        width: number | null;
+        height: number | null;
+        fps: number | null;
+        bitrateKbps: number | null;
+      };
+      subStream?: {
+        codec: "H264" | "H265" | "unknown";
+        width: number | null;
+        height: number | null;
+        fps: number | null;
+        bitrateKbps: number | null;
+      } | null;
+      webLiveSelectionReason?: string;
+      subCandidateIndex?: number;
+      webLiveWarning?: string | null;
     }
   | { ok: false; code: HikvisionErrorCode; error: string };
 
@@ -109,7 +127,7 @@ export interface HikvisionProvider {
   getLiveView(
     ctx: HikvisionProviderContext,
     cameraDocId: string,
-    options?: { streamVariant?: "main" | "sub" }
+    options?: { streamVariant?: "main" | "sub"; subCandidateIndex?: number }
   ): Promise<ProviderLiveViewResult>;
   getPlayback?(
     ctx: HikvisionProviderContext,

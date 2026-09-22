@@ -84,7 +84,12 @@ let receivedBytes = 0;
 let dataEvents = 0;
 let videoPackets = 0;
 let decodedFrames = 0;
+let renderedFrames = 0;
 let websocketOpen = false;
+let mainStreamCodec: StreamCodecHint = "unknown";
+let subStreamCodec: StreamCodecHint = "unknown";
+let webLiveSelectionReason: string | null = null;
+let webLiveWarning: string | null = null;
 let playAcknowledged = false;
 let decoderReady = false;
 
@@ -115,7 +120,12 @@ export function resetHikvisionPlayerDebugCounters(): void {
   dataEvents = 0;
   videoPackets = 0;
   decodedFrames = 0;
+  renderedFrames = 0;
   websocketOpen = false;
+  mainStreamCodec = "unknown";
+  subStreamCodec = "unknown";
+  webLiveSelectionReason = null;
+  webLiveWarning = null;
   playAcknowledged = false;
   decoderReady = false;
 }
@@ -125,6 +135,7 @@ export function setHikvisionStreamTelemetry(meta: {
   dataEvents?: number;
   videoPackets?: number;
   decodedFrames?: number;
+  renderedFrames?: number;
   websocketOpen?: boolean;
   playAcknowledged?: boolean;
   decoderReady?: boolean;
@@ -133,6 +144,7 @@ export function setHikvisionStreamTelemetry(meta: {
   if (meta.dataEvents !== undefined) dataEvents = meta.dataEvents;
   if (meta.videoPackets !== undefined) videoPackets = meta.videoPackets;
   if (meta.decodedFrames !== undefined) decodedFrames = meta.decodedFrames;
+  if (meta.renderedFrames !== undefined) renderedFrames = meta.renderedFrames;
   if (meta.websocketOpen !== undefined) websocketOpen = meta.websocketOpen;
   if (meta.playAcknowledged !== undefined) playAcknowledged = meta.playAcknowledged;
   if (meta.decoderReady !== undefined) decoderReady = meta.decoderReady;
@@ -149,6 +161,10 @@ export function setHikvisionLiveStreamContext(meta: {
   tokenPresent?: boolean;
   urlPresent?: boolean;
   expiresAt?: string | null;
+  mainStreamCodec?: StreamCodecHint;
+  subStreamCodec?: StreamCodecHint;
+  webLiveSelectionReason?: string | null;
+  webLiveWarning?: string | null;
 }): void {
   if (meta.cameraId !== undefined) cameraId = meta.cameraId;
   if (meta.deviceSerialMasked !== undefined) deviceSerialMasked = meta.deviceSerialMasked;
@@ -160,6 +176,11 @@ export function setHikvisionLiveStreamContext(meta: {
   if (meta.tokenPresent !== undefined) tokenPresent = meta.tokenPresent;
   if (meta.urlPresent !== undefined) streamUrlPresent = meta.urlPresent;
   if (meta.expiresAt !== undefined) expiresAt = meta.expiresAt;
+  if (meta.mainStreamCodec !== undefined) mainStreamCodec = meta.mainStreamCodec;
+  if (meta.subStreamCodec !== undefined) subStreamCodec = meta.subStreamCodec;
+  if (meta.webLiveSelectionReason !== undefined)
+    webLiveSelectionReason = meta.webLiveSelectionReason;
+  if (meta.webLiveWarning !== undefined) webLiveWarning = meta.webLiveWarning;
 }
 
 export function setHikvisionLivePipelineStage(stage: HikvisionLivePipelineStage): void {
@@ -295,6 +316,11 @@ export function getHikvisionPlayerRuntimeDiagnostics() {
     dataEvents,
     videoPackets,
     decodedFrames,
+    renderedFrames,
+    mainStreamCodec,
+    subStreamCodec,
+    webLiveSelectionReason,
+    webLiveWarning,
     websocketOpen,
     playAcknowledged,
     decoderReady,

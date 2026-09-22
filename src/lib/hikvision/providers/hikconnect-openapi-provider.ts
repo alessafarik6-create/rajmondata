@@ -15,10 +15,11 @@ import {
   hikvisionCamerasCol,
 } from "@/lib/hikvision/stores";
 import {
-  codecHintFromRecordSetting,
-  ezopenSubStreamFallbackUrl,
   maskDeviceSerial,
   parseEzopenLiveUrl,
+  parseRecordSettingStreams,
+  pickWebLiveEzopenStream,
+  type RecordSettingStreams,
 } from "@/lib/hikvision/ezopen-stream-meta";
 import type {
   HikvisionProvider,
@@ -127,7 +128,7 @@ async function buildEzopenSession(
   cameraDocId: string,
   addressType: "1" | "2" | "3",
   times?: { startTime: string; stopTime: string; code?: string },
-  liveOpts?: { streamVariant?: "main" | "sub" }
+  liveOpts?: { streamVariant?: "main" | "sub"; subCandidateIndex?: number }
 ): Promise<ProviderLiveViewResult> {
   const cam = await loadCameraForStream(ctx, cameraDocId);
   if (!cam.ok) return { ok: false, code: cam.code, error: cam.error };
@@ -167,15 +168,11 @@ async function buildEzopenSession(
     };
   }
 
-  let ezopenUrl = address.url;
-  const streamVariant = liveOpts?.streamVariant ?? "sub";
-  if (streamVariant === "sub") {
-    const subUrl = ezopenSubStreamFallbackUrl(ezopenUrl);
-    if (subUrl) ezopenUrl = subUrl;
-  }
-  const parsed = parseEzopenLiveUrl(ezopenUrl);
-
-  let codecHint: "H264" | "H265" | "unknown" = "unknown";
+  const openapiUrl = address.url;
+  let streamMeta: RecordSettingStreams = {
+    main: { codec: "unknown", width: null, height: null, fps: null, bitrateKbps: null },
+    sub: null,
+  };
   try {
     const settings = await hccGetRecordSettings({
       organizationId: ctx.organizationId,
@@ -185,14 +182,22 @@ async function buildEzopenSession(
       cameraIds: [cam.resourceId],
     });
     if (settings[0]) {
-      codecHint = codecHintFromRecordSetting(
-        settings[0] as Record<string, unknown>,
-        streamVariant
-      );
+      streamMeta = parseRecordSettingStreams(settings[0] as Record<string, unknown>);
     }
   } catch {
     /* optional */
   }
+
+  const pick = pickWebLiveEzopenStream({
+    openapiUrl,
+    streams: streamMeta,
+    requestedVariant: liveOpts?.streamVariant ?? "sub",
+    subCandidateIndex: liveOpts?.subCandidateIndex ?? 0,
+  });
+  const ezopenUrl = pick.ezopenUrl;
+  const streamVariant = pick.streamVariant;
+  const codecHint = pick.codecHint;
+  const parsed = parseEzopenLiveUrl(ezopenUrl);
 
   const expireMs = stream.appToken ? Date.now() + 6 * 3600 * 1000 : Date.now() + 3600 * 1000;
   return {
@@ -211,6 +216,12 @@ async function buildEzopenSession(
     streamVariant,
     protocol: parsed?.protocol ?? "ezopen",
     codecHint,
+    openapiEzopenUrl: openapiUrl,
+    mainStream: streamMeta.main,
+    subStream: streamMeta.sub,
+    webLiveSelectionReason: pick.selectionReason,
+    subCandidateIndex: pick.subCandidateIndex,
+    webLiveWarning: pick.webLiveWarning ?? null,
   };
 }
 
@@ -390,7 +401,10 @@ export const hikConnectOpenApiProvider: HikvisionProvider = {
         cameraDocId,
         "1",
         undefined,
-        { streamVariant: options?.streamVariant ?? "sub" }
+        {
+          streamVariant: options?.streamVariant ?? "sub",
+          subCandidateIndex: options?.subCandidateIndex ?? 0,
+        }
       );
     } catch (e) {
       const fail = fromHccError(e);
