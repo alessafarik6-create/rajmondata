@@ -86,10 +86,13 @@ export function DashboardDocumentsToPayWidget({
   const markPaid = async (id: string) => {
     if (!canWriteDocuments) return;
     if (!firestore || !user?.uid || !String(id ?? "").trim()) return;
+    const row = activeDocs.find((d) => d.id === id);
+    if (!row) return;
     const todayIso = new Date().toISOString().split("T")[0];
+    const gross = documentGrossForPayment(row);
     await updateDoc(doc(firestore, "companies", companyId, "documents", id), {
       paymentStatus: "paid",
-      paidAmount: null,
+      paidAmount: gross > 0 ? gross : null,
       paidAt: todayIso,
       paymentMethod: null,
       paymentNote: null,
@@ -97,6 +100,20 @@ export function DashboardDocumentsToPayWidget({
       paidBy: user.uid,
       updatedAt: serverTimestamp(),
     });
+    try {
+      const { syncLinkedInvoicePaymentFromDocument } = await import(
+        "@/lib/portal-invoice-payment-sync"
+      );
+      await syncLinkedInvoicePaymentFromDocument({
+        firestore,
+        companyId,
+        document: row,
+        mode: "paid",
+        paidAt: todayIso,
+      });
+    } catch {
+      /* sync optional */
+    }
   };
 
   if (isLoading) {

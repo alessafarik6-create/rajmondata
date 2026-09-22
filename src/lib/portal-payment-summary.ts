@@ -5,15 +5,19 @@
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import {
   documentClassificationValues,
-  documentRemainingForPayment,
   getDocumentPaymentUrgency,
   getPortalInvoicePaymentUrgency,
   isCompanyDocumentDeliveryNote,
   isDocumentEligibleForPaymentBox,
   isPortalInvoiceOpenForCollection,
-  portalInvoiceRemaining,
   type CompanyDocumentPaymentRow,
 } from "@/lib/company-document-payment";
+import {
+  calculatePaymentSummary,
+  getDocumentPaymentState,
+  getPortalInvoicePaymentState,
+  isPortalInvoiceExcludedFromPaymentSummary,
+} from "@/lib/invoice-payment-state";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { roundMoney2 } from "@/lib/vat-calculations";
 
@@ -61,6 +65,19 @@ export function isPortalInvoiceMirrorDocument(row: CompanyDocumentPaymentRow): b
   return String(row.source ?? "").trim() === "portalInvoice";
 }
 
+export function buildPortalInvoiceMirrorMap(
+  documents: CompanyDocumentPaymentRow[]
+): Map<string, CompanyDocumentPaymentRow> {
+  const map = new Map<string, CompanyDocumentPaymentRow>();
+  for (const d of documents) {
+    if (!isActiveFirestoreDoc(d)) continue;
+    const invId = String(d.sourceInvoiceId ?? d.invoiceId ?? "").trim();
+    if (!invId) continue;
+    map.set(invId, d);
+  }
+  return map;
+}
+
 export function filterActiveFinancialDocuments<T extends CompanyDocumentPaymentRow>(
   documents: T[] | null | undefined
 ): T[] {
@@ -95,25 +112,31 @@ export function collectOverduePaymentFlashTargets(
   invoices: Array<Record<string, unknown> & { id: string }>,
   todayIso: string
 ): PortalPaymentOverdueTarget[] {
+  const mirrors = buildPortalInvoiceMirrorMap(financialActive);
   const out: PortalPaymentOverdueTarget[] = [];
   for (const d of financialActive) {
     if (isPortalInvoiceMirrorDocument(d)) continue;
-    if (documentRemainingForPayment(d) <= 0) continue;
-    if (getDocumentPaymentUrgency(d, todayIso) !== "overdue") continue;
+    if (!isDocumentEligibleForPaymentBox(d)) continue;
+    const state = getDocumentPaymentState(d, todayIso);
+    if (state.remainingAmount <= 0 || !state.isOverdue) continue;
     const sec = paymentSectionForDoc(d);
     if (!sec) continue;
     out.push({
       flashRowKey: `doc:${String(d.id ?? "")}`,
-      due: String(d.dueDate ?? "").trim() || "9999-12-31",
+      due: state.dueDate ?? "9999-12-31",
       section: sec,
     });
   }
   for (const inv of invoices) {
-    if (!isPortalInvoiceOpenForCollection(inv)) continue;
-    if (getPortalInvoicePaymentUrgency(inv, todayIso) !== "overdue") continue;
+    if (!isActiveFirestoreDoc(inv)) continue;
+    if (isPortalInvoiceExcludedFromPaymentSummary(inv)) continue;
+    const invId = String(inv.id ?? "").trim();
+    const mirror = invId ? mirrors.get(invId) : undefined;
+    const state = getPortalInvoicePaymentState(inv, todayIso, mirror);
+    if (state.remainingAmount <= 0 || !state.isOverdue) continue;
     out.push({
       flashRowKey: `inv:${inv.id}`,
-      due: String(inv.dueDate ?? "").trim() || "9999-12-31",
+      due: state.dueDate ?? "9999-12-31",
       section: "issued",
     });
   }
@@ -124,19 +147,6 @@ export function collectOverduePaymentFlashTargets(
   return out;
 }
 
-function addDocToSide(
-  side: PortalPaymentSideStats,
-  remaining: number,
-  isOverdue: boolean
-): void {
-  side.openCount += 1;
-  side.openAmountKc = roundMoney2(side.openAmountKc + remaining);
-  if (isOverdue) {
-    side.overdueCount += 1;
-    side.overdueAmountKc = roundMoney2(side.overdueAmountKc + remaining);
-  }
-}
-
 export function computePortalPaymentOverviewStats(
   documents: CompanyDocumentPaymentRow[] | null | undefined,
   invoices: Array<Record<string, unknown> & { id: string }> | null | undefined,
@@ -144,32 +154,29 @@ export function computePortalPaymentOverviewStats(
 ): PortalPaymentOverviewStats {
   const financialActive = filterActiveFinancialDocuments(documents);
   const invList = filterActivePortalInvoices(invoices);
+  const mirrors = buildPortalInvoiceMirrorMap(financialActive);
 
-  const received: PortalPaymentSideStats = { ...EMPTY_SIDE };
-  const issued: PortalPaymentSideStats = { ...EMPTY_SIDE };
+  const summary = calculatePaymentSummary({
+    documents: financialActive,
+    invoices: invList,
+    todayIso,
+    invoiceMirrorBySourceId: mirrors,
+    skipPortalInvoiceMirror: (row) =>
+      isPortalInvoiceMirrorDocument(row as CompanyDocumentPaymentRow),
+  });
 
-  for (const d of financialActive) {
-    if (isPortalInvoiceMirrorDocument(d)) continue;
-    if (!isDocumentEligibleForPaymentBox(d)) continue;
-    const section = paymentSectionForDoc(d);
-    if (!section) continue;
-    const remaining = documentRemainingForPayment(d);
-    if (remaining <= 0) continue;
-    const overdue = getDocumentPaymentUrgency(d, todayIso) === "overdue";
-    if (section === "received") {
-      addDocToSide(received, remaining, overdue);
-    } else {
-      addDocToSide(issued, remaining, overdue);
-    }
-  }
-
-  for (const inv of invList) {
-    if (!isPortalInvoiceOpenForCollection(inv)) continue;
-    const remaining = portalInvoiceRemaining(inv);
-    if (remaining <= 0) continue;
-    const overdue = getPortalInvoicePaymentUrgency(inv, todayIso) === "overdue";
-    addDocToSide(issued, remaining, overdue);
-  }
+  const received: PortalPaymentSideStats = {
+    openCount: summary.received.openCount,
+    openAmountKc: summary.received.openAmount,
+    overdueCount: summary.received.overdueCount,
+    overdueAmountKc: summary.received.overdueAmount,
+  };
+  const issued: PortalPaymentSideStats = {
+    openCount: summary.issued.openCount,
+    openAmountKc: summary.issued.openAmount,
+    overdueCount: summary.issued.overdueCount,
+    overdueAmountKc: summary.issued.overdueAmount,
+  };
 
   const overdueTargets = collectOverduePaymentFlashTargets(
     financialActive,
@@ -193,4 +200,13 @@ export function computePortalPaymentOverviewStats(
     overdueTotal: overdueTargets.length,
     overdueTargets,
   };
+}
+
+/** Alias pro server / API — stejná logika jako computePortalPaymentOverviewStats. */
+export function calculateDocumentPaymentSummary(
+  documents: CompanyDocumentPaymentRow[] | null | undefined,
+  invoices: Array<Record<string, unknown> & { id: string }> | null | undefined,
+  todayIso: string
+): PortalPaymentOverviewStats {
+  return computePortalPaymentOverviewStats(documents, invoices, todayIso);
 }

@@ -1584,6 +1584,20 @@ function DocumentsPageContent() {
       updatedAt: serverTimestamp(),
     });
     try {
+      const { syncLinkedInvoicePaymentFromDocument } = await import(
+        "@/lib/portal-invoice-payment-sync"
+      );
+      await syncLinkedInvoicePaymentFromDocument({
+        firestore,
+        companyId,
+        document: { ...row, id: row.id } as CompanyDocumentPaymentRow,
+        mode: "paid",
+        paidAt: todayIso,
+      });
+    } catch (e) {
+      console.error("documents: sync invoice paid", e);
+    }
+    try {
       await reconcileCompanyDocumentJobIncome({
         firestore,
         companyId,
@@ -1617,6 +1631,19 @@ function DocumentsPageContent() {
       paidBy: deleteField(),
       updatedAt: serverTimestamp(),
     });
+    try {
+      const { syncLinkedInvoicePaymentFromDocument } = await import(
+        "@/lib/portal-invoice-payment-sync"
+      );
+      await syncLinkedInvoicePaymentFromDocument({
+        firestore,
+        companyId,
+        document: { ...row, id: row.id } as CompanyDocumentPaymentRow,
+        mode: "unpaid",
+      });
+    } catch (e) {
+      console.error("documents: sync invoice unpaid", e);
+    }
     try {
       await reconcileCompanyDocumentJobIncome({
         firestore,
