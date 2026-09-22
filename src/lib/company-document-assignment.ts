@@ -5,7 +5,9 @@
  */
 
 import {
+  allocationBasisGrossCzk,
   allocationJobIdsFromRows,
+  computeAllocationGrossCzkShares,
   resolveJobCostAllocationsFromDocument,
 } from "@/lib/company-document-job-allocations";
 
@@ -121,4 +123,54 @@ export function companyDocumentMatchesUnassignedJobFilter(
   row: CompanyDocumentAssignmentLike
 ): boolean {
   return !companyDocumentMatchesAssignedJobFilter(row);
+}
+
+export type DocumentAssignmentStatus =
+  | "unassigned"
+  | "partial"
+  | "assigned"
+  | "split";
+
+export function resolveDocumentAssignmentStatus(
+  row: CompanyDocumentAssignmentLike & Record<string, unknown>
+): DocumentAssignmentStatus {
+  const jobIds = documentLinkedJobIds(row);
+  const { rows, usesExplicitAllocations, mode } =
+    resolveJobCostAllocationsFromDocument(row);
+  const basis = allocationBasisGrossCzk(row);
+  if (jobIds.length === 0 && !documentJobLinkId(row)) {
+    if (row.assignmentType === "warehouse" || row.assignmentType === "company") {
+      return "assigned";
+    }
+    return "unassigned";
+  }
+  if (usesExplicitAllocations && jobIds.length > 1) return "split";
+  if (usesExplicitAllocations && rows.length > 0 && basis > 0) {
+    const shares = computeAllocationGrossCzkShares({
+      mode,
+      rows,
+      basisGrossCzk: basis,
+    });
+    let allocated = 0;
+    for (const g of shares.values()) allocated += g;
+    allocated = Math.round(allocated * 100) / 100;
+    if (allocated <= 0) return "unassigned";
+    if (Math.abs(allocated - basis) > 0.05) return "partial";
+    return jobIds.length > 1 ? "split" : "assigned";
+  }
+  if (documentJobLinkId(row)) return "assigned";
+  return "unassigned";
+}
+
+export function documentAssignmentStatusLabel(st: DocumentAssignmentStatus): string {
+  switch (st) {
+    case "unassigned":
+      return "Nezařazeno";
+    case "partial":
+      return "Částečně zařazeno";
+    case "split":
+      return "Rozděleno mezi zakázky";
+    case "assigned":
+      return "Zařazeno";
+  }
 }

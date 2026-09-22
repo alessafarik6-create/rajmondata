@@ -10,6 +10,8 @@ type DocAmountFields = CompanyDocumentLike & Record<string, unknown>;
 
 export type JobCostAllocationMode = "amount" | "percent";
 
+export type JobCostAllocationAmountBasis = "gross" | "net";
+
 export type JobCostAllocationRow = {
   id: string;
   kind: "job" | "overhead";
@@ -223,8 +225,11 @@ export function validateJobCostAllocations(params: {
   mode: JobCostAllocationMode;
   rows: JobCostAllocationRow[];
   basisGrossCzk: number;
+  /** Povolit součet menší než doklad (částečné přiřazení). Výchozí true. */
+  allowPartial?: boolean;
 }): AllocationValidationResult {
   const { mode, rows, basisGrossCzk } = params;
+  const allowPartial = params.allowPartial !== false;
   if (basisGrossCzk <= 0) {
     return { ok: false, message: "Doklad nemá kladnou částku k rozdělení." };
   }
@@ -262,7 +267,14 @@ export function validateJobCostAllocations(params: {
       }
       sumAmt += a;
     }
-    if (Math.abs(sumAmt - basisGrossCzk) > SUM_EPS) {
+    if (sumAmt > basisGrossCzk + SUM_EPS) {
+      const over = roundMoney2(sumAmt - basisGrossCzk);
+      return {
+        ok: false,
+        message: `Přiřazená částka přesahuje hodnotu dokladu o ${over.toLocaleString("cs-CZ")} Kč.`,
+      };
+    }
+    if (!allowPartial && Math.abs(sumAmt - basisGrossCzk) > SUM_EPS) {
       return {
         ok: false,
         message: `Součet částek (${roundMoney2(sumAmt).toLocaleString("cs-CZ")} Kč) musí odpovídat částce dokladu (${roundMoney2(basisGrossCzk).toLocaleString("cs-CZ")} Kč).`,
@@ -277,7 +289,13 @@ export function validateJobCostAllocations(params: {
       }
       sumP += p;
     }
-    if (Math.abs(sumP - 100) > SUM_EPS) {
+    if (sumP > 100 + SUM_EPS) {
+      return {
+        ok: false,
+        message: `Součet procent nesmí přesáhnout 100 % (nyní ${roundMoney2(sumP)} %).`,
+      };
+    }
+    if (!allowPartial && Math.abs(sumP - 100) > SUM_EPS) {
       return {
         ok: false,
         message: `Součet procent musí být 100 % (nyní ${roundMoney2(sumP)} %).`,
@@ -305,6 +323,11 @@ export function computeAllocationGrossCzkShares(params: {
     return map;
   }
 
+  let sumP = 0;
+  for (const r of rows) {
+    sumP += Number(r.percent ?? 0);
+  }
+  const fullPercent = Math.abs(sumP - 100) <= SUM_EPS;
   let acc = 0;
   const nonOh = rows.filter((r) => r.kind === "job");
   const oh = rows.filter((r) => r.kind === "overhead");
@@ -312,7 +335,7 @@ export function computeAllocationGrossCzkShares(params: {
   for (let i = 0; i < ordered.length; i++) {
     const r = ordered[i];
     const p = Number(r.percent ?? 0);
-    if (i === ordered.length - 1) {
+    if (fullPercent && i === ordered.length - 1) {
       map.set(r.id, roundMoney2(basisGrossCzk - acc));
     } else {
       const g = roundMoney2((basisGrossCzk * p) / 100);

@@ -131,9 +131,20 @@ import {
   documentJobLinkId,
   documentLinkedJobIds,
   documentShowsAsPendingAssignment,
+  documentAssignmentStatusLabel,
   effectiveCompanyDocumentAssignmentTypeForForm,
   resolveDocumentAssignmentBadge,
+  resolveDocumentAssignmentStatus,
 } from "@/lib/company-document-assignment";
+import { DocumentJobAssignmentDialog } from "@/components/documents/document-job-assignment-dialog";
+import {
+  allocationFormRowsToDomain,
+  documentAllocationTotalsCzk,
+  documentJobCostAllocationAmountBasis,
+  domainRowsToAllocationForm,
+  switchAllocationFormBasis,
+  type AllocationAmountInputBasis,
+} from "@/lib/company-document-allocation-vat";
 import {
   allocationBasisGrossCzk,
   allocationJobIdsFromRows,
@@ -1382,11 +1393,9 @@ function DocumentsPageContent() {
 
   const [receivedSearch, setReceivedSearch] = useState("");
   const [issuedSearch, setIssuedSearch] = useState("");
-  const [assigningDocId, setAssigningDocId] = useState<string | null>(null);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
-  const [assignTypeNext, setAssignTypeNext] =
-    useState<AssignmentType>("pending_assignment");
-  const [assignJobIdNext, setAssignJobIdNext] = useState("");
+  const [assigningDocRow, setAssigningDocRow] =
+    useState<CompanyDocumentRow | null>(null);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editRow, setEditRow] = useState<CompanyDocumentRow | null>(null);
@@ -1416,6 +1425,8 @@ function DocumentsPageContent() {
   const [editAllocRows, setEditAllocRows] = useState<EditJobCostAllocFormRow[]>(
     []
   );
+  const [editAllocAmountBasis, setEditAllocAmountBasis] =
+    useState<AllocationAmountInputBasis>("gross");
   const [isEditSaving, setIsEditSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CompanyDocumentRow | null>(
@@ -2283,140 +2294,15 @@ function DocumentsPageContent() {
   };
 
   const openAssignDialog = (row: CompanyDocumentRow) => {
-    setAssigningDocId(row.id);
-    setAssignTypeNext(effectiveCompanyDocumentAssignmentTypeForForm(row));
-    setAssignJobIdNext(documentJobLinkId(row));
+    setAssigningDocRow(row);
     setAssignDialogOpen(true);
-  };
-
-  const saveAssignment = async () => {
-    if (!companyId || !assigningDocId || !firestore || !user) return;
-    if (assignTypeNext === "job_cost" && !assignJobIdNext) {
-      toast({
-        variant: "destructive",
-        title: "Vyberte zakázku",
-        description: "Pro zařazení do nákladů zakázky je nutné vybrat zakázku.",
-      });
-      return;
-    }
-    const selected = jobs.find((j) => j.id === assignJobIdNext);
-    const jid =
-      assignTypeNext === "job_cost" ? selected?.id ?? assignJobIdNext : null;
-    const docRef = doc(
-      firestore,
-      "companies",
-      companyId,
-      "documents",
-      assigningDocId
-    );
-    try {
-      const snap = await getDoc(docRef);
-      if (!snap.exists()) {
-        toast({
-          variant: "destructive",
-          title: "Doklad nenalezen",
-          description: "Obnovte stránku a zkuste to znovu.",
-        });
-        return;
-      }
-      const beforeRow = snap.data() as CompanyDocumentRow;
-      const isDl = isDeliveryNote(beforeRow);
-      const before: CompanyDocumentExpenseReconcileBefore = {
-        ...beforeRow,
-        id: assigningDocId,
-      };
-      await updateDoc(docRef, {
-        assignmentType: assignTypeNext,
-        jobId: jid,
-        zakazkaId: jid,
-        jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
-        assignedTo: {
-          jobId: assignTypeNext === "job_cost" ? jid : null,
-          companyId: assignTypeNext === "company" ? companyId : null,
-          warehouseId: assignTypeNext === "warehouse" ? "main" : null,
-        },
-        jobCostAllocations: deleteField(),
-        jobCostAllocationMode: deleteField(),
-        allocations: deleteField(),
-        allocationMode: deleteField(),
-        allocationJobIds: deleteField(),
-        updatedAt: serverTimestamp(),
-      });
-      if (
-        documentShowsAsPendingAssignment(beforeRow) &&
-        assignTypeNext !== "pending_assignment"
-      ) {
-        const docTitle =
-          beforeRow.number?.trim() ||
-          beforeRow.entityName?.trim() ||
-          assigningDocId;
-        let placementLine = "";
-        if (assignTypeNext === "job_cost") {
-          placementLine = `Zařazeno do nákladů zakázky: ${selected?.name?.trim() || jid || "—"}`;
-        } else if (assignTypeNext === "warehouse") {
-          placementLine = "Zařazeno ke skladu";
-        } else if (assignTypeNext === "company" || assignTypeNext === "overhead") {
-          placementLine = "Zařazeno jako režie firmy";
-        }
-        void sendModuleEmailNotificationFromBrowser({
-          companyId: companyId!,
-          module: "documents",
-          eventKey: "updated",
-          entityId: assigningDocId,
-          title: `Doklad zařazen: ${docTitle}`,
-          lines: [placementLine].filter(Boolean),
-          actionPath: `/portal/documents`,
-        });
-      }
-      if (isDl) {
-        setAssignDialogOpen(false);
-        setAssigningDocId(null);
-        toast({ title: "Zařazení uloženo" });
-        return;
-      }
-      const after: CompanyDocumentExpenseReconcileBefore = {
-        ...before,
-        assignmentType: assignTypeNext,
-        jobId: jid,
-        zakazkaId: jid,
-        jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
-      };
-      await reconcileCompanyDocumentJobExpense({
-        firestore,
-        companyId,
-        userId: user.uid,
-        documentId: assigningDocId,
-        before,
-        after,
-      });
-      await reconcileCompanyDocumentJobIncome({
-        firestore,
-        companyId,
-        userId: user.uid,
-        documentId: assigningDocId,
-        before,
-        after,
-      });
-      setAssignDialogOpen(false);
-      setAssigningDocId(null);
-      toast({ title: "Zařazení uloženo" });
-    } catch (e) {
-      console.error(e);
-      toast({
-        variant: "destructive",
-        title: "Zařazení se nepovedlo",
-        description:
-          e instanceof Error
-            ? e.message
-            : "Zkontrolujte oprávnění a data dokladu (částka, typ přijatého dokladu).",
-      });
-    }
   };
 
   const openEditDocument = (row: CompanyDocumentRow) => {
     setEditSplitToJobs(false);
     setEditAllocMode("amount");
     setEditAllocRows([]);
+    setEditAllocAmountBasis("gross");
     if (isDeliveryNote(row)) {
       setEditInvoiceId(String(row.invoiceId ?? "").trim());
       {
@@ -2489,22 +2375,18 @@ function DocumentsPageContent() {
     ) {
       setEditSplitToJobs(true);
       setEditAllocMode(resolved.mode);
+      const basis = documentJobCostAllocationAmountBasis(
+        row as Record<string, unknown>
+      );
+      setEditAllocAmountBasis(basis);
+      const docTotals = documentAllocationTotalsCzk(row);
       setEditAllocRows(
-        resolved.rows.map((r) => ({
-          id: r.id,
-          kind: r.kind,
-          jobId: r.jobId?.trim() ?? "",
-          amount:
-            r.amount != null && Number.isFinite(r.amount)
-              ? String(r.amount)
-              : "",
-          percent:
-            r.percent != null && Number.isFinite(r.percent)
-              ? String(r.percent)
-              : "",
-          note: r.note?.trim() ?? "",
-          linkedExpenseId: r.linkedExpenseId ?? null,
-        }))
+        domainRowsToAllocationForm(
+          resolved.rows,
+          resolved.mode,
+          basis,
+          docTotals
+        )
       );
     }
     setEditOpen(true);
@@ -2710,11 +2592,18 @@ function DocumentsPageContent() {
         const basis = allocationBasisGrossCzk(
           mergedForBasis as Parameters<typeof allocationBasisGrossCzk>[0]
         );
-        const domainRows = editAllocFormRowsToDomain(editAllocRows);
+        const docTotals = documentAllocationTotalsCzk(mergedForBasis);
+        const domainRows = allocationFormRowsToDomain({
+          mode: editAllocMode,
+          inputBasis: editAllocAmountBasis,
+          totals: docTotals,
+          rows: editAllocRows,
+        });
         const val = validateJobCostAllocations({
           mode: editAllocMode,
           rows: domainRows,
           basisGrossCzk: basis,
+          allowPartial: true,
         });
         if (!val.ok) {
           toast({
@@ -2754,6 +2643,7 @@ function DocumentsPageContent() {
           linkedExpenseId: r.linkedExpenseId ?? null,
         }));
         basePayload.jobCostAllocationMode = editAllocMode;
+        basePayload.jobCostAllocationAmountBasis = editAllocAmountBasis;
         basePayload.allocationMode = editAllocMode;
         basePayload.allocations = allocationsMirrorForDocument(domainRows);
         basePayload.allocationJobIds =
@@ -3018,7 +2908,15 @@ function DocumentsPageContent() {
       return { kind: "amount" as const, value: 0 };
     }
     const basis = previewEditDocumentGrossCzk(editRow, editForm);
-    const d = editAllocFormRowsToDomain(editAllocRows);
+    const docTotals = documentAllocationTotalsCzk(
+      editRow as Record<string, unknown>
+    );
+    const d = allocationFormRowsToDomain({
+      mode: editAllocMode,
+      inputBasis: editAllocAmountBasis,
+      totals: docTotals,
+      rows: editAllocRows,
+    });
     if (editAllocMode === "amount") {
       let sum = 0;
       for (const r of d) {
@@ -3031,21 +2929,44 @@ function DocumentsPageContent() {
       sumP += Number(r.percent ?? 0);
     }
     return { kind: "percent" as const, value: roundMoney2(100 - sumP) };
-  }, [editRow, editSplitToJobs, editForm, editAllocRows, editAllocMode]);
+  }, [
+    editRow,
+    editSplitToJobs,
+    editForm,
+    editAllocRows,
+    editAllocMode,
+    editAllocAmountBasis,
+  ]);
 
   const fillEditAllocRemainder = useCallback(() => {
     setEditAllocRows((rows) => {
       if (rows.length === 0 || !editRow) return rows;
       const basis = previewEditDocumentGrossCzk(editRow, editForm);
-      const d = editAllocFormRowsToDomain(rows);
+      const docTotals = editRow
+        ? documentAllocationTotalsCzk(editRow)
+        : { net: 0, vat: 0, gross: 0, vatRatePercent: 0 };
+      const d = allocationFormRowsToDomain({
+        mode: editAllocMode,
+        inputBasis: editAllocAmountBasis,
+        totals: docTotals,
+        rows,
+      });
       if (editAllocMode === "amount") {
         let sum = 0;
         for (let i = 0; i < d.length - 1; i++) {
           sum += Number(d[i].amount ?? 0);
         }
-        const rest = roundMoney2(Math.max(0, basis - sum));
+        const restGross = roundMoney2(Math.max(0, basis - sum));
+        const display =
+          editAllocAmountBasis === "gross"
+            ? restGross
+            : roundMoney2(
+                docTotals.vatRatePercent > 0
+                  ? restGross / (1 + docTotals.vatRatePercent / 100)
+                  : restGross
+              );
         const last = { ...rows[rows.length - 1] };
-        last.amount = String(rest);
+        last.amount = String(display);
         return [...rows.slice(0, -1), last];
       }
       let sumP = 0;
@@ -3057,7 +2978,7 @@ function DocumentsPageContent() {
       last.percent = String(restP);
       return [...rows.slice(0, -1), last];
     });
-  }, [editRow, editForm, editAllocMode]);
+  }, [editRow, editForm, editAllocMode, editAllocAmountBasis]);
 
   const editAllocDuplicateJobIds = useMemo(() => {
     if (!editSplitToJobs) return [] as string[];
@@ -3076,11 +2997,18 @@ function DocumentsPageContent() {
   const editAllocSavePreview = useMemo(() => {
     if (!editRow || !editSplitToJobs) return null;
     const basis = previewEditDocumentGrossCzk(editRow, editForm);
-    const domain = editAllocFormRowsToDomain(editAllocRows);
+    const docTotals = documentAllocationTotalsCzk(editRow);
+    const domain = allocationFormRowsToDomain({
+      mode: editAllocMode,
+      inputBasis: editAllocAmountBasis,
+      totals: docTotals,
+      rows: editAllocRows,
+    });
     const val = validateJobCostAllocations({
       mode: editAllocMode,
       rows: domain,
       basisGrossCzk: basis,
+      allowPartial: true,
     });
     let allocatedCzk = 0;
     let sumPct = 0;
@@ -3108,7 +3036,14 @@ function DocumentsPageContent() {
       sumPct: roundMoney2(sumPct),
       remainderCzk: roundMoney2(basis - allocatedCzk),
     };
-  }, [editRow, editSplitToJobs, editForm, editAllocRows, editAllocMode]);
+  }, [
+    editRow,
+    editSplitToJobs,
+    editForm,
+    editAllocRows,
+    editAllocMode,
+    editAllocAmountBasis,
+  ]);
 
   if (isProfileLoading) {
     return (
@@ -4107,58 +4042,20 @@ function DocumentsPageContent() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Zařadit doklad</DialogTitle>
-            <DialogDescription>
-              Nastavte, kam doklad patří: zakázka, režie nebo ponechat na později.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>Zařazení</Label>
-              <Select
-                value={assignTypeNext}
-                onValueChange={(v) => setAssignTypeNext(v as AssignmentType)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="job_cost">Zakázka → náklad</SelectItem>
-                  <SelectItem value="company">Firma (doklady firmy)</SelectItem>
-                  <SelectItem value="warehouse">Sklad</SelectItem>
-                  <SelectItem value="pending_assignment">Nezařazený (později)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {assignTypeNext === "job_cost" ? (
-              <div className="space-y-2">
-                <Label>Zakázka</Label>
-                <Select value={assignJobIdNext} onValueChange={setAssignJobIdNext}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Vyberte zakázku" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {jobs.map((j) => (
-                      <SelectItem key={j.id} value={j.id}>
-                        {j.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>
-              Zrušit
-            </Button>
-            <Button onClick={() => void saveAssignment()}>Uložit zařazení</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {companyId && firestore && user ? (
+        <DocumentJobAssignmentDialog
+          open={assignDialogOpen}
+          onOpenChange={(o) => {
+            setAssignDialogOpen(o);
+            if (!o) setAssigningDocRow(null);
+          }}
+          document={assigningDocRow}
+          jobs={jobs.map((j) => ({ id: j.id, name: j.name }))}
+          companyId={companyId}
+          userId={user.uid}
+          firestore={firestore}
+        />
+      ) : null}
 
       <Dialog
         open={editOpen}
@@ -4512,9 +4409,9 @@ function DocumentsPageContent() {
                   <div className="space-y-0.5 min-w-0">
                     <Label htmlFor="edit-split-jobs">Rozdělení nákladu na zakázky</Label>
                     <p className="text-xs text-muted-foreground">
-                      Více zakázek nebo část jako režie. Režim částky: součet řádků = hrubá částka
-                      dokladu v CZK. Režim procenta: součet = 100 %. Bez zapnutí zůstává chování jako
-                      jedna zakázka níže.
+                      Více zakázek nebo část jako režie. Částky zadávejte s DPH nebo bez DPH —
+                      systém dopočítá druhou hodnotu. Částečné přiřazení je povolené (nemusíte rozdělit
+                      celý doklad).
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
@@ -4579,13 +4476,68 @@ function DocumentsPageContent() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="amount">
-                              Částky (Kč, hrubá po DPH jako u dokladu)
-                            </SelectItem>
-                            <SelectItem value="percent">Procenta (100 % celkem)</SelectItem>
+                            <SelectItem value="amount">Částky (Kč)</SelectItem>
+                            <SelectItem value="percent">Procenta</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
+                      {editAllocMode === "amount" && editRow ? (
+                        <div className="space-y-1">
+                          <Label className="text-xs">Zadávám</Label>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={
+                                editAllocAmountBasis === "gross"
+                                  ? "default"
+                                  : "outline"
+                              }
+                              onClick={() => {
+                                if (editAllocAmountBasis === "gross") return;
+                                const totals = documentAllocationTotalsCzk(editRow);
+                                setEditAllocRows((prev) =>
+                                  switchAllocationFormBasis(
+                                    prev,
+                                    editAllocAmountBasis,
+                                    "gross",
+                                    totals,
+                                    editAllocMode
+                                  )
+                                );
+                                setEditAllocAmountBasis("gross");
+                              }}
+                            >
+                              S DPH
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={
+                                editAllocAmountBasis === "net"
+                                  ? "default"
+                                  : "outline"
+                              }
+                              onClick={() => {
+                                if (editAllocAmountBasis === "net") return;
+                                const totals = documentAllocationTotalsCzk(editRow);
+                                setEditAllocRows((prev) =>
+                                  switchAllocationFormBasis(
+                                    prev,
+                                    editAllocAmountBasis,
+                                    "net",
+                                    totals,
+                                    editAllocMode
+                                  )
+                                );
+                                setEditAllocAmountBasis("net");
+                              }}
+                            >
+                              Bez DPH
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="text-sm">
                         {editSplitRemainder.kind === "amount" ? (
                           <span
@@ -4743,7 +4695,11 @@ function DocumentsPageContent() {
                           )}
                           <div className="sm:col-span-2">
                             <Label className="text-xs text-muted-foreground">
-                              {editAllocMode === "amount" ? "Kč" : "%"}
+                              {editAllocMode === "amount"
+                                ? editAllocAmountBasis === "gross"
+                                  ? "Kč s DPH"
+                                  : "Kč bez DPH"
+                                : "%"}
                             </Label>
                             <Input
                               className="bg-background h-9 tabular-nums"
@@ -5715,6 +5671,9 @@ function DocumentTableReceived({
               const payHighlightClasses = getDocumentStatusStyle(pr);
 
               const assignmentBadge = resolveDocumentAssignmentBadge(row);
+              const assignmentStatus = resolveDocumentAssignmentStatus(row);
+              const assignmentStatusText =
+                documentAssignmentStatusLabel(assignmentStatus);
 
               const iconBtn =
                 "h-10 w-10 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950 sm:h-7 sm:w-7 touch-manipulation";
@@ -5860,7 +5819,11 @@ function DocumentTableReceived({
                         variant="ghost"
                         size="icon"
                         className={iconBtn}
-                        title="Přiřadit"
+                        title={
+                          documentJobLinkId(row)
+                            ? "Upravit přiřazení / rozdělit"
+                            : "Přiřadit na zakázku"
+                        }
                         onClick={() => onAssign(row)}
                       >
                         <Link2 className="h-3.5 w-3.5" />
@@ -5932,6 +5895,12 @@ function DocumentTableReceived({
                         )}
                       >
                         {assignmentBadge}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="h-5 border-violet-300 px-1.5 text-[10px] text-violet-900"
+                      >
+                        {assignmentStatusText}
                       </Badge>
                       {isDeliveryNote(row) ? (
                         <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
@@ -6664,7 +6633,11 @@ function DocumentTableIssued({
                           variant="ghost"
                           size="icon"
                           className={ib}
-                          title="Přiřadit k zakázce"
+                          title={
+                            documentJobLinkId(docRow)
+                              ? "Upravit přiřazení / rozdělit"
+                              : "Přiřadit na zakázku"
+                          }
                           onClick={() => onAssign(docRow)}
                         >
                           <Link2 className="h-3.5 w-3.5" />
