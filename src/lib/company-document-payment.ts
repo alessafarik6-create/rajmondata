@@ -130,14 +130,66 @@ export function documentGrossForPayment(row: CompanyDocumentPaymentRow): number 
   return roundMoney2(n);
 }
 
+/** Zbývající částka s DPH k úhradě (po částečné platbě). */
+export function documentRemainingForPayment(row: CompanyDocumentPaymentRow): number {
+  if (resolveCompanyDocumentPaymentStatus(row) === "paid") return 0;
+  const gross = documentGrossForPayment(row);
+  if (gross <= 0) return 0;
+  const paid = Number(row.paidAmount ?? 0);
+  if (Number.isFinite(paid) && paid > 0) {
+    return Math.max(0, roundMoney2(gross - paid));
+  }
+  return gross;
+}
+
+export function portalInvoiceGross(inv: PortalInvoiceRow): number {
+  const gross = Number(inv.amountGross ?? inv.totalAmount ?? 0);
+  return Number.isFinite(gross) && gross > 0 ? roundMoney2(gross) : 0;
+}
+
+/** Zbývající částka k inkasu u vydané faktury (portal invoices). */
+export function portalInvoiceRemaining(inv: PortalInvoiceRow): number {
+  const status = String(inv.status ?? "")
+    .trim()
+    .toLowerCase();
+  if (status === "paid") return 0;
+  const paymentStatus = String(inv.paymentStatus ?? "")
+    .trim()
+    .toLowerCase();
+  if (paymentStatus === "paid") return 0;
+  const gross = portalInvoiceGross(inv);
+  if (gross <= 0) return 0;
+  const paid = Number(inv.paidAmount ?? inv.paidGrossReceived ?? 0);
+  if (Number.isFinite(paid) && paid > 0) {
+    return Math.max(0, roundMoney2(gross - paid));
+  }
+  return gross;
+}
+
+export function isPortalInvoiceOpenForCollection(inv: PortalInvoiceRow): boolean {
+  if (!isActiveFirestoreDoc(inv)) return false;
+  const status = String(inv.status ?? "")
+    .trim()
+    .toLowerCase();
+  if (
+    status === "paid" ||
+    status === "draft" ||
+    status === "cancelled" ||
+    status === "canceled" ||
+    status === "storno"
+  ) {
+    return false;
+  }
+  return portalInvoiceRemaining(inv) > 0;
+}
+
 export function isDocumentEligibleForPaymentBox(
   row: CompanyDocumentPaymentRow
 ): boolean {
   if (!isActiveFirestoreDoc(row)) return false;
   if (!row.requiresPayment) return false;
-  if (resolveCompanyDocumentPaymentStatus(row) === "paid") return false;
   if (!isFinancialCompanyDocument(row)) return false;
-  return documentGrossForPayment(row) > 0;
+  return documentRemainingForPayment(row) > 0;
 }
 
 /**
@@ -151,6 +203,7 @@ export function getDocumentPaymentUrgency(
 ): PaymentUrgency {
   if (resolveCompanyDocumentPaymentStatus(row) === "paid") return "paid";
   if (!row.requiresPayment) return "not_applicable";
+  if (documentRemainingForPayment(row) <= 0) return "paid";
   const due = String(row.dueDate ?? "").trim();
   if (!due) return "incomplete_no_due";
   if (compareIsoDate(due, todayIso) < 0) return "overdue";
@@ -178,8 +231,7 @@ export function getPortalInvoicePaymentUrgency(
   ) {
     return "not_applicable";
   }
-  const gross = Number(inv.amountGross ?? inv.totalAmount ?? 0);
-  if (!Number.isFinite(gross) || gross <= 0) return "not_applicable";
+  if (portalInvoiceRemaining(inv) <= 0) return "paid";
   const due = String(inv.dueDate ?? "").trim();
   if (!due) return "incomplete_no_due";
   if (compareIsoDate(due, todayIso) < 0) return "overdue";

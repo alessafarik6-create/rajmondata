@@ -115,7 +115,7 @@ export function DashboardDocumentsToPayWidget({
     );
   }
 
-  if (rows.length === 0 && stats.toPay === 0) {
+  if (rows.length === 0 && stats.received.openCount === 0) {
     return null;
   }
 
@@ -132,11 +132,12 @@ export function DashboardDocumentsToPayWidget({
       >
         <div className="space-y-2 text-xs">
           <p className="font-semibold tabular-nums text-foreground">
-            {stats.toPay} ks · {Math.round(stats.totalKc).toLocaleString("cs-CZ")} Kč
+            {stats.received.openCount} ks ·{" "}
+            {Math.round(stats.received.openAmountKc).toLocaleString("cs-CZ")} Kč
           </p>
-          {stats.overdueTotal > 0 ? (
+          {stats.received.overdueCount > 0 ? (
             <p className="text-red-700">
-              Po splatnosti: <strong>{stats.overdueTotal}</strong>
+              Po splatnosti: <strong>{stats.received.overdueCount}</strong>
             </p>
           ) : null}
           <ul className="space-y-1.5 pt-1">
@@ -177,15 +178,15 @@ export function DashboardDocumentsToPayWidget({
           Nutno uhradit
         </CardTitle>
         <CardDescription className="text-sm text-gray-700">
-          Doklady označené k úhradě ({PAYMENT_DUE_SOON_DAYS} dní = blížící se splatnost). Celkem{" "}
-          <span className="font-semibold tabular-nums">{stats.toPay}</span> ks ·{" "}
+          Přijaté faktury k úhradě ({PAYMENT_DUE_SOON_DAYS} dní = blížící se splatnost).{" "}
+          <span className="font-semibold tabular-nums">{stats.received.openCount}</span> ks ·{" "}
           <span className="font-semibold tabular-nums">
-            {Math.round(stats.totalKc).toLocaleString("cs-CZ")} Kč
+            {Math.round(stats.received.openAmountKc).toLocaleString("cs-CZ")} Kč
           </span>
-          {stats.overdueTotal > 0 ? (
+          {stats.received.overdueCount > 0 ? (
             <span className="text-red-700">
               {" "}
-              · Po splatnosti: <strong>{stats.overdueTotal}</strong>
+              · Po splatnosti: <strong>{stats.received.overdueCount}</strong>
             </span>
           ) : null}
         </CardDescription>

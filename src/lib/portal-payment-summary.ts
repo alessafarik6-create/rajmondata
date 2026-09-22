@@ -1,15 +1,17 @@
 /**
- * Jednotný souhrn „k úhradě“ — pouze aktivní doklady/faktury, bez dvojího započtení zrcadlených faktur.
+ * Souhrn plateb — přijaté (k úhradě) a vydané (k inkasu) odděleně, zbývající částky s DPH.
  */
 
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import {
   documentClassificationValues,
-  documentGrossForPayment,
+  documentRemainingForPayment,
   getDocumentPaymentUrgency,
   getPortalInvoicePaymentUrgency,
   isCompanyDocumentDeliveryNote,
   isDocumentEligibleForPaymentBox,
+  isPortalInvoiceOpenForCollection,
+  portalInvoiceRemaining,
   type CompanyDocumentPaymentRow,
 } from "@/lib/company-document-payment";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
@@ -21,13 +23,31 @@ export type PortalPaymentOverdueTarget = {
   section: "received" | "issued";
 };
 
+export type PortalPaymentSideStats = {
+  openCount: number;
+  openAmountKc: number;
+  overdueCount: number;
+  overdueAmountKc: number;
+};
+
 export type PortalPaymentOverviewStats = {
+  received: PortalPaymentSideStats;
+  issued: PortalPaymentSideStats;
+  /** Celkový počet otevřených položek (přijaté + vydané) — dashboard / legacy. */
   toPay: number;
   overdueDocuments: number;
   overdueInvoices: number;
   overdueTotal: number;
+  /** @deprecated Nepoužívat pro UI — sčítá oba směry. Použijte received/issued. */
   totalKc: number;
   overdueTargets: PortalPaymentOverdueTarget[];
+};
+
+const EMPTY_SIDE: PortalPaymentSideStats = {
+  openCount: 0,
+  openAmountKc: 0,
+  overdueCount: 0,
+  overdueAmountKc: 0,
 };
 
 function isFinancialOrDeliveryDoc(row: CompanyDocumentPaymentRow): boolean {
@@ -57,6 +77,19 @@ export function filterActivePortalInvoices(
   );
 }
 
+function paymentSectionForDoc(
+  d: CompanyDocumentPaymentRow
+): "received" | "issued" | null {
+  const { type, documentKind } = documentClassificationValues(d);
+  if (type === "received" || type === "prijate" || documentKind === "prijate") {
+    return "received";
+  }
+  if (type === "issued" || type === "vydane" || documentKind === "vydane") {
+    return "issued";
+  }
+  return null;
+}
+
 export function collectOverduePaymentFlashTargets(
   financialActive: CompanyDocumentPaymentRow[],
   invoices: Array<Record<string, unknown> & { id: string }>,
@@ -65,8 +98,9 @@ export function collectOverduePaymentFlashTargets(
   const out: PortalPaymentOverdueTarget[] = [];
   for (const d of financialActive) {
     if (isPortalInvoiceMirrorDocument(d)) continue;
+    if (documentRemainingForPayment(d) <= 0) continue;
     if (getDocumentPaymentUrgency(d, todayIso) !== "overdue") continue;
-    const sec = overdueSectionForDoc(d);
+    const sec = paymentSectionForDoc(d);
     if (!sec) continue;
     out.push({
       flashRowKey: `doc:${String(d.id ?? "")}`,
@@ -75,7 +109,7 @@ export function collectOverduePaymentFlashTargets(
     });
   }
   for (const inv of invoices) {
-    if (!isActiveFirestoreDoc(inv)) continue;
+    if (!isPortalInvoiceOpenForCollection(inv)) continue;
     if (getPortalInvoicePaymentUrgency(inv, todayIso) !== "overdue") continue;
     out.push({
       flashRowKey: `inv:${inv.id}`,
@@ -90,17 +124,17 @@ export function collectOverduePaymentFlashTargets(
   return out;
 }
 
-function overdueSectionForDoc(
-  d: CompanyDocumentPaymentRow
-): "received" | "issued" | null {
-  const { type, documentKind } = documentClassificationValues(d);
-  if (type === "received" || type === "prijate" || documentKind === "prijate") {
-    return "received";
+function addDocToSide(
+  side: PortalPaymentSideStats,
+  remaining: number,
+  isOverdue: boolean
+): void {
+  side.openCount += 1;
+  side.openAmountKc = roundMoney2(side.openAmountKc + remaining);
+  if (isOverdue) {
+    side.overdueCount += 1;
+    side.overdueAmountKc = roundMoney2(side.overdueAmountKc + remaining);
   }
-  if (type === "issued" || type === "vydane" || documentKind === "vydane") {
-    return "issued";
-  }
-  return null;
 }
 
 export function computePortalPaymentOverviewStats(
@@ -111,22 +145,30 @@ export function computePortalPaymentOverviewStats(
   const financialActive = filterActiveFinancialDocuments(documents);
   const invList = filterActivePortalInvoices(invoices);
 
-  let toPay = 0;
-  let totalKc = 0;
+  const received: PortalPaymentSideStats = { ...EMPTY_SIDE };
+  const issued: PortalPaymentSideStats = { ...EMPTY_SIDE };
 
   for (const d of financialActive) {
     if (isPortalInvoiceMirrorDocument(d)) continue;
     if (!isDocumentEligibleForPaymentBox(d)) continue;
-    toPay += 1;
-    totalKc += documentGrossForPayment(d);
+    const section = paymentSectionForDoc(d);
+    if (!section) continue;
+    const remaining = documentRemainingForPayment(d);
+    if (remaining <= 0) continue;
+    const overdue = getDocumentPaymentUrgency(d, todayIso) === "overdue";
+    if (section === "received") {
+      addDocToSide(received, remaining, overdue);
+    } else {
+      addDocToSide(issued, remaining, overdue);
+    }
   }
 
   for (const inv of invList) {
-    if (String(inv.status ?? "").trim().toLowerCase() === "paid") continue;
-    const gross = Number(inv.amountGross ?? inv.totalAmount ?? 0);
-    if (!Number.isFinite(gross) || gross <= 0) continue;
-    toPay += 1;
-    totalKc += roundMoney2(gross);
+    if (!isPortalInvoiceOpenForCollection(inv)) continue;
+    const remaining = portalInvoiceRemaining(inv);
+    if (remaining <= 0) continue;
+    const overdue = getPortalInvoicePaymentUrgency(inv, todayIso) === "overdue";
+    addDocToSide(issued, remaining, overdue);
   }
 
   const overdueTargets = collectOverduePaymentFlashTargets(
@@ -142,11 +184,13 @@ export function computePortalPaymentOverviewStats(
   ).length;
 
   return {
-    toPay,
+    received,
+    issued,
+    toPay: received.openCount + issued.openCount,
+    totalKc: roundMoney2(received.openAmountKc + issued.openAmountKc),
     overdueDocuments,
     overdueInvoices,
     overdueTotal: overdueTargets.length,
-    totalKc: roundMoney2(totalKc),
     overdueTargets,
   };
 }

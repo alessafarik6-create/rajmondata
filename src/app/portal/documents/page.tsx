@@ -162,6 +162,7 @@ import {
   getDocumentPaymentUrgency,
   getPortalInvoicePaymentUrgency,
   isDocumentEligibleForPaymentBox,
+  isPortalInvoiceOpenForCollection,
   paymentStatusBadgeClass,
   paymentStatusLabel,
   resolveCompanyDocumentPaymentStatus,
@@ -1010,9 +1011,8 @@ function issuedMergedEntryMatchesPaymentFilter(
   }
   const inv = entry.inv;
   const u = getPortalInvoicePaymentUrgency(inv, todayIso);
-  const gross = Number(inv.amountGross ?? inv.totalAmount ?? 0);
   if (paymentFilter === "to_pay") {
-    return u !== "paid" && u !== "not_applicable" && Number.isFinite(gross) && gross > 0;
+    return isPortalInvoiceOpenForCollection(inv);
   }
   if (paymentFilter === "needs_flag") return false;
   if (paymentFilter === "paid") return u === "paid";
@@ -3681,45 +3681,128 @@ function DocumentsPageContent() {
 
       {paymentOverviewStats.toPay > 0 ? (
         <Card className="border-gray-300 bg-white text-gray-900 shadow-sm">
-          <CardContent className="py-4 text-sm">
+          <CardContent className="py-4 text-sm space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">
-              Souhrn k úhradě
+              Souhrn plateb
             </p>
-            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
-              <span>
-                Dokladů k úhradě:{" "}
-                <strong className="tabular-nums">{paymentOverviewStats.toPay}</strong>
-              </span>
-              <span>
-                Celkem:{" "}
-                <strong className="tabular-nums">
-                  {Math.round(paymentOverviewStats.totalKc).toLocaleString("cs-CZ")} Kč
-                </strong>
-              </span>
+            <div
+              className={cn(
+                "grid gap-3",
+                documentsMainTab === "all"
+                  ? "md:grid-cols-2"
+                  : "grid-cols-1 max-w-xl"
+              )}
+            >
+              {documentsMainTab === "all" || documentsMainTab === "received" ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                    Přijaté faktury
+                  </p>
+                  <div className="space-y-1 text-sm text-slate-900">
+                    <p>
+                      K úhradě:{" "}
+                      <strong className="tabular-nums">
+                        {paymentOverviewStats.received.openCount}
+                      </strong>
+                    </p>
+                    <p>
+                      Celkem k úhradě:{" "}
+                      <strong className="tabular-nums">
+                        {Math.round(
+                          paymentOverviewStats.received.openAmountKc
+                        ).toLocaleString("cs-CZ")}{" "}
+                        Kč
+                      </strong>
+                    </p>
+                    <p
+                      className={cn(
+                        paymentOverviewStats.received.overdueCount > 0 &&
+                          "text-red-800"
+                      )}
+                    >
+                      Po splatnosti:{" "}
+                      <strong className="tabular-nums">
+                        {paymentOverviewStats.received.overdueCount}
+                      </strong>
+                      {paymentOverviewStats.received.overdueCount > 0 ? (
+                        <>
+                          {" "}
+                          ·{" "}
+                          <strong className="tabular-nums">
+                            {Math.round(
+                              paymentOverviewStats.received.overdueAmountKc
+                            ).toLocaleString("cs-CZ")}{" "}
+                            Kč
+                          </strong>
+                        </>
+                      ) : null}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              {documentsMainTab === "all" || documentsMainTab === "issued" ? (
+                <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/40 p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-900">
+                    Vydané faktury
+                  </p>
+                  <div className="space-y-1 text-sm text-slate-900">
+                    <p>
+                      Čeká na úhradu:{" "}
+                      <strong className="tabular-nums">
+                        {paymentOverviewStats.issued.openCount}
+                      </strong>
+                    </p>
+                    <p>
+                      Celkem k inkasu:{" "}
+                      <strong className="tabular-nums text-emerald-900">
+                        {Math.round(
+                          paymentOverviewStats.issued.openAmountKc
+                        ).toLocaleString("cs-CZ")}{" "}
+                        Kč
+                      </strong>
+                    </p>
+                    <p
+                      className={cn(
+                        paymentOverviewStats.issued.overdueCount > 0 &&
+                          "text-red-800"
+                      )}
+                    >
+                      Po splatnosti:{" "}
+                      <strong className="tabular-nums">
+                        {paymentOverviewStats.issued.overdueCount}
+                      </strong>
+                      {paymentOverviewStats.issued.overdueCount > 0 ? (
+                        <>
+                          {" "}
+                          ·{" "}
+                          <strong className="tabular-nums">
+                            {Math.round(
+                              paymentOverviewStats.issued.overdueAmountKc
+                            ).toLocaleString("cs-CZ")}{" "}
+                            Kč
+                          </strong>
+                        </>
+                      ) : null}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            {paymentOverviewStats.overdueTotal > 0 ? (
               <button
                 type="button"
                 onClick={onPaymentOverdueSummaryClick}
                 className={cn(
-                  "inline-flex max-w-full flex-wrap items-baseline gap-x-1 rounded-md border px-2 py-1 text-left text-sm transition-colors",
-                  paymentOverviewStats.overdueTotal > 0
-                    ? "cursor-pointer border-red-200 bg-red-50 text-red-900 hover:bg-red-100"
-                    : "cursor-pointer border-transparent text-gray-600 hover:bg-gray-50",
+                  "inline-flex max-w-full flex-wrap items-baseline gap-x-1 rounded-md border px-2 py-1 text-left text-xs transition-colors",
+                  "cursor-pointer border-red-200 bg-red-50 text-red-900 hover:bg-red-100",
                   documentsPaymentFilter === "overdue" &&
-                    paymentOverviewStats.overdueTotal > 0 &&
                     "ring-2 ring-red-400/60"
                 )}
-                title={
-                  paymentOverviewStats.overdueTotal > 0
-                    ? `Doklady: ${paymentOverviewStats.overdueDocuments}, faktury: ${paymentOverviewStats.overdueInvoices}. Kliknutím nastavíte filtr „po splatnosti“, zruší se hledání v tabulkách a zvýrazní se první položka.`
-                    : "Kliknutím ověříte stav"
-                }
+                title={`Přijaté po splatnosti: ${paymentOverviewStats.received.overdueCount}, vydané: ${paymentOverviewStats.issued.overdueCount}. Kliknutím filtr „po splatnosti“.`}
               >
-                <span className="font-normal">Po splatnosti:</span>{" "}
-                <strong className="tabular-nums">
-                  {paymentOverviewStats.overdueTotal}
-                </strong>
+                Zobrazit vše po splatnosti ({paymentOverviewStats.overdueTotal})
               </button>
-            </div>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}
