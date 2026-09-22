@@ -48,6 +48,12 @@ import {
   formatChatTimestampDisplay,
 } from "@/lib/format-chat-timestamp";
 import {
+  companyEmployeeMessageReadByAdmin,
+  dmPeerReadAtMs,
+  formatReadReceiptTime,
+  groupReadCount,
+} from "@/lib/chat-read-receipt";
+import {
   buildMessageTimestampClientFields,
   messageTimestampFromRecord,
 } from "@/lib/format-message-date";
@@ -171,11 +177,13 @@ function MessageAuthorMeta({
   sender,
   message,
   className,
+  readReceiptLine,
 }: {
   mine: boolean;
   sender: SenderDisplay;
   message: ChatMessageDoc;
   className?: string;
+  readReceiptLine?: string | null;
 }) {
   const timeLabel = formatMessageAuthorDateTime(
     messageTimestampFromRecord(message as Record<string, unknown>)
@@ -188,8 +196,44 @@ function MessageAuthorMeta({
       {!mine && sender.roleLabel ? (
         <div className="opacity-75 font-normal text-[10px] mt-0.5">{sender.roleLabel}</div>
       ) : null}
+      {mine && readReceiptLine ? (
+        <div className="opacity-80 font-normal text-[10px] mt-0.5">{readReceiptLine}</div>
+      ) : null}
     </div>
   );
+}
+
+function buildReadReceiptLine(
+  message: ChatMessageDoc,
+  ctx: {
+    conversationId: string;
+    peerUserId?: string | null;
+    participantIds?: string[];
+    myUserId?: string;
+    mode: CompanyChatSenderMode;
+  }
+): string | null {
+  const isCompany = ctx.conversationId === COMPANY_CHAT_CONVERSATION_ID;
+  if (isCompany && ctx.mode === "employee" && message.senderRole === "employee") {
+    return companyEmployeeMessageReadByAdmin(message) ? "Přečteno administrací" : "Odesláno";
+  }
+  if (isCompany && ctx.mode === "admin" && message.senderRole === "employee") {
+    return null;
+  }
+  if (isGroupConversationId(ctx.conversationId)) {
+    const { read, total } = groupReadCount(message, ctx.participantIds, ctx.myUserId);
+    if (total <= 0) return "Odesláno";
+    if (read >= total) return `Přečteno · ${read}/${total}`;
+    if (read > 0) return `Doručeno · přečetlo ${read}/${total}`;
+    return "Odesláno";
+  }
+  if (!isCompany) {
+    const peer = ctx.peerUserId ?? message.recipientUserId ?? null;
+    const readMs = dmPeerReadAtMs(message, peer);
+    if (readMs != null) return `Přečteno ${formatReadReceiptTime(readMs)}`;
+    return "Odesláno";
+  }
+  return "Odesláno";
 }
 
 function buildSenderNameFromProfile(profile: Record<string, unknown> | null | undefined): string {
@@ -435,12 +479,30 @@ export function CompanyChatMessenger({
       const toMark = filteredMessages.filter(
         (m) => m.senderRole === "employee" && m.read !== true
       );
-      if (toMark.length === 0) return;
-      const batch = writeBatch(firestore);
-      for (const m of toMark) {
-        batch.update(doc(firestore, "companies", companyId, "chat", m.id), { read: true });
+      if (toMark.length > 0) {
+        const batch = writeBatch(firestore);
+        for (const m of toMark) {
+          batch.update(doc(firestore, "companies", companyId, "chat", m.id), { read: true });
+        }
+        await batch.commit().catch(() => {});
       }
-      await batch.commit().catch(() => {});
+    }
+
+    const fromOthers = filteredMessages.filter((m) => m.senderId !== user.uid).slice(-80);
+    if (fromOthers.length > 0) {
+      const batch = writeBatch(firestore);
+      let pending = 0;
+      for (const m of fromOthers) {
+        const key = `readAtBy.${user.uid}`;
+        const existing = (m.readAtBy ?? {})[user.uid];
+        if (existing != null) continue;
+        batch.update(doc(firestore, "companies", companyId, "chat", m.id), {
+          [key]: serverTimestamp(),
+        });
+        pending += 1;
+        if (pending >= 400) break;
+      }
+      if (pending > 0) await batch.commit().catch(() => {});
     }
   }, [
     firestore,
@@ -478,8 +540,16 @@ export function CompanyChatMessenger({
   }, [mobileFull]);
 
   useEffect(() => {
-    if (mobileShowThread || !mobileFull) void markConversationRead();
-  }, [activeConversationId, filteredMessages.length, markConversationRead, mobileFull, mobileShowThread]);
+    if (mobileFull && !mobileShowThread) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    void markConversationRead();
+  }, [
+    activeConversationId,
+    filteredMessages.length,
+    markConversationRead,
+    mobileFull,
+    mobileShowThread,
+  ]);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
@@ -894,7 +964,7 @@ export function CompanyChatMessenger({
 
   const thread = (
     <div className="flex flex-col flex-1 min-h-0 w-full h-full overflow-hidden">
-      <div className="border-b px-3 py-2 flex items-center gap-2 shrink-0 bg-background">
+      <div className="border-b px-3 py-1.5 sm:py-2 flex items-center gap-2 shrink-0 bg-background">
         {mobileFull ? (
           <Button
             type="button"
@@ -955,6 +1025,18 @@ export function CompanyChatMessenger({
             const sender = resolveSenderDisplay(m, senderContext);
             const senderLabel = sender.name;
             const { photo: senderPhoto } = sender;
+            const readReceiptLine = mine
+              ? buildReadReceiptLine(m, {
+                  conversationId: activeConversationId,
+                  peerUserId: activeConvMeta?.peerUserId,
+                  participantIds:
+                    activeConvMeta?.participantIds ??
+                    groupById.get(activeConversationId)?.participantIds ??
+                    (m.participantIds?.length ? m.participantIds : undefined),
+                  myUserId: user?.uid,
+                  mode,
+                })
+              : null;
             return (
               <React.Fragment key={m.id}>
                 {showDay && dayLabel ? (
@@ -977,7 +1059,12 @@ export function CompanyChatMessenger({
                     mine ? "bg-primary text-primary-foreground" : "bg-muted"
                   )}
                 >
-                  <MessageAuthorMeta mine={mine} sender={sender} message={m} />
+                  <MessageAuthorMeta
+                    mine={mine}
+                    sender={sender}
+                    message={m}
+                    readReceiptLine={readReceiptLine}
+                  />
                   {m.text ? (
                     <p className="whitespace-pre-wrap break-words">{m.text}</p>
                   ) : null}
@@ -989,13 +1076,13 @@ export function CompanyChatMessenger({
                           <img
                             src={att.downloadUrl ?? ""}
                             alt={att.fileName}
-                            className="max-h-48 rounded-md border object-cover"
+                            className="max-h-48 max-lg:max-h-[min(50dvh,280px)] w-full rounded-md border object-contain"
                           />
                         </a>
                       ) : att.mimeType.startsWith("video/") ? (
                         <video
                           controls
-                          className="max-h-48 max-w-full rounded-md"
+                          className="max-h-48 max-lg:max-h-[min(50dvh,280px)] max-w-full rounded-md object-contain"
                           src={att.downloadUrl ?? undefined}
                         />
                       ) : (
@@ -1172,7 +1259,7 @@ export function CompanyChatMessenger({
         className={cn(
           "flex flex-col overflow-hidden min-h-0",
           mobileFull
-            ? "flex-1 min-h-0 h-full max-h-none rounded-none border-0 shadow-none"
+            ? "flex-1 min-h-0 h-full max-h-[100dvh] rounded-none border-0 shadow-none"
             : "min-h-[420px] max-h-[calc(100vh-120px)] md:max-h-[calc(100vh-140px)]"
         )}
         style={

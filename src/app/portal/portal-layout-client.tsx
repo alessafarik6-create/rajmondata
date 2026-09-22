@@ -778,7 +778,10 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       ) : null}
 
       <div
-        className="flex-1 flex flex-col min-w-0 min-h-screen bg-slate-100 text-slate-900 dark:bg-background dark:text-foreground"
+        className={cn(
+          "flex-1 flex flex-col min-w-0 bg-slate-100 text-slate-900 dark:bg-background dark:text-foreground",
+          mobileChatFullBleed ? "h-[100dvh] max-h-[100dvh] overflow-hidden" : "min-h-screen"
+        )}
         data-portal-content
       >
         <PwaInstallBanner />

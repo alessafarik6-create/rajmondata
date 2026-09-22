@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
 import { LogOut, User, Menu, MessageSquare, Bell } from 'lucide-react';
-import { GlobalSearchBar, GLOBAL_SEARCH_TRIGGER_WIDTH_CLASS } from '@/components/search/global-search-bar';
+import { GlobalSearchBar } from '@/components/search/global-search-bar';
 import { Button } from '@/components/ui/button';
 import { Logo } from '@/components/ui/logo';
 import Link from 'next/link';
@@ -121,16 +121,26 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
     return roles[role] || role;
   };
 
+  const iconBtnClass = cn(
+    "relative h-11 w-11 min-h-[44px] min-w-[44px] shrink-0",
+    dashboardDark
+      ? "text-slate-100 hover:bg-white/10 hover:text-white"
+      : "text-slate-800 hover:bg-slate-200 hover:text-slate-900"
+  );
+
   return (
     <header
       className={cn(
-        "print:hidden h-14 sm:h-16 sticky top-0 z-[100] lg:z-40 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 sm:px-6 lg:px-8 backdrop-blur-sm border-b sm:grid-cols-[auto_auto_minmax(380px,520px)_1fr_auto]",
+        "print:hidden sticky top-0 z-[100] lg:z-40 backdrop-blur-sm border-b",
+        "h-14 sm:h-16",
+        "max-lg:flex max-lg:items-center max-lg:gap-1 max-lg:px-2 sm:max-lg:px-3",
+        "lg:grid lg:grid-cols-[auto_auto_minmax(380px,520px)_1fr_auto] lg:items-center lg:gap-2 lg:px-8",
         dashboardDark
           ? "border-white/10 bg-slate-950/95 text-slate-50"
           : "border-slate-200 bg-white/90 text-slate-900"
       )}
     >
-      <div className="flex items-center gap-2 min-w-0 sm:col-span-2">
+      <div className="flex items-center gap-1 min-w-0 shrink-0 max-lg:max-w-[42%] sm:max-lg:max-w-none lg:col-span-2">
         {onOpenMobileMenu && (
           <Button
             variant="ghost"
@@ -164,7 +174,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-500 ring-1 ring-orange-400/40">
             <span className="text-sm font-extrabold text-white">R</span>
           </div>
-          <span className="truncate text-sm font-extrabold tracking-wide text-white">
+          <span className="truncate text-sm font-extrabold tracking-wide text-white max-[400px]:hidden min-[401px]:inline">
             RAJMONDATA
           </span>
         </Link>
@@ -194,30 +204,21 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
 
       <div
         className={cn(
-          "flex items-center justify-end sm:justify-start col-start-2 row-start-1 sm:col-start-3",
-          GLOBAL_SEARCH_TRIGGER_WIDTH_CLASS,
+          "flex items-center min-w-0 flex-1 max-lg:mx-0.5 max-lg:w-auto max-lg:max-w-none",
+          "lg:justify-start lg:col-start-3",
+          "lg:w-[clamp(360px,32vw,520px)] lg:max-w-[520px] lg:shrink-0",
           hideMobileGlobalSearch && "max-lg:hidden"
         )}
       >
-        <GlobalSearchBar dashboardDark={dashboardDark} className="w-full" />
+        <GlobalSearchBar dashboardDark={dashboardDark} className="w-full min-w-0" />
       </div>
 
-      <div className="hidden sm:block" aria-hidden />
+      <div className="hidden lg:block" aria-hidden />
 
-      <div className="flex items-center gap-1 sm:gap-4 shrink-0 justify-end col-start-2 sm:col-start-5">
+      <div className="flex items-center gap-0.5 sm:gap-1 shrink-0 justify-end max-lg:ml-auto lg:col-start-5 lg:gap-4">
         {isAdminArea ? <AdminNotificationsBell /> : null}
         {!isAdminArea ? (
-          <Button
-            asChild
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "relative h-10 w-10 shrink-0",
-              dashboardDark
-                ? "text-slate-100 hover:bg-white/10 hover:text-white"
-                : "text-slate-800 hover:bg-slate-200 hover:text-slate-900"
-            )}
-          >
+          <Button asChild variant="ghost" size="icon" className={iconBtnClass}>
             <Link href="/portal/notifications" aria-label="Oznámení portálu">
               <Bell className="w-5 h-5" />
               {portalNotifyCount > 0 ? (
@@ -229,17 +230,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
           </Button>
         ) : null}
         {showCompanyChatShortcut ? (
-          <Button
-            asChild
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "relative h-10 w-10 shrink-0",
-              dashboardDark
-                ? "text-slate-100 hover:bg-white/10 hover:text-white"
-                : "text-slate-800 hover:bg-slate-200 hover:text-slate-900"
-            )}
-          >
+          <Button asChild variant="ghost" size="icon" className={iconBtnClass}>
             <Link href={chatHref} aria-label={isCustomerPortal ? "Chat s administrací" : "Zprávy od zaměstnanců"}>
               <MessageSquare className="w-5 h-5" />
               {(isCustomerPortal ? customerUnread > 0 : showChatBadge && unreadChatCount > 0) ? (

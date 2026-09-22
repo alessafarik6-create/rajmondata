@@ -66,6 +66,8 @@ export function MobileDashboard(props: {
   showContractedJobsOverview?: boolean;
   contractedJobs?: Array<Record<string, unknown> & { id: string }>;
   contractedJobsCustomersById?: Map<string, Record<string, unknown>>;
+  /** AI sekretářka — součást toku mobilního dashboardu (nesmí být fixed). */
+  aiSecretary?: React.ReactNode;
 }) {
   const greet = dayPartGreeting();
   const name = props.displayName || "uživateli";
@@ -111,6 +113,10 @@ export function MobileDashboard(props: {
           </p>
           <p className="text-[12px] text-slate-400">{formatCompanySubline(props.companyLabel)}</p>
         </div>
+
+        {props.aiSecretary ? (
+          <div className="min-w-0 max-w-full overflow-x-hidden">{props.aiSecretary}</div>
+        ) : null}
 
         {props.schedulePreview ? (
           <div className="min-w-0 max-w-full overflow-x-hidden">

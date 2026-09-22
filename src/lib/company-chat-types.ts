@@ -55,6 +55,8 @@ export type ChatMessageDoc = {
   attachments?: ChatAttachmentMeta[];
   /** DM: uid příjemce (pro unread u zaměstnance) */
   recipientUserId?: string | null;
+  /** Kdo zprávu přečetl — uid → timestamp (DM / skupina). */
+  readAtBy?: Record<string, unknown>;
 };
 
 export function buildDirectConversationId(uidA: string, uidB: string): string {

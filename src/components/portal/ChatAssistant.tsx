@@ -261,6 +261,11 @@ export function ChatAssistant() {
 
   const quickTop = helpRows.slice(0, 6);
 
+  /** Na mobilu je zprávy v bottom nav — floating bublina nepřekrývá obsah. */
+  if (isMobileLayout) {
+    return null;
+  }
+
   return (
     <>
       {!open ? (

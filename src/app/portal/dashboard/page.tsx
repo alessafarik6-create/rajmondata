@@ -1000,11 +1000,6 @@ export default function CompanyDashboard() {
 
   return (
     <>
-      {belowLg && showAdminDashboard && companyId && showAiSecretary ? (
-        <div className="lg:hidden px-3 pt-2 pb-1 max-w-full overflow-x-hidden">
-          <DashboardAiSecretaryPanel companyId={companyId} />
-        </div>
-      ) : null}
       <MobileDashboard
         displayName={String(typedProfile.displayName || user?.email?.split("@")[0] || "")}
         companyLabel={String(companyName || companyId || "Organizace")}
@@ -1039,6 +1034,11 @@ export default function CompanyDashboard() {
         showContractedJobsOverview={showAdminDashboard}
         contractedJobs={jobsForContractedOverview}
         contractedJobsCustomersById={customersById}
+        aiSecretary={
+          belowLg && showAdminDashboard && companyId && showAiSecretary ? (
+            <DashboardAiSecretaryPanel companyId={companyId} />
+          ) : undefined
+        }
       />
       <MobileBottomNav unreadMessages={unreadEmployeeChatCount} role={role} />
 

@@ -3,6 +3,7 @@
 import React, { useMemo } from "react";
 import { format, startOfMonth } from "date-fns";
 import { cs } from "date-fns/locale";
+import { formatMeetingScheduleLabel } from "@/lib/format-meeting-schedule-label";
 import { CalendarDays, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -18,10 +19,12 @@ export function MobileSchedulePreviewCard(props: {
 
   const nowMs = Date.now();
   const upcoming = useMemo(() => {
-    const list = events.filter(
-      (e) => isValidCompanyScheduleEvent(e) && e.at.getTime() >= nowMs - 120_000
-    );
-    return list.slice(0, 2);
+    const list = events
+      .filter(
+        (e) => isValidCompanyScheduleEvent(e) && e.at.getTime() >= nowMs - 120_000
+      )
+      .sort((a, b) => a.at.getTime() - b.at.getTime());
+    return list.slice(0, 3);
   }, [events, nowMs]);
 
   const total = events.filter(isValidCompanyScheduleEvent).length;
@@ -65,10 +68,10 @@ export function MobileSchedulePreviewCard(props: {
               <li
                 key={ev.id}
                 className="truncate text-sm text-slate-200"
-                title={`${format(ev.at, "HH:mm")} — ${ev.headline}`}
+                title={`${formatMeetingScheduleLabel(ev.at)} — ${ev.headline}`}
               >
                 <span className="font-semibold tabular-nums text-orange-200">
-                  {format(ev.at, "HH:mm")}
+                  {formatMeetingScheduleLabel(ev.at)}
                 </span>{" "}
                 <span className="text-slate-100">{ev.headline}</span>
                 <span className="text-slate-500"> · {ev.title}</span>
