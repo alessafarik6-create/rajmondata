@@ -76,8 +76,12 @@ export function CameraLiveDialog(props: {
       hikLiveLog("CONFIG FETCH", {
         reason,
         camera: cameraId,
-        streamVariant: streamVariantRef.current,
-        subCandidateIndex: subCandidateIndexRef.current,
+        ...(streamVariantRef.current != null
+          ? { streamVariant: streamVariantRef.current }
+          : {}),
+        ...(subCandidateIndexRef.current != null
+          ? { subCandidateIndex: subCandidateIndexRef.current }
+          : {}),
       });
       setLoadingStream(true);
       if (reason === "open") {
