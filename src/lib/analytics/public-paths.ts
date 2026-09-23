@@ -20,7 +20,6 @@ const PUBLIC_PREFIXES = [
   "/pro-stavebni-firmy",
   "/obchodni-podminky",
   "/ochrana-osobnich-udaju",
-  "/gdpr",
   "/cookies",
   "/zpracovatelska-smlouva",
 ];

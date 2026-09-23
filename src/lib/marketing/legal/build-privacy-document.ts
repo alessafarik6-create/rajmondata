@@ -1,10 +1,7 @@
 import type { PublicOperatorInfo } from "@/lib/marketing/load-billing-provider-public";
-import { LEGAL_PRIVACY } from "@/lib/marketing/legal-versions";
+import { LEGAL_DPA_SLUG, LEGAL_PRIVACY } from "@/lib/marketing/legal-versions";
 import { OPTIONAL_SUBPROCESSORS, PLATFORM_SUBPROCESSORS } from "@/lib/marketing/subprocessors";
 import type { LegalDocumentRender } from "@/lib/marketing/legal/legal-section-types";
-
-const DRAFT =
-  "Návrh zásad ochrany osobních údajů — před publikací nechte zkontrolovat advokátem specializovaným na GDPR.";
 
 export function buildPrivacyDocument(operator: PublicOperatorInfo): LegalDocumentRender {
   const subList = [...PLATFORM_SUBPROCESSORS, ...OPTIONAL_SUBPROCESSORS]
@@ -13,7 +10,6 @@ export function buildPrivacyDocument(operator: PublicOperatorInfo): LegalDocumen
 
   return {
     meta: LEGAL_PRIVACY,
-    disclaimer: DRAFT,
     operator,
     sections: [
       {
@@ -25,12 +21,13 @@ export function buildPrivacyDocument(operator: PublicOperatorInfo): LegalDocumen
       {
         heading: "Rozsah těchto zásad",
         paragraphs: [
-          "Tento dokument popisuje zpracování osobních údajů provozovatele platformy RAJMONDATA v roli správce (registrace, smluvní vztah, provoz účtu, fakturace služby, podpora).",
-          "Zpracování údajů, které do systému vkládá zákaznická organizace o svých zaměstnancích a zákaznících, se řídí samostatně informacemi k GDPR a zpracovatelskou smlouvou.",
+          "Tento dokument popisuje zpracování osobních údajů v souvislosti s platformou RAJMONDATA podle nařízení GDPR a souvisejících předpisů.",
+          "Zpracování údajů uživatelů registrace, fakturace služby a provozu platformy probíhá v roli správce (provozovatel).",
+          "Zpracování údajů, které do systému vkládá zákaznická organizace o svých zaměstnancích, zákaznících a obchodních partnerech, probíhá v roli zpracovatele výhradně dle pokynů správce (organizace).",
         ],
       },
       {
-        heading: "Kategorie údajů a účely",
+        heading: "Kategorie údajů a účely (správce)",
         bullets: [
           "Identifikační a kontaktní údaje (jméno, e-mail, telefon, firma, IČO) — registrace a komunikace.",
           "Přihlašovací údaje — autentizace (heslo u Firebase Auth; neukládáme ho v čitelné podobě).",
@@ -48,6 +45,24 @@ export function buildPrivacyDocument(operator: PublicOperatorInfo): LegalDocumen
       {
         heading: "Příjemci a zpracovatelé",
         paragraphs: [subList],
+      },
+      {
+        heading: "Povinnosti organizace jako správce údajů",
+        bullets: [
+          "Mít právní titul pro zpracování údajů zaměstnanců a zákazníků.",
+          "Informovat subjekty údajů podle GDPR.",
+          "Uzavřít se Provozovatelem smlouvu o zpracování (DPA), pokud je to vyžadováno.",
+        ],
+      },
+      {
+        heading: "Subzpracovatelé provozovatele",
+        bullets: PLATFORM_SUBPROCESSORS.map((s) => `${s.name} (${s.location}): ${s.purpose}`),
+      },
+      {
+        heading: "Smlouva o zpracování osobních údajů (DPA)",
+        paragraphs: [
+          `Text smlouvy podle čl. 28 GDPR je k dispozici na stránce /${LEGAL_DPA_SLUG}. Organizace může požádat o individuální podpis na kontaktním e-mailu provozovatele.`,
+        ],
       },
       {
         heading: "Doba uchování",
@@ -70,9 +85,10 @@ export function buildPrivacyDocument(operator: PublicOperatorInfo): LegalDocumen
         ],
       },
       {
-        heading: "Zabezpečení",
+        heading: "Zabezpečení a incidenty",
         paragraphs: [
           "Používáme řízení přístupu, šifrované přenosy (HTTPS), oddělení dat organizací (multi-tenant) a pravidelnou aktualizaci aplikace. Absolutní bezpečnost nelze garantovat.",
+          "Provozovatel informuje organizaci o porušení zabezpečení osobních údajů v rozsahu vyžadovaném GDPR a poskytne přiměřenou součinnost.",
         ],
       },
       {
@@ -83,7 +99,7 @@ export function buildPrivacyDocument(operator: PublicOperatorInfo): LegalDocumen
       },
       {
         heading: "Cookies",
-        paragraphs: ["Podrobnosti viz stránka Cookies."],
+        paragraphs: ["Podrobnosti viz stránka /cookies."],
       },
       {
         heading: "Verze dokumentu",

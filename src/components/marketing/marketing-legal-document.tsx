@@ -11,10 +11,7 @@ export function MarketingLegalDocument({ doc }: { doc: LegalDocumentRender }) {
           { label: doc.meta.title },
         ]}
       />
-      <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-        {doc.disclaimer}
-      </p>
-      <h1 className="mt-6 text-3xl font-bold text-slate-50">{doc.meta.title}</h1>
+      <h1 className="mt-4 text-3xl font-bold text-slate-50">{doc.meta.title}</h1>
       <p className="mt-2 text-sm text-slate-500">
         Verze {doc.meta.version} · účinnost {doc.meta.effectiveDate} · aktualizace{" "}
         {doc.meta.lastUpdated}
@@ -41,12 +38,12 @@ export function MarketingLegalDocument({ doc }: { doc: LegalDocumentRender }) {
       </div>
 
       <p className="mt-10 text-sm text-slate-500">
-        <Link href="/gdpr" className="text-primary hover:underline">
-          GDPR a zpracovatel
-        </Link>
-        {" · "}
         <Link href="/ochrana-osobnich-udaju" className="text-primary hover:underline">
           Zásady ochrany osobních údajů
+        </Link>
+        {" · "}
+        <Link href="/cookies" className="text-primary hover:underline">
+          Cookies
         </Link>
         {" · "}
         <Link href="/obchodni-podminky" className="text-primary hover:underline">

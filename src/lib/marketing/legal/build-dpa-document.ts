@@ -1,5 +1,5 @@
 import type { PublicOperatorInfo } from "@/lib/marketing/load-billing-provider-public";
-import { LEGAL_GDPR } from "@/lib/marketing/legal-versions";
+import { LEGAL_PRIVACY } from "@/lib/marketing/legal-versions";
 import { PLATFORM_SUBPROCESSORS } from "@/lib/marketing/subprocessors";
 import type { LegalDocumentRender } from "@/lib/marketing/legal/legal-section-types";
 
@@ -7,16 +7,14 @@ import type { LegalDocumentRender } from "@/lib/marketing/legal/legal-section-ty
 const DPA_META = {
   slug: "zpracovatelska-smlouva",
   title: "Smlouva o zpracování osobních údajů",
-  version: LEGAL_GDPR.version,
-  effectiveDate: LEGAL_GDPR.effectiveDate,
-  lastUpdated: LEGAL_GDPR.lastUpdated,
+  version: LEGAL_PRIVACY.version,
+  effectiveDate: LEGAL_PRIVACY.effectiveDate,
+  lastUpdated: LEGAL_PRIVACY.lastUpdated,
 };
 
 export function buildDpaDocument(operator: PublicOperatorInfo): LegalDocumentRender {
   return {
     meta: DPA_META,
-    disclaimer:
-      "Návrh smlouvy o zpracování osobních údajů (DPA) podle čl. 28 GDPR — k individuálnímu doplnění a podpisu s advokátem.",
     operator,
     sections: [
       {

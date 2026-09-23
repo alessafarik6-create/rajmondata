@@ -1,6 +1,5 @@
 import {
   LEGAL_COOKIES,
-  LEGAL_GDPR,
   LEGAL_PRIVACY,
   LEGAL_TERMS,
   LEGAL_DPA_SLUG,
@@ -20,7 +19,7 @@ export type MarketingPageDef = {
   description: string;
   h1: string;
   kind: MarketingPageKind;
-  legalKey?: "terms" | "privacy" | "gdpr" | "cookies" | "dpa";
+  legalKey?: "terms" | "privacy" | "cookies" | "dpa";
   intro?: string;
   blocks?: MarketingContentBlock[];
   relatedSlugs?: string[];
@@ -408,7 +407,7 @@ const pages: MarketingPageDef[] = [
   {
     slug: LEGAL_TERMS.slug,
     title: "RAJMONDATA | Obchodní podmínky služby",
-    description: "Všeobecné obchodní podmínky používání platformy RAJMONDATA (B2B SaaS). Návrh k právní revizi.",
+    description: "Všeobecné obchodní podmínky používání platformy RAJMONDATA (B2B SaaS).",
     h1: LEGAL_TERMS.title,
     kind: "legal",
     legalKey: "terms",
@@ -417,21 +416,12 @@ const pages: MarketingPageDef[] = [
   {
     slug: LEGAL_PRIVACY.slug,
     title: "RAJMONDATA | Zásady ochrany osobních údajů",
-    description: "Informace o zpracování osobních údajů provozovatele platformy RAJMONDATA. Návrh k právní revizi.",
+    description:
+      "Zásady ochrany osobních údajů, informace k GDPR, role správce a zpracovatele a smlouva o zpracování (DPA).",
     h1: LEGAL_PRIVACY.title,
     kind: "legal",
     legalKey: "privacy",
     breadcrumbLabel: "Ochrana osobních údajů",
-  },
-  {
-    slug: LEGAL_GDPR.slug,
-    title: "RAJMONDATA | GDPR — správce a zpracovatel",
-    description:
-      "Role RAJMONDATA při zpracování údajů, informace pro zákaznické organizace a návrh zpracovatelské smlouvy.",
-    h1: "GDPR a zpracování osobních údajů",
-    kind: "legal",
-    legalKey: "gdpr",
-    breadcrumbLabel: "GDPR",
   },
   {
     slug: LEGAL_COOKIES.slug,
@@ -444,9 +434,9 @@ const pages: MarketingPageDef[] = [
   },
   {
     slug: LEGAL_DPA_SLUG,
-    title: "RAJMONDATA | Návrh zpracovatelské smlouvy (DPA)",
-    description: "Návrh smlouvy o zpracování osobních údajů podle čl. 28 GDPR pro zákaznické organizace.",
-    h1: "Návrh smlouvy o zpracování osobních údajů",
+    title: "RAJMONDATA | Smlouva o zpracování osobních údajů (DPA)",
+    description: "Smlouva o zpracování osobních údajů podle čl. 28 GDPR pro zákaznické organizace.",
+    h1: "Smlouva o zpracování osobních údajů",
     kind: "legal",
     legalKey: "dpa",
     breadcrumbLabel: "Zpracovatelská smlouva",

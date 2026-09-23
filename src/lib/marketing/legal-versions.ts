@@ -1,5 +1,5 @@
 /**
- * Verze veřejných právních dokumentů (návrh k odborné právní revizi).
+ * Verze veřejných právních dokumentů.
  * Při změně textu zvyšte verzi a ponechte záznam v historii (git / archiv).
  */
 
@@ -27,13 +27,8 @@ export const LEGAL_PRIVACY: LegalDocumentMeta = {
   lastUpdated: "2026-09-17",
 };
 
-export const LEGAL_GDPR: LegalDocumentMeta = {
-  slug: "gdpr",
-  title: "Informace k GDPR a zpracování údajů",
-  version: "1.0",
-  effectiveDate: "2026-09-17",
-  lastUpdated: "2026-09-17",
-};
+/** Legacy URL — přesměrování na /ochrana-osobnich-udaju (next.config redirects). */
+export const LEGACY_GDPR_SLUG = "gdpr";
 
 export const LEGAL_COOKIES: LegalDocumentMeta = {
   slug: "cookies",

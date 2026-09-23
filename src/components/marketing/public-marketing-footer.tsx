@@ -28,7 +28,6 @@ const rajmondataLinks = [
 const legalLinks = [
   { href: "/obchodni-podminky", label: "Obchodní podmínky" },
   { href: "/ochrana-osobnich-udaju", label: "Ochrana osobních údajů" },
-  { href: "/gdpr", label: "GDPR" },
   { href: "/cookies", label: "Cookies" },
 ];
 

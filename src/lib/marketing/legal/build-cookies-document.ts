@@ -5,15 +5,13 @@ import type { LegalDocumentRender } from "@/lib/marketing/legal/legal-section-ty
 export function buildCookiesDocument(operator: PublicOperatorInfo): LegalDocumentRender {
   return {
     meta: LEGAL_COOKIES,
-    disclaimer:
-      "Audit cookies a local storage vychází z aktuální implementace aplikace. Po přidání analytických nebo marketingových nástrojů je nutné text a consent mechanismus aktualizovat.",
     operator,
     sections: [
       {
         heading: "Shrnutí",
         paragraphs: [
           "Veřejný marketingový web a aplikace RAJMONDATA primárně používají technicky nezbytné cookies a local storage pro fungování přihlášení, relace a uživatelského rozhraní.",
-          "V době auditu nebyly identifikovány samostatné marketingové nebo analytické cookies třetích stran (např. Google Analytics) ve veřejné části — pokud je později nasadíte, vyžaduje to souhlas před načtením.",
+          "Aktuálně nejsou ve veřejné části identifikovány samostatné marketingové nebo analytické cookies třetích stran (např. Google Analytics). Pokud je později nasadíte, vyžaduje to souhlas před načtením.",
         ],
       },
       {

@@ -2,9 +2,6 @@ import type { PublicOperatorInfo } from "@/lib/marketing/load-billing-provider-p
 import { LEGAL_TERMS } from "@/lib/marketing/legal-versions";
 import type { LegalDocumentRender } from "@/lib/marketing/legal/legal-section-types";
 
-const DRAFT_NOTE =
-  "Tento text je návrh obchodních podmínek připravený k odborné právní revizi. Před použitím vůči zákazníkům jej prosím nechte zkontrolovat advokátem.";
-
 function operatorBlock(o: PublicOperatorInfo): string {
   const lines = [
     o.companyName,
@@ -24,7 +21,6 @@ export function buildTermsDocument(operator: PublicOperatorInfo): LegalDocumentR
 
   return {
     meta: LEGAL_TERMS,
-    disclaimer: DRAFT_NOTE,
     operator,
     sections: [
       {

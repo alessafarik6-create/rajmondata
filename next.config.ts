@@ -37,6 +37,8 @@ const nextConfig: NextConfig = {
       { source: "/companies/:companyId/terminal", destination: "/portal/attendance", permanent: false },
       { source: "/portal/attendance/terminal", destination: "/portal/attendance", permanent: false },
       { source: "/portal/attendance/terminal/settings", destination: "/portal/attendance", permanent: false },
+      { source: "/gdpr", destination: "/ochrana-osobnich-udaju", permanent: true },
+      { source: "/gdpr/:path*", destination: "/ochrana-osobnich-udaju", permanent: true },
       { source: "/evidence-dochazky", destination: "/dochazka-zamestnancu", permanent: true },
       { source: "/fakturace", destination: "/fakturace-a-doklady", permanent: true },
       { source: "/zakaznicky-portal", destination: "/komunikace-se-zakazniky", permanent: true },

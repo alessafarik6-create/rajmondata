@@ -10,7 +10,6 @@ export type LegalSection = {
 
 export type LegalDocumentRender = {
   meta: LegalDocumentMeta;
-  disclaimer: string;
   sections: LegalSection[];
   operator: PublicOperatorInfo;
 };
