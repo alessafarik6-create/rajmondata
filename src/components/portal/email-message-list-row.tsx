@@ -55,16 +55,16 @@ export function EmailMessageListRow(props: Props) {
       className={cn(
         "w-full border-b border-slate-100 px-3 py-2.5 text-left text-sm transition-colors",
         "hover:bg-slate-50/90",
-        unread && "bg-sky-50/40 dark:bg-sky-950/20",
+        unread && "bg-sky-50/50",
         props.selected &&
-          "border-l-[3px] border-l-blue-600 bg-slate-100/90 dark:bg-slate-800/50 pl-[calc(0.75rem-3px)]"
+          "border-l-[3px] border-l-primary bg-orange-50/70 pl-[calc(0.75rem-3px)]"
       )}
       onClick={props.onSelect}
     >
       <div className="flex items-start gap-2">
         <div className="mt-1.5 shrink-0 w-2 flex justify-center">
           {unread ? (
-            <Circle className="h-2 w-2 fill-blue-600 text-blue-600" aria-label="Nepřečteno" />
+            <Circle className="h-2 w-2 fill-primary text-primary" aria-label="Nepřečteno" />
           ) : (
             <span className="h-2 w-2" aria-hidden />
           )}

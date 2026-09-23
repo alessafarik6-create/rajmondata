@@ -79,6 +79,8 @@ export type HikvisionLivePlayerState =
   | "OFFLINE";
 
 const USER_ERROR_MESSAGE = "Živý obraz se nepodařilo zobrazit.";
+const LIVE_PLAYER_WIDTH = 800;
+const LIVE_PLAYER_HEIGHT = 450;
 
 type PlayerInstance = {
   stop: () => void;
@@ -89,6 +91,12 @@ type PlayerInstance = {
   on?: (event: string, cb: (info: unknown) => void) => void;
 };
 
+function logHik(tag: string, payload?: unknown) {
+  if (typeof console === "undefined") return;
+  if (payload !== undefined) console.log(tag, payload);
+  else console.log(tag);
+}
+
 function destroyHikPlayer(
   playerRef: React.MutableRefObject<PlayerInstance | null>,
   cameraId?: string
@@ -96,14 +104,12 @@ function destroyHikPlayer(
   if (!playerRef.current) return;
   bumpHikvisionPlayerDestroyCount();
   hikLiveLog("PLAYER DESTROY");
-  if (typeof console !== "undefined") {
-    console.log("[HIK] DESTROY", cameraId ?? "?");
-  }
+  logHik("[HIK] DESTROY", cameraId ?? "?");
   try {
     playerRef.current.destroy?.();
     playerRef.current.stop();
-  } catch {
-    /* ignore */
+  } catch (e) {
+    logHik("[HIK] ERROR", { phase: "destroy", error: e });
   }
   playerRef.current = null;
 }
@@ -123,7 +129,7 @@ export function HikvisionEzopenPlayer(props: {
   compact?: boolean;
   streamErrorCode?: HikvisionLivePlayerErrorCode | null;
   showDeveloperDetail?: boolean;
-  /** @deprecated Formát řeší až po stabilním obrazu — ignorováno. */
+  /** @deprecated */
   mobileLayout?: boolean;
 }) {
   const {
@@ -149,7 +155,7 @@ export function HikvisionEzopenPlayer(props: {
   const shellRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<PlayerInstance | null>(null);
   const initStreamKeyRef = useRef<string | null>(null);
-  const initInFlightRef = useRef(false);
+  const initializingRef = useRef(false);
   const streamRetriedRef = useRef(false);
   const modeRef = useRef(mode);
   const compactRef = useRef(compact);
@@ -205,6 +211,7 @@ export function HikvisionEzopenPlayer(props: {
       setHikvisionPlayerError("DEVICE_OFFLINE");
       destroyHikPlayer(playerRef, cameraId);
       initStreamKeyRef.current = null;
+      initializingRef.current = false;
       return;
     }
     if (streamErrorCode) {
@@ -225,7 +232,7 @@ export function HikvisionEzopenPlayer(props: {
       return;
     }
     if (!streamKey) {
-      setUiState(streamLoading ? "LOADING_STREAM" : "LOADING_STREAM");
+      setUiState("LOADING_STREAM");
       setErrorCode(null);
       return;
     }
@@ -240,20 +247,18 @@ export function HikvisionEzopenPlayer(props: {
       return;
     }
 
-    if (initInFlightRef.current && initStreamKeyRef.current === streamKey) {
+    if (initializingRef.current && initStreamKeyRef.current === streamKey) {
       return;
     }
 
     let cancelled = false;
     let stopFrameWatch: (() => void) | null = null;
 
-    const markPlaying = () => {
+    const markPlaying = (source: string) => {
       if (cancelled) return;
       bumpHikvisionPlayStartCount();
       hikLiveLog("PLAYING");
-      if (typeof console !== "undefined") {
-        console.log("[HIK] PLAY", { cameraId, ok: true });
-      }
+      logHik("[HIK] PLAY RESULT", { cameraId, ok: true, source });
       setUiState("PLAYING");
       setErrorCode(null);
       setHikvisionPlayerPhase("PLAY_STARTED");
@@ -265,6 +270,9 @@ export function HikvisionEzopenPlayer(props: {
       if (playerRef.current && initStreamKeyRef.current === streamKey) {
         return;
       }
+      if (initializingRef.current) {
+        return;
+      }
 
       const containerEl = playerContainerRef.current;
       if (!containerEl) return;
@@ -273,20 +281,21 @@ export function HikvisionEzopenPlayer(props: {
         destroyHikPlayer(playerRef, cameraId);
       }
 
-      initInFlightRef.current = true;
+      initializingRef.current = true;
       setUiState("INITIALIZING_PLAYER");
       setErrorCode(null);
       setHikvisionPlayerPhase("PLAYER_CREATING");
 
       const sized = await waitForNonZeroContainerSize(containerEl);
       if (cancelled || !sized) {
-        initInFlightRef.current = false;
+        initializingRef.current = false;
+        logHik("[HIK] ERROR", { cameraId, phase: "container_size", sized });
         return;
       }
 
       const EZUIKitPlayer = getHikvisionPlayerConstructor();
       if (!EZUIKitPlayer || cancelled) {
-        initInFlightRef.current = false;
+        initializingRef.current = false;
         if (!cancelled) {
           setUiState("ERROR");
           setErrorCode("SDK_API_MISSING");
@@ -297,21 +306,20 @@ export function HikvisionEzopenPlayer(props: {
       setHikvisionPlayerStreamMeta({ streamUrlPresent: true });
       setHikvisionPlayerPhase("STREAM_CONFIG_LOADED");
       hikLiveLog("CONFIG READY");
-      hikLiveLog("PLAYER CREATE");
-      if (typeof console !== "undefined") {
-        console.log("[HIK] CREATE", cameraId);
-      }
+      logHik("[HIK] CREATE", { cameraId, w: sized.width, h: sized.height });
 
       const jssdkCfg = getHikvisionJssdkPublicConfig();
       const liveSession = sessionRef.current;
       if (!liveSession?.ezopenUrl || !liveSession.accessToken) {
-        initInFlightRef.current = false;
+        initializingRef.current = false;
         return;
       }
 
       const domain = liveSession.streamAreaDomain?.replace(/\/$/, "");
       const liveMode = modeRef.current;
       const isCompact = compactRef.current;
+      const playerWidth = isCompact ? 320 : LIVE_PLAYER_WIDTH;
+      const playerHeight = isCompact ? 180 : LIVE_PLAYER_HEIGHT;
 
       const playerOpts: Record<string, unknown> = {
         id: containerId,
@@ -322,12 +330,12 @@ export function HikvisionEzopenPlayer(props: {
         plugin: [],
         header: liveMode === "live" ? ["capture"] : [],
         audio: 0,
-        width: isCompact ? 320 : "100%",
-        height: isCompact ? 180 : "100%",
+        width: playerWidth,
+        height: playerHeight,
         handleError: (info: unknown) => {
           if (cancelled) return;
           if (hikPlayerContainerHasVideo(containerEl)) {
-            markPlaying();
+            markPlaying("handleError_has_video");
             return;
           }
           if (!isLikelyHikStreamFatalError(info)) {
@@ -342,18 +350,18 @@ export function HikvisionEzopenPlayer(props: {
             onRetryRef.current();
             return;
           }
+          logHik("[HIK] PLAY RESULT", { cameraId, ok: false, info });
+          logHik("[HIK] ERROR", { cameraId, phase: "sdk_handleError", info });
           setUiState("ERROR");
           setErrorCode("PLAY_FAILED");
           setHikvisionPlayerPhase("PLAY_ERROR");
           setHikvisionPlayerError("PLAY_FAILED");
-          if (typeof console !== "undefined") {
-            console.log("[HIK] PLAY", { cameraId, ok: false, info });
-          }
         },
         handleSuccess: () => {
           if (cancelled) return;
           hikLiveLog("PLAY START");
-          markPlaying();
+          logHik("[HIK] PLAY", { cameraId });
+          markPlaying("handleSuccess");
         },
       };
       if (domain) {
@@ -367,24 +375,26 @@ export function HikvisionEzopenPlayer(props: {
         initStreamKeyRef.current = streamKey;
         setHikvisionPlayerPhase("PLAYER_CREATED");
         setUiState("CONNECTING");
+        logHik("[HIK] PLAY", { cameraId, phase: "player_constructed" });
 
-        player.on?.("play", () => markPlaying());
+        player.on?.("play", () => markPlaying("event_play"));
         player.on?.("firstFrame", () => {
           hikLiveLog("FIRST FRAME");
-          markPlaying();
+          markPlaying("event_firstFrame");
         });
 
         stopFrameWatch = watchHikPlayerFirstFrame(containerEl, () => {
           hikLiveLog("FIRST FRAME (dom)");
-          markPlaying();
+          markPlaying("dom_firstFrame");
         });
-      } catch {
+      } catch (e) {
+        logHik("[HIK] ERROR", { cameraId, phase: "player_init", error: e });
         setUiState("ERROR");
         setErrorCode("PLAYER_INIT_FAILED");
         setHikvisionPlayerPhase("PLAY_ERROR");
         setHikvisionPlayerError("PLAYER_INIT_FAILED");
       } finally {
-        initInFlightRef.current = false;
+        initializingRef.current = false;
       }
     }
 
@@ -404,6 +414,7 @@ export function HikvisionEzopenPlayer(props: {
     return () => {
       destroyHikPlayer(playerRef, cameraId);
       initStreamKeyRef.current = null;
+      initializingRef.current = false;
       if (document.fullscreenElement === shellRef.current) {
         void document.exitFullscreen().catch(() => undefined);
       }
@@ -436,6 +447,7 @@ export function HikvisionEzopenPlayer(props: {
   async function retryAll() {
     destroyHikPlayer(playerRef, cameraId);
     initStreamKeyRef.current = null;
+    initializingRef.current = false;
     setUiState("LOADING_SDK");
     setErrorCode(null);
     const sdk = await loadHikvisionSdk();
@@ -457,11 +469,16 @@ export function HikvisionEzopenPlayer(props: {
       uiState === "CONNECTING") &&
     !showErrorOverlay;
 
+  const shellVideoClass = cn(
+    "relative flex-shrink-0 bg-black mx-auto w-full max-w-full",
+    compact ? "min-h-[180px]" : fsActive ? "min-h-0 flex-1 h-full w-full" : "h-[450px] max-w-[800px]"
+  );
+
   return (
     <div
       ref={shellRef}
       className={cn(
-        "relative flex flex-col bg-black text-white overflow-hidden live-modal",
+        "relative flex flex-col bg-black text-white overflow-hidden",
         fsActive ? "w-screen h-screen rounded-none" : "rounded-md",
         className
       )}
@@ -536,14 +553,8 @@ export function HikvisionEzopenPlayer(props: {
         </div>
       </div>
 
-      <div
-        className={cn(
-          "live-player-shell relative flex-1 bg-black min-h-[200px] max-w-full",
-          !compact && !fsActive && "aspect-video w-full",
-          fsActive && "w-full h-full min-h-0"
-        )}
-      >
-        <div ref={playerContainerRef} id={containerId} className="absolute inset-0 w-full h-full" />
+      <div className={shellVideoClass}>
+        <div ref={playerContainerRef} id={containerId} />
         {showLoadingOverlay ? (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 z-20">
             <Loader2 className="h-8 w-8 animate-spin" />

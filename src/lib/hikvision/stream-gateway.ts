@@ -59,13 +59,17 @@ export class HikvisionStreamGateway {
     }
 
     const { provider } = await resolveHikvisionProviderForOrg(this.db, params.organizationId);
+    const liveOpts =
+      params.streamVariant != null || params.subCandidateIndex != null
+        ? {
+            streamVariant: params.streamVariant ?? "sub",
+            subCandidateIndex: params.subCandidateIndex ?? 0,
+          }
+        : undefined;
     const live = await provider.getLiveView(
       { db: this.db, organizationId: params.organizationId },
       params.cameraId,
-      {
-        streamVariant: params.streamVariant ?? "sub",
-        subCandidateIndex: params.subCandidateIndex ?? 0,
-      }
+      liveOpts
     );
     if (!live.ok) {
       return { ok: false, error: live.error, code: live.code };

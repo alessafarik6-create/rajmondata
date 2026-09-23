@@ -18,15 +18,17 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
   const { cameraId } = await params;
   let bodyCompanyId = "";
-  let streamVariant: "main" | "sub" = "sub";
-  let subCandidateIndex = 0;
+  let streamVariant: "main" | "sub" | undefined;
+  let subCandidateIndex: number | undefined;
   try {
     const body = await request.json();
     bodyCompanyId = String(body?.companyId ?? "").trim();
-    const sv = String(body?.streamVariant ?? "sub").trim();
-    if (sv === "main") streamVariant = "main";
-    const idx = Number(body?.subCandidateIndex);
-    if (Number.isFinite(idx) && idx >= 0) subCandidateIndex = Math.floor(idx);
+    const sv = String(body?.streamVariant ?? "").trim();
+    if (sv === "main" || sv === "sub") streamVariant = sv;
+    if (body?.subCandidateIndex != null) {
+      const idx = Number(body.subCandidateIndex);
+      if (Number.isFinite(idx) && idx >= 0) subCandidateIndex = Math.floor(idx);
+    }
   } catch {
     bodyCompanyId = "";
   }

@@ -862,11 +862,11 @@ export function EmailPortalPage() {
           .
         </div>
       ) : null}
-      <div className="flex flex-col lg:flex-row lg:items-start">
+      <div className="flex flex-col lg:grid lg:grid-cols-[minmax(190px,220px)_minmax(300px,340px)_minmax(0,1fr)] lg:items-start">
       <aside
         className={cn(
           EMAIL_STICKY_LIST_PANEL,
-          "w-full shrink-0 border-b p-3 lg:w-56 lg:border-b-0 lg:border-r",
+          "w-full shrink-0 border-b p-3 lg:w-auto lg:border-b-0 lg:border-r",
           mobilePane !== "folders" && "hidden lg:flex"
         )}
       >
@@ -981,7 +981,7 @@ export function EmailPortalPage() {
         ) : null}
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col lg:flex-row lg:items-start">
+      <div className="flex min-w-0 flex-1 flex-col lg:contents">
         <div className="flex shrink-0 gap-2 border-b p-2 lg:hidden">
           <Button size="sm" variant={mobilePane === "folders" ? "secondary" : "outline"} onClick={() => setMobilePane("folders")}>
             Složky
@@ -993,7 +993,7 @@ export function EmailPortalPage() {
         <div
           className={cn(
             EMAIL_STICKY_LIST_PANEL,
-            "min-w-0 flex flex-col border-b lg:w-[min(100%,22rem)] lg:shrink-0 lg:border-b-0 lg:border-r max-lg:min-h-[40vh]",
+            "min-w-0 flex flex-col border-b lg:w-auto lg:max-w-[340px] lg:shrink-0 lg:border-b-0 lg:border-r max-lg:min-h-[40vh]",
             mobilePane === "detail" && "hidden lg:flex",
             mobilePane === "folders" && "hidden lg:flex"
           )}
@@ -1050,7 +1050,7 @@ export function EmailPortalPage() {
 
         <div
           className={cn(
-            "min-w-0 flex-1 p-3 sm:p-4 bg-background",
+            "min-w-0 w-full flex-1 p-3 sm:p-4 lg:p-5 bg-background overflow-x-hidden",
             mobilePane !== "detail" && "max-lg:hidden"
           )}
         >

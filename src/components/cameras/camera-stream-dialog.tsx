@@ -49,8 +49,8 @@ export function CameraLiveDialog(props: {
   const [loadingStream, setLoadingStream] = useState(false);
   const [streamErrorCode, setStreamErrorCode] = useState<HikvisionLivePlayerErrorCode | null>(null);
   const fetchGenRef = useRef(0);
-  const streamVariantRef = useRef<"main" | "sub">("sub");
-  const subCandidateIndexRef = useRef(0);
+  const streamVariantRef = useRef<"main" | "sub" | undefined>(undefined);
+  const subCandidateIndexRef = useRef<number | undefined>(undefined);
 
   const fetchLiveConfig = useCallback(
     async (
@@ -59,16 +59,17 @@ export function CameraLiveDialog(props: {
       subCandidateIndex?: number
     ) => {
       if (!user || !cameraId) return;
-      if (streamVariant) streamVariantRef.current = streamVariant;
-      if (reason === "open") {
-        streamVariantRef.current = "sub";
-        subCandidateIndexRef.current = 0;
+      if (reason === "open" || reason === "retry") {
+        streamVariantRef.current = undefined;
+        subCandidateIndexRef.current = undefined;
       }
+      if (streamVariant) streamVariantRef.current = streamVariant;
       if (typeof subCandidateIndex === "number" && subCandidateIndex >= 0) {
         subCandidateIndexRef.current = Math.floor(subCandidateIndex);
       }
       if (reason === "sub_candidate") {
-        subCandidateIndexRef.current += 1;
+        subCandidateIndexRef.current = (subCandidateIndexRef.current ?? 0) + 1;
+        streamVariantRef.current = "sub";
       }
       const gen = ++fetchGenRef.current;
       bumpHikvisionLiveConfigFetchCount();
@@ -94,8 +95,12 @@ export function CameraLiveDialog(props: {
             },
             body: JSON.stringify({
               companyId,
-              streamVariant: streamVariantRef.current,
-              subCandidateIndex: subCandidateIndexRef.current,
+              ...(streamVariantRef.current
+                ? { streamVariant: streamVariantRef.current }
+                : {}),
+              ...(subCandidateIndexRef.current != null
+                ? { subCandidateIndex: subCandidateIndexRef.current }
+                : {}),
             }),
           }
         );

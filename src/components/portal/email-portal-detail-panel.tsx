@@ -119,14 +119,77 @@ type Props = {
   forwardMode?: boolean;
 };
 
+function EmailAiCategoryActions(props: {
+  category: EmailAiCategory;
+  canWrite: boolean;
+  busy: boolean;
+  inquiryDraft: Record<string, unknown> | null | undefined;
+  onAssignEmailToJob: () => void;
+}) {
+  const { category, canWrite, busy, inquiryDraft, onAssignEmailToJob } = props;
+  if (!canWrite) return null;
+
+  if (category === "INQUIRY" && inquiryDraft) {
+    return (
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Button size="sm" asChild>
+          <Link href="/portal/leads">Vytvořit poptávku</Link>
+        </Button>
+      </div>
+    );
+  }
+
+  if (category === "INVOICE" || category === "DOCUMENT") {
+    return (
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Button size="sm" variant="default" asChild>
+          <Link href="/portal/documents">Zařadit fakturu / doklad</Link>
+        </Button>
+        <Button size="sm" variant="outline" disabled={busy} onClick={onAssignEmailToJob}>
+          Přiřadit k zakázce
+        </Button>
+        <Button size="sm" variant="outline" asChild>
+          <Link href="/portal/documents">Uložit do dokladů</Link>
+        </Button>
+      </div>
+    );
+  }
+
+  if (category === "ORDER") {
+    return (
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Button size="sm" variant="default" asChild>
+          <Link href="/portal/jobs">Vytvořit / přiřadit objednávku</Link>
+        </Button>
+        <Button size="sm" variant="outline" disabled={busy} onClick={onAssignEmailToJob}>
+          Přiřadit k zakázce
+        </Button>
+      </div>
+    );
+  }
+
+  if (category === "INQUIRY") {
+    return (
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Button size="sm" asChild>
+          <Link href="/portal/leads">Vytvořit poptávku</Link>
+        </Button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 export function EmailPortalDetailPanel(props: Props) {
   const d = props.detail;
   const cat = (d.aiCategory ?? "OTHER") as EmailAiCategory;
   const catLabel = EMAIL_AI_CATEGORY_LABELS[cat] ?? d.aiCategory ?? "—";
   const pri = String(d.aiPriority ?? "NORMAL");
+  const insightTail = (d.aiInsights ?? []).slice(d.needsReply || d.requiresAction ? 1 : 0);
 
   return (
-    <div className="w-full max-w-3xl space-y-4 bg-background">
+    <div className="w-full min-w-0 space-y-4 bg-background text-gray-900">
       {props.onBack ? (
         <Button variant="ghost" size="sm" className="-ml-2" onClick={props.onBack}>
           ← Zpět
@@ -134,7 +197,7 @@ export function EmailPortalDetailPanel(props: Props) {
       ) : null}
 
       {props.canWrite ? (
-        <div className="flex flex-wrap items-center gap-1.5 border-b pb-3">
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-3">
           <Button size="sm" disabled={props.busy} onClick={props.onReply}>
             Odpovědět
           </Button>
@@ -143,12 +206,12 @@ export function EmailPortalDetailPanel(props: Props) {
           </Button>
           <Button
             size="sm"
-            variant="secondary"
-            className="border border-indigo-200 bg-indigo-50 text-indigo-950 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-100"
+            variant="outline"
+            className="border-violet-200 bg-violet-50/80 text-violet-950 hover:bg-violet-100"
             disabled={props.busy}
             onClick={() => props.onAiDraft()}
           >
-            <Sparkles className="h-3.5 w-3.5 mr-1" /> AI odpověď
+            <Sparkles className="h-3.5 w-3.5 mr-1 text-primary" /> AI odpověď
           </Button>
           <span className="hidden sm:inline h-5 w-px bg-border mx-0.5" aria-hidden />
           <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onAssignEmployee}>
@@ -170,13 +233,7 @@ export function EmailPortalDetailPanel(props: Props) {
             <Briefcase className="h-3.5 w-3.5 mr-1" /> Zakázka
           </Button>
           <span className="hidden sm:inline h-5 w-px bg-border mx-0.5" aria-hidden />
-          <Button
-            size="sm"
-            variant="default"
-            className="bg-emerald-700 hover:bg-emerald-800"
-            disabled={props.busy}
-            onClick={props.onResolve}
-          >
+          <Button size="sm" variant="default" disabled={props.busy} onClick={props.onResolve}>
             <Check className="h-3.5 w-3.5 mr-1" /> Vyřízeno
           </Button>
         </div>
@@ -209,32 +266,32 @@ export function EmailPortalDetailPanel(props: Props) {
         ) : null}
       </div>
 
-      <div className="rounded-lg border border-indigo-200/80 bg-gradient-to-br from-indigo-50/90 to-slate-50 p-4 text-sm space-y-3 dark:border-indigo-900 dark:from-indigo-950/40 dark:to-slate-950">
-        <p className="flex items-center gap-2 font-semibold text-indigo-950 dark:text-indigo-100">
-          <Sparkles className="h-4 w-4 text-indigo-600" />
+      <div className="rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm space-y-3">
+        <p className="flex items-center gap-2 font-semibold text-gray-900">
+          <Sparkles className="h-4 w-4 text-primary shrink-0" />
           RAJMONDATA AI
         </p>
-        <div className="grid gap-1.5 sm:grid-cols-2">
+        <div className="grid gap-1.5 sm:grid-cols-2 text-gray-900">
           <p>
-            <span className="text-slate-600 dark:text-slate-400">Kategorie: </span>
-            <span className="font-medium text-slate-900 dark:text-slate-100">{catLabel}</span>
+            <span className="text-gray-600">Kategorie: </span>
+            <span className="font-medium">{catLabel}</span>
           </p>
           <p>
-            <span className="text-slate-600 dark:text-slate-400">Priorita: </span>
-            <span className="font-medium text-slate-900 dark:text-slate-100">{emailPriorityLabel(pri)}</span>
+            <span className="text-gray-600">Priorita: </span>
+            <span className="font-medium">{emailPriorityLabel(pri)}</span>
           </p>
           <p className="sm:col-span-2">
-            <span className="text-slate-600 dark:text-slate-400">Vyžaduje odpověď: </span>
-            <span className="font-medium text-slate-900 dark:text-slate-100">{d.needsReply ? "Ano" : "Ne"}</span>
+            <span className="text-gray-600">Vyžaduje odpověď: </span>
+            <span className="font-medium">{d.needsReply ? "Ano" : "Ne"}</span>
           </p>
         </div>
         {(d.needsReply || d.requiresAction) && (d.aiInsights?.length || d.aiSummary) ? (
-          <div className="rounded-md border border-orange-300/80 bg-orange-50 px-3 py-2 dark:border-orange-900 dark:bg-orange-950/50">
-            <p className="flex items-center gap-1.5 text-sm font-semibold text-orange-950 dark:text-orange-100">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
+          <div className="rounded-md border border-orange-200 bg-orange-50 px-3 py-2">
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-orange-950">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-orange-600" />
               Vyžaduje reakci
             </p>
-            <p className="mt-1 text-sm text-orange-950/90 dark:text-orange-50/90">
+            <p className="mt-1 text-sm text-orange-950/90">
               {(d.aiInsights ?? [])[0] ?? d.aiSummary}
             </p>
           </div>
@@ -260,27 +317,30 @@ export function EmailPortalDetailPanel(props: Props) {
           </div>
         )}
         {d.aiSummary ? (
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Shrnutí</p>
-            <p className="mt-1 text-slate-800 dark:text-slate-200">{d.aiSummary}</p>
+          <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">Shrnutí</p>
+            <p className="mt-1 text-gray-900 leading-relaxed">{d.aiSummary}</p>
           </div>
         ) : null}
-        {(d.aiInsights ?? []).slice(d.needsReply || d.requiresAction ? 1 : 0).map((line) => (
-          <div
-            key={line}
-            className="rounded-md border-l-[3px] border-l-slate-400 bg-white/80 px-3 py-2 text-slate-800 dark:bg-slate-900/60 dark:text-slate-200"
-          >
-            {line}
-          </div>
-        ))}
-        {d.inquiryDraft && props.canWrite ? (
-          <div className="rounded border border-dashed p-2 mt-2">
-            <p className="font-medium">Vypadá to jako nová poptávka.</p>
-            <Button size="sm" className="mt-2" asChild>
-              <Link href="/portal/leads">Vytvořit poptávku</Link>
-            </Button>
-          </div>
+        {insightTail.length > 0 ? (
+          <ul className="space-y-2">
+            {insightTail.map((line) => (
+              <li
+                key={line}
+                className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-gray-900 leading-relaxed"
+              >
+                {line}
+              </li>
+            ))}
+          </ul>
         ) : null}
+        <EmailAiCategoryActions
+          category={cat}
+          canWrite={props.canWrite}
+          busy={props.busy}
+          inquiryDraft={d.inquiryDraft}
+          onAssignEmailToJob={props.onAssignEmailToJob}
+        />
       </div>
 
       {props.thread.length > 1 ? (
@@ -297,7 +357,7 @@ export function EmailPortalDetailPanel(props: Props) {
           ))}
         </div>
       ) : (
-        <div className="whitespace-pre-wrap break-words text-sm border rounded-md p-3">
+        <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-900 border border-gray-200 rounded-md bg-white p-4 max-w-[min(100%,1000px)]">
           {d.textBody}
         </div>
       )}

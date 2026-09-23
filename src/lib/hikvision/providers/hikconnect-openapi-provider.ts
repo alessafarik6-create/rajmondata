@@ -188,18 +188,47 @@ async function buildEzopenSession(
     /* optional */
   }
 
+  const expireMs = stream.appToken ? Date.now() + 6 * 3600 * 1000 : Date.now() + 3600 * 1000;
+
+  /** Výchozí live = přesná URL z OpenAPI (funkční chování před web stream pickerem). */
+  if (!liveOpts) {
+    const parsedDefault = parseEzopenLiveUrl(openapiUrl);
+    return {
+      ok: true,
+      playbackType: "ezopen",
+      sessionType: "sdk",
+      ezopenUrl: openapiUrl,
+      accessToken: stream.appToken,
+      appKey: stream.appKey,
+      streamAreaDomain: stream.streamAreaDomain,
+      expiresAt: new Date(expireMs).toISOString(),
+      message: "Přehrávání přes oficiální Hik-Connect JSSDK (ezopen).",
+      deviceSerialMasked: maskDeviceSerial(cam.deviceSerial),
+      channelNo: parsedDefault?.channelNo ?? cam.channelNo,
+      streamType: parsedDefault?.streamSuffix ?? "live",
+      streamVariant: parsedDefault?.streamProfile === "sub" ? "sub" : "main",
+      protocol: parsedDefault?.protocol ?? "ezopen",
+      codecHint: streamMeta.main.codec,
+      openapiEzopenUrl: openapiUrl,
+      mainStream: streamMeta.main,
+      subStream: streamMeta.sub,
+      webLiveSelectionReason: "openapi_default",
+      subCandidateIndex: 0,
+      webLiveWarning: null,
+    };
+  }
+
   const pick = pickWebLiveEzopenStream({
     openapiUrl,
     streams: streamMeta,
-    requestedVariant: liveOpts?.streamVariant ?? "sub",
-    subCandidateIndex: liveOpts?.subCandidateIndex ?? 0,
+    requestedVariant: liveOpts.streamVariant ?? "sub",
+    subCandidateIndex: liveOpts.subCandidateIndex ?? 0,
   });
   const ezopenUrl = pick.ezopenUrl;
   const streamVariant = pick.streamVariant;
   const codecHint = pick.codecHint;
   const parsed = parseEzopenLiveUrl(ezopenUrl);
 
-  const expireMs = stream.appToken ? Date.now() + 6 * 3600 * 1000 : Date.now() + 3600 * 1000;
   return {
     ok: true,
     playbackType: "ezopen",
@@ -395,16 +424,21 @@ export const hikConnectOpenApiProvider: HikvisionProvider = {
       return { ok: false, code: cred.fail.code, error: cred.fail.error };
     }
     try {
+      const liveOpts =
+        options &&
+        (options.streamVariant != null || options.subCandidateIndex != null)
+          ? {
+              streamVariant: options.streamVariant ?? "sub",
+              subCandidateIndex: options.subCandidateIndex ?? 0,
+            }
+          : undefined;
       return await buildEzopenSession(
         ctx,
         { apiKey: cred.apiKey, apiSecret: cred.apiSecret },
         cameraDocId,
         "1",
         undefined,
-        {
-          streamVariant: options?.streamVariant ?? "sub",
-          subCandidateIndex: options?.subCandidateIndex ?? 0,
-        }
+        liveOpts
       );
     } catch (e) {
       const fail = fromHccError(e);
