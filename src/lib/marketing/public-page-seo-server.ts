@@ -45,6 +45,29 @@ export async function loadPublicPageSeoOverrides(): Promise<Record<string, Publi
   }
 }
 
+/** Canonical musí odpovídat slug stránky — jinak ignorujeme override (častá chyba v admin SEO). */
+export function resolveMarketingPageCanonical(
+  page: MarketingPageDef,
+  overrideCanonical?: string
+): string {
+  const base = SITE_URL.replace(/\/$/, "");
+  const expectedPath = `/${page.slug}`;
+  const fallback = `${base}${expectedPath}`;
+  const raw = overrideCanonical?.trim();
+  if (!raw) return fallback;
+  try {
+    const u = new URL(raw, `${base}/`);
+    const siteOrigin = new URL(base).origin;
+    const path = u.pathname.replace(/\/$/, "") || "/";
+    if (u.origin === siteOrigin && path === expectedPath) {
+      return `${siteOrigin}${expectedPath}`;
+    }
+  } catch {
+    /* ignore invalid override */
+  }
+  return fallback;
+}
+
 export function mergePageSeo(
   page: MarketingPageDef,
   override?: PublicPageSeoOverride
@@ -56,7 +79,7 @@ export function mergePageSeo(
   ogDescription: string;
   ogImage: string;
 } {
-  const canonical = override?.canonical || `${SITE_URL}/${page.slug}`;
+  const canonical = resolveMarketingPageCanonical(page, override?.canonical);
   const title = override?.title || page.title;
   const description = override?.description || page.description;
   return {

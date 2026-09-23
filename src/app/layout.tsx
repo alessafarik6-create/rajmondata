@@ -23,6 +23,10 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: HOME_SEO_TITLE,
   description: HOME_SEO_DESCRIPTION,
+  robots: {
+    index: true,
+    follow: true,
+  },
   applicationName: PLATFORM_NAME,
   appleWebApp: {
     capable: true,
