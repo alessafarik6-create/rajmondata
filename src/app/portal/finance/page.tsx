@@ -50,6 +50,9 @@ import {
   resolveExpenseAmounts,
   resolveJobBudgetFromFirestore,
 } from "@/lib/vat-calculations";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { downloadCsvFromRows } from "@/lib/csv-download";
+import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 
 function isReceivedFinanceDoc(d: { type?: string; documentKind?: string }) {
   return d.type === "received" || d.documentKind === "prijate";
@@ -104,8 +107,10 @@ export default function FinancePage() {
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
   const companyId = profile?.companyId;
   const role = profile?.role || "employee";
+  const { canRead: canReadFinance, canExport: canExportFinance, canWrite: canWriteFinance } =
+    usePortalModuleAccess("finance");
 
-  const canAccess = ["owner", "admin", "accountant"].includes(role);
+  const canAccess = canReadFinance;
 
   const jobsQuery = useMemoFirebase(
     () =>
@@ -285,18 +290,47 @@ export default function FinancePage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2 sm:gap-3">
-          <Button
-            variant="outlineLight"
-            className="min-h-[44px] gap-2"
-            disabled
-          >
-            <Download className="h-4 w-4 shrink-0" /> Exportovat PDF
-          </Button>
-          {(role === "owner" || role === "admin") && (
+          {canExportFinance ? (
+            <Button
+              variant="outlineLight"
+              className="min-h-[44px] gap-2"
+              onClick={() => {
+                const rows = [
+                  ["Popis", "Datum", "Typ", "Částka"],
+                  ...(financeRecords ?? []).map((r) => {
+                    const row = r as {
+                      description?: string;
+                      date?: unknown;
+                      type?: string;
+                      amount?: number;
+                    };
+                    return [
+                      String(row.description ?? ""),
+                      String(row.date ?? ""),
+                      String(row.type ?? ""),
+                      String(row.amount ?? ""),
+                    ];
+                  }),
+                ];
+                downloadCsvFromRows(rows, `finance-prehled-${new Date().toISOString().slice(0, 10)}`);
+                if (user) {
+                  void logPortalExportAudit(user, {
+                    actionType: "FINANCE_EXPORT_CREATED",
+                    moduleId: "finance",
+                    format: "csv",
+                    metadata: { rows: (financeRecords ?? []).length },
+                  });
+                }
+              }}
+            >
+              <Download className="h-4 w-4 shrink-0" /> Export CSV
+            </Button>
+          ) : null}
+          {canWriteFinance && (role === "owner" || role === "admin") ? (
             <Button className="min-h-[44px] gap-2">
               <Receipt className="h-4 w-4 shrink-0" /> Nový záznam
             </Button>
-          )}
+          ) : null}
         </div>
       </div>
 

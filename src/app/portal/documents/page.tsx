@@ -110,6 +110,12 @@ import {
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import {
+  exportDocumentRowsCsv,
+  printSelectedDocumentRows,
+  type DocumentExportRow,
+} from "@/lib/documents/documents-list-export";
+import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 import { canManagePortalInvoices } from "@/lib/portal-invoice-permissions";
 import { MarkInvoicePaidDialog } from "@/components/invoices/mark-invoice-paid-dialog";
 import { getPortalInvoicePaymentState } from "@/lib/invoice-payment-state";
@@ -1091,7 +1097,8 @@ function DocumentsPageContent() {
   const { toast } = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { canWrite: canWriteDocuments } = usePortalModuleAccess("documents");
+  const { canWrite: canWriteDocuments, canExport: canExportDocuments } =
+    usePortalModuleAccess("documents");
   const documentsReadOnly = !canWriteDocuments;
   const viewParam = searchParams.get("view");
   const documentsMainTab =
@@ -4042,6 +4049,8 @@ function DocumentsPageContent() {
                 onPaymentFilterChange={setDocumentsPaymentFilter}
                 costCategoryFilter={documentsCostCategoryFilter}
                 canRecordInvoicePayment={canRecordInvoicePayment}
+                canExport={canExportDocuments}
+                canWrite={canWriteDocuments}
               />
             </section>
           )}
@@ -4100,6 +4109,8 @@ function DocumentsPageContent() {
             onPaymentFilterChange={setDocumentsPaymentFilter}
             costCategoryFilter={documentsCostCategoryFilter}
             canRecordInvoicePayment={canRecordInvoicePayment}
+            canExport={canExportDocuments}
+            canWrite={canWriteDocuments}
           />
         </TabsContent>
 
@@ -6217,6 +6228,8 @@ function DocumentTableIssued({
   todayIso,
   paymentFilter,
   onPaymentFilterChange,
+  canExport = false,
+  canWrite = true,
   flashDomScope,
   paymentFlashRowKey = null,
   costCategoryFilter = "__all__",
@@ -6246,9 +6259,13 @@ function DocumentTableIssued({
   paymentFlashRowKey?: string | null;
   costCategoryFilter?: string;
   canRecordInvoicePayment?: boolean;
+  canExport?: boolean;
+  canWrite?: boolean;
 }) {
   const firestore = useFirestore();
+  const { user } = useUser();
   const { toast } = useToast();
+  const [selectedExportKeys, setSelectedExportKeys] = useState<Set<string>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
   const [markPaidInv, setMarkPaidInv] = useState<
     (Record<string, unknown> & { id: string }) | null
@@ -6519,6 +6536,72 @@ function DocumentTableIssued({
 
   const loading = isLoading || isLoadingInvoices;
 
+  const mergedEntryKey = (
+    entry: (typeof mergedVisible)[number]
+  ): string => (entry.kind === "doc" ? `doc:${entry.row.id}` : `inv:${entry.inv.id}`);
+
+  const buildExportRowsFromEntries = (
+    entries: typeof mergedVisible
+  ): DocumentExportRow[] =>
+    entries.map((entry) => {
+      if (entry.kind === "doc") {
+        const d = entry.row;
+        return {
+          id: d.id,
+          kind: "document" as const,
+          number: String(d.number ?? d.id),
+          customer: String(d.entityName ?? d.nazev ?? "—"),
+          date: String(d.date ?? ""),
+          amount: String(d.amountGross ?? d.amount ?? ""),
+          status: String(d.paymentStatus ?? ""),
+        };
+      }
+      const inv = entry.inv;
+      return {
+        id: inv.id,
+        kind: "invoice" as const,
+        number: String(inv.invoiceNumber ?? inv.documentNumber ?? inv.id),
+        customer: String(inv.customerName ?? "—"),
+        date: String(inv.issueDate ?? inv.date ?? ""),
+        amount: String(inv.amountGross ?? inv.totalAmount ?? ""),
+        status: String(inv.status ?? ""),
+        pdfHtml: typeof inv.pdfHtml === "string" ? inv.pdfHtml : undefined,
+      };
+    });
+
+  const runDocumentsCsvExport = (onlySelected: boolean) => {
+    if (!canExport) return;
+    const pool = onlySelected
+      ? mergedVisible.filter((e) => selectedExportKeys.has(mergedEntryKey(e)))
+      : mergedVisible;
+    if (pool.length === 0) {
+      toast({ variant: "destructive", title: "Export", description: "Nic k exportu." });
+      return;
+    }
+    exportDocumentRowsCsv(
+      buildExportRowsFromEntries(pool),
+      `doklady-vydane-${new Date().toISOString().slice(0, 10)}`
+    );
+    if (user) {
+      void logPortalExportAudit(user, {
+        actionType: "DOCUMENT_EXPORTED",
+        moduleId: "documents",
+        format: "csv",
+        metadata: { count: pool.length, onlySelected },
+      });
+    }
+    toast({ title: "CSV export dokončen", description: `${pool.length} položek.` });
+  };
+
+  const toggleExportSelection = (key: string) => {
+    setSelectedExportKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   return (
     <>
     <Card className="min-w-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
@@ -6533,6 +6616,61 @@ function DocumentTableIssued({
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
+          {canExport ? (
+            <>
+              <Button
+                type="button"
+                variant="outlineLight"
+                size="sm"
+                className="h-8"
+                onClick={() => runDocumentsCsvExport(false)}
+              >
+                Export filtru (CSV)
+              </Button>
+              {selectedExportKeys.size > 0 ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => runDocumentsCsvExport(true)}
+                  >
+                    Export vybraných ({selectedExportKeys.size})
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outlineLight"
+                    size="sm"
+                    className="h-8 gap-1"
+                    onClick={async () => {
+                      const pool = mergedVisible.filter((e) =>
+                        selectedExportKeys.has(mergedEntryKey(e))
+                      );
+                      const rows = buildExportRowsFromEntries(pool);
+                      const n = await printSelectedDocumentRows(rows);
+                      if (user) {
+                        void logPortalExportAudit(user, {
+                          actionType: "DOCUMENT_PRINTED",
+                          moduleId: "documents",
+                          format: "print",
+                          metadata: { count: n, onlySelected: true },
+                        });
+                      }
+                      toast({
+                        title: "Tisk",
+                        description:
+                          n > 0 ? `Otevřeno ${n} PDF.` : "Vybrané položky nemají uložené PDF HTML.",
+                      });
+                    }}
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Tisk vybraných
+                  </Button>
+                </>
+              ) : null}
+            </>
+          ) : null}
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
             <SelectTrigger className="h-8 w-[180px] border-gray-300 bg-white text-xs text-gray-900">
               <SelectValue />
@@ -6578,9 +6716,6 @@ function DocumentTableIssued({
           ) : null}
           <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs">
             <Filter className="h-3.5 w-3.5 shrink-0" /> Filtr
-          </Button>
-          <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs">
-            <Download className="h-3.5 w-3.5 shrink-0" /> Export
           </Button>
         </div>
       </div>
@@ -6737,6 +6872,17 @@ function DocumentTableIssued({
                       <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
                         Akce
                       </span>
+                      {canExport ? (
+                        <label className="inline-flex h-8 items-center gap-1 pr-1 text-[10px] text-gray-600">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-400"
+                            checked={selectedExportKeys.has(`doc:${docRow.id}`)}
+                            onChange={() => toggleExportSelection(`doc:${docRow.id}`)}
+                            aria-label="Vybrat k exportu"
+                          />
+                        </label>
+                      ) : null}
                       {issuedJobId ? (
                         <Button
                           variant="outline"
@@ -6750,7 +6896,7 @@ function DocumentTableIssued({
                           </Link>
                         </Button>
                       ) : null}
-                      {!readOnlyTrash ? (
+                      {canWrite && !readOnlyTrash ? (
                         <Button
                           type="button"
                           variant="ghost"
@@ -6762,7 +6908,7 @@ function DocumentTableIssued({
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
                       ) : null}
-                      {!readOnlyTrash ? (
+                      {canWrite && !readOnlyTrash ? (
                         <Button
                           type="button"
                           variant="ghost"
@@ -6778,7 +6924,7 @@ function DocumentTableIssued({
                           <Link2 className="h-3.5 w-3.5" />
                         </Button>
                       ) : null}
-                      {!readOnlyTrash ? (
+                      {canWrite && !readOnlyTrash ? (
                         <Button
                           type="button"
                           variant="ghost"
@@ -6956,6 +7102,17 @@ function DocumentTableIssued({
                     <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
                       Akce
                     </span>
+                    {canExport ? (
+                      <label className="inline-flex h-8 items-center gap-1 pr-1 text-[10px] text-gray-600">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-400"
+                          checked={selectedExportKeys.has(`inv:${inv.id}`)}
+                          onChange={() => toggleExportSelection(`inv:${inv.id}`)}
+                          aria-label="Vybrat k exportu"
+                        />
+                      </label>
+                    ) : null}
                     {jid ? (
                       <Button
                         variant="outline"
@@ -6974,23 +7131,25 @@ function DocumentTableIssued({
                         <ReceiptText className="h-3.5 w-3.5" />
                       </Link>
                     </Button>
-                    {!readOnlyTrash ? (
+                    {canWrite && !readOnlyTrash ? (
                       <Button variant="ghost" size="icon" className={ib} asChild title="Upravit">
                         <Link href={`/portal/invoices/${inv.id}/edit`}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Link>
                       </Button>
                     ) : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className={ib}
-                      title="Tisk / PDF"
-                      onClick={() => openInvoicePrintFromRow(inv, toast)}
-                    >
-                      <Printer className="h-3.5 w-3.5" />
-                    </Button>
+                    {canExport ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={ib}
+                        title="Tisk / PDF"
+                        onClick={() => openInvoicePrintFromRow(inv, toast)}
+                      >
+                        <Printer className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       variant="ghost"

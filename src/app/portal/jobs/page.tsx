@@ -92,11 +92,17 @@ import {
   VAT_RATE_OPTIONS,
   type JobBudgetType,
 } from "@/lib/vat-calculations";
+import { fetchImageAsDataUrl } from "@/lib/pdf/exportJobsToPdf";
 import {
-  exportJobsToPdf,
-  fetchImageAsDataUrl,
-  type JobPdfExportRow,
-} from "@/lib/pdf/exportJobsToPdf";
+  exportJobsListCsv,
+  exportJobsListPdfBundle,
+  filterJobsForExportPreset,
+  printJobsListHtml,
+  sortJobsForExportPreset,
+  type JobsListExportPreset,
+} from "@/lib/jobs/jobs-list-export-utils";
+import { JobsExportPrintMenu } from "@/components/portal/jobs-export-print-menu";
+import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 import { exportContractedJobsToPdf } from "@/lib/pdf/exportContractedJobsToPdf";
 import { sumJobExpensesFromFirestore } from "@/lib/pdf/sum-job-expenses-client";
 import {
@@ -198,7 +204,9 @@ function JobsPageContent() {
     [firestore, user]
   );
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
-  const { canRead: canReadJobs } = usePortalModuleAccess("jobs");
+  const { canRead: canReadJobs, canExport: canExportJobs } = usePortalModuleAccess("jobs");
+  const { canExport: canExportFinance } = usePortalModuleAccess("finance");
+  const canExportContracted = canExportJobs && canExportFinance;
 
   const companyId = profile?.companyId;
   const isAdmin =
@@ -786,16 +794,27 @@ function JobsPageContent() {
     }
   };
 
-  const handleExportJobsPdf = async () => {
-    if (!isAdmin || !firestore || !companyId) {
+  const jobsForExportAction = useCallback(
+    (preset: JobsListExportPreset) =>
+      sortJobsForExportPreset(
+        filterJobsForExportPreset(displayJobs, preset),
+        preset,
+        getCustomerName
+      ),
+    [displayJobs, getCustomerName]
+  );
+
+  const handleExportJobsPdf = async (preset: JobsListExportPreset = "current") => {
+    if (!canExportJobs || !firestore || !companyId) {
       toast({
         variant: "destructive",
         title: "Export",
-        description: "Tuto akci mohou provést jen administrátoři.",
+        description: "K exportu zakázek nemáte oprávnění.",
       });
       return;
     }
-    if (displayJobs.length === 0) {
+    const exportJobs = jobsForExportAction(preset);
+    if (exportJobs.length === 0) {
       toast({
         variant: "destructive",
         title: "Export",
@@ -805,51 +824,25 @@ function JobsPageContent() {
     }
     setExportPdfLoading(true);
     try {
-      let logoDataUrl: string | null = null;
       const logoUrl = company?.organizationLogoUrl;
-      if (typeof logoUrl === "string" && logoUrl.trim()) {
-        logoDataUrl = await fetchImageAsDataUrl(logoUrl.trim());
-      }
-
-      const rows: JobPdfExportRow[] = [];
-      for (const job of displayJobs) {
-        const jid = job?.id;
-        if (!jid) continue;
-        const raw = job as unknown as Record<string, unknown>;
-        const bd = resolveJobBudgetFromFirestore(raw);
-        const costs = await sumJobExpensesFromFirestore(firestore, companyId, jid);
-        const budgetRaw = bd?.budgetGross;
-        const budgetGross =
-          budgetRaw != null && Number.isFinite(Number(budgetRaw)) ? Number(budgetRaw) : 0;
-        const costsGross = Number.isFinite(costs.gross) ? costs.gross : 0;
-        const remainingGross =
-          bd != null && budgetRaw != null && Number.isFinite(Number(budgetRaw))
-            ? roundMoney2(Number(budgetRaw) - costsGross)
-            : 0;
-
-        const periodParts = [
-          job?.startDate ? `Zahájení: ${job.startDate}` : "",
-          job?.endDate ? `Dokončení: ${job.endDate}` : "",
-        ].filter(Boolean);
-        rows.push({
-          jobName: String(job?.name ?? "—"),
-          customer: getCustomerName(job?.customerId),
-          statusLabel: jobStatusLabel(job?.status),
-          budgetGross,
-          costsGross,
-          remainingGross,
-          vatPercentLabel: bd ? `${bd.vatRate} %` : "0 %",
-          periodLabel: periodParts.length ? periodParts.join(" · ") : "—",
+      await exportJobsListPdfBundle({
+        firestore,
+        companyId,
+        jobs: exportJobs,
+        getCustomerName,
+        companyName: tenantCompanyName || "Organizace",
+        logoUrl: typeof logoUrl === "string" ? logoUrl : null,
+        fileName: `prehled-zakazek-${preset}-${new Date().toISOString().slice(0, 10)}`,
+      });
+      if (user) {
+        void logPortalExportAudit(user, {
+          actionType: "JOB_EXPORTED",
+          moduleId: "jobs",
+          entityType: "jobs_list",
+          format: "pdf",
+          metadata: { preset, count: exportJobs.length },
         });
       }
-
-      await exportJobsToPdf({
-        jobs: rows,
-        companyName: tenantCompanyName || "Organizace",
-        logoDataUrl,
-        fileName: `prehled-zakazek-${new Date().toISOString().slice(0, 10)}`,
-      });
-
       toast({
         title: "PDF bylo vygenerováno",
         description: "Soubor byl stažen do vašeho zařízení.",
@@ -865,12 +858,65 @@ function JobsPageContent() {
     }
   };
 
-  const handleExportContractedJobs = async (format: "pdf" | "csv") => {
-    if (!isAdmin || !firestore || !companyId) {
+  const handleExportJobsCsv = (preset: JobsListExportPreset = "current") => {
+    if (!canExportJobs) {
+      toast({ variant: "destructive", title: "Export", description: "K exportu nemáte oprávnění." });
+      return;
+    }
+    const exportJobs = jobsForExportAction(preset);
+    if (exportJobs.length === 0) {
       toast({
         variant: "destructive",
         title: "Export",
-        description: "Tuto akci mohou provést jen administrátoři.",
+        description: "Nejsou žádné zakázky k exportu.",
+      });
+      return;
+    }
+    exportJobsListCsv(
+      exportJobs,
+      getCustomerName,
+      `prehled-zakazek-${preset}-${new Date().toISOString().slice(0, 10)}`
+    );
+    if (user) {
+      void logPortalExportAudit(user, {
+        actionType: "JOB_EXPORTED",
+        moduleId: "jobs",
+        format: "csv",
+        metadata: { preset, count: exportJobs.length },
+      });
+    }
+    toast({ title: "CSV bylo vygenerováno" });
+  };
+
+  const handlePrintJobsList = (preset: JobsListExportPreset = "current") => {
+    if (!canExportJobs) return;
+    const exportJobs = jobsForExportAction(preset);
+    if (exportJobs.length === 0) {
+      toast({ variant: "destructive", title: "Tisk", description: "Seznam je prázdný." });
+      return;
+    }
+    printJobsListHtml(
+      exportJobs,
+      getCustomerName,
+      tenantCompanyName || "Organizace",
+      "Přehled zakázek"
+    );
+    if (user) {
+      void logPortalExportAudit(user, {
+        actionType: "DOCUMENT_PRINTED",
+        moduleId: "jobs",
+        format: "print",
+        metadata: { preset, count: exportJobs.length },
+      });
+    }
+  };
+
+  const handleExportContractedJobs = async (format: "pdf" | "csv") => {
+    if (!canExportContracted || !firestore || !companyId) {
+      toast({
+        variant: "destructive",
+        title: "Export",
+        description: "K exportu zesmluvněných zakázek nemáte oprávnění.",
       });
       return;
     }
@@ -1023,29 +1069,25 @@ function JobsPageContent() {
                 </button>
               );
             }
-            if (isAdmin) {
+            if (canExportJobs) {
               row1.push(
-                <button
-                  key="pdf"
-                  type="button"
-                  className={cn(
-                    "min-w-0 text-left",
-                    (exportPdfLoading || displayJobs.length === 0) &&
-                      "pointer-events-none opacity-50"
-                  )}
-                  disabled={exportPdfLoading || displayJobs.length === 0}
-                  onClick={() => void handleExportJobsPdf()}
-                >
-                  <div className={tileClass}>
-                    {exportPdfLoading ? (
-                      <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-400" />
-                    ) : (
-                      <FileDown className="h-5 w-5 shrink-0 text-orange-400" />
-                    )}
-                    <span className={labelClass}>Export PDF</span>
-                  </div>
-                </button>
+                <div key="export" className="min-w-0 flex items-center justify-center">
+                  <JobsExportPrintMenu
+                    mobile
+                    loading={exportPdfLoading}
+                    disabled={displayJobs.length === 0}
+                    onExportPdf={(p) => void handleExportJobsPdf(p)}
+                    onExportCsv={handleExportJobsCsv}
+                    onPrint={handlePrintJobsList}
+                    showContracted={canExportContracted}
+                    contractedLoading={exportContractedLoading}
+                    onExportContractedPdf={() => void handleExportContractedJobs("pdf")}
+                    onExportContractedCsv={() => void handleExportContractedJobs("csv")}
+                  />
+                </div>
               );
+            }
+            if (isAdmin) {
               row1.push(
                 <Link key="sablony" href="/portal/jobs/templates" className="min-w-0">
                   <div className={tileClass}>
@@ -1058,48 +1100,6 @@ function JobsPageContent() {
             return (
               <div className="space-y-1.5 pb-2">
                 <div className="grid grid-cols-4 gap-1.5">{row1}</div>
-                {isAdmin ? (
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      className={cn(
-                        "min-w-0 text-left",
-                        (exportContractedLoading || jobsForExport.length === 0) &&
-                          "pointer-events-none opacity-50"
-                      )}
-                      disabled={
-                        exportContractedLoading || jobsForExport.length === 0
-                      }
-                      onClick={() => void handleExportContractedJobs("pdf")}
-                    >
-                      <div className={tileClass}>
-                        {exportContractedLoading ? (
-                          <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-400" />
-                        ) : (
-                          <FileDown className="h-5 w-5 shrink-0 text-orange-400" />
-                        )}
-                        <span className={labelClass}>Zesmluvněné</span>
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      className={cn(
-                        "min-w-0 text-left",
-                        (exportContractedLoading || jobsForExport.length === 0) &&
-                          "pointer-events-none opacity-50"
-                      )}
-                      disabled={
-                        exportContractedLoading || jobsForExport.length === 0
-                      }
-                      onClick={() => void handleExportContractedJobs("csv")}
-                    >
-                      <div className={tileClass}>
-                        <FileText className="h-5 w-5 shrink-0 text-orange-400" />
-                        <span className={labelClass}>Zesml. CSV</span>
-                      </div>
-                    </button>
-                  </div>
-                ) : null}
                 {isAdmin ? (
                   <div className="grid grid-cols-2 gap-1.5">
                     <button
@@ -1163,44 +1163,21 @@ function JobsPageContent() {
               </Button>
             </Link>
           )}
+          {canExportJobs ? (
+            <JobsExportPrintMenu
+              loading={exportPdfLoading}
+              disabled={displayJobs.length === 0}
+              onExportPdf={(p) => void handleExportJobsPdf(p)}
+              onExportCsv={handleExportJobsCsv}
+              onPrint={handlePrintJobsList}
+              showContracted={canExportContracted}
+              contractedLoading={exportContractedLoading}
+              onExportContractedPdf={() => void handleExportContractedJobs("pdf")}
+              onExportContractedCsv={() => void handleExportContractedJobs("csv")}
+            />
+          ) : null}
           {isAdmin && (
             <>
-              <Button
-                type="button"
-                className="gap-2 min-h-[44px] bg-orange-600 text-white hover:bg-orange-700 border-0 shadow-md shadow-orange-600/25"
-                disabled={exportPdfLoading || displayJobs.length === 0}
-                onClick={() => void handleExportJobsPdf()}
-              >
-                {exportPdfLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                ) : (
-                  <FileDown className="w-4 h-4 shrink-0" />
-                )}
-                Export PDF
-              </Button>
-              <Button
-                type="button"
-                variant="outlineLight"
-                className="gap-2 min-h-[44px]"
-                disabled={exportContractedLoading || jobsForExport.length === 0}
-                onClick={() => void handleExportContractedJobs("pdf")}
-              >
-                {exportContractedLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                ) : (
-                  <FileDown className="w-4 h-4 shrink-0" />
-                )}
-                Export zesmluvněných zakázek
-              </Button>
-              <Button
-                type="button"
-                variant="outlineLight"
-                className="gap-2 min-h-[44px]"
-                disabled={exportContractedLoading || jobsForExport.length === 0}
-                onClick={() => void handleExportContractedJobs("csv")}
-              >
-                CSV zesmluvněných
-              </Button>
               <Link href="/portal/jobs/templates">
                 <Button variant="outlineLight" className="gap-2 min-h-[44px]">
                   <FileStack className="w-4 h-4" /> Šablony

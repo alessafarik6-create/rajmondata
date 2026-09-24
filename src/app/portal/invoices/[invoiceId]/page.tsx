@@ -19,7 +19,12 @@ import { PortalInvoiceSendDialog } from "@/components/invoices/portal-invoice-se
 import { PortalInvoicePreviewViewer } from "@/components/invoices/portal-invoice-preview-viewer";
 import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice-preview-dialog";
 import { formatCsDateTimeDot } from "@/lib/date-safe";
-import { canManagePortalInvoices } from "@/lib/portal-invoice-permissions";
+import {
+  canEditPortalInvoicesByModuleAccess,
+  canPrintPortalInvoices,
+} from "@/lib/portal-invoice-permissions";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 import { PortalInvoicePaymentsPanel } from "@/components/invoices/portal-invoice-payments-panel";
 
 export default function InvoiceDocumentPage() {
@@ -35,6 +40,9 @@ export default function InvoiceDocumentPage() {
   );
   const { data: profile, isLoading: profileLoading } = useDoc(userRef);
   const companyId = profile?.companyId as string | undefined;
+  const { canRead: canReadInvoices, canWrite: canWriteInvoices } = usePortalModuleAccess("invoices");
+  const canPrintInvoice = canPrintPortalInvoices(canReadInvoices);
+  const canEditInvoice = canEditPortalInvoicesByModuleAccess(canWriteInvoices);
 
   const invoiceRef = useMemoFirebase(
     () =>
@@ -145,6 +153,16 @@ export default function InvoiceDocumentPage() {
           "Prohlížeč zablokoval nové okno. Povolte vyskakovací okna pro tento web nebo zkuste znovu.",
       });
     }
+    if (user && result === "ok") {
+      void logPortalExportAudit(user, {
+        actionType: "DOCUMENT_PRINTED",
+        moduleId: "invoices",
+        entityType: "invoice",
+        entityId: invoiceId,
+        entityName: title,
+        format: "print",
+      });
+    }
   };
 
   const handleDownloadPdf = async () => {
@@ -236,9 +254,6 @@ export default function InvoiceDocumentPage() {
 
   const isInvoiceDeleted =
     (invoice as { isDeleted?: boolean }).isDeleted === true;
-  const canEditInvoice = canManagePortalInvoices(
-    String((profile as { role?: string } | null | undefined)?.role ?? "employee")
-  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 px-2 pb-10 sm:px-0">
@@ -275,6 +290,7 @@ export default function InvoiceDocumentPage() {
               Odeslat e-mailem
             </Button>
           ) : null}
+          {canPrintInvoice ? (
           <Button
             type="button"
             variant="outline"
@@ -285,10 +301,13 @@ export default function InvoiceDocumentPage() {
             <Printer className="h-4 w-4" />
             Tisk
           </Button>
+          ) : null}
+          {canPrintInvoice ? (
           <Button type="button" className="gap-2" disabled={!html || pdfBusy} onClick={() => void handleDownloadPdf()}>
             {pdfBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             Stáhnout PDF
           </Button>
+          ) : null}
         </div>
       </div>
       <p className="text-sm text-neutral-700">

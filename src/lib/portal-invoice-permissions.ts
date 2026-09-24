@@ -9,3 +9,13 @@ export function canViewPortalInvoices(role: string): boolean {
   if (canManagePortalInvoices(r)) return true;
   return ["employee", "customer"].includes(r);
 }
+
+/** Úprava / odeslání / mazání — vyžaduje WRITE modulu (role účetní = jen READ). */
+export function canEditPortalInvoicesByModuleAccess(canWriteInvoices: boolean): boolean {
+  return canWriteInvoices;
+}
+
+/** Tisk a PDF — stačí READ modulu faktur / dokladů. */
+export function canPrintPortalInvoices(canReadInvoices: boolean): boolean {
+  return canReadInvoices;
+}

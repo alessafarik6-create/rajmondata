@@ -96,6 +96,12 @@ import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catal
 import { canAccessCompanyModule } from "@/lib/platform-access";
 import { isCompanyPrivileged } from "@/lib/company-privilege";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import {
+  JobDetailExportPrintMenu,
+  type JobDetailExportKind,
+} from "@/components/portal/job-detail-export-print-menu";
+import { exportJobDetailToPdf } from "@/lib/pdf/exportJobDetailToPdf";
+import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
@@ -1271,7 +1277,14 @@ export function JobDetailPageContent({
     profile?.role === "admin" ||
     profile?.globalRoles?.includes("super_admin");
 
-  const { canWrite: canWriteJobsModule } = usePortalModuleAccess("jobs");
+  const { canWrite: canWriteJobsModule, canExport: canExportJobsModule } =
+    usePortalModuleAccess("jobs");
+  const { canExport: canExportFinanceModule } = usePortalModuleAccess("finance");
+  const { canExport: canExportInvoicesModule } = usePortalModuleAccess("invoices");
+  const { canExport: canExportDocumentsModule } = usePortalModuleAccess("documents");
+  const { canExport: canExportLaborModule } = usePortalModuleAccess("labor");
+  const { canExport: canExportScheduleModule } = usePortalModuleAccess("schedule");
+  const [jobExportBusy, setJobExportBusy] = useState(false);
 
   const canManageFolders =
     canWriteJobsModule &&
@@ -8815,12 +8828,171 @@ export function JobDetailPageContent({
     [annotationShapeLegendEntries, annotationArrowLegendEntries]
   );
 
+  const handleJobDetailExport = useCallback(
+    async (kind: JobDetailExportKind) => {
+      if (!canExportJobsModule || !job || !companyId || !firestore || !jobFirestoreId) {
+        toast({
+          variant: "destructive",
+          title: "Export",
+          description: "K exportu zakázky nemáte oprávnění.",
+        });
+        return;
+      }
+      setJobExportBusy(true);
+      try {
+        const customerLabel =
+          jobExpensesReportMeta.customerName ||
+          jobCustomerAddressBlock.displayName ||
+          "—";
+        let invoiceLines: string[] = [];
+        let documentLines: string[] = [];
+        let meetingLines: string[] = [];
+
+        if (
+          canExportInvoicesModule &&
+          (kind === "invoices" ||
+            kind === "financial" ||
+            kind === "full" ||
+            kind === "deposits" ||
+            kind === "payments")
+        ) {
+          const invSnap = await getDocs(
+            query(
+              collection(firestore, "companies", companyId, "invoices"),
+              where("jobId", "==", jobFirestoreId)
+            )
+          );
+          invoiceLines = invSnap.docs.map((d) => {
+            const x = d.data() as Record<string, unknown>;
+            const num = String(x.invoiceNumber ?? x.documentNumber ?? d.id);
+            const gross = x.amountGross ?? x.totalAmount ?? "";
+            const typ = String(x.type ?? "");
+            return `${num} · ${typ} · ${gross} Kč`;
+          });
+        }
+
+        if (
+          canExportDocumentsModule &&
+          (kind === "received_docs" || kind === "issued_docs" || kind === "full")
+        ) {
+          const docSnap = await getDocs(
+            query(
+              collection(firestore, "companies", companyId, "documents"),
+              where("jobId", "==", jobFirestoreId)
+            )
+          );
+          documentLines = docSnap.docs.map((d) => {
+            const x = d.data() as Record<string, unknown>;
+            const num = String(x.documentNumber ?? x.invoiceNumber ?? d.id);
+            const dt = String(x.documentType ?? x.type ?? "");
+            return `${num} · ${dt}`;
+          });
+        }
+
+        if (canExportScheduleModule && (kind === "meetings" || kind === "full")) {
+          const meetSnap = await getDocs(
+            query(
+              collection(firestore, "companies", companyId, "lead_meetings"),
+              where("jobId", "==", jobFirestoreId)
+            )
+          );
+          meetingLines = meetSnap.docs.map((d) => {
+            const x = d.data() as Record<string, unknown>;
+            const title = String(x.title ?? x.customerName ?? "Schůzka");
+            const at = x.scheduledAt;
+            return `${title} · ${String(at ?? "")}`;
+          });
+        }
+
+        const sections = {
+          summary: kind === "summary" || kind === "job_sheet" || kind === "full",
+          financial:
+            canExportFinanceModule &&
+            (kind === "financial" || kind === "full" || kind === "deposits" || kind === "payments"),
+          budget: canExportJobsModule && (kind === "budget" || kind === "full"),
+          invoices: canExportInvoicesModule && (kind === "invoices" || kind === "full"),
+          receivedDocs:
+            canExportDocumentsModule && (kind === "received_docs" || kind === "full"),
+          issuedDocs:
+            canExportInvoicesModule && (kind === "issued_docs" || kind === "full"),
+          deposits: canExportFinanceModule && (kind === "deposits" || kind === "full"),
+          payments: canExportFinanceModule && (kind === "payments" || kind === "full"),
+          material: false,
+          labor: canExportLaborModule && (kind === "labor" || kind === "full"),
+          meetings: canExportScheduleModule && (kind === "meetings" || kind === "full"),
+          notes: kind === "summary" || kind === "job_sheet" || kind === "full",
+        };
+
+        await exportJobDetailToPdf({
+          companyName: companyNameFromDoc || "Organizace",
+          logoUrl: (companyDoc as { organizationLogoUrl?: string } | null)?.organizationLogoUrl,
+          jobId: jobFirestoreId,
+          jobName: String(job.name ?? "Zakázka"),
+          customerName: customerLabel,
+          status: String(job.status ?? ""),
+          startDate: String(job.startDate ?? ""),
+          endDate: String(job.endDate ?? ""),
+          description: String(job.description ?? ""),
+          sections,
+          financialLines:
+            canExportFinanceModule && invoiceLines.length
+              ? [`Počet faktur / dokladů u zakázky: ${invoiceLines.length}`]
+              : undefined,
+          invoiceLines,
+          documentLines,
+          meetingLines,
+          notes: String(job.description ?? "").slice(0, 800),
+          fileName: `zakazka-${jobFirestoreId}-${kind}`,
+        });
+
+        if (user) {
+          void logPortalExportAudit(user, {
+            actionType: "JOB_EXPORTED",
+            moduleId: "jobs",
+            entityType: "job",
+            entityId: jobFirestoreId,
+            entityName: String(job.name ?? ""),
+            format: "pdf",
+            metadata: { kind },
+          });
+        }
+        toast({ title: "PDF zakázky bylo vygenerováno" });
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "Export PDF",
+          description: e instanceof Error ? e.message : "Generování se nezdařilo.",
+        });
+      } finally {
+        setJobExportBusy(false);
+      }
+    },
+    [
+      canExportJobsModule,
+      canExportFinanceModule,
+      canExportInvoicesModule,
+      canExportDocumentsModule,
+      canExportLaborModule,
+      canExportScheduleModule,
+      job,
+      companyId,
+      firestore,
+      jobFirestoreId,
+      jobExpensesReportMeta.customerName,
+      jobCustomerAddressBlock.displayName,
+      companyNameFromDoc,
+      companyDoc,
+      user,
+      toast,
+    ]
+  );
+
   const openEditJobDialog = useCallback(() => {
-    if (!isAdmin) {
+    if (!canWriteJobsModule) {
       toast({
         variant: "destructive",
         title: "Nedostatečná oprávnění",
-        description: "Upravit zakázku můžete pouze jako administrátor.",
+        description: "Úpravu zakázky povoluje oprávnění se zápisem.",
       });
       return;
     }
@@ -10506,6 +10678,41 @@ export function JobDetailPageContent({
             </Select>
           )}
 
+          {canExportJobsModule ? (
+            <>
+              <div className="hidden sm:block">
+                <JobDetailExportPrintMenu
+                  loading={jobExportBusy}
+                  canSummary
+                  canFinancial={canExportFinanceModule}
+                  canBudget={canExportJobsModule}
+                  canInvoices={canExportInvoicesModule}
+                  canDocuments={canExportDocumentsModule}
+                  canLabor={canExportLaborModule}
+                  canMeetings={canExportScheduleModule}
+                  onExport={(k) => void handleJobDetailExport(k)}
+                  onPrintContract={() => void openContractDialog("sod_work")}
+                />
+              </div>
+              <div className="sm:hidden">
+                <JobDetailExportPrintMenu
+                  mobile
+                  loading={jobExportBusy}
+                  canSummary
+                  canFinancial={canExportFinanceModule}
+                  canBudget={canExportJobsModule}
+                  canInvoices={canExportInvoicesModule}
+                  canDocuments={canExportDocumentsModule}
+                  canLabor={canExportLaborModule}
+                  canMeetings={canExportScheduleModule}
+                  onExport={(k) => void handleJobDetailExport(k)}
+                  onPrintContract={() => void openContractDialog("sod_work")}
+                />
+              </div>
+            </>
+          ) : null}
+
+          {canWriteJobsModule ? (
           <Button
             variant="outline"
             className={cn(JD.actionButton, "max-md:flex-1 max-md:min-w-[calc(50%-0.25rem)]")}
@@ -10513,6 +10720,7 @@ export function JobDetailPageContent({
           >
             <Edit2 className="h-4 w-4" /> Upravit
           </Button>
+          ) : null}
 
           <Button
             variant="outline"
