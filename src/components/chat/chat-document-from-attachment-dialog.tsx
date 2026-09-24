@@ -37,7 +37,7 @@ type Props = {
   analysisId: string | null;
   initialAnalysis: DocumentAiAnalysisResult | null;
   canWriteDocuments: boolean;
-  onSaved?: () => void;
+  onSaved?: (documentId: string) => void;
   defaultTarget?: "job" | "overhead" | "pending";
 };
 
@@ -157,7 +157,7 @@ export function ChatDocumentFromAttachmentDialog(props: Props) {
         title: "Doklad uložen",
         description: "Příloha z chatu byla zapsána mezi doklady.",
       });
-      props.onSaved?.();
+      props.onSaved?.(String(data.documentId ?? "").trim());
       props.onOpenChange(false);
     } catch (e) {
       toast({

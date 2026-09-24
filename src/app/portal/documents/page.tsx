@@ -1101,6 +1101,15 @@ function DocumentsPageContent() {
     usePortalModuleAccess("documents");
   const documentsReadOnly = !canWriteDocuments;
   const viewParam = searchParams.get("view");
+  const deepLinkDocumentId = useMemo(
+    () =>
+      searchParams.get("documentId")?.trim() ||
+      searchParams.get("highlight")?.trim() ||
+      "",
+    [searchParams]
+  );
+  const returnChatPath = searchParams.get("returnChatPath")?.trim() || null;
+  const deepLinkDocumentHandledRef = useRef<string | null>(null);
   const documentsMainTab =
     viewParam === "issued" ||
     viewParam === "all" ||
@@ -2443,6 +2452,58 @@ function DocumentsPageContent() {
     setEditOpen(true);
   };
 
+  useEffect(() => {
+    const id = deepLinkDocumentId;
+    if (!id || isLoading || isProfileLoading || !companyId) return;
+    if (deepLinkDocumentHandledRef.current === id) return;
+
+    const all = (documents ?? []) as CompanyDocumentRow[];
+    const row = all.find((d) => String(d.id) === id);
+    if (!row) return;
+    if (row.isDeleted === true) {
+      deepLinkDocumentHandledRef.current = id;
+      toast({
+        variant: "destructive",
+        title: "Doklad není k dispozici",
+        description: "Doklad je v koši nebo byl smazán.",
+      });
+      return;
+    }
+    if (!isFinancialCompanyDocument(row) && !isDeliveryNote(row)) return;
+
+    const desiredView: "received" | "issued" = isIssuedFinancialDocRow(row)
+      ? "issued"
+      : "received";
+
+    if (documentsMainTab !== desiredView && documentsMainTab !== "all") {
+      const q = new URLSearchParams(searchParams.toString());
+      q.set("view", desiredView);
+      router.replace(`/portal/documents?${q.toString()}`, { scroll: false });
+      return;
+    }
+
+    deepLinkDocumentHandledRef.current = id;
+    setPaymentFlashRowKey(`doc:${id}`);
+    openEditDocument(row);
+    window.requestAnimationFrame(() => {
+      const scrollId =
+        documentsMainTab === "issued" || desiredView === "issued"
+          ? `payment-flash-issued-doc-${id}`
+          : `payment-flash-received-doc-${id}`;
+      document.getElementById(scrollId)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, [
+    deepLinkDocumentId,
+    documents,
+    isLoading,
+    isProfileLoading,
+    companyId,
+    documentsMainTab,
+    searchParams,
+    router,
+    toast,
+  ]);
+
   const saveEditDocument = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyId || !editRow || !firestore || !user) return;
@@ -3130,6 +3191,11 @@ function DocumentsPageContent() {
             vyúčtovací faktury ze zakázek jsou ve vydaných dokladech; fotodokumentace bez částky jen u
             zakázky v médiích.
           </p>
+          {returnChatPath ? (
+            <Button variant="link" className="mt-2 h-auto p-0 text-sm font-medium" asChild>
+              <Link href={returnChatPath}>← Zpět do chatu</Link>
+            </Button>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {!documentsReadOnly ? (

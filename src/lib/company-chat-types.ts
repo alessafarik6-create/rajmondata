@@ -49,6 +49,10 @@ export type ChatAttachmentMeta = {
   aiDocumentAnalysisId?: string | null;
   analysisStatus?: ChatAttachmentAnalysisStatus;
   linkedDocumentId?: string | null;
+  createdDocumentId?: string | null;
+  createdDocumentType?: string | null;
+  createdDocumentAt?: unknown;
+  source?: string | null;
 };
 
 export type ChatMessageDoc = {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { FileText, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,10 @@ import type { ChatAttachmentMeta } from "@/lib/company-chat-types";
 import type { DocumentAiAnalysisResult } from "@/components/documents/document-ai-scan-section";
 import { ChatDocumentFromAttachmentDialog } from "@/components/chat/chat-document-from-attachment-dialog";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import {
+  buildChatDocumentOpenHref,
+  resolveChatDocumentIdFromAttachment,
+} from "@/lib/chat-document-link";
 
 function isDocLikeAttachment(att: ChatAttachmentMeta): boolean {
   const m = att.mimeType.toLowerCase();
@@ -27,6 +31,7 @@ export function ChatAttachmentDocumentPanel(props: {
   messageId: string;
   attachment: ChatAttachmentMeta;
   conversationId: string;
+  chatBasePath?: "/portal/chat" | "/portal/employee/messages";
   onAttachmentPatched?: () => void;
 }) {
   const { user } = useUser();
@@ -41,6 +46,57 @@ export function ChatAttachmentDocumentPanel(props: {
   const [status, setStatus] = useState(att.analysisStatus ?? "idle");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogTarget, setDialogTarget] = useState<"job" | "overhead" | "pending">("pending");
+  const [resolvedDocumentId, setResolvedDocumentId] = useState<string | null>(
+    resolveChatDocumentIdFromAttachment(att)
+  );
+
+  useEffect(() => {
+    setResolvedDocumentId(resolveChatDocumentIdFromAttachment(att));
+  }, [att.linkedDocumentId, att.createdDocumentId]);
+
+  useEffect(() => {
+    if (resolvedDocumentId || !user || !docsAccess.canRead) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const q = new URLSearchParams({
+          companyId: props.companyId,
+          messageId: props.messageId,
+          attachmentId: att.id,
+        });
+        const res = await fetch(`/api/company/chat/document-for-attachment?${q.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = (await res.json()) as { ok?: boolean; documentId?: string | null };
+        if (!cancelled && data.ok && data.documentId) {
+          setResolvedDocumentId(String(data.documentId));
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    att.id,
+    docsAccess.canRead,
+    props.companyId,
+    props.messageId,
+    resolvedDocumentId,
+    user,
+  ]);
+
+  const documentOpenHref =
+    resolvedDocumentId && docsAccess.canRead
+      ? buildChatDocumentOpenHref({
+          documentId: resolvedDocumentId,
+          conversationId: props.conversationId,
+          messageId: props.messageId,
+          chatBasePath: props.chatBasePath,
+        })
+      : null;
 
   const runAnalyze = useCallback(async () => {
     if (!user || !isDocLikeAttachment(att)) return;
@@ -105,16 +161,13 @@ export function ChatAttachmentDocumentPanel(props: {
 
   if (!isDocLikeAttachment(att)) return null;
 
-  if (att.linkedDocumentId) {
+  if (resolvedDocumentId) {
     return (
       <div className="mt-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-2 text-[11px] text-emerald-100">
         Uloženo jako doklad{" "}
-        {docsAccess.canRead ? (
-          <Link
-            href={`/portal/documents?highlight=${encodeURIComponent(att.linkedDocumentId)}`}
-            className="underline font-semibold"
-          >
-            otevřít
+        {documentOpenHref ? (
+          <Link href={documentOpenHref} className="underline font-semibold">
+            Otevřít doklad
           </Link>
         ) : null}
       </div>
@@ -220,8 +273,9 @@ export function ChatAttachmentDocumentPanel(props: {
         initialAnalysis={analysis}
         canWriteDocuments={docsAccess.canWrite}
         defaultTarget={dialogTarget}
-        onSaved={() => {
+        onSaved={(documentId) => {
           setStatus("saved");
+          if (documentId) setResolvedDocumentId(documentId);
           props.onAttachmentPatched?.();
         }}
       />

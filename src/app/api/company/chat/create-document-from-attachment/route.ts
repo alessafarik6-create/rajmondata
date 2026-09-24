@@ -190,9 +190,16 @@ export async function POST(request: NextRequest) {
   });
 
   const msgRef = db.collection("companies").doc(companyId).collection("chat").doc(messageId);
+  const createdDocumentType =
+    target === "job" ? "job_cost" : target === "overhead" ? "overhead" : "pending";
+
   await msgRef.update({
     attachments: patchAttachments(loaded.attachments, attachmentId, {
       linkedDocumentId: docRef.id,
+      createdDocumentId: docRef.id,
+      createdDocumentType,
+      createdDocumentAt: FieldValue.serverTimestamp(),
+      source: "chat-ai",
       analysisStatus: "saved",
     }),
     updatedAt: FieldValue.serverTimestamp(),

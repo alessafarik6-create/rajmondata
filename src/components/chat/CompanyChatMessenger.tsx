@@ -543,19 +543,93 @@ export function CompanyChatMessenger({
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
+  const isAtBottomRef = useRef(true);
+  const hasInitialScrolledRef = useRef<string | null>(null);
+  const prevMessageCountRef = useRef(0);
   const [showNewBelow, setShowNewBelow] = useState(false);
+
+  const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const run = () => {
+      const el = messagesScrollRef.current;
+      if (!el) return;
+      if (bottomRef.current) {
+        bottomRef.current.scrollIntoView({ block: "end", behavior });
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+      isAtBottomRef.current = true;
+      setShowNewBelow(false);
+    };
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
+  }, []);
+
+  const onMessagesMediaLayout = useCallback(() => {
+    if (isAtBottomRef.current) {
+      scrollMessagesToBottom("auto");
+    }
+  }, [scrollMessagesToBottom]);
+
+  useEffect(() => {
+    hasInitialScrolledRef.current = null;
+    prevMessageCountRef.current = 0;
+    isAtBottomRef.current = true;
+    setShowNewBelow(false);
+  }, [activeConversationId]);
 
   useEffect(() => {
     const el = messagesScrollRef.current;
     if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
-    if (nearBottom) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-      setShowNewBelow(false);
-    } else if (filteredMessages.length > 0) {
+    const onScroll = () => {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+      isAtBottomRef.current = nearBottom;
+      if (nearBottom) setShowNewBelow(false);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [activeConversationId, mobileShowThread]);
+
+  useEffect(() => {
+    if (mobileFull && !mobileShowThread) return;
+    if (isLoading) return;
+    if (!filteredMessages.length) return;
+    if (hasInitialScrolledRef.current === activeConversationId) return;
+    hasInitialScrolledRef.current = activeConversationId;
+    prevMessageCountRef.current = filteredMessages.length;
+    scrollMessagesToBottom("auto");
+  }, [
+    activeConversationId,
+    filteredMessages.length,
+    isLoading,
+    mobileFull,
+    mobileShowThread,
+    scrollMessagesToBottom,
+  ]);
+
+  useEffect(() => {
+    if (mobileFull && !mobileShowThread) return;
+    if (hasInitialScrolledRef.current !== activeConversationId) return;
+    const count = filteredMessages.length;
+    const prev = prevMessageCountRef.current;
+    if (count <= prev) {
+      prevMessageCountRef.current = count;
+      return;
+    }
+    prevMessageCountRef.current = count;
+    if (isAtBottomRef.current) {
+      scrollMessagesToBottom("smooth");
+    } else {
       setShowNewBelow(true);
     }
-  }, [filteredMessages.length, activeConversationId]);
+  }, [
+    filteredMessages.length,
+    activeConversationId,
+    mobileFull,
+    mobileShowThread,
+    scrollMessagesToBottom,
+  ]);
 
   const [draft, setDraft] = useState("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -752,6 +826,7 @@ export function CompanyChatMessenger({
 
       setDraft("");
       setPendingFiles([]);
+      scrollMessagesToBottom("smooth");
     } finally {
       setSending(false);
     }
@@ -1075,6 +1150,7 @@ export function CompanyChatMessenger({
                             src={att.downloadUrl ?? ""}
                             alt={att.fileName}
                             className="max-h-48 max-lg:max-h-[min(50dvh,280px)] w-full rounded-md border object-contain"
+                            onLoad={onMessagesMediaLayout}
                           />
                         </a>
                       ) : att.mimeType.startsWith("video/") ? (
@@ -1082,6 +1158,7 @@ export function CompanyChatMessenger({
                           controls
                           className="max-h-48 max-lg:max-h-[min(50dvh,280px)] max-w-full rounded-md object-contain"
                           src={att.downloadUrl ?? undefined}
+                          onLoadedData={onMessagesMediaLayout}
                         />
                       ) : (
                         <a
@@ -1127,6 +1204,11 @@ export function CompanyChatMessenger({
                           messageId={m.id}
                           attachment={att}
                           conversationId={activeConversationId}
+                          chatBasePath={
+                            mode === "employee"
+                              ? "/portal/employee/messages"
+                              : "/portal/chat"
+                          }
                         />
                       ) : null}
                     </div>
@@ -1166,11 +1248,10 @@ export function CompanyChatMessenger({
               variant="secondary"
               className="pointer-events-auto shadow-md h-8 text-xs"
               onClick={() => {
-                bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-                setShowNewBelow(false);
+                scrollMessagesToBottom("smooth");
               }}
             >
-              Nové zprávy ↓
+              Nová zpráva ↓
             </Button>
           </div>
         ) : null}
