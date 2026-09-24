@@ -14,6 +14,8 @@ export function parseCalendarAuthorFromFirestore(
   const uidRaw =
     (typeof raw.createdByUserId === "string" && raw.createdByUserId.trim()) ||
     (typeof raw.createdBy === "string" && raw.createdBy.trim()) ||
+    (typeof raw.creatorId === "string" && raw.creatorId.trim()) ||
+    (typeof raw.authorId === "string" && raw.authorId.trim()) ||
     "";
   const createdByUid = uidRaw || undefined;
   const createdByName =

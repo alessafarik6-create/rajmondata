@@ -57,6 +57,10 @@ import {
   calendarEventAssignsToViewer,
   filterCompanyCalendarEventsForViewer,
 } from "@/lib/calendar/company-calendar-service";
+import {
+  buildCalendarAssigneePersistPayload,
+  buildEmployeeIdToAuthUidMap,
+} from "@/lib/calendar/organization-calendar-repository";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -493,21 +497,6 @@ function resolveAssigneeEmployeeIds(
   return [...out];
 }
 
-function expandAssigneeIdsForFirestore(
-  employeeIds: string[],
-  employeeOptions: EmployeePick[]
-): { ids: string[]; names: string[] } {
-  const out = new Set<string>();
-  const names: string[] = [];
-  for (const id of employeeIds) {
-    out.add(id);
-    const row = employeeOptions.find((e) => e.id === id);
-    if (row?.authUserId) out.add(row.authUserId);
-    names.push(row?.name ?? id);
-  }
-  return { ids: [...out], names };
-}
-
 function newCalendarManualLeadKeys(): { leadKey: string; importLeadId: string } {
   const id =
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -599,9 +588,9 @@ export function CompanyScheduleCalendar({
   const showMeasurementLegend = showMeetingLegend || showInstallationLegend;
 
   const employeesQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || readOnly) return null;
+    if (!firestore || !companyId) return null;
     return collection(firestore, "companies", companyId, "employees");
-  }, [firestore, companyId, readOnly]);
+  }, [firestore, companyId]);
   const { data: employeesRaw = [] } = useCollection(employeesQuery);
   const jobsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || readOnly) return null;
@@ -760,15 +749,31 @@ export function CompanyScheduleCalendar({
     useCompanyScheduleMonthEvents(companyId, visibleMonth);
 
   const viewerUid = String(user?.uid ?? "").trim();
-  const viewerEmployeeId = String(profile?.employeeId ?? "").trim();
+  const employeeIdToAuthUid = useMemo(
+    () => buildEmployeeIdToAuthUidMap(employeeOptions),
+    [employeeOptions]
+  );
+  const viewerEmployeeId = useMemo(() => {
+    const fromProfile = String(profile?.employeeId ?? "").trim();
+    if (fromProfile) return fromProfile;
+    for (const [empId, uid] of employeeIdToAuthUid) {
+      if (uid === viewerUid) return empId;
+    }
+    return "";
+  }, [profile?.employeeId, employeeIdToAuthUid, viewerUid]);
   const events = useMemo(() => {
-    let list = filterCompanyCalendarEventsForViewer(eventsRaw, {
-      restrictToEmployeeScope: restrictEmployeeEvents,
-      viewerUid,
-      viewerEmployeeId,
-      isManagement,
-      calendarAccess,
-    });
+    let list = filterCompanyCalendarEventsForViewer(
+      eventsRaw,
+      {
+        restrictToEmployeeScope: restrictEmployeeEvents,
+        viewerUid,
+        viewerEmployeeId,
+        isManagement,
+        calendarAccess,
+        organizationId: companyId,
+      },
+      employeeIdToAuthUid
+    );
     if (scheduleFilter === "installationsOnly") {
       list = list.filter((ev) => isValidCompanyScheduleEvent(ev) && ev.kind === "installation");
     } else if (scheduleFilter === "meetingsOnly") {
@@ -787,6 +792,8 @@ export function CompanyScheduleCalendar({
     scheduleFilter,
     isManagement,
     calendarAccess,
+    companyId,
+    employeeIdToAuthUid,
   ]);
 
   React.useEffect(() => {
@@ -941,7 +948,10 @@ export function CompanyScheduleCalendar({
     setInstallJobId(ev.jobId ?? "");
     setInstallJobName(ev.jobName ?? "");
     setInstallCustomerId(ev.customerId ?? "");
-    const assigneeIds = resolveAssigneeEmployeeIds(ev.assignedEmployeeIds, employeeOptions);
+    const assigneeIds = resolveAssigneeEmployeeIds(
+      [...(ev.assignedEmployeeIds ?? []), ...(ev.assignedUserIds ?? [])],
+      employeeOptions
+    );
     if (ev.kind === "installation") {
       setSelectedInstallEmployeeIds(assigneeIds);
       setSelectedMeetingEmployeeIds([]);
@@ -1115,11 +1125,11 @@ export function CompanyScheduleCalendar({
         employeeTargetCount: employeeIds.length,
       });
 
-      const installAssignees = expandAssigneeIdsForFirestore(
+      const installAssignees = buildCalendarAssigneePersistPayload(
         selectedInstallEmployeeIds,
         employeeOptions
       );
-      const meetingAssignees = expandAssigneeIdsForFirestore(
+      const meetingAssignees = buildCalendarAssigneePersistPayload(
         selectedMeetingEmployeeIds,
         employeeOptions
       );
@@ -1150,8 +1160,9 @@ export function CompanyScheduleCalendar({
           updatedAt: serverTimestamp(),
           endsAt: endsAtField,
           ...(endsAtField ? { endAt: endsAtField } : {}),
-          assignedEmployeeIds: installAssignees.ids,
-          assignedEmployeeNames: installAssignees.names,
+          assignedUserIds: installAssignees.assignedUserIds,
+          assignedEmployeeIds: installAssignees.assignedEmployeeIds,
+          assignedEmployeeNames: installAssignees.assignedEmployeeNames,
           ...(installJobId.trim() ? { jobId: installJobId.trim() } : {}),
           ...(installJobName.trim() ? { jobName: installJobName.trim() } : {}),
           ...(installCustomerId.trim() ? { customerId: installCustomerId.trim() } : {}),
@@ -1188,8 +1199,10 @@ export function CompanyScheduleCalendar({
           ...(meetingSt === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
           ...(meetingSt === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
           reminderOffsetsMinutes,
-          assignedEmployeeIds: meetingAssignees.ids,
-          assignedEmployeeNames: meetingAssignees.names,
+          assignedUserIds: meetingAssignees.assignedUserIds,
+          assignedEmployeeIds: meetingAssignees.assignedEmployeeIds,
+          assignedEmployeeNames: meetingAssignees.assignedEmployeeNames,
+          isOrganizationWide: sendToAllEmployees === true,
         };
       }
 
@@ -1224,7 +1237,9 @@ export function CompanyScheduleCalendar({
           metadata: {
             organizationId: companyId,
             eventId: eventIdExisting,
-            assignedUserIds: isInstallation ? installAssignees.ids : meetingAssignees.ids,
+            assignedUserIds: isInstallation
+              ? installAssignees.assignedUserIds
+              : meetingAssignees.assignedUserIds,
           },
         });
         toast({
@@ -1255,7 +1270,9 @@ export function CompanyScheduleCalendar({
           metadata: {
             organizationId: companyId,
             eventId: createdEventId,
-            assignedUserIds: isInstallation ? installAssignees.ids : meetingAssignees.ids,
+            assignedUserIds: isInstallation
+              ? installAssignees.assignedUserIds
+              : meetingAssignees.assignedUserIds,
           },
         });
         console.log("[calendar] lead_meeting created", createdEventId);
@@ -2266,7 +2283,7 @@ export function CompanyScheduleCalendar({
                                     ? "border-slate-200 bg-slate-100 text-slate-700"
                                     : "border-emerald-200 bg-emerald-100"
                             )}
-                            title={`${format(ev.at, "HH:mm")} — ${ev.title} — ${ev.detail ?? ""}`}
+                            title={`${format(ev.at, "HH:mm")} — ${ev.headline || ev.title} — Vytvořil: ${formatCalendarCreatedByLine(ev)}`}
                             onClick={() => {
                               console.log("[calendar] desktop event click", {
                                 id: ev.id,
@@ -2285,6 +2302,11 @@ export function CompanyScheduleCalendar({
                           >
                             <span className="font-semibold tabular-nums">{format(ev.at, "HH:mm")}</span>{" "}
                             <span className="font-medium">{ev.headline || ev.title}</span>
+                            {ev.createdByName ? (
+                              <span className="block truncate text-[9px] font-normal text-slate-700">
+                                · {ev.createdByName}
+                              </span>
+                            ) : null}
                             {ev.sentToAllEmployees ? (
                               <span className="ml-1 text-[9px] font-semibold text-indigo-900">
                                 · rozesláno

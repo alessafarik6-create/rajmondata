@@ -1,6 +1,6 @@
 import { parseISO } from "date-fns";
 import { parseFirestoreScheduledAt } from "@/lib/lead-meeting-utils";
-import { getAssignedEmployeeIdsFromFirestore } from "@/lib/calendar/company-calendar-service";
+import { parseCalendarAssigneesFromFirestore } from "@/lib/calendar/organization-calendar-repository";
 import { parseCalendarAuthorFromFirestore } from "@/lib/calendar/calendar-event-author";
 import type { MeasurementDoc, MeasurementStatus } from "@/lib/measurements";
 import { MEASUREMENT_STATUS_LABELS } from "@/lib/measurements";
@@ -33,6 +33,10 @@ export type CompanyScheduleCalendarEvent = {
   sourceId?: string;
   eventNote?: string;
   sentToAllEmployees?: boolean;
+  /** Firemní / broadcast událost (alias sentToAllEmployees). */
+  isOrganizationWide?: boolean;
+  /** Auth uid přiřazení (canonical). */
+  assignedUserIds?: string[];
   notificationType?: EmployeeNotificationType;
   notificationMessage?: string | null;
   titleClass?: string;
@@ -213,9 +217,13 @@ export function buildCompanyScheduleEvents(
     const author = parseCalendarAuthorFromFirestore(raw);
     const createdByUid = author.createdByUid;
 
-    const assignedEmployeeIds = getAssignedEmployeeIdsFromFirestore(raw);
+    const assignees = parseCalendarAssigneesFromFirestore(raw);
     const assignedEmployeeIdsNorm =
-      assignedEmployeeIds.length > 0 ? assignedEmployeeIds : undefined;
+      assignees.assignedEmployeeIds.length > 0 ? assignees.assignedEmployeeIds : undefined;
+    const assignedUserIdsNorm =
+      assignees.assignedUserIds.length > 0 ? assignees.assignedUserIds : undefined;
+    const isOrganizationWide =
+      sentToAllEmployees || raw?.isOrganizationWide === true;
     const assignedEmployeeNamesRaw = raw?.assignedEmployeeNames;
     const assignedEmployeeNames = Array.isArray(assignedEmployeeNamesRaw)
       ? assignedEmployeeNamesRaw.map((x) => String(x ?? "").trim()).filter(Boolean)
@@ -261,7 +269,8 @@ export function buildCompanyScheduleEvents(
         accentClass: v.accentClass,
         sourceId: id,
         eventNote: note,
-        sentToAllEmployees,
+        sentToAllEmployees: isOrganizationWide,
+        isOrganizationWide,
         notificationType: nt,
         notificationMessage,
         titleClass: v.titleClass,
@@ -269,6 +278,7 @@ export function buildCompanyScheduleEvents(
         jobName,
         customerId,
         assignedEmployeeIds: assignedEmployeeIdsNorm,
+        assignedUserIds: assignedUserIdsNorm,
         assignedEmployeeNames,
         reminderOffsetsMinutes,
       });
@@ -302,11 +312,13 @@ export function buildCompanyScheduleEvents(
       accentClass: v.accentClass,
       sourceId: id,
       eventNote: note,
-      sentToAllEmployees,
+      sentToAllEmployees: isOrganizationWide,
+      isOrganizationWide,
       notificationType: nt,
       notificationMessage,
       titleClass: v.titleClass,
       assignedEmployeeIds: assignedEmployeeIdsNorm,
+      assignedUserIds: assignedUserIdsNorm,
       assignedEmployeeNames,
       reminderOffsetsMinutes,
     });
@@ -325,7 +337,7 @@ export function buildCompanyScheduleEvents(
     const address = String(raw.address ?? "").trim();
     const mAuthor = parseCalendarAuthorFromFirestore(raw as Record<string, unknown>);
     const createdByUid = mAuthor.createdByUid;
-    const mAssigned = getAssignedEmployeeIdsFromFirestore(
+    const mAssigned = parseCalendarAssigneesFromFirestore(
       raw as Record<string, unknown>
     );
     out.push({
@@ -334,7 +346,10 @@ export function buildCompanyScheduleEvents(
       createdByUid,
       createdByName: mAuthor.createdByName,
       createdByRole: mAuthor.createdByRole,
-      assignedEmployeeIds: mAssigned.length > 0 ? mAssigned : undefined,
+      assignedEmployeeIds:
+        mAssigned.assignedEmployeeIds.length > 0 ? mAssigned.assignedEmployeeIds : undefined,
+      assignedUserIds:
+        mAssigned.assignedUserIds.length > 0 ? mAssigned.assignedUserIds : undefined,
       title: raw.customerName?.trim() || "—",
       headline: note || "Zaměření",
       kind: "measurement",

@@ -67,6 +67,7 @@ export function filterScheduleEventsForDashboardViewer(
     viewerEmployeeId: string;
     isManagement?: boolean;
     calendarAccess?: CalendarPermissionsResolved;
+    employeeIdToAuthUid?: Map<string, string>;
   }
 ): CompanyScheduleCalendarEvent[] {
   const calendarAccess =
@@ -76,13 +77,17 @@ export function filterScheduleEventsForDashboardViewer(
       employeeDoc: null,
     });
 
-  return filterCompanyCalendarEventsForViewer(events, {
-    restrictToEmployeeScope: opts.restrictEmployeeEvents,
-    viewerUid: opts.viewerUid,
-    viewerEmployeeId: opts.viewerEmployeeId,
-    isManagement: opts.isManagement === true,
-    calendarAccess,
-  });
+  return filterCompanyCalendarEventsForViewer(
+    events,
+    {
+      restrictToEmployeeScope: opts.restrictEmployeeEvents,
+      viewerUid: opts.viewerUid,
+      viewerEmployeeId: opts.viewerEmployeeId,
+      isManagement: opts.isManagement === true,
+      calendarAccess,
+    },
+    opts.employeeIdToAuthUid
+  );
 }
 
 function scheduleEventHref(ev: CompanyScheduleCalendarEvent): string {

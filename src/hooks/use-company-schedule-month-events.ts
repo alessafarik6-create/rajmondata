@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import {
   collection,
   query,
@@ -15,6 +15,7 @@ import {
   type CompanyScheduleCalendarEvent,
 } from "@/lib/company-schedule-events";
 import { pragueMonthScheduledAtIsoRange } from "@/lib/calendar/company-calendar-service";
+import { ORGANIZATION_CALENDAR_EVENTS_COLLECTION } from "@/lib/calendar/organization-calendar-repository";
 
 export function useCompanyScheduleMonthEvents(
   companyId: string | undefined,
@@ -57,6 +58,13 @@ export function useCompanyScheduleMonthEvents(
     () => buildCompanyScheduleEvents(meetingsRaw, measurementsRaw),
     [meetingsRaw, measurementsRaw]
   );
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development" || !companyId) return;
+    console.log("[CALENDAR] source collection:", ORGANIZATION_CALENDAR_EVENTS_COLLECTION);
+    console.log("[CALENDAR] organizationId:", companyId);
+    console.log("[CALENDAR] loaded event count:", events.length);
+  }, [companyId, events.length]);
 
   return {
     events,

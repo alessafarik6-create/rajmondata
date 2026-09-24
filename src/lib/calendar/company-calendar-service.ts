@@ -9,6 +9,8 @@ import {
   employeeCanViewCalendarEventKind,
   type CalendarPermissionsResolved,
 } from "@/lib/calendar/calendar-access";
+import { parseCalendarAssigneesFromFirestore } from "@/lib/calendar/organization-calendar-repository";
+import { ORGANIZATION_CALENDAR_EVENTS_COLLECTION } from "@/lib/calendar/organization-calendar-repository";
 
 export type CompanyCalendarViewer = {
   /** true = jen události pro tohoto zaměstnance (přiřazení / autor / broadcast). */
@@ -17,38 +19,14 @@ export type CompanyCalendarViewer = {
   viewerEmployeeId: string;
   isManagement: boolean;
   calendarAccess: CalendarPermissionsResolved;
+  organizationId?: string;
 };
 
-const ASSIGNEE_FIELD_KEYS = [
-  "assignedEmployeeIds",
-  "employeeIds",
-  "employeeId",
-  "assignedTo",
-  "assigneeId",
-  "workerIds",
-  "participants",
-] as const;
-
-/** Normalizace přiřazení z Firestore (historické i nové struktury). */
+/** @deprecated Použij parseCalendarAssigneesFromFirestore — zachováno pro importy. */
 export function getAssignedEmployeeIdsFromFirestore(
   raw: Record<string, unknown> | null | undefined
 ): string[] {
-  if (!raw || typeof raw !== "object") return [];
-  const out = new Set<string>();
-
-  for (const key of ASSIGNEE_FIELD_KEYS) {
-    const v = raw[key];
-    if (Array.isArray(v)) {
-      for (const x of v) {
-        const s = String(x ?? "").trim();
-        if (s) out.add(s);
-      }
-    } else if (typeof v === "string" && v.trim()) {
-      out.add(v.trim());
-    }
-  }
-
-  return [...out];
+  return parseCalendarAssigneesFromFirestore(raw).assignedEmployeeIds;
 }
 
 export function getAssignedEmployeeIdsFromEvent(
@@ -58,39 +36,68 @@ export function getAssignedEmployeeIdsFromEvent(
   return Array.isArray(ids) ? ids.map((x) => String(x).trim()).filter(Boolean) : [];
 }
 
+export function getAssignedUserIdsFromEvent(
+  ev: CompanyScheduleCalendarEvent,
+  employeeIdToAuthUid?: Map<string, string>
+): string[] {
+  const out = new Set<string>();
+  for (const uid of ev.assignedUserIds ?? []) {
+    const s = String(uid ?? "").trim();
+    if (s) out.add(s);
+  }
+  for (const id of getAssignedEmployeeIdsFromEvent(ev)) {
+    const mapped = employeeIdToAuthUid?.get(id);
+    if (mapped) out.add(mapped);
+    else out.add(id);
+  }
+  return [...out];
+}
+
 export function calendarEventAssignsToViewer(
   ev: CompanyScheduleCalendarEvent,
   viewerEmployeeId: string,
-  viewerUid: string
+  viewerUid: string,
+  employeeIdToAuthUid?: Map<string, string>
 ): boolean {
   const eid = viewerEmployeeId.trim();
   const uid = viewerUid.trim();
-  const assigned = getAssignedEmployeeIdsFromEvent(ev);
-  if (eid && assigned.includes(eid)) return true;
-  if (uid && assigned.includes(uid)) return true;
+  const userIds = getAssignedUserIdsFromEvent(ev, employeeIdToAuthUid);
+  if (uid && userIds.includes(uid)) return true;
+  const legacy = getAssignedEmployeeIdsFromEvent(ev);
+  if (eid && legacy.includes(eid)) return true;
+  if (uid && legacy.includes(uid)) return true;
   return false;
 }
 
 function employeeScopeAllowsEvent(
   ev: CompanyScheduleCalendarEvent,
-  viewer: CompanyCalendarViewer
+  viewer: CompanyCalendarViewer,
+  employeeIdToAuthUid?: Map<string, string>
 ): boolean {
   const uid = viewer.viewerUid.trim();
-  const eid = viewer.viewerEmployeeId.trim();
 
   if (ev.kind === "meeting") {
-    if (ev.sentToAllEmployees) return true;
-    if (calendarEventAssignsToViewer(ev, eid, uid)) return true;
+    if (ev.sentToAllEmployees || ev.isOrganizationWide) return true;
+    if (calendarEventAssignsToViewer(ev, viewer.viewerEmployeeId, uid, employeeIdToAuthUid)) {
+      return true;
+    }
     if (uid && ev.createdByUid === uid) return true;
     return false;
   }
 
   if (ev.kind === "installation") {
-    return calendarEventAssignsToViewer(ev, eid, uid);
+    return calendarEventAssignsToViewer(
+      ev,
+      viewer.viewerEmployeeId,
+      uid,
+      employeeIdToAuthUid
+    );
   }
 
   if (ev.kind === "measurement") {
-    if (calendarEventAssignsToViewer(ev, eid, uid)) return true;
+    if (calendarEventAssignsToViewer(ev, viewer.viewerEmployeeId, uid, employeeIdToAuthUid)) {
+      return true;
+    }
     if (uid && ev.createdByUid === uid) return true;
     return false;
   }
@@ -101,7 +108,8 @@ function employeeScopeAllowsEvent(
 /** Oprávnění typu + (u zaměstnance) přiřazení. */
 export function filterCompanyCalendarEventsForViewer(
   events: CompanyScheduleCalendarEvent[],
-  viewer: CompanyCalendarViewer
+  viewer: CompanyCalendarViewer,
+  employeeIdToAuthUid?: Map<string, string>
 ): CompanyScheduleCalendarEvent[] {
   const afterPermission = events.filter((ev) => {
     if (!isValidCompanyScheduleEvent(ev)) return false;
@@ -110,26 +118,30 @@ export function filterCompanyCalendarEventsForViewer(
   });
 
   if (!viewer.restrictToEmployeeScope || viewer.isManagement) {
+    if (process.env.NODE_ENV === "development") {
+      console.log("[CALENDAR] source collection:", ORGANIZATION_CALENDAR_EVENTS_COLLECTION);
+      console.log("[CALENDAR] organizationId:", viewer.organizationId ?? "—");
+      console.log("[CALENDAR] currentUserId:", viewer.viewerUid);
+      console.log("[CALENDAR] loaded event count:", events.length);
+      console.log("[CALENDAR] filtered my event count:", afterPermission.length);
+    }
     return afterPermission;
   }
 
   if (!viewer.viewerUid.trim()) return [];
 
-  const matched = afterPermission.filter((ev) => employeeScopeAllowsEvent(ev, viewer));
+  const matched = afterPermission.filter((ev) =>
+    employeeScopeAllowsEvent(ev, viewer, employeeIdToAuthUid)
+  );
 
   if (process.env.NODE_ENV === "development") {
-    console.log("[calendar debug]", {
-      userId: viewer.viewerUid,
-      employeeId: viewer.viewerEmployeeId,
-      restrictToEmployeeScope: viewer.restrictToEmployeeScope,
-      permissions: {
-        meetings: viewer.calendarAccess.meetings.level,
-        installations: viewer.calendarAccess.installations.level,
-      },
-      rawEvents: events.length,
-      afterPermission: afterPermission.length,
-      matchedEvents: matched.length,
-    });
+    console.log("[CALENDAR] source collection:", ORGANIZATION_CALENDAR_EVENTS_COLLECTION);
+    console.log("[CALENDAR] organizationId:", viewer.organizationId ?? "—");
+    console.log("[CALENDAR] currentUserId:", viewer.viewerUid);
+    console.log("[CALENDAR] assignedUserIds (sample):", matched[0]?.assignedUserIds ?? "—");
+    console.log("[CALENDAR] loaded event count:", events.length);
+    console.log("[CALENDAR] after permission count:", afterPermission.length);
+    console.log("[CALENDAR] filtered my event count:", matched.length);
   }
 
   return matched;
