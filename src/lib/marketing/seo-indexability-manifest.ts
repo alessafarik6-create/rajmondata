@@ -1,6 +1,6 @@
-import { MARKETING_PAGES } from "@/lib/marketing/public-pages-registry";
+import { getIndexableMarketingPages } from "@/lib/marketing/public-pages-registry";
+import { publicSitemapBaseUrl } from "@/lib/marketing/public-sitemap";
 import { mergePageSeo } from "@/lib/marketing/public-page-seo-server";
-import { SITE_URL } from "@/lib/site-url";
 
 /** Statický přehled veřejných URL pro SEO audit (build / dokumentace). */
 export type SeoIndexabilityRow = {
@@ -15,7 +15,7 @@ export type SeoIndexabilityRow = {
 };
 
 export function buildPublicSeoIndexabilityManifest(): SeoIndexabilityRow[] {
-  const base = SITE_URL.replace(/\/$/, "");
+  const base = publicSitemapBaseUrl();
   const home: SeoIndexabilityRow = {
     url: `${base}/`,
     slug: "(home)",
@@ -27,7 +27,7 @@ export function buildPublicSeoIndexabilityManifest(): SeoIndexabilityRow[] {
     expectedHttp: 200,
   };
 
-  const pages = MARKETING_PAGES.map((page) => {
+  const pages = getIndexableMarketingPages().map((page) => {
     const seo = mergePageSeo(page);
     return {
       url: `${base}/${page.slug}`,
@@ -36,7 +36,7 @@ export function buildPublicSeoIndexabilityManifest(): SeoIndexabilityRow[] {
       canonical: seo.canonical,
       title: seo.title,
       description: seo.description.slice(0, 120) + (seo.description.length > 120 ? "…" : ""),
-      inSitemap: page.legalKey !== "dpa",
+      inSitemap: true,
       expectedHttp: 200 as const,
     };
   });

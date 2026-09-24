@@ -3,6 +3,7 @@ import {
   LEGAL_PRIVACY,
   LEGAL_TERMS,
   LEGAL_DPA_SLUG,
+  LEGACY_GDPR_SLUG,
 } from "@/lib/marketing/legal-versions";
 import { SEO_EXTRA_PRODUCT_PAGES } from "@/lib/marketing/seo-extra-product-pages";
 
@@ -454,7 +455,10 @@ export function getAllMarketingSlugs(): string[] {
 }
 
 export function getIndexableMarketingPages(): MarketingPageDef[] {
-  return MARKETING_PAGES.filter((p) => p.kind !== "legal" || p.legalKey !== "dpa");
+  return MARKETING_PAGES.filter(
+    (p) =>
+      p.slug !== LEGACY_GDPR_SLUG && (p.kind !== "legal" || p.legalKey !== "dpa")
+  );
 }
 
 /** DPA stránka je právní příloha — ve sitemap ji neuvádíme. */
