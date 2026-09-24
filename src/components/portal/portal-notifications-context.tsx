@@ -32,9 +32,23 @@ import type { PortalNotificationCategory } from "@/lib/portal-notifications-type
 export type PortalNotificationItem = {
   id: string;
   category: PortalNotificationCategory;
+  type: string | null;
+  entityType: string | null;
+  entityId: string | null;
   title: string;
   body: string;
   linkUrl: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  targetUrl: string | null;
+  jobId: string | null;
+  messageId: string | null;
+  commentId: string | null;
+  conversationId: string | null;
+  documentId: string | null;
+  invoiceId: string | null;
+  inquiryId: string | null;
+  calendarEventId: string | null;
   read: boolean;
   createdAt: unknown;
 };
@@ -102,13 +116,27 @@ export function PortalNotificationsProvider({ children }: { children: React.Reac
 
   const items: PortalNotificationItem[] = useMemo(() => {
     const list = (inboxRows ?? []) as Array<Record<string, unknown> & { id: string }>;
+    const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
     return list.map((row) => ({
       id: row.id,
       category: (typeof row.category === "string" ? row.category : "system") as PortalNotificationCategory,
+      type: str(row.type),
+      entityType: str(row.entityType),
+      entityId: str(row.entityId),
       title: typeof row.title === "string" ? row.title : "Oznámení",
       body: typeof row.body === "string" ? row.body : "",
-      linkUrl:
-        typeof row.linkUrl === "string" && row.linkUrl.trim() ? row.linkUrl.trim() : null,
+      linkUrl: str(row.linkUrl),
+      targetType: str(row.targetType),
+      targetId: str(row.targetId),
+      targetUrl: str(row.targetUrl),
+      jobId: str(row.jobId),
+      messageId: str(row.messageId),
+      commentId: str(row.commentId) ?? str(row.messageId),
+      conversationId: str(row.conversationId),
+      documentId: str(row.documentId),
+      invoiceId: str(row.invoiceId),
+      inquiryId: str(row.inquiryId),
+      calendarEventId: str(row.calendarEventId),
       read: row.read === true,
       createdAt: row.createdAt,
     }));

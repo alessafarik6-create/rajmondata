@@ -102,6 +102,7 @@ export async function POST(request: NextRequest) {
       url: chatUrl,
       entityType: "system",
       entityId: body.conversationId ?? "company",
+      conversationId: body.conversationId ?? "company",
       category: "message",
       eventId: `${eventBase}:${recipientUserId}`,
       source: "chat",

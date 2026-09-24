@@ -85,4 +85,13 @@ export type CreateNotificationInput = {
   source?: string | null;
   /** Vynutit push i mimo preference (urgent systém). */
   forcePush?: boolean;
+  targetType?: string | null;
+  jobId?: string | null;
+  messageId?: string | null;
+  commentId?: string | null;
+  conversationId?: string | null;
+  documentId?: string | null;
+  invoiceId?: string | null;
+  inquiryId?: string | null;
+  calendarEventId?: string | null;
 };

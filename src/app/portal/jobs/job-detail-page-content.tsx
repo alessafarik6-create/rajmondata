@@ -3000,6 +3000,16 @@ export function JobDetailPageContent({
     setCollapsibleForceOpen((prev) => ({ ...prev, [id]: true }));
     openDeepSection("realizace-panel");
   }, [openDeepSection]);
+
+  const communicationDeepLinkCommentId = useMemo(
+    () => searchParams.get("commentId")?.trim() || "",
+    [searchParams]
+  );
+
+  useEffect(() => {
+    if (searchParams.get("section")?.trim() !== "communication") return;
+    openDeepSection("communication-detail");
+  }, [searchParams, openDeepSection]);
   const [handoverDefaultContractId, setHandoverDefaultContractId] = useState<string | null>(
     null
   );
@@ -11110,6 +11120,7 @@ export function JobDetailPageContent({
                 channelBadgeLabel="Interní"
                 title="Interní chat k zakázce"
                 target={{ targetType: "job" }}
+                focusCommentId={communicationDeepLinkCommentId || null}
                 onAfterSend={async (sent) => {
                   try {
                     const token = await user.getIdToken();
@@ -11124,6 +11135,7 @@ export function JobDetailPageContent({
                         jobId: String(jobId),
                         targetType: "job",
                         messagePreview: sent.message,
+                        commentId: sent.id,
                       }),
                     });
                   } catch {
@@ -11718,6 +11730,7 @@ export function JobDetailPageContent({
                 channelBadgeLabel="Interní"
                 title="Interní chat k zakázce"
                 target={{ targetType: "job" }}
+                focusCommentId={communicationDeepLinkCommentId || null}
                 onAfterSend={async (sent) => {
                   try {
                     const token = await user.getIdToken();
@@ -11732,6 +11745,7 @@ export function JobDetailPageContent({
                         jobId: String(jobId),
                         targetType: "job",
                         messagePreview: sent.message,
+                        commentId: sent.id,
                       }),
                     });
                   } catch {

@@ -18,6 +18,15 @@ export type PortalNotificationInboxDoc = {
   title: string;
   body: string;
   linkUrl?: string | null;
+  targetType?: string | null;
+  targetId?: string | null;
+  targetUrl?: string | null;
+  jobId?: string | null;
+  messageId?: string | null;
+  conversationId?: string | null;
+  type?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
   read: boolean;
   createdAt: unknown;
   /** Volitelně k filtrování / analytice */

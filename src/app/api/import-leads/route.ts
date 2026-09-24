@@ -300,7 +300,7 @@ export async function GET(request: NextRequest) {
                 type: "INQUIRY_CREATED",
                 title,
                 body: `Import přidal ${sync.created} poptávek.`,
-                url: "/portal/leads",
+                url: "/portal/leads?filter=new",
                 entityType: "inquiry",
                 entityId: companyId,
                 eventId: `inquiry-import:${companyId}:${sync.created}:${Math.floor(Date.now() / 300_000)}`,

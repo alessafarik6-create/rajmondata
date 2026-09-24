@@ -22,6 +22,7 @@ import {
 import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
 import { createNotification } from "@/lib/notification-service/notification-service";
 import type { NotificationEventType } from "@/lib/notification-service/types";
+import { buildJobCommunicationPath } from "@/lib/notification-target";
 
 export type JobActivityNotifyEvent =
   | "file_upload"
@@ -137,15 +138,17 @@ function dedupId(input: JobActivityNotifyInput, email: string): string {
 
 function portalPathForRecipient(
   role: string | null | undefined,
-  jobId: string
+  jobId: string,
+  input?: JobActivityNotifyInput
 ): string {
-  if (role === "customer") {
-    return `/portal/customer/jobs/${encodeURIComponent(jobId)}`;
-  }
-  if (role === "employee") {
-    return `/portal/employee/jobs/${encodeURIComponent(jobId)}`;
-  }
-  return `/portal/jobs/${encodeURIComponent(jobId)}`;
+  const commentId =
+    input?.eventType === "job_chat" || input?.eventType === "file_chat"
+      ? String(input.entityId ?? input.fileId ?? "").trim() || undefined
+      : undefined;
+  return buildJobCommunicationPath(role ?? undefined, jobId, {
+    commentId,
+    fileId: input?.eventType === "file_chat" ? input.fileId ?? undefined : undefined,
+  });
 }
 
 async function loadFolder(
@@ -410,7 +413,7 @@ export async function dispatchJobActivityNotifications(
       continue;
     }
 
-    const linkPath = portalPathForRecipient(recipient.role, input.jobId);
+    const linkPath = portalPathForRecipient(recipient.role, input.jobId, input);
     const actionUrl = absoluteUrl(linkPath);
 
     const html = wrapPortalEmailHtml({
@@ -469,9 +472,14 @@ export async function dispatchJobActivityNotifications(
           type: notifType,
           title: pushTitle,
           body: pushBody,
-          url: portalPathForRecipient(recipient.role, input.jobId),
+          url: portalPathForRecipient(recipient.role, input.jobId, input),
           entityType: "job",
           entityId: input.jobId,
+          jobId: input.jobId,
+          commentId:
+            input.eventType === "job_chat" || input.eventType === "file_chat"
+              ? String(input.entityId ?? "").trim() || null
+              : null,
           priority: input.eventType === "customer_drawing_reminder" ? "HIGH" : "NORMAL",
           eventId: `job-activity:${input.companyId}:${input.jobId}:${input.eventType}:${entityKey}:${recipient.uid}`,
           source: "job-activity-notify",

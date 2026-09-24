@@ -12,6 +12,7 @@ import {
   shouldSendPushForNotification,
 } from "@/lib/notification-service/preferences";
 import type { CreateNotificationInput, NotificationPriority } from "@/lib/notification-service/types";
+import { resolveCreateNotificationTarget } from "@/lib/notification-target";
 
 let vapidConfigured = false;
 
@@ -126,7 +127,8 @@ export async function createNotification(
   const prefs = await loadUserPreferences(db, input.recipientUserId);
   const category = input.category ?? defaultCategory(input.type);
   const priority: NotificationPriority = input.priority ?? "NORMAL";
-  const linkUrl = input.url?.trim() || "/portal/notifications";
+  const targetResolved = resolveCreateNotificationTarget(input);
+  const linkUrl = targetResolved.url || "/portal/notifications";
 
   const inboxRef = db
     .collection("users")
@@ -144,6 +146,13 @@ export async function createNotification(
     title: input.title,
     body: input.body,
     linkUrl,
+    targetType: targetResolved.targetType,
+    targetId: targetResolved.targetId,
+    targetUrl: targetResolved.targetUrl,
+    jobId: targetResolved.jobId ?? null,
+    messageId: targetResolved.messageId ?? null,
+    commentId: input.commentId ?? input.messageId ?? null,
+    conversationId: targetResolved.conversationId ?? input.conversationId ?? null,
     read: false,
     createdAt: FieldValue.serverTimestamp(),
     source: input.source ?? null,
@@ -248,6 +257,14 @@ export async function emitPortalNotification(input: {
   type?: CreateNotificationInput["type"];
   eventId?: string | null;
   priority?: NotificationPriority;
+  entityType?: CreateNotificationInput["entityType"];
+  entityId?: string | null;
+  jobId?: string | null;
+  commentId?: string | null;
+  messageId?: string | null;
+  conversationId?: string | null;
+  inquiryId?: string | null;
+  calendarEventId?: string | null;
 }): Promise<{ inboxId: string | null; pushAttempted: number; pushOk: number }> {
   const r = await createNotification({
     organizationId: input.companyId ?? "",
@@ -260,6 +277,14 @@ export async function emitPortalNotification(input: {
     source: input.source,
     eventId: input.eventId,
     priority: input.priority,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    jobId: input.jobId,
+    commentId: input.commentId,
+    messageId: input.messageId,
+    conversationId: input.conversationId,
+    inquiryId: input.inquiryId,
+    calendarEventId: input.calendarEventId,
   });
   return { inboxId: r.inboxId, pushAttempted: r.pushAttempted, pushOk: r.pushOk };
 }

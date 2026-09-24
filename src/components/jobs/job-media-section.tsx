@@ -2345,6 +2345,7 @@ function UserFolderBlock({
                       folderId: fileChatTarget.folderId,
                       fileName: fileChatTarget.fileName,
                       messagePreview: sent.message,
+                      commentId: sent.id,
                     }),
                   });
                 } catch {

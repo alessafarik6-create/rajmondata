@@ -1311,7 +1311,7 @@ export function CompanyScheduleCalendar({
           eventDate: dateStr,
           eventTime: timeStr,
           sentBy: user.uid,
-          linkUrl: "/portal/employee",
+          linkUrl: `/portal/schedule?event=${encodeURIComponent(realEventId)}`,
         });
         console.log("[calendar] upsert employee notifications done", res);
         toast({
@@ -1364,7 +1364,7 @@ export function CompanyScheduleCalendar({
           eventDate: dateStr,
           eventTime: timeStr,
           sentBy: user.uid,
-          linkUrl: "/portal/employee",
+          linkUrl: `/portal/schedule?event=${encodeURIComponent(realEventId)}`,
         });
         toast({
           title: "Upozornění pro montéry",

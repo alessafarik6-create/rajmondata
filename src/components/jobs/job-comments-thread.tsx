@@ -119,12 +119,16 @@ export function JobCommentsThread(props: {
     fileName?: string | null;
     message: string;
   }) => Promise<void> | void;
+  /** Po deep linku ?commentId= — scroll a krátké zvýraznění. */
+  focusCommentId?: string | null;
 }) {
   const { toast } = useToast();
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+  const [highlightCommentId, setHighlightCommentId] = useState<string | null>(null);
   const isSummary = props.presentation === "summary";
+  const focusCommentId = String(props.focusCommentId ?? "").trim();
 
   const firestore = props.firestore as any;
 
@@ -197,6 +201,16 @@ export function JobCommentsThread(props: {
     () => computeUnreadCountForTarget({ comments, userId: props.userId }),
     [comments, props.userId]
   );
+
+  useEffect(() => {
+    if (!focusCommentId || isLoading) return;
+    const el = document.getElementById(`job-comment-${focusCommentId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightCommentId(focusCommentId);
+    const t = window.setTimeout(() => setHighlightCommentId(null), 2800);
+    return () => window.clearTimeout(t);
+  }, [focusCommentId, isLoading, comments.length]);
 
   // Mark as read when opened / new messages arrive.
   useEffect(() => {
@@ -423,18 +437,21 @@ export function JobCommentsThread(props: {
               return (
                 <div
                   key={c.id}
+                  id={`job-comment-${c.id}`}
                   className={cn(
-                    "flex w-full",
+                    "flex w-full scroll-mt-24",
                     mine ? "justify-end" : "justify-start"
                   )}
                 >
                   <div
                     className={cn(
-                      "max-w-[92%] min-w-0 rounded-2xl border bg-white px-3 py-2.5 shadow-sm break-words",
+                      "max-w-[92%] min-w-0 rounded-2xl border bg-white px-3 py-2.5 shadow-sm break-words transition-shadow",
                       props.wide ? "sm:max-w-[75%]" : "sm:max-w-[75%]",
                       mine
                         ? "border-orange-300 rounded-br-md"
                         : "border-sky-200 rounded-bl-md",
+                      highlightCommentId === c.id &&
+                        "ring-2 ring-orange-500 ring-offset-2 ring-offset-background"
                     )}
                   >
                     <JobMessageHeader message={c} />

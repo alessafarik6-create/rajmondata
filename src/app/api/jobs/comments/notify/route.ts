@@ -5,6 +5,7 @@ import {
   dispatchJobActivityNotifications,
   type JobActivityNotifyEvent,
 } from "@/lib/email-notifications/job-activity-notify-server";
+import { buildJobCommunicationPath } from "@/lib/notification-target";
 
 type Body = {
   companyId?: string;
@@ -14,6 +15,7 @@ type Body = {
   folderId?: string | null;
   fileName?: string | null;
   messagePreview?: string | null;
+  commentId?: string | null;
 };
 
 export async function POST(request: NextRequest) {
@@ -58,6 +60,8 @@ export async function POST(request: NextRequest) {
   const fileName = body.fileName != null ? String(body.fileName).trim() : null;
   const messagePreview =
     body.messagePreview != null ? String(body.messagePreview).trim().slice(0, 400) : "";
+  const commentId =
+    body.commentId != null ? String(body.commentId).trim() : "";
 
   if (!companyId || !jobId) {
     return NextResponse.json({ error: "Chybí companyId nebo jobId." }, { status: 400 });
@@ -78,10 +82,11 @@ export async function POST(request: NextRequest) {
     String(caller.displayName ?? caller.name ?? caller.email ?? "").trim() ||
     "Uživatel";
 
-  const linkPath =
-    callerRole === "employee"
-      ? `/portal/employee/jobs/${encodeURIComponent(jobId)}`
-      : `/portal/jobs/${encodeURIComponent(jobId)}`;
+  const linkPath = buildJobCommunicationPath(callerRole, jobId, {
+    commentId: commentId || undefined,
+    fileId: targetType === "file" ? fileId ?? undefined : undefined,
+    communication: true,
+  });
 
   const title =
     targetType === "file" ? "Poznámka k souboru" : "Poznámka k zakázce";
@@ -104,7 +109,7 @@ export async function POST(request: NextRequest) {
       fileId,
       fileName,
       messagePreview,
-      entityId: targetType === "file" ? fileId : jobId,
+      entityId: commentId || (targetType === "file" ? fileId : jobId),
     });
   } catch (e) {
     console.warn("[jobs/comments/notify] email dispatch failed", e);
@@ -130,9 +135,17 @@ export async function POST(request: NextRequest) {
             type: "JOB_CUSTOMER_MESSAGE",
             title,
             body: bodyText,
-            linkUrl: linkPath,
+            linkUrl: buildJobCommunicationPath(undefined, jobId, {
+              commentId: commentId || undefined,
+              fileId: targetType === "file" ? fileId ?? undefined : undefined,
+              communication: true,
+            }),
             source: "api/jobs/comments/notify",
-            eventId: `job-chat:${companyId}:${jobId}:${targetType}:${uid}:${Date.now()}`,
+            eventId: `job-chat:${companyId}:${jobId}:${targetType}:${commentId || "x"}:${uid}:${Date.now()}`,
+            entityType: "job",
+            entityId: jobId,
+            jobId,
+            commentId: commentId || null,
           })
         )
       );
@@ -163,9 +176,17 @@ export async function POST(request: NextRequest) {
             type: "JOB_CUSTOMER_MESSAGE",
             title,
             body: bodyText,
-            linkUrl: linkPath,
+            linkUrl: buildJobCommunicationPath("employee", jobId, {
+              commentId: commentId || undefined,
+              fileId: targetType === "file" ? fileId ?? undefined : undefined,
+              communication: true,
+            }),
             source: "api/jobs/comments/notify",
-            eventId: `job-chat:${companyId}:${jobId}:${targetType}:${uid}:${Date.now()}`,
+            eventId: `job-chat:${companyId}:${jobId}:${targetType}:${commentId || "x"}:${uid}:${Date.now()}`,
+            entityType: "job",
+            entityId: jobId,
+            jobId,
+            commentId: commentId || null,
           })
         )
       );
@@ -174,5 +195,5 @@ export async function POST(request: NextRequest) {
     console.warn("[jobs/comments/notify] portal notify failed", e);
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, linkPath });
 }

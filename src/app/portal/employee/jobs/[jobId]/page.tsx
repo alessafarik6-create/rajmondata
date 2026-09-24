@@ -52,6 +52,7 @@ export default function EmployeeJobDetailPage() {
   const searchParams = useSearchParams();
   const jobIdRaw = params?.jobId;
   const jobId = Array.isArray(jobIdRaw) ? jobIdRaw[0] : jobIdRaw;
+  const communicationCommentId = searchParams.get("commentId")?.trim() || "";
   const photoCommentRaw = searchParams.get("photoComment");
   const photoCommentDeepLink = useMemo(
     () => parsePhotoCommentQueryParam(photoCommentRaw),
@@ -485,6 +486,7 @@ export default function EmployeeJobDetailPage() {
                 channelBadgeLabel="Interní"
                 title="Interní chat k zakázce"
                 target={{ targetType: "job" }}
+                focusCommentId={communicationCommentId || null}
                 wide
                 onAfterSend={async (sent) => {
                   try {
@@ -500,6 +502,7 @@ export default function EmployeeJobDetailPage() {
                         jobId,
                         targetType: "job",
                         messagePreview: sent.message,
+                        commentId: sent.id,
                       }),
                     });
                   } catch {
