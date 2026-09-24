@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Home, Briefcase, Clock, MessageSquare, Menu } from "lucide-react";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
 
 type NavItem = {
   key: string;
@@ -18,19 +19,40 @@ type NavItem = {
 export function MobileBottomNav(props: { unreadMessages?: number; role?: string }) {
   const pathname = usePathname();
   const role = String(props.role || "");
+  const portalPerms = usePortalPermissionsOptional();
   const messagesHref = role === "employee" ? "/portal/employee/messages" : "/portal/chat";
+  const jobsHref = role === "employee" ? "/portal/employee/jobs" : "/portal/jobs";
+  const overviewHref = role === "employee" ? "/portal/employee" : "/portal/dashboard";
+  const showLabor = portalPerms ? portalPerms.canRead("labor") : role !== "employee";
+  const showJobs = portalPerms ? portalPerms.canRead("jobs") : true;
+  const showChat = portalPerms ? portalPerms.canRead("chat") : true;
 
   const items: NavItem[] = [
-    { key: "overview", label: "Přehled", href: "/portal/dashboard", Icon: Home },
-    { key: "jobs", label: "Zakázky", href: "/portal/jobs", Icon: Briefcase },
-    { key: "att", label: "Docházka", href: "/portal/labor/dochazka", Icon: Clock },
-    {
-      key: "msg",
-      label: "Zprávy",
-      href: messagesHref,
-      Icon: MessageSquare,
-      badge: props.unreadMessages,
-    },
+    { key: "overview", label: "Přehled", href: overviewHref, Icon: Home },
+    ...(showJobs
+      ? [{ key: "jobs", label: "Zakázky", href: jobsHref, Icon: Briefcase } as NavItem]
+      : []),
+    ...(showLabor
+      ? [
+          {
+            key: "att",
+            label: "Docházka",
+            href: role === "employee" ? "/portal/employee/worklogs" : "/portal/labor/dochazka",
+            Icon: Clock,
+          } as NavItem,
+        ]
+      : []),
+    ...(showChat
+      ? [
+          {
+            key: "msg",
+            label: "Zprávy",
+            href: messagesHref,
+            Icon: MessageSquare,
+            badge: props.unreadMessages,
+          } as NavItem,
+        ]
+      : []),
     { key: "more", label: "Více", href: "/portal/settings", Icon: Menu },
   ];
 
@@ -39,7 +61,12 @@ export function MobileBottomNav(props: { unreadMessages?: number; role?: string 
       className="fixed bottom-0 left-0 right-0 z-[70] border-t border-white/10 bg-slate-950/90 backdrop-blur supports-[backdrop-filter]:bg-slate-950/75 lg:hidden"
       aria-label="Mobilní navigace"
     >
-      <div className="mx-auto grid max-w-[520px] grid-cols-5 gap-1 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2">
+      <div
+        className={cn(
+          "mx-auto grid max-w-[520px] gap-1 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2",
+          items.length === 5 ? "grid-cols-5" : items.length === 4 ? "grid-cols-4" : "grid-cols-3"
+        )}
+      >
         {items.map((it) => {
           const active = pathname === it.href || (it.href !== "/portal/dashboard" && pathname?.startsWith(it.href));
           return (

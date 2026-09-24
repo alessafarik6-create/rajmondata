@@ -154,12 +154,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     pathname.startsWith("/portal/customer") ||
     pathname.startsWith("/portal/notifications");
 
-  /** Zaměstnanec může mimo /portal/employee jen tyto větve (docházka, sklad, výroba). */
+  /** Zaměstnanec — vždy povolené systémové větve; moduly řídí `employeeHasReadAccessToPath`. */
   const isEmployeeAllowedBranchPath =
     pathname.startsWith("/portal/employee") ||
-    pathname.startsWith("/portal/labor") ||
-    pathname.startsWith("/portal/sklad") ||
-    pathname.startsWith("/portal/vyroba") ||
     pathname.startsWith("/portal/notifications") ||
     pathname.startsWith("/portal/help");
 

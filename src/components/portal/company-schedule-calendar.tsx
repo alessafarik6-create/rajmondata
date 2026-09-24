@@ -115,6 +115,12 @@ import {
 import { mergeEmailNotifications } from "@/lib/email-notifications/schema";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { logActivity } from "@/lib/activity-log";
+import {
+  calendarAuthorPersistFieldsFromSession,
+  calendarUpdateAuthorFieldsFromSession,
+  formatCalendarCreatedByLine,
+} from "@/lib/calendar/calendar-event-author";
 
 const WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
 
@@ -389,6 +395,26 @@ function ScheduleMobileEventCard({
           </div>
         ) : null}
 
+        {(ev.assignedEmployeeNames?.length || ev.assignedEmployeeIds?.length) ? (
+          <div className="space-y-1">
+            <p className={cn("text-xs font-semibold", darkCards ? "text-slate-400" : "text-slate-500")}>
+              Přiřazeno
+            </p>
+            <p className={cn("text-sm leading-relaxed", darkCards ? "text-slate-200" : "text-slate-800")}>
+              {(ev.assignedEmployeeNames ?? ev.assignedEmployeeIds ?? []).join(", ")}
+            </p>
+          </div>
+        ) : null}
+
+        <div className="space-y-1">
+          <p className={cn("text-xs font-semibold", darkCards ? "text-slate-400" : "text-slate-500")}>
+            Vytvořil
+          </p>
+          <p className={cn("text-sm leading-relaxed", darkCards ? "text-slate-200" : "text-slate-800")}>
+            {formatCalendarCreatedByLine(ev)}
+          </p>
+        </div>
+
         {ev.phone ? (
           <div className="space-y-1">
             <p className={cn("text-xs font-semibold", darkCards ? "text-slate-400" : "text-slate-500")}>
@@ -446,6 +472,42 @@ function ScheduleMobileEventCard({
 }
 
 /** Jedinečné klíče pro ruční schůzku z kalendáře (Firestore rules vyžadují importLeadId + leadKey). */
+type EmployeePick = { id: string; name: string; authUserId?: string };
+
+function resolveAssigneeEmployeeIds(
+  rawIds: string[] | undefined,
+  employeeOptions: EmployeePick[]
+): string[] {
+  if (!Array.isArray(rawIds) || rawIds.length === 0) return [];
+  const out = new Set<string>();
+  for (const id of rawIds) {
+    const s = String(id ?? "").trim();
+    if (!s) continue;
+    if (employeeOptions.some((e) => e.id === s)) {
+      out.add(s);
+      continue;
+    }
+    const byAuth = employeeOptions.find((e) => e.authUserId === s);
+    if (byAuth) out.add(byAuth.id);
+  }
+  return [...out];
+}
+
+function expandAssigneeIdsForFirestore(
+  employeeIds: string[],
+  employeeOptions: EmployeePick[]
+): { ids: string[]; names: string[] } {
+  const out = new Set<string>();
+  const names: string[] = [];
+  for (const id of employeeIds) {
+    out.add(id);
+    const row = employeeOptions.find((e) => e.id === id);
+    if (row?.authUserId) out.add(row.authUserId);
+    names.push(row?.name ?? id);
+  }
+  return { ids: [...out], names };
+}
+
 function newCalendarManualLeadKeys(): { leadKey: string; importLeadId: string } {
   const id =
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -508,6 +570,14 @@ export function CompanyScheduleCalendar({
   );
   const { data: profile } = useDoc<any>(userRef);
   const role = String(profile?.role ?? "");
+  const sessionDisplayName = useMemo(() => {
+    return (
+      String(profile?.displayName ?? "").trim() ||
+      [profile?.firstName, profile?.lastName].filter(Boolean).join(" ").trim() ||
+      String(user?.email ?? "").trim() ||
+      "—"
+    );
+  }, [profile?.displayName, profile?.firstName, profile?.lastName, user?.email]);
   const isManagement =
     role === "owner" || role === "admin" || role === "manager" || role === "accountant";
   const canSendToAllEmployees = isManagement;
@@ -611,6 +681,7 @@ export function CompanyScheduleCalendar({
   const [installJobName, setInstallJobName] = useState("");
   const [installCustomerId, setInstallCustomerId] = useState("");
   const [selectedInstallEmployeeIds, setSelectedInstallEmployeeIds] = useState<string[]>([]);
+  const [selectedMeetingEmployeeIds, setSelectedMeetingEmployeeIds] = useState<string[]>([]);
   const [notifyInstallAssignees, setNotifyInstallAssignees] = useState(true);
   const [installJobPickerOpen, setInstallJobPickerOpen] = useState(false);
   const [installJobSearch, setInstallJobSearch] = useState("");
@@ -813,6 +884,7 @@ export function CompanyScheduleCalendar({
     setInstallJobName("");
     setInstallCustomerId("");
     setSelectedInstallEmployeeIds([]);
+    setSelectedMeetingEmployeeIds([]);
     setNotifyInstallAssignees(true);
     setCalendarEventKind(presetKind);
     setSendToAllEmployees(false);
@@ -828,6 +900,12 @@ export function CompanyScheduleCalendar({
 
   const toggleInstallEmployee = (empId: string) => {
     setSelectedInstallEmployeeIds((prev) =>
+      prev.includes(empId) ? prev.filter((x) => x !== empId) : [...prev, empId]
+    );
+  };
+
+  const toggleMeetingEmployee = (empId: string) => {
+    setSelectedMeetingEmployeeIds((prev) =>
       prev.includes(empId) ? prev.filter((x) => x !== empId) : [...prev, empId]
     );
   };
@@ -863,9 +941,14 @@ export function CompanyScheduleCalendar({
     setInstallJobId(ev.jobId ?? "");
     setInstallJobName(ev.jobName ?? "");
     setInstallCustomerId(ev.customerId ?? "");
-    setSelectedInstallEmployeeIds(
-      Array.isArray(ev.assignedEmployeeIds) ? [...ev.assignedEmployeeIds] : []
-    );
+    const assigneeIds = resolveAssigneeEmployeeIds(ev.assignedEmployeeIds, employeeOptions);
+    if (ev.kind === "installation") {
+      setSelectedInstallEmployeeIds(assigneeIds);
+      setSelectedMeetingEmployeeIds([]);
+    } else {
+      setSelectedMeetingEmployeeIds(assigneeIds);
+      setSelectedInstallEmployeeIds([]);
+    }
     setNotifyInstallAssignees(false);
     {
       const ct = String(ev.calendarEventType ?? "lead_meeting");
@@ -1032,20 +1115,14 @@ export function CompanyScheduleCalendar({
         employeeTargetCount: employeeIds.length,
       });
 
-      const expandedInstallAssigneeIds = (() => {
-        const out = new Set<string>();
-        for (const id of selectedInstallEmployeeIds) {
-          out.add(id);
-          const row = employeeOptions.find((e) => e.id === id);
-          if (row?.authUserId) out.add(row.authUserId);
-        }
-        return [...out];
-      })();
-
-      const assignedNames = selectedInstallEmployeeIds.map((id) => {
-        const row = employeeOptions.find((e) => e.id === id);
-        return row?.name ?? id;
-      });
+      const installAssignees = expandAssigneeIdsForFirestore(
+        selectedInstallEmployeeIds,
+        employeeOptions
+      );
+      const meetingAssignees = expandAssigneeIdsForFirestore(
+        selectedMeetingEmployeeIds,
+        employeeOptions
+      );
 
       let payloadCommon: Record<string, unknown>;
 
@@ -1073,8 +1150,8 @@ export function CompanyScheduleCalendar({
           updatedAt: serverTimestamp(),
           endsAt: endsAtField,
           ...(endsAtField ? { endAt: endsAtField } : {}),
-          assignedEmployeeIds: expandedInstallAssigneeIds,
-          assignedEmployeeNames: assignedNames,
+          assignedEmployeeIds: installAssignees.ids,
+          assignedEmployeeNames: installAssignees.names,
           ...(installJobId.trim() ? { jobId: installJobId.trim() } : {}),
           ...(installJobName.trim() ? { jobName: installJobName.trim() } : {}),
           ...(installCustomerId.trim() ? { customerId: installCustomerId.trim() } : {}),
@@ -1111,6 +1188,8 @@ export function CompanyScheduleCalendar({
           ...(meetingSt === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
           ...(meetingSt === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
           reminderOffsetsMinutes,
+          assignedEmployeeIds: meetingAssignees.ids,
+          assignedEmployeeNames: meetingAssignees.names,
         };
       }
 
@@ -1126,8 +1205,28 @@ export function CompanyScheduleCalendar({
         console.log("[calendar] lead_meeting update", eventIdExisting);
         await updateDoc(
           doc(firestore, "companies", companyId, "lead_meetings", eventIdExisting),
-          { ...payloadCommon, updatedBy: user.uid } as UpdateData<DocumentData>
+          {
+            ...payloadCommon,
+            ...calendarUpdateAuthorFieldsFromSession({
+              userId: user.uid,
+              displayName: sessionDisplayName,
+              role,
+            }),
+          } as UpdateData<DocumentData>
         );
+        void logActivity(firestore, companyId, user, profile, {
+          actionType: "CALENDAR_EVENT_UPDATED",
+          actionLabel: isInstallation ? "Montáž upravena" : "Schůzka upravena",
+          entityType: "calendar_event",
+          entityId: eventIdExisting,
+          entityName: title,
+          sourceModule: "schedule",
+          metadata: {
+            organizationId: companyId,
+            eventId: eventIdExisting,
+            assignedUserIds: isInstallation ? installAssignees.ids : meetingAssignees.ids,
+          },
+        });
         toast({
           title: "Uloženo",
           description: isInstallation ? "Montáž byla upravena." : "Schůzka byla upravena.",
@@ -1139,9 +1238,26 @@ export function CompanyScheduleCalendar({
           leadKey: keys.leadKey,
           importLeadId: keys.importLeadId,
           createdAt: serverTimestamp(),
-          createdBy: user.uid,
+          ...calendarAuthorPersistFieldsFromSession({
+            userId: user.uid,
+            displayName: sessionDisplayName,
+            role,
+          }),
         });
         createdEventId = created.id;
+        void logActivity(firestore, companyId, user, profile, {
+          actionType: "CALENDAR_EVENT_CREATED",
+          actionLabel: isInstallation ? "Montáž vytvořena" : "Schůzka vytvořena",
+          entityType: "calendar_event",
+          entityId: createdEventId,
+          entityName: title,
+          sourceModule: "schedule",
+          metadata: {
+            organizationId: companyId,
+            eventId: createdEventId,
+            assignedUserIds: isInstallation ? installAssignees.ids : meetingAssignees.ids,
+          },
+        });
         console.log("[calendar] lead_meeting created", createdEventId);
         toast({
           title: "Uloženo",
@@ -1323,6 +1439,17 @@ export function CompanyScheduleCalendar({
     try {
       console.log("[calendar] delete meeting", { eventId, companyId });
       await deleteDoc(doc(firestore, "companies", companyId, "lead_meetings", eventId));
+      if (user) {
+        void logActivity(firestore, companyId, user, profile, {
+          actionType: "CALENDAR_EVENT_DELETED",
+          actionLabel: "Kalendář — událost smazána",
+          entityType: "calendar_event",
+          entityId: eventId,
+          entityName: editingEvent?.headline ?? null,
+          sourceModule: "schedule",
+          metadata: { organizationId: companyId, eventId },
+        });
+      }
 
       void syncCalendarEmailRemindersFromBrowser({
         companyId,
@@ -2587,6 +2714,42 @@ export function CompanyScheduleCalendar({
               />
             </div>
             {calendarEventKind !== "installation" ? (
+              <>
+              <div className="sm:col-span-2 space-y-2">
+                <Label className={dark ? "text-slate-200" : undefined}>Přiřazení zaměstnanců</Label>
+                <div
+                  className={cn(
+                    "max-h-44 space-y-2 overflow-y-auto rounded-lg border p-3",
+                    dark ? "border-white/10 bg-slate-900/80" : "border-slate-200 bg-slate-50"
+                  )}
+                >
+                  {employeeOptions.length === 0 ? (
+                    <p className={cn("text-sm", dark ? "text-slate-400" : "text-slate-600")}>
+                      Žádní zaměstnanci.
+                    </p>
+                  ) : (
+                    employeeOptions.map((emp) => (
+                      <label
+                        key={emp.id}
+                        className={cn(
+                          "flex cursor-pointer items-center gap-3 text-sm",
+                          dark ? "text-slate-100" : "text-slate-900"
+                        )}
+                      >
+                        <Checkbox
+                          checked={selectedMeetingEmployeeIds.includes(emp.id)}
+                          disabled={readOnly}
+                          onCheckedChange={() => toggleMeetingEmployee(emp.id)}
+                        />
+                        <span>{emp.name}</span>
+                      </label>
+                    ))
+                  )}
+                </div>
+                <p className={cn("text-xs", dark ? "text-slate-500" : "text-muted-foreground")}>
+                  Vybraní zaměstnanci uvidí schůzku v „Moje schůzky“ a organizačním kalendáři.
+                </p>
+              </div>
               <div
                 className={cn(
                   "sm:col-span-2 rounded-lg border p-3",
@@ -2649,6 +2812,7 @@ export function CompanyScheduleCalendar({
                   </div>
                 ) : null}
               </div>
+              </>
             ) : null}
             <div className="sm:col-span-2 space-y-1">
               <Label className={dark ? "text-slate-200" : undefined}>Stav</Label>

@@ -9,6 +9,7 @@ import {
   type CalendarPermissionsResolved,
 } from "@/lib/calendar/calendar-access";
 import type { DashboardTaskItem } from "@/lib/dashboard-task-items-merge";
+import { formatCalendarCreatedByLine } from "@/lib/calendar/calendar-event-author";
 
 export type DashboardCalendarFilter = "all" | "meetings" | "jobs" | "tasks";
 
@@ -110,11 +111,20 @@ function scheduleToDashboard(
   else if (ev.kind === "installation" && ev.status === "done") kind = "confirmed";
   else if (ev.kind === "installation") kind = "installation";
 
+  const assigneeLine =
+    ev.assignedEmployeeNames?.length
+      ? `Přiřazeno: ${ev.assignedEmployeeNames.join(", ")}`
+      : ev.assignedEmployeeIds?.length
+        ? `Přiřazeno: ${ev.assignedEmployeeIds.join(", ")}`
+        : "";
+  const createdLine = `Vytvořil: ${formatCalendarCreatedByLine(ev)}`;
   const tooltipLines = [
     ev.kind === "installation" ? "Montáž / schůzka" : ev.kind === "measurement" ? "Zaměření" : "Schůzka",
     `${format(ev.at, "d. M. yyyy")} ${timeLabel}`,
     ev.title?.trim() || "",
     ev.jobName ? `Zakázka ${ev.jobName}` : "",
+    assigneeLine,
+    createdLine,
   ].filter(Boolean);
 
   return {

@@ -252,11 +252,10 @@ export function resolveEffectivePortalPermissions(
   }
 
   if (role === "employee") {
-    const base = buildLegacyEmployeePermissionPreset(input.employeeDoc);
-    if (Object.keys(overrides).length > 0) {
-      return applyOverrides(base, overrides, "write");
+    if (employeeHasExplicitPortalModuleMatrix(input.employeeDoc)) {
+      return initialPortalPermissionLevelsForEmployee(input.employeeDoc, "employee");
     }
-    return base;
+    return buildLegacyEmployeePermissionPreset(input.employeeDoc);
   }
 
   return emptyPermissionMap();
@@ -367,6 +366,44 @@ export function applyPermissionPreset(
   }
 }
 
+export function employeeHasExplicitPortalModuleMatrix(
+  employeeDoc: Record<string, unknown> | null | undefined
+): boolean {
+  const raw = employeeDoc?.portalModulePermissions;
+  return Boolean(raw && typeof raw === "object" && Object.keys(raw as object).length > 0);
+}
+
+/** Uloží celou matici včetně explicitního `none` (individuální oprávnění). */
+export function mergePortalModulePermissionsForFirestore(input: {
+  incoming?: Record<string, unknown> | null;
+  existing?: Record<string, unknown> | null;
+}): Record<string, string> {
+  const existing = parsePortalModulePermissionsFromEmployee(
+    input.existing ? ({ portalModulePermissions: input.existing } as Record<string, unknown>) : null
+  );
+  const merged: Record<string, string> = {};
+  for (const id of ALL_PORTAL_MODULE_IDS) {
+    const fromBody = input.incoming?.[id];
+    const v =
+      typeof fromBody === "string"
+        ? fromBody.trim().toLowerCase()
+        : String(existing[id] ?? "none").trim().toLowerCase();
+    merged[id] = v === "read" || v === "write" || v === "none" ? v : "none";
+  }
+  return merged;
+}
+
+export function portalModuleLevelsFromFirestoreRecord(
+  merged: Record<string, string>
+): Record<PortalModuleId, PortalAccessLevel> {
+  const levelMap = {} as Record<PortalModuleId, PortalAccessLevel>;
+  for (const id of ALL_PORTAL_MODULE_IDS) {
+    const v = String(merged[id] ?? "none").trim().toLowerCase();
+    levelMap[id] = v === "read" || v === "write" || v === "none" ? v : "none";
+  }
+  return levelMap;
+}
+
 export function serializePortalModulePermissionsForFirestore(
   map: Record<PortalModuleId, PortalAccessLevel>
 ): Record<string, string> {
@@ -374,6 +411,18 @@ export function serializePortalModulePermissionsForFirestore(
   for (const id of ALL_PORTAL_MODULE_IDS) {
     const v = map[id] ?? "none";
     if (v !== "none") out[id] = v;
+  }
+  return out;
+}
+
+/** Kompletní matice pro PATCH (včetně `none`). */
+export function serializePortalModulePermissionsFullForFirestore(
+  map: Record<PortalModuleId, PortalAccessLevel>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const id of ALL_PORTAL_MODULE_IDS) {
+    const v = map[id] ?? "none";
+    out[id] = v;
   }
   return out;
 }

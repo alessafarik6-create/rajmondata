@@ -10,6 +10,7 @@ import {
   resolveEffectivePortalPermissions,
   type PortalModuleId,
 } from "@/lib/portal-permissions";
+import { resolveCalendarPermissions } from "@/lib/calendar/calendar-access";
 
 export type MobileHomeTile = {
   key: string;
@@ -156,6 +157,12 @@ export function buildMobileHomeTiles(input: {
     globalRoles: globalRoles ?? undefined,
     employeeDoc: employeeRow,
   });
+  const calendarAccess = resolveCalendarPermissions({
+    role,
+    globalRoles: globalRoles ?? undefined,
+    employeeDoc: employeeRow,
+    portalModuleScheduleLevel: portalPermissions.schedule ?? "none",
+  });
 
   const fromSidebar: MobileHomeTile[] = [];
   for (const def of PORTAL_SIDEBAR_MENU_DEFS) {
@@ -172,7 +179,14 @@ export function buildMobileHomeTiles(input: {
   }
 
   const legacy = legacyMobileTiles(role).filter((tile) => {
-    if (tile.key === "calendar" || tile.key === "tasks") return true;
+    if (tile.key === "calendar") {
+      return (
+        canAccessPortalModule(portalPermissions, "schedule", "read") && calendarAccess.anyView
+      );
+    }
+    if (tile.key === "tasks") {
+      return canAccessPortalModule(portalPermissions, "overview", "read");
+    }
     const sidebarDef = PORTAL_SIDEBAR_MENU_DEFS.find(
       (d) => d.href === tile.href || d.id === tile.key
     );

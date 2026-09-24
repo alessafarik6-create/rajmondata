@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
-import { ALL_PORTAL_MODULE_IDS, type PortalAccessLevel } from "@/lib/portal-permissions";
+import {
+  legacyAccessFlagsFromPortalPermissions,
+  mergePortalModulePermissionsForFirestore,
+  portalModuleLevelsFromFirestoreRecord,
+  portalPermissionsToLegacyEmployeeModules,
+} from "@/lib/portal-permissions";
 import { normalizeCameraPermissionsForFirestore } from "@/lib/hikvision/camera-access";
 import {
   aggregateScheduleModuleLevel,
@@ -21,12 +26,6 @@ type Body = {
   calendarPermissions?: CalendarPermissionsDoc | null;
   dashboardAiAssistantEnabled?: boolean;
 };
-
-function normalizeLevel(raw: unknown): PortalAccessLevel | null {
-  const v = String(raw ?? "").trim().toLowerCase();
-  if (v === "none" || v === "read" || v === "write") return v;
-  return null;
-}
 
 export async function PATCH(request: NextRequest) {
   const db = getAdminFirestore();
@@ -75,13 +74,6 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Chybí employeeId." }, { status: 400 });
   }
 
-  const raw = body.permissions ?? {};
-  const portalModulePermissions: Record<string, string> = {};
-  for (const id of ALL_PORTAL_MODULE_IDS) {
-    const level = normalizeLevel(raw[id]);
-    if (level && level !== "none") portalModulePermissions[id] = level;
-  }
-
   const empRef = db.collection("companies").doc(companyId).collection("employees").doc(employeeId);
   const empSnap = await empRef.get();
   if (!empSnap.exists) {
@@ -90,12 +82,26 @@ export async function PATCH(request: NextRequest) {
 
   const empData = empSnap.data() as Record<string, unknown>;
   const before = (empData?.portalModulePermissions ?? {}) as Record<string, string>;
-  const beforeAi = empData?.dashboardAiAssistantEnabled;
+  const beforeAi = empData.dashboardAiAssistantEnabled;
+
+  const merged = mergePortalModulePermissionsForFirestore({
+    incoming: body.permissions ?? {},
+    existing: before,
+  });
+
+  if (body.calendarPermissions !== undefined) {
+    merged.schedule = aggregateScheduleModuleLevel(body.calendarPermissions ?? {});
+  }
+
+  const levelMap = portalModuleLevelsFromFirestoreRecord(merged);
 
   const patch: Record<string, unknown> = {
-    portalModulePermissions,
+    portalModulePermissions: merged,
+    employeePortalModules: portalPermissionsToLegacyEmployeeModules(levelMap),
+    ...legacyAccessFlagsFromPortalPermissions(levelMap),
     updatedAt: FieldValue.serverTimestamp(),
   };
+
   if (body.cameraPermissions !== undefined) {
     const normalized = normalizeCameraPermissionsForFirestore(body.cameraPermissions ?? {});
     if (normalized) patch.cameraPermissions = normalized;
@@ -103,18 +109,8 @@ export async function PATCH(request: NextRequest) {
   }
   if (body.calendarPermissions !== undefined) {
     const normalized = normalizeCalendarPermissionsForFirestore(body.calendarPermissions ?? {});
-    if (normalized) {
-      patch.calendarPermissions = normalized;
-      portalModulePermissions.schedule = aggregateScheduleModuleLevel(
-        body.calendarPermissions ?? {}
-      );
-      if (portalModulePermissions.schedule === "none") {
-        delete portalModulePermissions.schedule;
-      }
-      patch.portalModulePermissions = portalModulePermissions;
-    } else {
-      patch.calendarPermissions = FieldValue.delete();
-    }
+    if (normalized) patch.calendarPermissions = normalized;
+    else patch.calendarPermissions = FieldValue.delete();
   }
 
   if (typeof body.dashboardAiAssistantEnabled === "boolean") {
@@ -131,7 +127,7 @@ export async function PATCH(request: NextRequest) {
       entityId: employeeId,
       details: JSON.stringify({
         oldPermissions: before,
-        newPermissions: portalModulePermissions,
+        newPermissions: merged,
         oldDashboardAiAssistant: beforeAi,
         newDashboardAiAssistant: patch.dashboardAiAssistantEnabled ?? beforeAi,
       }),
@@ -142,5 +138,5 @@ export async function PATCH(request: NextRequest) {
     /* audit volitelný */
   }
 
-  return NextResponse.json({ ok: true, portalModulePermissions });
+  return NextResponse.json({ ok: true, portalModulePermissions: merged });
 }

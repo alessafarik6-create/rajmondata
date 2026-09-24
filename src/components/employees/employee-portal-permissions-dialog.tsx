@@ -27,7 +27,7 @@ import {
   buildLegacyEmployeePermissionPreset,
   emptyPermissionMap,
   PORTAL_PERMISSION_MODULES,
-  serializePortalModulePermissionsForFirestore,
+  serializePortalModulePermissionsFullForFirestore,
   type PortalAccessLevel,
   type PortalModuleId,
   type PortalPermissionPresetId,
@@ -132,11 +132,13 @@ export function EmployeePortalPermissionsDialog(props: {
       ...levels,
       schedule: aggregateScheduleModuleLevel(calendarLevels),
     };
-    let permissions = serializePortalModulePermissionsForFirestore(levelsWithSchedule);
+    const permissions = serializePortalModulePermissionsFullForFirestore(levelsWithSchedule);
     if (cameraPermissions?.view) {
-      permissions = { ...permissions, cameras: permissions.cameras ?? "read" };
+      permissions.cameras = permissions.cameras === "none" ? "read" : permissions.cameras;
     } else if (cameraPermissions?.admin) {
-      permissions = { ...permissions, cameras: "write" };
+      permissions.cameras = "write";
+    } else if (!cameraPermissions?.view && !cameraPermissions?.admin) {
+      permissions.cameras = "none";
     }
     await onSave({ permissions, cameraPermissions, calendarPermissions });
   };

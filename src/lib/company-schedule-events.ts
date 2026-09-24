@@ -1,6 +1,7 @@
 import { parseISO } from "date-fns";
 import { parseFirestoreScheduledAt } from "@/lib/lead-meeting-utils";
 import { getAssignedEmployeeIdsFromFirestore } from "@/lib/calendar/company-calendar-service";
+import { parseCalendarAuthorFromFirestore } from "@/lib/calendar/calendar-event-author";
 import type { MeasurementDoc, MeasurementStatus } from "@/lib/measurements";
 import { MEASUREMENT_STATUS_LABELS } from "@/lib/measurements";
 import type { EmployeeNotificationType } from "@/lib/employee-notifications";
@@ -17,6 +18,8 @@ export type CompanyScheduleCalendarEvent = {
   endsAt?: Date;
   /** Autor záznamu ve Firestore (`lead_meetings.createdBy`) — pro filtrování u zaměstnance. */
   createdByUid?: string;
+  createdByName?: string;
+  createdByRole?: string;
   title: string;
   headline: string;
   kind: "meeting" | "measurement" | "installation";
@@ -207,8 +210,8 @@ export function buildCompanyScheduleEvents(
       typeof raw?.notificationMessage === "string" && raw.notificationMessage.trim()
         ? raw.notificationMessage.trim()
         : null;
-    const createdByUid =
-      typeof raw?.createdBy === "string" && raw.createdBy.trim() ? raw.createdBy.trim() : undefined;
+    const author = parseCalendarAuthorFromFirestore(raw);
+    const createdByUid = author.createdByUid;
 
     const assignedEmployeeIds = getAssignedEmployeeIdsFromFirestore(raw);
     const assignedEmployeeIdsNorm =
@@ -243,6 +246,8 @@ export function buildCompanyScheduleEvents(
         at,
         endsAt: endsAt ?? undefined,
         createdByUid,
+        createdByName: author.createdByName,
+        createdByRole: author.createdByRole,
         title: customerName,
         headline,
         kind: "installation",
@@ -282,6 +287,8 @@ export function buildCompanyScheduleEvents(
       at,
       endsAt: endsAt ?? undefined,
       createdByUid,
+      createdByName: author.createdByName,
+      createdByRole: author.createdByRole,
       title: customerName,
       headline,
       kind: "meeting",
@@ -316,10 +323,8 @@ export function buildCompanyScheduleEvents(
     const note = String(raw.note ?? "").trim();
     const phone = String(raw.phone ?? "").trim();
     const address = String(raw.address ?? "").trim();
-    const createdByUid =
-      typeof raw?.createdBy === "string" && raw.createdBy.trim()
-        ? raw.createdBy.trim()
-        : undefined;
+    const mAuthor = parseCalendarAuthorFromFirestore(raw as Record<string, unknown>);
+    const createdByUid = mAuthor.createdByUid;
     const mAssigned = getAssignedEmployeeIdsFromFirestore(
       raw as Record<string, unknown>
     );
@@ -327,6 +332,8 @@ export function buildCompanyScheduleEvents(
       id: `z-${raw.id}`,
       at,
       createdByUid,
+      createdByName: mAuthor.createdByName,
+      createdByRole: mAuthor.createdByRole,
       assignedEmployeeIds: mAssigned.length > 0 ? mAssigned : undefined,
       title: raw.customerName?.trim() || "—",
       headline: note || "Zaměření",
