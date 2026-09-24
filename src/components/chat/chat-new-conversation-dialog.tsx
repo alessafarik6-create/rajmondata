@@ -15,9 +15,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export type ChatEmployeeOption = {
-  employeeId: string;
+  employeeId: string | null;
   authUserId: string;
   label: string;
+  roleLabel?: string;
 };
 
 type Props = {
@@ -72,7 +73,7 @@ export function ChatNewConversationDialog({
             </TabsTrigger>
           </TabsList>
           <TabsContent value="dm" className="space-y-3 mt-3">
-            <p className="text-xs text-muted-foreground">Vyberte zaměstnance.</p>
+            <p className="text-xs text-muted-foreground">Vyberte kontakt ve firmě.</p>
             <ul className="max-h-64 overflow-y-auto space-y-1 border rounded-md p-1">
               {sorted.map((e) => (
                 <li key={e.authUserId}>
@@ -83,7 +84,10 @@ export function ChatNewConversationDialog({
                     }`}
                     onClick={() => setDmUid(e.authUserId)}
                   >
-                    {e.label}
+                    <span className="block font-medium">{e.label}</span>
+                    {e.roleLabel ? (
+                      <span className="block text-[11px] text-muted-foreground">{e.roleLabel}</span>
+                    ) : null}
                   </button>
                 </li>
               ))}
@@ -123,7 +127,10 @@ export function ChatNewConversationDialog({
                     onCheckedChange={() => toggleMember(e.authUserId)}
                   />
                   <label htmlFor={`m-${e.authUserId}`} className="text-sm cursor-pointer flex-1">
-                    {e.label}
+                    <span className="block">{e.label}</span>
+                    {e.roleLabel ? (
+                      <span className="block text-[11px] text-muted-foreground">{e.roleLabel}</span>
+                    ) : null}
                   </label>
                 </li>
               ))}

@@ -11,11 +11,16 @@ export async function resolveCompanyChatPushRecipientIds(
   senderRole: "employee" | "admin"
 ): Promise<string[]> {
   if (senderRole === "employee") {
-    const snap = await db.collection("users").where("companyId", "==", companyId).get();
-    return snap.docs
-      .filter((d) => ADMIN_ROLES.has(String(d.data()?.role ?? "").trim()))
-      .map((d) => d.id)
-      .filter((id) => id && id !== senderUid);
+    const rolesByUid = new Map<string, string>();
+    for (const field of ["companyId", "organizationId"] as const) {
+      const snap = await db.collection("users").where(field, "==", companyId).get();
+      for (const d of snap.docs) {
+        rolesByUid.set(d.id, String(d.data()?.role ?? "").trim());
+      }
+    }
+    return [...rolesByUid.entries()]
+      .filter(([id, role]) => id !== senderUid && ADMIN_ROLES.has(role))
+      .map(([id]) => id);
   }
 
   const empSnap = await db.collection("companies").doc(companyId).collection("employees").get();

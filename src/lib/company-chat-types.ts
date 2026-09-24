@@ -57,14 +57,19 @@ export type ChatMessageDoc = {
   senderRole: "employee" | "admin";
   text: string;
   createdAt?: { seconds?: number; nanoseconds?: number } | unknown;
+  createdAtMs?: number;
   read?: boolean;
   companyId?: string;
+  organizationId?: string;
+  senderUserId?: string;
   senderName?: string;
   senderPhotoURL?: string;
   employeeId?: string;
   conversationId?: string;
   participantIds?: string[];
   attachments?: ChatAttachmentMeta[];
+  createdByRole?: string;
+  authorRole?: string;
   /** DM: uid příjemce (pro unread u zaměstnance) */
   recipientUserId?: string | null;
   /** Kdo zprávu přečetl — uid → timestamp (DM / skupina). */

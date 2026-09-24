@@ -12,28 +12,30 @@ export function normalizeMessageDate(value: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** Řádek autor · datum · čas pro chat bubliny. */
+/** Řádek autor · datum · čas pro chat bubliny. Dnes jen HH:mm, starší dny včetně data. */
 export function formatMessageAuthorDateTime(value: unknown): string {
   const d = normalizeMessageDate(value);
   if (!d) {
     if (value != null && isFirestoreServerTimestampPlaceholder(value)) return "Odesílám…";
-    return "—";
+    return "Odesílám…";
   }
-  const datePart = `${d.getDate()}. ${d.getMonth() + 1}. ${d.getFullYear()}`;
   const timePart = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const today = startOfDay(new Date());
+  const day = startOfDay(d);
+  if (day === today) return timePart;
+  const datePart = `${d.getDate()}. ${d.getMonth() + 1}. ${d.getFullYear()}`;
   return `${datePart} · ${timePart}`;
 }
 
 /** Vrací null, pokud čas ještě není k dispozici (serverTimestamp placeholder). */
 export function formatChatTimestamp(value: unknown): string | null {
-  if (value == null) return null;
-  if (isFirestoreServerTimestampPlaceholder(value)) return null;
-  const ms = safeTime(value);
-  if (!ms) return null;
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return null;
+  const d = normalizeMessageDate(value);
+  if (!d) return null;
   const hh = String(d.getHours()).padStart(2, "0");
   const min = String(d.getMinutes()).padStart(2, "0");
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  if (startOfDay(d) === startOfDay(new Date())) return `${hh}:${min}`;
   const datePart = `${d.getDate()}. ${d.getMonth() + 1}. ${d.getFullYear()}`;
   return `${datePart} · ${hh}:${min}`;
 }

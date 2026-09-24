@@ -40,7 +40,6 @@ import {
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
-import { isEmployeeActive } from "@/lib/employee-active";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import {
   formatChatDaySeparator,
@@ -54,9 +53,16 @@ import {
   groupReadCount,
 } from "@/lib/chat-read-receipt";
 import {
+  buildMessageAuthorPersistFields,
   buildMessageTimestampClientFields,
   messageTimestampFromRecord,
+  messageTimestampMs,
 } from "@/lib/format-message-date";
+import {
+  displayNameFromUserRecord,
+  resolveChatSenderDisplay,
+  type ChatParticipantProfile,
+} from "@/lib/chat-participant-profile";
 import {
   buildDirectConversationId,
   chatAttachmentStoragePath,
@@ -104,74 +110,7 @@ type ConversationItem = {
   participantIds?: string[];
 };
 
-function senderRoleLabel(senderRole?: string): string | null {
-  if (senderRole === "employee") return "Zaměstnanec";
-  return null;
-}
-
 type SenderDisplay = { name: string; photo: string; roleLabel: string | null };
-
-function resolveSenderDisplay(
-  m: ChatMessageDoc,
-  ctx: {
-    currentUserId?: string;
-    profile: Record<string, unknown> | null | undefined;
-    employeesById: Map<string, Record<string, unknown>>;
-    employeesByAuthUid: Map<string, Record<string, unknown>>;
-  }
-): SenderDisplay {
-  const nameStored = String(m.senderName ?? "").trim();
-  const photoStored = String(m.senderPhotoURL ?? "").trim();
-
-  if (m.senderId && m.senderId === ctx.currentUserId) {
-    const fromProfile = buildSenderNameFromProfile(ctx.profile);
-    const photo = String(
-      ctx.profile?.profileImage ??
-        ctx.profile?.photoURL ??
-        ctx.profile?.photoUrl ??
-        photoStored
-    );
-    return {
-      name: fromProfile || nameStored || "Já",
-      photo,
-      roleLabel: null,
-    };
-  }
-
-  if (nameStored) {
-    const emp =
-      (m.employeeId ? ctx.employeesById.get(m.employeeId) : undefined) ??
-      ctx.employeesByAuthUid.get(m.senderId);
-    const photo = emp
-      ? String(emp.profileImage ?? emp.photoURL ?? photoStored)
-      : photoStored;
-    return {
-      name: nameStored,
-      photo,
-      roleLabel: senderRoleLabel(m.senderRole),
-    };
-  }
-
-  const emp =
-    (m.employeeId ? ctx.employeesById.get(m.employeeId) : undefined) ??
-    ctx.employeesByAuthUid.get(m.senderId);
-  if (emp) {
-    const fn = String(emp.firstName ?? "").trim();
-    const ln = String(emp.lastName ?? "").trim();
-    const full = `${fn} ${ln}`.trim();
-    return {
-      name: full || String(emp.email ?? "Neznámý uživatel"),
-      photo: String(emp.profileImage ?? emp.photoURL ?? photoStored),
-      roleLabel: senderRoleLabel(m.senderRole),
-    };
-  }
-
-  return {
-    name: nameStored || "Neznámý uživatel",
-    photo: photoStored,
-    roleLabel: senderRoleLabel(m.senderRole),
-  };
-}
 
 function MessageAuthorMeta({
   mine,
@@ -238,12 +177,7 @@ function buildReadReceiptLine(
 }
 
 function buildSenderNameFromProfile(profile: Record<string, unknown> | null | undefined): string {
-  if (!profile) return "";
-  const fn = String(profile.firstName ?? "").trim();
-  const ln = String(profile.lastName ?? "").trim();
-  const full = `${fn} ${ln}`.trim();
-  if (full) return full;
-  return String(profile.displayName ?? "").trim();
+  return displayNameFromUserRecord(profile ?? {});
 }
 
 function isMediaMime(m: string): boolean {
@@ -305,14 +239,67 @@ export function CompanyChatMessenger({
     return m;
   }, [employeeRows]);
 
+  const [chatContacts, setChatContacts] = useState<ChatParticipantProfile[]>([]);
+
+  useEffect(() => {
+    if (!user || !companyId) {
+      setChatContacts([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/chat/contacts?companyId=${encodeURIComponent(companyId)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!res.ok) return;
+        const j = (await res.json()) as {
+          contacts?: Array<{
+            userId: string;
+            displayName: string;
+            role: string;
+            roleLabel: string;
+            photoUrl?: string | null;
+            employeeId?: string | null;
+          }>;
+        };
+        if (cancelled) return;
+        const list: ChatParticipantProfile[] = (j.contacts ?? []).map((c) => ({
+          userId: c.userId,
+          displayName: c.displayName,
+          role: c.role,
+          roleLabel: c.roleLabel,
+          photoUrl: String(c.photoUrl ?? ""),
+          employeeId: c.employeeId ? String(c.employeeId) : null,
+          email: "",
+        }));
+        setChatContacts(list);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, companyId]);
+
+  const participantsByUserId = useMemo(() => {
+    const m = new Map<string, ChatParticipantProfile>();
+    for (const c of chatContacts) m.set(c.userId, c);
+    return m;
+  }, [chatContacts]);
+
   const senderContext = useMemo(
     () => ({
       currentUserId: user?.uid,
       profile,
+      participantsByUserId,
       employeesById,
       employeesByAuthUid,
     }),
-    [user?.uid, profile, employeesById, employeesByAuthUid]
+    [user?.uid, profile, participantsByUserId, employeesById, employeesByAuthUid]
   );
 
   const groupConvQuery = useMemoFirebase(() => {
@@ -346,22 +333,24 @@ export function CompanyChatMessenger({
     return m;
   }, [groupConvRaw]);
 
-  const employeeChatOptions = useMemo((): ChatEmployeeOption[] => {
-    const out: ChatEmployeeOption[] = [];
-    for (const e of employeeRows ?? []) {
-      if (!isEmployeeActive(e)) continue;
-      const authUid = String(e.authUserId ?? "").trim();
-      if (!authUid || authUid === user?.uid) continue;
-      const fn = String(e.firstName ?? "").trim();
-      const ln = String(e.lastName ?? "").trim();
-      out.push({
-        employeeId: e.id,
-        authUserId: authUid,
-        label: `${fn} ${ln}`.trim() || String(e.email ?? "Zaměstnanec"),
-      });
-    }
-    return out;
-  }, [employeeRows, user?.uid]);
+  const chatContactOptions = useMemo((): ChatEmployeeOption[] => {
+    return chatContacts.map((c) => ({
+      employeeId: c.employeeId,
+      authUserId: c.userId,
+      label: c.displayName,
+      roleLabel: c.roleLabel,
+    }));
+  }, [chatContacts]);
+
+  const peerLabelFromUid = useCallback(
+    (peerUid: string | null | undefined): string => {
+      const uid = String(peerUid ?? "").trim();
+      if (!uid) return "Soukromý chat";
+      const p = participantsByUserId.get(uid);
+      return p?.displayName ?? "Soukromý chat";
+    },
+    [participantsByUserId]
+  );
 
   const conversations = useMemo((): ConversationItem[] => {
     const list: ConversationItem[] = [
@@ -376,18 +365,22 @@ export function CompanyChatMessenger({
         participantIds: g.participantIds ?? [],
       });
     }
-    if (mode === "admin") {
-      for (const e of employeeChatOptions) {
-        const dmId = buildDirectConversationId(user?.uid ?? "", e.authUserId);
+    const seenDm = new Set(list.map((c) => c.id));
+    if (user?.uid) {
+      for (const c of chatContactOptions) {
+        const dmId = buildDirectConversationId(user.uid, c.authUserId);
+        if (!dmId || seenDm.has(dmId)) continue;
+        seenDm.add(dmId);
+        const peer = participantsByUserId.get(c.authUserId);
         list.push({
           id: dmId,
-          label: e.label,
-          peerUserId: e.authUserId,
-          employeeId: e.employeeId,
+          label: c.label,
+          subtitle: c.roleLabel,
+          peerUserId: c.authUserId,
+          employeeId: c.employeeId ?? undefined,
+          photo: peer?.photoUrl,
         });
       }
-    } else if (user?.uid) {
-      const seenDm = new Set(list.map((c) => c.id));
       for (const msg of messages) {
         const k = messageConversationKey(msg);
         if (k === COMPANY_CHAT_CONVERSATION_ID || isGroupConversationId(k) || seenDm.has(k)) {
@@ -397,19 +390,18 @@ export function CompanyChatMessenger({
         if (!pids.includes(user.uid) || pids.length < 2) continue;
         seenDm.add(k);
         const peerUid = pids.find((uid) => uid !== user.uid) ?? null;
-        const label =
-          msg.senderRole === "admin"
-            ? "Administrace"
-            : String(msg.senderName ?? "").trim() || "Soukromý chat";
+        const peer = peerUid ? participantsByUserId.get(peerUid) : undefined;
         list.push({
           id: k,
-          label,
+          label: peer?.displayName ?? peerLabelFromUid(peerUid),
+          subtitle: peer?.roleLabel,
           peerUserId: peerUid,
+          photo: peer?.photoUrl,
         });
       }
     }
     return list;
-  }, [groupById, mode, employeeChatOptions, user?.uid, messages]);
+  }, [groupById, chatContactOptions, user?.uid, messages, participantsByUserId, peerLabelFromUid]);
 
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
@@ -456,10 +448,7 @@ export function CompanyChatMessenger({
         lr && typeof (lr as { toMillis?: () => number }).toMillis === "function"
           ? (lr as { toMillis: () => number }).toMillis()
           : 0;
-      const msgMs =
-        msg.createdAt && typeof (msg.createdAt as { seconds?: number }).seconds === "number"
-          ? Number((msg.createdAt as { seconds: number }).seconds) * 1000
-          : Date.now();
+      const msgMs = messageTimestampMs(msg as Record<string, unknown>) || Date.now();
       if (msgMs > lrMs) {
         counts.set(k, (counts.get(k) ?? 0) + 1);
       }
@@ -703,9 +692,12 @@ export function CompanyChatMessenger({
         }
       }
 
+      const orgRole = String(profile?.role ?? (senderRole === "employee" ? "employee" : "admin")).trim();
       await setDoc(msgRef, {
         companyId,
+        organizationId: companyId,
         senderId: user.uid,
+        senderUserId: user.uid,
         senderRole,
         senderName,
         senderPhotoURL,
@@ -718,6 +710,11 @@ export function CompanyChatMessenger({
         attachments,
         createdAt: serverTimestamp(),
         ...buildMessageTimestampClientFields(),
+        ...buildMessageAuthorPersistFields({
+          userId: user.uid,
+          authorName: senderName,
+          authorRole: orgRole,
+        }),
       });
 
       if (isCompany) {
@@ -906,7 +903,7 @@ export function CompanyChatMessenger({
     <div className="flex flex-col border-r border-border min-h-0 flex-1">
       <div className="px-3 py-2 border-b flex items-center gap-2 shrink-0">
         <span className="font-semibold text-sm flex-1 truncate">{title}</span>
-        {mode === "admin" ? (
+        {!readOnly ? (
           <Button
             type="button"
             size="sm"
@@ -1023,7 +1020,7 @@ export function CompanyChatMessenger({
             const showDay = Boolean(dayLabel && dayLabel !== lastDayLabel);
             if (showDay && dayLabel) lastDayLabel = dayLabel;
             const mine = Boolean(user?.uid && m.senderId === user.uid);
-            const sender = resolveSenderDisplay(m, senderContext);
+            const sender = resolveChatSenderDisplay(m, senderContext);
             const senderLabel = sender.name;
             const { photo: senderPhoto } = sender;
             const readReceiptLine = mine
@@ -1296,7 +1293,7 @@ export function CompanyChatMessenger({
       <ChatNewConversationDialog
         open={newChatOpen}
         onOpenChange={setNewChatOpen}
-        employees={employeeChatOptions}
+        employees={chatContactOptions}
         canCreateGroup={canManageGroups}
         onCreateDm={createDmChat}
         onCreateGroup={createGroupChat}
