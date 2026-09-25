@@ -3,6 +3,10 @@ import {
   computePortalManualInvoiceTotals,
   type PortalManualFormItem,
 } from "@/lib/portal-manual-invoice";
+import {
+  computePortalInvoiceTotalsWithDiscounts,
+  type PortalInvoiceDocumentDiscount,
+} from "@/lib/portal-invoice-discount";
 import type {
   JobWorkBudgetItemDoc,
   WorkBudgetInvoiceItemLink,
@@ -221,16 +225,22 @@ export function buildBillSlicesFromManualInvoiceLines(params: {
   budgetItems: JobWorkBudgetItemDoc[];
   invoiceId: string;
   lines: PortalManualFormItem[];
+  invoiceDiscount?: PortalInvoiceDocumentDiscount | null;
 }): WorkBudgetBillSlice[] {
   const byId = new Map(params.budgetItems.map((row) => [row.id, row]));
+  const computedByItemId = new Map(
+    computePortalInvoiceTotalsWithDiscounts(params.lines, params.invoiceDiscount ?? null).lines.map(
+      (l) => [l.itemId, l]
+    )
+  );
   const slices: WorkBudgetBillSlice[] = [];
   for (const line of params.lines) {
     const budget = byId.get(line.id);
     if (!budget) continue;
-    const lineTotals = computePortalManualInvoiceTotals([line]);
-    if (lineTotals.amountGross <= EPS) continue;
-    const billNet = lineTotals.amountNet;
-    const billGross = lineTotals.amountGross;
+    const computed = computedByItemId.get(line.id);
+    if (!computed || computed.billGross <= EPS) continue;
+    const billNet = computed.billNet;
+    const billGross = computed.billGross;
     const billQuantity = Math.max(0, Number(line.quantity) || 0);
     const rem = remainingToInvoice(budget);
     const existing = (budget.invoiceItemLinks ?? []).find(

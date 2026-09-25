@@ -82,6 +82,16 @@ export type InvoiceLineRow = {
   lineNet: number;
   lineVat: number;
   lineGross: number;
+  lineNetBeforeDiscount?: number;
+  discountAmount?: number;
+  discountType?: "percent" | "fixed" | null;
+  discountValue?: number;
+};
+
+export type InvoiceDocumentDiscountSummary = {
+  subtotalNetBeforeDiscount: number;
+  lineDiscountTotal: number;
+  invoiceDiscountAmount: number;
 };
 
 /** Odečet záloh na vyúčtovací / rozpočtové faktuře — zobrazení v patičce PDF. */
@@ -146,6 +156,7 @@ export function buildAdvanceInvoiceHtml(params: {
   vatBreakdownByRate?: Array<{ rate: number; base: number; vat: number }>;
   /** Mezisoučet položek + odečet záloh + částka k úhradě */
   advanceSettlement?: InvoiceAdvanceSettlement | null;
+  invoiceDiscountSummary?: InvoiceDocumentDiscountSummary | null;
   note?: string;
   supplierStampUrl?: string | null;
   supplierFooterText?: string | null;
@@ -161,9 +172,21 @@ export function buildAdvanceInvoiceHtml(params: {
     params.issueDate;
 
   const rowsHtml = params.items
-    .map(
-      (r) => `<tr>
-<td>${escapeHtml(r.description)}</td>
+    .map((r) => {
+      const disc =
+        r.discountAmount && r.discountAmount > 0
+          ? `<div class="line-discount">${
+              r.discountType === "percent" && r.discountValue
+                ? `Sleva ${escapeHtml(String(r.discountValue))} %: −${fmtKc(r.discountAmount)}`
+                : `Sleva: −${fmtKc(r.discountAmount)}`
+            }${
+              r.lineNetBeforeDiscount && r.lineNetBeforeDiscount > r.lineNet
+                ? `<br/>Před slevou: ${fmtKc(r.lineNetBeforeDiscount)} bez DPH`
+                : ""
+            }</div>`
+          : "";
+      return `<tr>
+<td>${escapeHtml(r.description)}${disc}</td>
 <td class="num">${escapeHtml(String(r.quantity).replace(".", ","))}</td>
 <td>${escapeHtml(r.unit || "ks")}</td>
 <td class="num">${fmtKc(r.unitPriceNet)}</td>
@@ -171,8 +194,8 @@ export function buildAdvanceInvoiceHtml(params: {
 <td class="num">${fmtKc(r.lineNet)}</td>
 <td class="num">${fmtKc(r.lineVat)}</td>
 <td class="num">${fmtKc(r.lineGross)}</td>
-</tr>`
-    )
+</tr>`;
+    })
     .join("");
 
   const vs = params.variableSymbol ? String(params.variableSymbol).trim() : "";
@@ -203,9 +226,27 @@ export function buildAdvanceInvoiceHtml(params: {
 
   let totalsRowsHtml: string;
   if (settlement && settlement.advanceTotalGross > 0) {
+    const disc = params.invoiceDiscountSummary;
+    const discountRows: string[] = [];
+    if (disc && (disc.lineDiscountTotal > 0 || disc.invoiceDiscountAmount > 0)) {
+      discountRows.push(
+        `<tr><td>Mezisoučet před slevou (bez DPH)</td><td>${fmtKc(disc.subtotalNetBeforeDiscount)}</td></tr>`
+      );
+      if (disc.lineDiscountTotal > 0) {
+        discountRows.push(
+          `<tr><td>Položkové slevy</td><td>−${fmtKc(disc.lineDiscountTotal)}</td></tr>`
+        );
+      }
+      if (disc.invoiceDiscountAmount > 0) {
+        discountRows.push(
+          `<tr><td>Celková sleva</td><td>−${fmtKc(disc.invoiceDiscountAmount)}</td></tr>`
+        );
+      }
+    }
     const vatRows =
       breakdown.length > 0
         ? [
+            ...discountRows,
             `<tr><td>Celkem bez DPH</td><td>${fmtKc(netForBreakdown)}</td></tr>`,
             ...breakdown.flatMap((b) => {
               const rows: string[] = [];
@@ -238,9 +279,27 @@ export function buildAdvanceInvoiceHtml(params: {
       `<tr class="grand"><td><strong>K úhradě</strong></td><td><strong>${fmtKc(settlement.amountDueGross)}</strong></td></tr>`,
     ].join("");
   } else {
+    const disc = params.invoiceDiscountSummary;
+    const discountRows: string[] = [];
+    if (disc && (disc.lineDiscountTotal > 0 || disc.invoiceDiscountAmount > 0)) {
+      discountRows.push(
+        `<tr><td>Mezisoučet před slevou (bez DPH)</td><td>${fmtKc(disc.subtotalNetBeforeDiscount)}</td></tr>`
+      );
+      if (disc.lineDiscountTotal > 0) {
+        discountRows.push(
+          `<tr><td>Položkové slevy</td><td>−${fmtKc(disc.lineDiscountTotal)}</td></tr>`
+        );
+      }
+      if (disc.invoiceDiscountAmount > 0) {
+        discountRows.push(
+          `<tr><td>Celková sleva</td><td>−${fmtKc(disc.invoiceDiscountAmount)}</td></tr>`
+        );
+      }
+    }
     totalsRowsHtml =
       breakdown.length > 0
         ? [
+            ...discountRows,
             `<tr><td>Celkem bez DPH</td><td>${fmtKc(params.amountNet)}</td></tr>`,
             ...breakdown.flatMap((b) => {
               const rows: string[] = [];

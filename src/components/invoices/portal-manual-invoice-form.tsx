@@ -51,6 +51,7 @@ import {
   createEmptyPortalManualFormItem,
   computePortalManualInvoiceTotals,
   formatPortalInvoiceMoney,
+  type PortalManualInvoiceTotals,
   recipientDisplayName,
   buildRecipientAddressMultiline,
 } from "@/lib/portal-manual-invoice";
@@ -63,6 +64,11 @@ import {
 } from "@/lib/work-budget-invoice-settlement";
 import { applyAdvanceDeductionsToGross } from "@/lib/work-budget-financial-overview";
 import { syncWorkBudgetInvoiceAfterManualEdit } from "@/lib/work-budget-invoice";
+import {
+  parsePortalInvoiceDocumentDiscount,
+  type PortalInvoiceDiscountType,
+  type PortalInvoiceDocumentDiscount,
+} from "@/lib/portal-invoice-discount";
 import { roundMoney2 } from "@/lib/vat-calculations";
 import { PortalManualInvoiceLineCard } from "@/components/invoices/portal-manual-invoice-line-card";
 import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice-preview-dialog";
@@ -79,6 +85,80 @@ type Props = {
   invoiceId?: string;
   initialInvoice?: Record<string, unknown> | null;
 };
+
+const EMPTY_INVOICE_TOTALS: PortalManualInvoiceTotals = {
+  rows: [],
+  amountNet: 0,
+  vatAmount: 0,
+  amountGross: 0,
+  vatBreakdown: [],
+  subtotalNetBeforeDiscount: 0,
+  lineDiscountTotal: 0,
+  invoiceDiscountAmount: 0,
+};
+
+function InvoiceTotalsSummaryBlock({
+  totals,
+  error,
+  grandLabel = "Celkem s DPH",
+}: {
+  totals: PortalManualInvoiceTotals;
+  error: string | null;
+  grandLabel?: string;
+}) {
+  const hasDiscount =
+    totals.lineDiscountTotal > 0 ||
+    totals.invoiceDiscountAmount > 0 ||
+    totals.subtotalNetBeforeDiscount > totals.amountNet + 0.009;
+  return (
+    <>
+      {error ? (
+        <p className="text-sm text-destructive w-full sm:text-right">{error}</p>
+      ) : null}
+      {hasDiscount ? (
+        <>
+          <p className="text-sm text-muted-foreground w-full sm:text-right">
+            Mezisoučet před slevou: {formatPortalInvoiceMoney(totals.subtotalNetBeforeDiscount)}
+          </p>
+          {totals.lineDiscountTotal > 0 ? (
+            <p className="text-sm text-muted-foreground w-full sm:text-right">
+              Položkové slevy: −{formatPortalInvoiceMoney(totals.lineDiscountTotal)}
+            </p>
+          ) : null}
+          {totals.invoiceDiscountAmount > 0 ? (
+            <p className="text-sm text-muted-foreground w-full sm:text-right">
+              Celková sleva: −{formatPortalInvoiceMoney(totals.invoiceDiscountAmount)}
+            </p>
+          ) : null}
+          <p className="text-sm font-medium w-full sm:text-right">
+            Základ po slevách: {formatPortalInvoiceMoney(totals.amountNet)}
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground w-full sm:text-right">
+          Celkem bez DPH: {formatPortalInvoiceMoney(totals.amountNet)}
+        </p>
+      )}
+      {VAT_RATE_OPTIONS.map((rate) => {
+        const row = totals.vatBreakdown.find((b) => b.rate === rate);
+        if (!row || (row.base <= 0 && row.vat <= 0)) return null;
+        return (
+          <p key={rate} className="text-xs text-muted-foreground w-full sm:text-right">
+            {rate === 0
+              ? `Základ DPH 0 %: ${formatPortalInvoiceMoney(row.base)}`
+              : `DPH ${rate} %: ${formatPortalInvoiceMoney(row.vat)} (základ ${formatPortalInvoiceMoney(row.base)})`}
+          </p>
+        );
+      })}
+      <p className="text-sm font-medium w-full sm:text-right">
+        Celkem DPH: {formatPortalInvoiceMoney(totals.vatAmount)}
+      </p>
+      <p className="flex items-center gap-2 text-2xl font-bold text-primary w-full sm:justify-end">
+        {grandLabel}: {formatPortalInvoiceMoney(totals.amountGross)}
+      </p>
+    </>
+  );
+}
 
 export function PortalManualInvoiceForm({
   firestore,
@@ -119,6 +199,10 @@ export function PortalManualInvoiceForm({
   const [notes, setNotes] = useState("");
   const [variableSymbol, setVariableSymbol] = useState("");
   const [bankAccountId, setBankAccountId] = useState<string>("");
+  const [invoiceDiscountEnabled, setInvoiceDiscountEnabled] = useState(false);
+  const [invoiceDiscountType, setInvoiceDiscountType] =
+    useState<PortalInvoiceDiscountType>("percent");
+  const [invoiceDiscountValue, setInvoiceDiscountValue] = useState(0);
 
   const isWorkBudgetInvoice =
     mode === "edit" &&
@@ -270,6 +354,15 @@ export function PortalManualInvoiceForm({
       );
     }
     setSavedInvoiceId(typeof invoiceId === "string" ? invoiceId : "");
+    const docDisc = parsePortalInvoiceDocumentDiscount(inv as Record<string, unknown>);
+    if (docDisc.discountType && docDisc.discountValue > 0) {
+      setInvoiceDiscountEnabled(true);
+      setInvoiceDiscountType(docDisc.discountType);
+      setInvoiceDiscountValue(docDisc.discountValue);
+    } else {
+      setInvoiceDiscountEnabled(false);
+      setInvoiceDiscountValue(0);
+    }
     setInitialized(true);
   }, [mode, initialInvoice, initialized]);
 
@@ -368,7 +461,27 @@ export function PortalManualInvoiceForm({
     setItems((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   };
 
-  const invoiceTotals = useMemo(() => computePortalManualInvoiceTotals(items), [items]);
+  const invoiceDocumentDiscount = useMemo((): PortalInvoiceDocumentDiscount | null => {
+    if (!invoiceDiscountEnabled || invoiceDiscountValue <= 0) return null;
+    return {
+      discountType: invoiceDiscountType,
+      discountValue: invoiceDiscountValue,
+    };
+  }, [invoiceDiscountEnabled, invoiceDiscountType, invoiceDiscountValue]);
+
+  const { invoiceTotals, invoiceTotalsError } = useMemo(() => {
+    try {
+      return {
+        invoiceTotals: computePortalManualInvoiceTotals(items, invoiceDocumentDiscount),
+        invoiceTotalsError: null as string | null,
+      };
+    } catch (e) {
+      return {
+        invoiceTotals: EMPTY_INVOICE_TOTALS,
+        invoiceTotalsError: e instanceof Error ? e.message : "Chyba výpočtu",
+      };
+    }
+  }, [items, invoiceDocumentDiscount]);
 
   const workBudgetLiveTotals = useMemo(() => {
     if (!isWorkBudgetInvoice || !initialInvoice) return null;
@@ -410,6 +523,7 @@ export function PortalManualInvoiceForm({
           amountDueVat: workBudgetLiveTotals.vatAmount,
           advancesApplied,
           invoiceLines: items,
+          invoiceDiscount: invoiceDocumentDiscount,
         });
       }
     }
@@ -432,6 +546,7 @@ export function PortalManualInvoiceForm({
       legacyCompanyBankLine: legacyCompanyBank,
       advanceSettlement,
       overrideVariableSymbol: variableSymbol.trim() || null,
+      invoiceDiscount: invoiceDocumentDiscount,
     };
   };
 
@@ -442,6 +557,10 @@ export function PortalManualInvoiceForm({
     );
     if (err) {
       toast({ variant: "destructive", title: "Odběratel", description: err });
+      return;
+    }
+    if (invoiceTotalsError) {
+      toast({ variant: "destructive", title: "Položky", description: invoiceTotalsError });
       return;
     }
     const previewNumber =
@@ -469,6 +588,10 @@ export function PortalManualInvoiceForm({
     );
     if (err) {
       toast({ variant: "destructive", title: "Odběratel", description: err });
+      return;
+    }
+    if (invoiceTotalsError) {
+      toast({ variant: "destructive", title: "Položky", description: invoiceTotalsError });
       return;
     }
 
@@ -534,7 +657,10 @@ export function PortalManualInvoiceForm({
       const initialParsed = initialItems.map((row, idx) =>
         parsePortalManualFormItemFromFirestore(row as Record<string, unknown>, idx)
       );
-      const initialLineTotals = computePortalManualInvoiceTotals(initialParsed);
+      const initialLineTotals = computePortalManualInvoiceTotals(
+        initialParsed,
+        parsePortalInvoiceDocumentDiscount(inv)
+      );
       const financialChanged =
         Math.abs(initialLineTotals.amountGross - invoiceTotals.amountGross) > 0.009 ||
         initialParsed.length !== items.length;
@@ -587,7 +713,9 @@ export function PortalManualInvoiceForm({
       customerIco: recipient.ico ?? null,
       customerDic: recipient.dic ?? null,
       invoiceNumber: invoiceNumberStr,
-      items: portalFormItemsForFirestore(items),
+      items: portalFormItemsForFirestore(items, invoiceDocumentDiscount),
+      invoiceDiscountType: invoiceDocumentDiscount?.discountType ?? null,
+      invoiceDiscountValue: invoiceDocumentDiscount?.discountValue ?? 0,
       totalAmount: amountGross,
       amountNet,
       vatAmount,
@@ -625,6 +753,7 @@ export function PortalManualInvoiceForm({
             invoiceId,
             invoiceLines: items,
             inv: initialInvoice as Record<string, unknown>,
+            invoiceDiscount: invoiceDocumentDiscount,
           });
           amountNet = workBudgetSyncTotals.amountNet;
           vatAmount = workBudgetSyncTotals.vatAmount;
@@ -1124,17 +1253,88 @@ export function PortalManualInvoiceForm({
               />
             ))}
           </div>
+          {!workBudgetInvoiceLocked ? (
+            <div className="rounded-lg border border-dashed border-border bg-muted/30 p-4 space-y-3">
+              {!invoiceDiscountEnabled ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setInvoiceDiscountEnabled(true);
+                    setInvoiceDiscountType("percent");
+                    setInvoiceDiscountValue(0);
+                  }}
+                >
+                  Přidat celkovou slevu
+                </Button>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label className="text-sm font-medium">Celková sleva na fakturu</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground"
+                      onClick={() => {
+                        setInvoiceDiscountEnabled(false);
+                        setInvoiceDiscountValue(0);
+                      }}
+                    >
+                      Odebrat
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap gap-3 items-end">
+                    <div className="space-y-1 min-w-[140px]">
+                      <Label className="text-xs">Typ slevy</Label>
+                      <Select
+                        value={invoiceDiscountType}
+                        onValueChange={(v) =>
+                          setInvoiceDiscountType(v as PortalInvoiceDiscountType)
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="percent">%</SelectItem>
+                          <SelectItem value="fixed">Kč (bez DPH)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1 flex-1 min-w-[120px] max-w-[200px]">
+                      <Label className="text-xs">Hodnota</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        max={invoiceDiscountType === "percent" ? 100 : undefined}
+                        value={invoiceDiscountValue}
+                        onChange={(e) =>
+                          setInvoiceDiscountValue(Math.max(0, Number(e.target.value) || 0))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Počítá se z mezisoučtu položek po položkových slevách (bez DPH). DPH se přepočítá
+                    z ceny po slevě.
+                  </p>
+                </>
+              )}
+            </div>
+          ) : null}
         </CardContent>
         <Separator />
         <CardFooter className="flex flex-col items-stretch gap-2 py-6 sm:items-end">
           {isWorkBudgetInvoice && workBudgetLiveTotals ? (
             <>
-              {workBudgetLiveTotals.subtotalGross > 0 ? (
-                <p className="text-sm text-muted-foreground w-full sm:text-right">
-                  Mezisoučet položek s DPH:{" "}
-                  {formatPortalInvoiceMoney(workBudgetLiveTotals.subtotalGross)}
-                </p>
-              ) : null}
+              <InvoiceTotalsSummaryBlock
+                totals={invoiceTotals}
+                error={invoiceTotalsError}
+                grandLabel="Celkem položek s DPH"
+              />
               {workBudgetLiveTotals.advanceDeduction > 0 ? (
                 <p className="text-sm text-orange-800 w-full sm:text-right">
                   Započtené zálohy: −{formatPortalInvoiceMoney(workBudgetLiveTotals.advanceDeduction)}
@@ -1145,28 +1345,7 @@ export function PortalManualInvoiceForm({
               </p>
             </>
           ) : (
-            <>
-              <p className="text-sm text-muted-foreground w-full sm:text-right">
-                Celkem bez DPH: {formatPortalInvoiceMoney(invoiceTotals.amountNet)}
-              </p>
-              {VAT_RATE_OPTIONS.map((rate) => {
-                const row = invoiceTotals.vatBreakdown.find((b) => b.rate === rate);
-                if (!row || (row.base <= 0 && row.vat <= 0)) return null;
-                return (
-                  <p key={rate} className="text-xs text-muted-foreground w-full sm:text-right">
-                    {rate === 0
-                      ? `Základ DPH 0 %: ${formatPortalInvoiceMoney(row.base)}`
-                      : `DPH ${rate} %: ${formatPortalInvoiceMoney(row.vat)} (základ ${formatPortalInvoiceMoney(row.base)})`}
-                  </p>
-                );
-              })}
-              <p className="text-sm font-medium w-full sm:text-right">
-                Celkem DPH: {formatPortalInvoiceMoney(invoiceTotals.vatAmount)}
-              </p>
-              <p className="flex items-center gap-2 text-2xl font-bold text-primary w-full sm:justify-end">
-                {formatPortalInvoiceMoney(invoiceTotals.amountGross)}
-              </p>
-            </>
+            <InvoiceTotalsSummaryBlock totals={invoiceTotals} error={invoiceTotalsError} />
           )}
         </CardFooter>
       </Card>

@@ -20,13 +20,17 @@ import { buildCustomerAddressMultiline } from "@/lib/customer-address-display";
 import type { CompanyLookupResult } from "@/lib/company-lookup-api";
 import { validateCzechIcoInput } from "@/lib/company-lookup-api";
 import {
-  computeExpenseAmountsFromInput,
   normalizeVatRate,
   roundMoney2,
   VAT_RATE_OPTIONS,
   type JobBudgetType,
   type VatRatePercent,
 } from "@/lib/vat-calculations";
+import {
+  computePortalInvoiceTotalsWithDiscounts,
+  type PortalInvoiceDiscountType,
+  type PortalInvoiceDocumentDiscount,
+} from "@/lib/portal-invoice-discount";
 
 export const PORTAL_MANUAL_INVOICE_TYPE = "portal_manual" as const;
 
@@ -58,7 +62,11 @@ export type PortalManualFormItem = {
   unit: string;
   inventoryItemId?: string | null;
   imageUrl?: string | null;
+  discountType?: PortalInvoiceDiscountType | null;
+  discountValue?: number;
 };
+
+export type { PortalInvoiceDocumentDiscount, PortalInvoiceDiscountType };
 
 export type PortalManualVatBreakdown = {
   rate: VatRatePercent;
@@ -72,6 +80,9 @@ export type PortalManualInvoiceTotals = {
   vatAmount: number;
   amountGross: number;
   vatBreakdown: PortalManualVatBreakdown[];
+  subtotalNetBeforeDiscount: number;
+  lineDiscountTotal: number;
+  invoiceDiscountAmount: number;
 };
 
 function trim(v: unknown): string {
@@ -89,6 +100,8 @@ export function createEmptyPortalManualFormItem(id?: string): PortalManualFormIt
     unit: "ks",
     inventoryItemId: null,
     imageUrl: null,
+    discountType: null,
+    discountValue: 0,
   };
 }
 
@@ -99,6 +112,9 @@ export function parsePortalManualFormItemFromFirestore(
   const priceTypeRaw = row.priceType;
   const priceType: JobBudgetType =
     priceTypeRaw === "net" || priceTypeRaw === "gross" ? priceTypeRaw : "gross";
+  const discountTypeRaw = String(row.discountType ?? "").trim();
+  const discountType: PortalInvoiceDiscountType | null =
+    discountTypeRaw === "percent" || discountTypeRaw === "fixed" ? discountTypeRaw : null;
   return {
     id: String(row.id ?? `row-${index}`),
     description: String(row.description ?? ""),
@@ -109,6 +125,8 @@ export function parsePortalManualFormItemFromFirestore(
     unit: trim(row.unit) || "ks",
     inventoryItemId: trim(row.inventoryItemId) || null,
     imageUrl: trim(row.imageUrl) || null,
+    discountType,
+    discountValue: Math.max(0, Number(row.discountValue) || 0),
   };
 }
 
@@ -305,59 +323,39 @@ export function validateInvoiceRecipientSnapshot(
 }
 
 export function computePortalManualInvoiceTotals(
-  items: PortalManualFormItem[]
+  items: PortalManualFormItem[],
+  invoiceDiscount?: PortalInvoiceDocumentDiscount | null
 ): PortalManualInvoiceTotals {
-  let amountNet = 0;
-  let amountGross = 0;
-  const vatMap = new Map<VatRatePercent, { base: number; vat: number }>();
-  for (const rate of VAT_RATE_OPTIONS) {
-    vatMap.set(rate, { base: 0, vat: 0 });
-  }
-  const rows: InvoiceLineRow[] = [];
-
-  for (const it of items) {
-    const qty = Math.max(0, Number(it.quantity) || 0);
-    const unitInput = Math.max(0, Number(it.unitPrice) || 0);
-    const desc = trim(it.description);
-    if (!desc || qty <= 0 || unitInput <= 0) continue;
-
-    const vatRate = normalizeVatRate(it.vatRate);
-    const unitComputed = computeExpenseAmountsFromInput({
-      amountInput: unitInput,
-      amountType: it.priceType === "net" ? "net" : "gross",
-      vatRate,
-    });
-    const lineNet = roundMoney2(unitComputed.amountNet * qty);
-    const lineVat = roundMoney2(unitComputed.vatAmount * qty);
-    const lineGross = roundMoney2(unitComputed.amountGross * qty);
-    const unitNet = roundMoney2(unitComputed.amountNet);
-
-    amountNet = roundMoney2(amountNet + lineNet);
-    amountGross = roundMoney2(amountGross + lineGross);
-    const bucket = vatMap.get(vatRate)!;
-    bucket.base = roundMoney2(bucket.base + lineNet);
-    bucket.vat = roundMoney2(bucket.vat + lineVat);
-
-    rows.push({
-      description: desc,
-      quantity: qty,
-      unit: trim(it.unit) || "ks",
-      unitPriceNet: unitNet,
-      vatRate,
-      lineNet,
-      lineVat,
-      lineGross,
-    });
-  }
-
-  const vatAmount = roundMoney2(amountGross - amountNet);
-  const vatBreakdown: PortalManualVatBreakdown[] = VAT_RATE_OPTIONS.map((rate) => ({
-    rate,
-    base: vatMap.get(rate)!.base,
-    vat: vatMap.get(rate)!.vat,
-  })).filter((b) => b.base > 0 || b.vat > 0);
-
-  return { rows, amountNet, vatAmount, amountGross, vatBreakdown };
+  const computed = computePortalInvoiceTotalsWithDiscounts(items, invoiceDiscount);
+  const rows: InvoiceLineRow[] = computed.lines.map((line) => ({
+    description: line.description,
+    quantity: line.quantity,
+    unit: line.unit,
+    unitPriceNet: line.unitPriceNet,
+    vatRate: line.vatRate,
+    lineNet: line.lineNet,
+    lineVat: line.lineVat,
+    lineGross: line.lineGross,
+    lineNetBeforeDiscount: line.lineNetBeforeDiscount,
+    discountAmount: line.discountAmount,
+    discountType: line.discountType,
+    discountValue: line.discountValue,
+  }));
+  const vatBreakdown: PortalManualVatBreakdown[] = computed.vatBreakdown.map((b) => ({
+    rate: b.rate,
+    base: b.base,
+    vat: b.vat,
+  }));
+  return {
+    rows,
+    amountNet: computed.amountNet,
+    vatAmount: computed.vatAmount,
+    amountGross: computed.amountGross,
+    vatBreakdown,
+    subtotalNetBeforeDiscount: computed.subtotalNetBeforeDiscount,
+    lineDiscountTotal: computed.lineDiscountTotal,
+    invoiceDiscountAmount: computed.invoiceDiscountAmount,
+  };
 }
 
 export function portalGrossItemsToLineRows(
@@ -412,6 +410,7 @@ export type BuildPortalManualInvoiceHtmlParams = {
   advanceSettlement?: InvoiceAdvanceSettlement | null;
   /** Ručně uložený VS (jinak z čísla faktury) */
   overrideVariableSymbol?: string | null;
+  invoiceDiscount?: PortalInvoiceDocumentDiscount | null;
 };
 
 export function buildPortalManualInvoiceHtml(params: BuildPortalManualInvoiceHtmlParams): {
@@ -423,9 +422,20 @@ export function buildPortalManualInvoiceHtml(params: BuildPortalManualInvoiceHtm
   vatBreakdown: PortalManualVatBreakdown[];
   variableSymbol: string;
 } {
-  const lineTotals = computePortalManualInvoiceTotals(params.items);
+  const lineTotals = computePortalManualInvoiceTotals(
+    params.items,
+    params.invoiceDiscount ?? null
+  );
   const { rows } = lineTotals;
   let { amountNet, vatAmount, amountGross, vatBreakdown } = lineTotals;
+  const discountSummary =
+    lineTotals.lineDiscountTotal > 0 || lineTotals.invoiceDiscountAmount > 0
+      ? {
+          subtotalNetBeforeDiscount: lineTotals.subtotalNetBeforeDiscount,
+          lineDiscountTotal: lineTotals.lineDiscountTotal,
+          invoiceDiscountAmount: lineTotals.invoiceDiscountAmount,
+        }
+      : null;
   if (rows.length === 0 || lineTotals.amountGross <= 0) {
     throw new Error("Přidejte alespoň jednu položku s kladnou částkou.");
   }
@@ -505,25 +515,50 @@ export function buildPortalManualInvoiceHtml(params: BuildPortalManualInvoiceHtm
     primaryVatRateLabel: allSameVat ? `${rows[0].vatRate}` : "smíšené",
     vatBreakdownByRate: settlement ? settlement.linesVatBreakdown : vatBreakdown,
     advanceSettlement: settlement,
+    invoiceDiscountSummary: discountSummary,
     note,
   });
   return { html, rows, amountNet, vatAmount, amountGross, vatBreakdown, variableSymbol: vs };
 }
 
-export function portalFormItemsForFirestore(items: PortalManualFormItem[]): Record<string, unknown>[] {
-  return items.map((it) =>
-    scrubFirestoreValue({
+export function portalFormItemsForFirestore(
+  items: PortalManualFormItem[],
+  invoiceDiscount?: PortalInvoiceDocumentDiscount | null
+): Record<string, unknown>[] {
+  let computedLines: ReturnType<typeof computePortalInvoiceTotalsWithDiscounts>["lines"] = [];
+  try {
+    computedLines = computePortalInvoiceTotalsWithDiscounts(items, invoiceDiscount).lines;
+  } catch {
+    computedLines = [];
+  }
+  let lineIdx = 0;
+  return items.map((it) => {
+    const qty = Math.max(0, Number(it.quantity) || 0);
+    const unitInput = Math.max(0, Number(it.unitPrice) || 0);
+    const desc = trim(it.description);
+    const computed =
+      desc && qty > 0 && unitInput > 0 && lineIdx < computedLines.length
+        ? computedLines[lineIdx++]
+        : null;
+    return scrubFirestoreValue({
       id: it.id,
-      description: trim(it.description),
-      quantity: Number(it.quantity) || 0,
-      unitPrice: Number(it.unitPrice) || 0,
+      description: desc,
+      quantity: qty,
+      unitPrice: unitInput,
       priceType: it.priceType === "net" ? "net" : "gross",
       vatRate: normalizeVatRate(it.vatRate),
       unit: trim(it.unit) || "ks",
       inventoryItemId: it.inventoryItemId ?? null,
       imageUrl: it.imageUrl ?? null,
-    })
-  );
+      discountType: it.discountType ?? null,
+      discountValue: Math.max(0, Number(it.discountValue) || 0),
+      priceBeforeDiscount: computed?.lineNetBeforeDiscount ?? null,
+      discountAmount: computed?.discountAmount ?? 0,
+      netAfterDiscount: computed?.lineNet ?? null,
+      vatAmount: computed?.lineVat ?? null,
+      grossAmount: computed?.lineGross ?? null,
+    });
+  });
 }
 
 export function formatPortalInvoiceMoney(n: number): string {

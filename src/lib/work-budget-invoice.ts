@@ -44,6 +44,10 @@ import {
 } from "@/lib/work-budget-financial-overview";
 import { isNormalBudgetItem } from "@/lib/work-budget-types";
 import { roundMoney2 } from "@/lib/vat-calculations";
+import {
+  parsePortalInvoiceDocumentDiscount,
+  type PortalInvoiceDocumentDiscount,
+} from "@/lib/portal-invoice-discount";
 import { buildWorkBudgetAdvanceSettlement } from "@/lib/work-budget-invoice-settlement";
 import {
   assertWorkBudgetInvoiceSelectionValid,
@@ -1095,19 +1099,24 @@ export async function syncWorkBudgetInvoiceAfterManualEdit(params: {
   invoiceId: string;
   invoiceLines: PortalManualFormItem[];
   inv: Record<string, unknown>;
+  invoiceDiscount?: PortalInvoiceDocumentDiscount | null;
 }): Promise<WorkBudgetManualEditTotals> {
   const budgetItems = await fetchJobWorkBudgetItemsFromFirestore(
     params.firestore,
     params.companyId,
     params.jobId
   );
+  const invoiceDiscount =
+    params.invoiceDiscount ??
+    parsePortalInvoiceDocumentDiscount(params.inv);
   const billSlices = buildBillSlicesFromManualInvoiceLines({
     budgetItems,
     invoiceId: params.invoiceId,
     lines: params.invoiceLines,
+    invoiceDiscount,
   });
 
-  const lineTotals = computePortalManualInvoiceTotals(params.invoiceLines);
+  const lineTotals = computePortalManualInvoiceTotals(params.invoiceLines, invoiceDiscount);
   const deductionGross = roundMoney2(Number(params.inv.workBudgetAdvanceDeductionGross) || 0);
   const after = applyAdvanceDeductionsToGross({
     subtotalGross: lineTotals.amountGross,

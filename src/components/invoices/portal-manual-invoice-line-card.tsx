@@ -53,8 +53,12 @@ export function PortalManualInvoiceLineCard({
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const lineTotals = useMemo(() => {
-    const t = computePortalManualInvoiceTotals([item]);
-    return t.rows[0] ?? null;
+    try {
+      const t = computePortalManualInvoiceTotals([item]);
+      return t.rows[0] ?? null;
+    } catch {
+      return null;
+    }
   }, [item]);
 
   const applyInventory = (inv: PortalInvoiceInventoryPick) => {
@@ -165,6 +169,46 @@ export function PortalManualInvoiceLineCard({
             onChange={(e) => onChange({ unitPrice: Number(e.target.value) })}
           />
         </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Sleva</Label>
+          <div className="flex gap-2">
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              className="min-w-0 flex-1"
+              value={item.discountValue ?? 0}
+              onChange={(e) =>
+                onChange({
+                  discountValue: Number(e.target.value),
+                  discountType: item.discountType ?? "percent",
+                })
+              }
+            />
+            <Select
+              value={item.discountType ?? "none"}
+              onValueChange={(v) => {
+                if (v === "none") {
+                  onChange({ discountType: null, discountValue: 0 });
+                } else {
+                  onChange({
+                    discountType: v as "percent" | "fixed",
+                    discountValue: item.discountValue ?? 0,
+                  });
+                }
+              }}
+            >
+              <SelectTrigger className="w-[88px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">—</SelectItem>
+                <SelectItem value="percent">%</SelectItem>
+                <SelectItem value="fixed">Kč</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
         <div className="flex items-end">
           <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
             <DialogTrigger asChild>
@@ -212,6 +256,15 @@ export function PortalManualInvoiceLineCard({
 
       {lineTotals ? (
         <div className="grid grid-cols-2 gap-2 rounded-md bg-muted/50 p-3 text-xs sm:grid-cols-3">
+          {lineTotals.lineNetBeforeDiscount &&
+          lineTotals.discountAmount &&
+          lineTotals.discountAmount > 0 ? (
+            <div className="col-span-full text-muted-foreground">
+              Před slevou (bez DPH): {formatPortalInvoiceMoney(lineTotals.lineNetBeforeDiscount)}
+              {" · "}
+              Sleva: −{formatPortalInvoiceMoney(lineTotals.discountAmount)}
+            </div>
+          ) : null}
           <div>
             <span className="text-muted-foreground">Základ bez DPH</span>
             <p className="font-medium">{formatPortalInvoiceMoney(lineTotals.lineNet)}</p>

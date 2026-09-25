@@ -3,6 +3,10 @@ import {
   computePortalManualInvoiceTotals,
   type PortalManualFormItem,
 } from "@/lib/portal-manual-invoice";
+import {
+  parsePortalInvoiceDocumentDiscount,
+  type PortalInvoiceDocumentDiscount,
+} from "@/lib/portal-invoice-discount";
 import { roundMoney2 } from "@/lib/vat-calculations";
 
 export type WorkBudgetAdvancesAppliedRow = {
@@ -21,11 +25,15 @@ export function buildWorkBudgetAdvanceSettlement(params: {
   advancesApplied: WorkBudgetAdvancesAppliedRow[];
   overpaymentGross?: number;
   invoiceLines: PortalManualFormItem[];
+  invoiceDiscount?: PortalInvoiceDocumentDiscount | null;
 }): InvoiceAdvanceSettlement | null {
   if (params.deductionGross <= 0 || params.advancesApplied.length === 0) {
     return null;
   }
-  const lineTotals = computePortalManualInvoiceTotals(params.invoiceLines);
+  const lineTotals = computePortalManualInvoiceTotals(
+    params.invoiceLines,
+    params.invoiceDiscount ?? null
+  );
   return {
     linesGrossTotal: params.subtotalGross,
     linesAmountNet: lineTotals.amountNet,
@@ -103,5 +111,6 @@ export function buildWorkBudgetAdvanceSettlementFromInvoiceDoc(
     overpaymentGross:
       rawDeduction > grossTotal ? roundMoney2(rawDeduction - grossTotal) : undefined,
     invoiceLines,
+    invoiceDiscount: parsePortalInvoiceDocumentDiscount(inv),
   });
 }
