@@ -56,7 +56,13 @@ import {
 } from "@/lib/portal-manual-invoice";
 import { syncPortalInvoiceToDocuments } from "@/lib/portal-invoice-documents-sync";
 import { logActivitySafe } from "@/lib/activity-log";
-import { buildWorkBudgetAdvanceSettlementFromInvoiceDoc } from "@/lib/work-budget-invoice-settlement";
+import {
+  buildWorkBudgetAdvanceSettlement,
+  buildWorkBudgetAdvanceSettlementFromInvoiceDoc,
+  parseWorkBudgetAdvancesAppliedFromInvoice,
+} from "@/lib/work-budget-invoice-settlement";
+import { applyAdvanceDeductionsToGross } from "@/lib/work-budget-financial-overview";
+import { syncWorkBudgetInvoiceAfterManualEdit } from "@/lib/work-budget-invoice";
 import { roundMoney2 } from "@/lib/vat-calculations";
 import { PortalManualInvoiceLineCard } from "@/components/invoices/portal-manual-invoice-line-card";
 import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice-preview-dialog";
@@ -118,6 +124,19 @@ export function PortalManualInvoiceForm({
     mode === "edit" &&
     (initialInvoice as { workBudgetSource?: boolean } | null | undefined)?.workBudgetSource ===
       true;
+
+  const workBudgetInvoiceLocked = useMemo(() => {
+    if (!isWorkBudgetInvoice || !initialInvoice) return false;
+    const inv = initialInvoice as Record<string, unknown>;
+    const st = String(inv.status ?? "").trim().toLowerCase();
+    if (st === "cancelled" || st === "storno" || inv.storno === true) return true;
+    return false;
+  }, [isWorkBudgetInvoice, initialInvoice]);
+
+  const workBudgetJobId = useMemo(() => {
+    if (!isWorkBudgetInvoice || !initialInvoice) return "";
+    return String((initialInvoice as { jobId?: string }).jobId ?? "").trim();
+  }, [isWorkBudgetInvoice, initialInvoice]);
 
   const { data: customersRaw } = useCollection(
     useMemoFirebase(
@@ -351,17 +370,24 @@ export function PortalManualInvoiceForm({
 
   const invoiceTotals = useMemo(() => computePortalManualInvoiceTotals(items), [items]);
 
-  const workBudgetStoredTotals = useMemo(() => {
+  const workBudgetLiveTotals = useMemo(() => {
     if (!isWorkBudgetInvoice || !initialInvoice) return null;
     const inv = initialInvoice as Record<string, unknown>;
+    const deductionRaw = roundMoney2(Number(inv.workBudgetAdvanceDeductionGross) || 0);
+    const after = applyAdvanceDeductionsToGross({
+      subtotalGross: invoiceTotals.amountGross,
+      subtotalNet: invoiceTotals.amountNet,
+      subtotalVat: invoiceTotals.vatAmount,
+      deductionGross: deductionRaw,
+    });
     return {
-      amountNet: roundMoney2(Number(inv.amountNet) || 0),
-      vatAmount: roundMoney2(Number(inv.vatAmount) || 0),
-      amountGross: roundMoney2(Number(inv.amountGross) || 0),
-      subtotalGross: roundMoney2(Number(inv.workBudgetSubtotalGross) || 0),
-      advanceDeduction: roundMoney2(Number(inv.workBudgetAdvanceDeductionGross) || 0),
+      amountNet: after.net,
+      vatAmount: after.vat,
+      amountGross: after.gross,
+      subtotalGross: invoiceTotals.amountGross,
+      advanceDeduction: after.deductionGross,
     };
-  }, [isWorkBudgetInvoice, initialInvoice]);
+  }, [isWorkBudgetInvoice, initialInvoice, invoiceTotals]);
 
   const profileDisplayName = useMemo(() => {
     const c = company as { displayName?: string } | null;
@@ -369,13 +395,24 @@ export function PortalManualInvoiceForm({
   }, [company, user?.email]);
 
   const buildHtmlParams = (invoiceNumberStr: string) => {
-    const advanceSettlement =
-      isWorkBudgetInvoice && initialInvoice
-        ? buildWorkBudgetAdvanceSettlementFromInvoiceDoc(
-            initialInvoice as Record<string, unknown>,
-            items
-          )
-        : null;
+    let advanceSettlement = null as ReturnType<
+      typeof buildWorkBudgetAdvanceSettlementFromInvoiceDoc
+    >;
+    if (isWorkBudgetInvoice && initialInvoice && workBudgetLiveTotals) {
+      const inv = initialInvoice as Record<string, unknown>;
+      const advancesApplied = parseWorkBudgetAdvancesAppliedFromInvoice(inv);
+      if (workBudgetLiveTotals.advanceDeduction > 0 && advancesApplied.length > 0) {
+        advanceSettlement = buildWorkBudgetAdvanceSettlement({
+          subtotalGross: workBudgetLiveTotals.subtotalGross,
+          deductionGross: workBudgetLiveTotals.advanceDeduction,
+          amountDueGross: workBudgetLiveTotals.amountGross,
+          amountDueNet: workBudgetLiveTotals.amountNet,
+          amountDueVat: workBudgetLiveTotals.vatAmount,
+          advancesApplied,
+          invoiceLines: items,
+        });
+      }
+    }
     return {
       invoiceNumber: invoiceNumberStr,
       issueDate,
@@ -460,20 +497,55 @@ export function PortalManualInvoiceForm({
 
     let { html, amountNet, vatAmount, amountGross, variableSymbol: vsResolved, vatBreakdown } =
       built;
-    if (isWorkBudgetInvoice && workBudgetStoredTotals) {
-      amountNet = workBudgetStoredTotals.amountNet;
-      vatAmount = workBudgetStoredTotals.vatAmount;
-      amountGross = workBudgetStoredTotals.amountGross;
-      const rawBreakdown = (initialInvoice as { vatBreakdown?: unknown })?.vatBreakdown;
-      if (Array.isArray(rawBreakdown) && rawBreakdown.length > 0) {
-        vatBreakdown = rawBreakdown.map((row) => {
-          const r = row as { rate?: unknown; base?: unknown; vat?: unknown };
-          return {
-            rate: normalizeVatRate(Number(r.rate) || 0),
-            base: roundMoney2(Number(r.base) || 0),
-            vat: roundMoney2(Number(r.vat) || 0),
-          };
-        });
+    let workBudgetSyncTotals: Awaited<
+      ReturnType<typeof syncWorkBudgetInvoiceAfterManualEdit>
+    > | null = null;
+
+    if (isWorkBudgetInvoice && workBudgetLiveTotals) {
+      amountNet = workBudgetLiveTotals.amountNet;
+      vatAmount = workBudgetLiveTotals.vatAmount;
+      amountGross = workBudgetLiveTotals.amountGross;
+      vatBreakdown = invoiceTotals.vatBreakdown.map((b) => ({
+        rate: b.rate,
+        base: b.base,
+        vat: b.vat,
+      }));
+      if (
+        workBudgetLiveTotals.advanceDeduction > 0 &&
+        vatBreakdown.length === 1 &&
+        workBudgetLiveTotals.subtotalGross > 0
+      ) {
+        const ratio = amountGross / workBudgetLiveTotals.subtotalGross;
+        vatBreakdown = vatBreakdown.map((b) => ({
+          rate: b.rate,
+          base: roundMoney2(b.base * ratio),
+          vat: roundMoney2(b.vat * ratio),
+        }));
+      }
+    }
+
+    if (isWorkBudgetInvoice && initialInvoice && !workBudgetInvoiceLocked) {
+      const inv = initialInvoice as Record<string, unknown>;
+      const ps = String(inv.paymentStatus ?? "unpaid").trim().toLowerCase();
+      const sent =
+        String(inv.issueStatus ?? "").trim().toLowerCase() === "sent" ||
+        inv.emailSentAt != null;
+      const initialItems = Array.isArray(inv.items) ? inv.items : [];
+      const initialParsed = initialItems.map((row, idx) =>
+        parsePortalManualFormItemFromFirestore(row as Record<string, unknown>, idx)
+      );
+      const initialLineTotals = computePortalManualInvoiceTotals(initialParsed);
+      const financialChanged =
+        Math.abs(initialLineTotals.amountGross - invoiceTotals.amountGross) > 0.009 ||
+        initialParsed.length !== items.length;
+      if (
+        financialChanged &&
+        (ps === "paid" || ps === "partial" || sent) &&
+        !window.confirm(
+          "Faktura je odeslaná nebo uhrazená. Změna částek upraví historický doklad. Opravdu pokračovat?"
+        )
+      ) {
+        return;
       }
     }
     const variableSymbolFinal = variableSymbol.trim() || vsResolved;
@@ -544,14 +616,60 @@ export function PortalManualInvoiceForm({
     }) as Record<string, unknown>;
 
     if (mode === "edit" && invoiceId) {
+      if (isWorkBudgetInvoice && workBudgetJobId && initialInvoice && !workBudgetInvoiceLocked) {
+        try {
+          workBudgetSyncTotals = await syncWorkBudgetInvoiceAfterManualEdit({
+            firestore,
+            companyId,
+            jobId: workBudgetJobId,
+            invoiceId,
+            invoiceLines: items,
+            inv: initialInvoice as Record<string, unknown>,
+          });
+          amountNet = workBudgetSyncTotals.amountNet;
+          vatAmount = workBudgetSyncTotals.vatAmount;
+          amountGross = workBudgetSyncTotals.amountGross;
+          vatBreakdown = workBudgetSyncTotals.vatBreakdown.map((b) => ({
+            rate: normalizeVatRate(b.rate),
+            base: b.base,
+            vat: b.vat,
+          }));
+          const rebuilt = buildPortalManualInvoiceHtml(buildHtmlParams(invoiceNumberStr));
+          html = rebuilt.html;
+          basePayload.pdfHtml = html;
+          basePayload.amountNet = amountNet;
+          basePayload.vatAmount = vatAmount;
+          basePayload.amountGross = amountGross;
+          basePayload.totalAmount = amountGross;
+          basePayload.vatBreakdown = vatBreakdown.map((b) => ({
+            rate: b.rate,
+            base: b.base,
+            vat: b.vat,
+          }));
+          basePayload.workBudgetSubtotalGross = workBudgetSyncTotals.subtotalGross;
+          basePayload.workBudgetItemIds = workBudgetSyncTotals.workBudgetItemIds;
+          basePayload.workBudgetLinesPristine = false;
+        } catch (e) {
+          toast({
+            variant: "destructive",
+            title: "Nelze uložit fakturu",
+            description:
+              e instanceof Error
+                ? e.message
+                : "Kontrola vazby na rozpočet zakázky selhala.",
+          });
+          return;
+        }
+      }
+
       await updateDoc(
         doc(firestore, "companies", companyId, "invoices", invoiceId),
         basePayload as UpdateData<DocumentData>
       );
       if (isWorkBudgetInvoice && user) {
         void logActivitySafe(firestore, companyId, user, null, {
-          actionType: "invoice_updated",
-          actionLabel: `Konečná faktura ${invoiceNumberStr} byla upravena`,
+          actionType: "INVOICE_UPDATED",
+          actionLabel: `Faktura ${invoiceNumberStr} byla upravena`,
           entityType: "invoice",
           entityId: invoiceId,
           entityName: invoiceNumberStr,
@@ -559,7 +677,19 @@ export function PortalManualInvoiceForm({
           route: `/portal/invoices/${invoiceId}/edit`,
           metadata: {
             workBudgetSource: true,
-            fields: ["issueDate", "dueDate", "taxSupplyDate", "notes", "recipient", "bank", "variableSymbol"],
+            jobId: workBudgetJobId || null,
+            organizationId: companyId,
+            invoiceId,
+            changedFields: [
+              "items",
+              "issueDate",
+              "dueDate",
+              "taxSupplyDate",
+              "notes",
+              "recipient",
+              "bank",
+              "variableSymbol",
+            ],
           },
         });
       }
@@ -961,7 +1091,7 @@ export function PortalManualInvoiceForm({
       <Card className="bg-surface border-border">
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Položky faktury</CardTitle>
-          {!isWorkBudgetInvoice ? (
+          {!isWorkBudgetInvoice || !workBudgetInvoiceLocked ? (
             <Button type="button" variant="outline" size="sm" onClick={addItem} className="gap-2">
               <Plus className="h-4 w-4" /> Přidat řádek
             </Button>
@@ -969,10 +1099,12 @@ export function PortalManualInvoiceForm({
         </CardHeader>
         <CardContent className="space-y-4">
           {isWorkBudgetInvoice ? (
-            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-              Faktura vznikla z položkového rozpočtu zakázky. Položky a částky upravte akcí{" "}
-              <strong>Aktualizovat podle rozpočtu</strong> v detailu zakázky. Zde lze měnit hlavičku,
-              odběratele, data a poznámku.
+            <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900">
+              Faktura z položkového rozpočtu zakázky. Řádky navázané na rozpočet (stejné id) aktualizují
+              stav fakturace na zakázce. Text a ceny na faktuře nemění původní rozpočet.
+              {workBudgetInvoiceLocked
+                ? " Stornovanou fakturu nelze upravovat."
+                : null}
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">
@@ -987,29 +1119,29 @@ export function PortalManualInvoiceForm({
                 inventoryItems={inventoryItems}
                 onChange={(patch) => updateItem(item.id, patch)}
                 onRemove={() => removeItem(item.id)}
-                canRemove={!isWorkBudgetInvoice && items.length > 1}
-                readOnly={isWorkBudgetInvoice}
+                canRemove={items.length > 1 && !workBudgetInvoiceLocked}
+                readOnly={workBudgetInvoiceLocked}
               />
             ))}
           </div>
         </CardContent>
         <Separator />
         <CardFooter className="flex flex-col items-stretch gap-2 py-6 sm:items-end">
-          {isWorkBudgetInvoice && workBudgetStoredTotals ? (
+          {isWorkBudgetInvoice && workBudgetLiveTotals ? (
             <>
-              {workBudgetStoredTotals.subtotalGross > 0 ? (
+              {workBudgetLiveTotals.subtotalGross > 0 ? (
                 <p className="text-sm text-muted-foreground w-full sm:text-right">
                   Mezisoučet položek s DPH:{" "}
-                  {formatPortalInvoiceMoney(workBudgetStoredTotals.subtotalGross)}
+                  {formatPortalInvoiceMoney(workBudgetLiveTotals.subtotalGross)}
                 </p>
               ) : null}
-              {workBudgetStoredTotals.advanceDeduction > 0 ? (
+              {workBudgetLiveTotals.advanceDeduction > 0 ? (
                 <p className="text-sm text-orange-800 w-full sm:text-right">
-                  Započtené zálohy: −{formatPortalInvoiceMoney(workBudgetStoredTotals.advanceDeduction)}
+                  Započtené zálohy: −{formatPortalInvoiceMoney(workBudgetLiveTotals.advanceDeduction)}
                 </p>
               ) : null}
               <p className="flex items-center gap-2 text-2xl font-bold text-primary w-full sm:justify-end">
-                K úhradě: {formatPortalInvoiceMoney(workBudgetStoredTotals.amountGross)}
+                K úhradě: {formatPortalInvoiceMoney(workBudgetLiveTotals.amountGross)}
               </p>
             </>
           ) : (

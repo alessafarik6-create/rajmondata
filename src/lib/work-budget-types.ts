@@ -30,6 +30,32 @@ export const EXTRA_WORK_STATUSES = {
 export type ExtraWorkStatus =
   (typeof EXTRA_WORK_STATUSES)[keyof typeof EXTRA_WORK_STATUSES];
 
+export type WorkBudgetInvoiceItemLink = {
+  invoiceId: string;
+  amountNet: number;
+  amountGross: number;
+  quantity: number;
+  invoicedAt: string;
+};
+
+export function parseWorkBudgetInvoiceItemLinks(raw: unknown): WorkBudgetInvoiceItemLink[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((row) => {
+      const r = row as Record<string, unknown>;
+      const invoiceId = String(r.invoiceId ?? "").trim();
+      if (!invoiceId) return null;
+      return {
+        invoiceId,
+        amountNet: roundMoney2(Number(r.amountNet) || 0),
+        amountGross: roundMoney2(Number(r.amountGross) || 0),
+        quantity: Number(r.quantity) || 0,
+        invoicedAt: String(r.invoicedAt ?? "").trim() || new Date().toISOString(),
+      };
+    })
+    .filter((x): x is WorkBudgetInvoiceItemLink => x != null);
+}
+
 export type JobWorkBudgetItemDoc = {
   id: string;
   companyId: string;
@@ -56,6 +82,10 @@ export type JobWorkBudgetItemDoc = {
   invoiced: boolean;
   invoicedAt: string | null;
   linkedInvoiceId: string | null;
+  /** Součet již vyfakturovaných částek (bez DPH) — denormalizace z invoiceItemLinks. */
+  invoicedAmountNet?: number;
+  invoicedAmountGross?: number;
+  invoiceItemLinks?: WorkBudgetInvoiceItemLink[];
   createdBy?: string | null;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -191,6 +221,11 @@ export function parseJobWorkBudgetItemFromFirestore(
     invoiced: raw.invoiced === true,
     invoicedAt: raw.invoicedAt != null ? String(raw.invoicedAt) : null,
     linkedInvoiceId: raw.linkedInvoiceId != null ? String(raw.linkedInvoiceId) : null,
+    invoicedAmountNet:
+      raw.invoicedAmountNet != null ? roundMoney2(Number(raw.invoicedAmountNet)) : undefined,
+    invoicedAmountGross:
+      raw.invoicedAmountGross != null ? roundMoney2(Number(raw.invoicedAmountGross)) : undefined,
+    invoiceItemLinks: parseWorkBudgetInvoiceItemLinks(raw.invoiceItemLinks),
     createdBy: raw.createdBy != null ? String(raw.createdBy) : null,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,

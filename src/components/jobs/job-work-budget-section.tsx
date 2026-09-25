@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useMemo, useState } from "react";
+import Link from "next/link";
 import type { User } from "firebase/auth";
 import {
   addDoc,
@@ -55,12 +56,18 @@ import { computeWorkBudgetSummary, sortWorkBudgetItems } from "@/lib/work-budget
 import { buildWorkBudgetReportPdfHtml } from "@/lib/work-budget-report-pdf";
 import {
   assessWorkBudgetInvoiceRegeneration,
-  billableWorkBudgetItems,
   createInvoiceFromWorkBudgetItems,
   isWorkBudgetInvoiceStale,
   isWorkBudgetSourceInvoice,
   regenerateInvoiceFromWorkBudgetItems,
 } from "@/lib/work-budget-invoice";
+import {
+  computeWorkBudgetInvoicingSummary,
+  primaryInvoiceLinkId,
+  workBudgetItemHasBillableRemainder,
+  workBudgetItemInvoicingStatus,
+} from "@/lib/work-budget-invoicing";
+import type { WorkBudgetInvoiceDialogConfirm } from "@/components/jobs/job-work-budget-invoice-dialog";
 import { JobWorkBudgetPdfPreviewDialog } from "@/components/jobs/job-work-budget-pdf-preview-dialog";
 import { JobWorkBudgetRegenerateDialog } from "@/components/jobs/job-work-budget-regenerate-dialog";
 import {
@@ -106,6 +113,28 @@ import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 
 function formatKc(n: number): string {
   return `${n.toLocaleString("cs-CZ")} Kč`;
+}
+
+function isWorkBudgetRowFullyInvoiced(row: JobWorkBudgetItemDoc): boolean {
+  return workBudgetItemInvoicingStatus(row) === "full";
+}
+
+function WorkBudgetInvoicingBadge({ row }: { row: JobWorkBudgetItemDoc }) {
+  const status = workBudgetItemInvoicingStatus(row);
+  if (status === "none") return null;
+  const invoiceId = primaryInvoiceLinkId(row);
+  const label =
+    status === "partial" ? "Částečně vyfakturováno" : "Vyfakturováno";
+  if (invoiceId) {
+    return (
+      <Badge variant="secondary" className="font-normal">
+        <Link href={`/portal/invoices/${invoiceId}`} className="hover:underline">
+          {label}
+        </Link>
+      </Badge>
+    );
+  }
+  return <Badge variant="secondary">{label}</Badge>;
 }
 
 function doneAtLabel(iso: string | null): string {
@@ -267,7 +296,14 @@ export function JobWorkBudgetSection(props: {
     () => computeWorkBudgetSummary(items, jobBudgetBreakdown),
     [items, jobBudgetBreakdown]
   );
-  const billable = useMemo(() => billableWorkBudgetItems(items), [items]);
+  const billable = useMemo(
+    () => items.filter((row) => workBudgetItemHasBillableRemainder(row, null)),
+    [items]
+  );
+  const invoicingSummary = useMemo(
+    () => computeWorkBudgetInvoicingSummary(items),
+    [items]
+  );
 
   const jobInvoicesQuery = useMemoFirebase(
     () =>
@@ -339,7 +375,7 @@ export function JobWorkBudgetSection(props: {
   };
 
   const openEditItem = (row: JobWorkBudgetItemDoc) => {
-    if (!canManage || row.invoiced) return;
+    if (!canManage || isWorkBudgetRowFullyInvoiced(row)) return;
     setEditingItemId(row.id);
     setDraft(draftFromItem(row));
     setItemDialogOpen(true);
@@ -398,7 +434,7 @@ export function JobWorkBudgetSection(props: {
   };
 
   const deleteItem = async (row: JobWorkBudgetItemDoc) => {
-    if (!canManage || row.invoiced) return;
+    if (!canManage || workBudgetItemInvoicingStatus(row) !== "none") return;
     if (!window.confirm(`Smazat položku „${row.title}"?`)) return;
     try {
       await deleteDoc(
@@ -415,7 +451,7 @@ export function JobWorkBudgetSection(props: {
   };
 
   const toggleDone = async (row: JobWorkBudgetItemDoc, checked: boolean) => {
-    if (!canMarkDone || row.invoiced) return;
+    if (!canMarkDone || workBudgetItemInvoicingStatus(row) !== "none") return;
     try {
       await updateDoc(
         doc(firestore, "companies", companyId, "jobs", jobId, WORK_BUDGET_ITEMS_COLLECTION, row.id),
@@ -439,7 +475,7 @@ export function JobWorkBudgetSection(props: {
     if (!window.confirm("Smazat všechny položky rozpočtu? Tuto akci nelze vrátit.")) return;
     const batch = writeBatch(firestore);
     for (const row of items) {
-      if (!row.invoiced) {
+      if (workBudgetItemInvoicingStatus(row) === "none") {
         batch.delete(
           doc(firestore, "companies", companyId, "jobs", jobId, WORK_BUDGET_ITEMS_COLLECTION, row.id)
         );
@@ -605,7 +641,7 @@ export function JobWorkBudgetSection(props: {
     setInvoiceDialogOpen(true);
   };
 
-  const generateInvoice = async (selectedAdvanceIds: string[]) => {
+  const generateInvoice = async (payload: WorkBudgetInvoiceDialogConfirm) => {
     if (!canManage) return;
     setInvoiceBusy(true);
     try {
@@ -620,7 +656,9 @@ export function JobWorkBudgetSection(props: {
         orgBankAccounts,
         items,
         advances,
-        selectedAdvanceIds,
+        selectedAdvanceIds: payload.selectedAdvanceIds,
+        billingScope: payload.billingScope,
+        selectedItemIds: payload.selectedItemIds,
         userId: user.uid,
         profileDisplayName,
       });
@@ -629,13 +667,19 @@ export function JobWorkBudgetSection(props: {
         description: `${result.invoiceNumber} · ${formatKc(result.amountGross)}`,
       });
       logActivitySafe(firestore, companyId, user, null, {
-        actionType: "job.work_budget_invoice_created",
+        actionType: "INVOICE_CREATED",
         actionLabel: "Faktura z rozpočtu prací",
-        entityType: "job",
-        entityId: jobId,
-        entityName: jobDisplayName,
-        details: result.invoiceNumber,
+        entityType: "invoice",
+        entityId: result.invoiceId,
+        entityName: result.invoiceNumber,
         sourceModule: "invoices",
+        route: `/portal/invoices/${result.invoiceId}`,
+        metadata: {
+          organizationId: companyId,
+          invoiceId: result.invoiceId,
+          jobId,
+          billingScope: payload.billingScope,
+        },
       });
       setInvoiceDialogOpen(false);
       router.push(`/portal/invoices/${result.invoiceId}`);
@@ -756,7 +800,7 @@ export function JobWorkBudgetSection(props: {
                 disabled={invoiceBusy || billable.length === 0}
               >
                 <Receipt className="mr-1.5 h-4 w-4" />
-                Vygenerovat fakturu z hotových položek
+                Vytvořit fakturu
               </Button>
               {singleWorkBudgetInvoice ? (
                 <Button
@@ -798,6 +842,39 @@ export function JobWorkBudgetSection(props: {
         ))}
       </div>
 
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-gray-900">
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">Fakturace</p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          <div>
+            <p className="font-medium text-gray-800">Základní rozpočet (provedeno, bez DPH)</p>
+            <p>
+              Vyfakturováno: <strong>{formatKc(invoicingSummary.base.invoicedNet)}</strong>
+            </p>
+            <p>
+              Zbývá: <strong>{formatKc(invoicingSummary.base.remainingNet)}</strong>
+            </p>
+          </div>
+          <div>
+            <p className="font-medium text-gray-800">Vícepráce (provedeno, bez DPH)</p>
+            <p>
+              Vyfakturováno: <strong>{formatKc(invoicingSummary.extra.invoicedNet)}</strong>
+            </p>
+            <p>
+              Zbývá: <strong>{formatKc(invoicingSummary.extra.remainingNet)}</strong>
+            </p>
+          </div>
+          <div>
+            <p className="font-medium text-gray-800">Celkem</p>
+            <p>
+              Vyfakturováno: <strong>{formatKc(invoicingSummary.all.invoicedNet)}</strong>
+            </p>
+            <p>
+              Zbývá: <strong>{formatKc(invoicingSummary.all.remainingNet)}</strong>
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="flex flex-wrap gap-2">
         {(
           [
@@ -831,7 +908,7 @@ export function JobWorkBudgetSection(props: {
               className={cn(
                 "min-w-0 rounded-lg border border-slate-200 bg-white p-3 text-[13px] shadow-sm",
                 row.done && "border-emerald-200 bg-emerald-50/50",
-                row.invoiced && "opacity-85"
+                isWorkBudgetRowFullyInvoiced(row) && "opacity-85"
               )}
             >
               <div className="flex flex-wrap items-start gap-2">
@@ -839,10 +916,10 @@ export function JobWorkBudgetSection(props: {
                   type="button"
                   className={cn(
                     "min-w-0 flex-1 text-left text-[14px] font-semibold text-gray-950 break-words",
-                    canManage && !row.invoiced && "hover:underline"
+                    canManage && !isWorkBudgetRowFullyInvoiced(row) && "hover:underline"
                   )}
                   onClick={() => openEditItem(row)}
-                  disabled={!canManage || row.invoiced}
+                  disabled={!canManage || isWorkBudgetRowFullyInvoiced(row)}
                 >
                   {row.title || "—"}
                 </button>
@@ -853,7 +930,12 @@ export function JobWorkBudgetSection(props: {
                     </Badge>
                   ) : null}
                   {row.done ? <Badge variant="secondary">Provedeno</Badge> : null}
-                  {row.invoiced ? <Badge>Vyfakturováno</Badge> : null}
+                  <WorkBudgetInvoicingBadge row={row} />
+                  {isExtraWorkItem(row) && workBudgetItemInvoicingStatus(row) === "none" ? (
+                    <Badge variant="outline" className="text-[10px] font-normal">
+                      Nevyfakturováno
+                    </Badge>
+                  ) : null}
                 </div>
               </div>
               {row.description ? (
@@ -885,12 +967,12 @@ export function JobWorkBudgetSection(props: {
                 <Label className="text-xs text-gray-700">Provedeno</Label>
                 <Checkbox
                   checked={row.done}
-                  disabled={!canMarkDone || row.invoiced}
+                  disabled={!canMarkDone || workBudgetItemInvoicingStatus(row) !== "none"}
                   onCheckedChange={(v) => void toggleDone(row, v === true)}
                   aria-label={`Provedeno: ${row.title}`}
                 />
               </div>
-              {canManage && !row.invoiced ? (
+              {canManage && workBudgetItemInvoicingStatus(row) === "none" ? (
                 <Button
                   type="button"
                   size="sm"
@@ -929,7 +1011,7 @@ export function JobWorkBudgetSection(props: {
                   className={cn(
                     "border-t border-slate-100",
                     row.done && "bg-emerald-50/70",
-                    row.invoiced && "opacity-80"
+                    isWorkBudgetRowFullyInvoiced(row) && "opacity-80"
                   )}
                 >
                   <td className="px-3 py-2 align-top">
@@ -937,10 +1019,10 @@ export function JobWorkBudgetSection(props: {
                       type="button"
                       className={cn(
                         "text-left font-medium text-gray-950",
-                        canManage && !row.invoiced && "hover:underline"
+                        canManage && !isWorkBudgetRowFullyInvoiced(row) && "hover:underline"
                       )}
                       onClick={() => openEditItem(row)}
-                      disabled={!canManage || row.invoiced}
+                      disabled={!canManage || isWorkBudgetRowFullyInvoiced(row)}
                     >
                       {row.title || "—"}
                     </button>
@@ -964,7 +1046,12 @@ export function JobWorkBudgetSection(props: {
                         </Badge>
                       ) : null}
                       {row.done ? <Badge variant="secondary">Provedeno</Badge> : null}
-                      {row.invoiced ? <Badge>Vyfakturováno</Badge> : null}
+                      <WorkBudgetInvoicingBadge row={row} />
+                      {isExtraWorkItem(row) && workBudgetItemInvoicingStatus(row) === "none" ? (
+                        <Badge variant="outline" className="text-[10px] font-normal">
+                          Nevyfakturováno
+                        </Badge>
+                      ) : null}
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">{row.quantity}</td>
@@ -979,7 +1066,9 @@ export function JobWorkBudgetSection(props: {
                   <td className="px-3 py-2 text-center">
                     <Checkbox
                       checked={row.done}
-                      disabled={!canMarkDone || row.invoiced}
+                      disabled={
+                        !canMarkDone || workBudgetItemInvoicingStatus(row) !== "none"
+                      }
                       onCheckedChange={(v) => void toggleDone(row, v === true)}
                       aria-label={`Provedeno: ${row.title}`}
                     />
@@ -989,7 +1078,7 @@ export function JobWorkBudgetSection(props: {
                   </td>
                   {canManage ? (
                     <td className="px-3 py-2">
-                      {!row.invoiced ? (
+                      {workBudgetItemInvoicingStatus(row) === "none" ? (
                         <Button
                           type="button"
                           size="icon"
@@ -1218,7 +1307,7 @@ export function JobWorkBudgetSection(props: {
         items={items}
         advances={advances}
         busy={invoiceBusy}
-        onConfirm={(ids) => void generateInvoice(ids)}
+        onConfirm={(payload) => void generateInvoice(payload)}
       />
 
       <JobWorkBudgetRegenerateDialog

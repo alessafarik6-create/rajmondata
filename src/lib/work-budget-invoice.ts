@@ -22,6 +22,7 @@ import {
   portalFormItemsForFirestore,
   recipientDisplayName,
   scrubFirestoreValue,
+  computePortalManualInvoiceTotals,
   type PortalManualFormItem,
 } from "@/lib/portal-manual-invoice";
 import { syncPortalInvoiceToDocuments } from "@/lib/portal-invoice-documents-sync";
@@ -44,6 +45,18 @@ import {
 import { isNormalBudgetItem } from "@/lib/work-budget-types";
 import { roundMoney2 } from "@/lib/vat-calculations";
 import { buildWorkBudgetAdvanceSettlement } from "@/lib/work-budget-invoice-settlement";
+import {
+  assertWorkBudgetInvoiceSelectionValid,
+  buildBillSlicesForInvoice,
+  buildBillSlicesFromManualInvoiceLines,
+  filterItemsByBillingScope,
+  mergeInvoiceItemLink,
+  removeInvoiceItemLink,
+  sumInvoicedFromLinks,
+  workBudgetItemHasBillableRemainder,
+  type WorkBudgetBillSlice,
+  type WorkBudgetBillingScope,
+} from "@/lib/work-budget-invoicing";
 
 function trim(v: unknown): string {
   return String(v ?? "").trim();
@@ -95,6 +108,43 @@ function workBudgetItemToInvoiceLine(item: JobWorkBudgetItemDoc): PortalManualFo
   };
 }
 
+function workBudgetSliceToInvoiceLine(
+  slice: WorkBudgetBillSlice,
+  budgetCatalog: JobWorkBudgetItemDoc[]
+): PortalManualFormItem {
+  const item = resolveWorkBudgetItemFromCatalog(slice.item, budgetCatalog);
+  const description = formatWorkBudgetItemInvoiceDescription(item);
+  const qty = slice.billQuantity > 0 ? slice.billQuantity : item.quantity;
+  const unitNet = qty > 0 ? roundMoney2(slice.billNet / qty) : slice.billNet;
+  return {
+    id: item.id,
+    description,
+    quantity: qty,
+    unitPrice: unitNet,
+    priceType: "net",
+    vatRate: item.vatRate,
+    unit: item.unit || "ks",
+    inventoryItemId: null,
+    imageUrl: null,
+  };
+}
+
+function aggregateBillSlices(
+  slices: WorkBudgetBillSlice[],
+  predicate: (item: JobWorkBudgetItemDoc) => boolean
+): { net: number; vat: number; gross: number } {
+  let net = 0;
+  let gross = 0;
+  for (const s of slices) {
+    if (!predicate(s.item)) continue;
+    net += s.billNet;
+    gross += s.billGross;
+  }
+  net = roundMoney2(net);
+  gross = roundMoney2(gross);
+  return { net, vat: roundMoney2(gross - net), gross };
+}
+
 /** Zdroj pravdy pro typ položky je vždy aktuální záznam z položkového rozpočtu (podle id). */
 export function resolveWorkBudgetItemFromCatalog(
   row: JobWorkBudgetItemDoc,
@@ -112,6 +162,13 @@ export function buildInvoiceLinesFromWorkBudgetItems(
   return billable.map((row) =>
     workBudgetItemToInvoiceLine(resolveWorkBudgetItemFromCatalog(row, budgetCatalog))
   );
+}
+
+export function buildInvoiceLinesFromBillSlices(
+  slices: WorkBudgetBillSlice[],
+  budgetCatalog: JobWorkBudgetItemDoc[]
+): PortalManualFormItem[] {
+  return slices.map((slice) => workBudgetSliceToInvoiceLine(slice, budgetCatalog));
 }
 
 async function fetchJobWorkBudgetItemsFromFirestore(
@@ -132,14 +189,9 @@ export function workBudgetItemsEligibleForInvoice(
   items: JobWorkBudgetItemDoc[],
   regenerateInvoiceId?: string | null
 ): JobWorkBudgetItemDoc[] {
-  const reg = String(regenerateInvoiceId ?? "").trim();
-  return items.filter((row) => {
-    if (!row.done || row.amountGross <= 0) return false;
-    if (isExtraWorkItem(row) && !isApprovedExtraWorkItem(row)) return false;
-    if (reg && row.linkedInvoiceId === reg) return true;
-    if (!row.invoiced) return true;
-    return false;
-  });
+  return items.filter((row) =>
+    workBudgetItemHasBillableRemainder(row, regenerateInvoiceId)
+  );
 }
 
 export function billableWorkBudgetItems(items: JobWorkBudgetItemDoc[]): JobWorkBudgetItemDoc[] {
@@ -207,11 +259,20 @@ export function isWorkBudgetInvoiceStale(params: {
     ? (inv.workBudgetAdvanceIds as string[])
     : [];
   try {
+    const scopeRaw = String(inv.workBudgetBillingScope ?? "").trim();
+    const billingScope: WorkBudgetBillingScope =
+      scopeRaw === "base" ||
+      scopeRaw === "extra_only" ||
+      scopeRaw === "manual" ||
+      scopeRaw === "base_and_extra"
+        ? scopeRaw
+        : "base_and_extra";
     const preview = buildWorkBudgetInvoicePreview({
       items: params.items,
       advances: params.advances,
       selectedAdvanceIds: advanceIds,
       regenerateInvoiceId: invId,
+      billingScope,
     });
     const oldSub = roundMoney2(Number(inv.workBudgetSubtotalGross ?? 0));
     const oldPay = roundMoney2(Number(inv.amountGross ?? 0));
@@ -233,6 +294,8 @@ export function isWorkBudgetInvoiceStale(params: {
 
 export type WorkBudgetInvoicePreview = {
   billableItems: JobWorkBudgetItemDoc[];
+  billSlices: WorkBudgetBillSlice[];
+  billingScope: WorkBudgetBillingScope;
   linesNormalGross: number;
   linesExtraGross: number;
   subtotalNet: number;
@@ -276,6 +339,9 @@ export function buildInvoiceFromBudgetAndAdvances(params: {
   advances: JobWorkBudgetAdvanceDoc[];
   selectedAdvanceIds: string[];
   regenerateInvoiceId?: string | null;
+  billingScope?: WorkBudgetBillingScope;
+  selectedItemIds?: string[];
+  partialNetByItemId?: Record<string, number>;
 }): WorkBudgetInvoiceAmounts & WorkBudgetInvoicePreview {
   const preview = buildWorkBudgetInvoicePreview(params);
   return {
@@ -295,11 +361,23 @@ export function buildWorkBudgetInvoicePreview(params: {
   advances: JobWorkBudgetAdvanceDoc[];
   selectedAdvanceIds: string[];
   regenerateInvoiceId?: string | null;
+  billingScope?: WorkBudgetBillingScope;
+  selectedItemIds?: string[];
+  partialNetByItemId?: Record<string, number>;
 }): WorkBudgetInvoicePreview {
   const reg = String(params.regenerateInvoiceId ?? "").trim() || null;
-  const billable = workBudgetItemsEligibleForInvoice(params.items, reg);
-  const normal = aggregateBudgetItemAmounts(billable.filter(isNormalBudgetItem));
-  const extraWork = aggregateBudgetItemAmounts(billable.filter(isApprovedExtraWorkItem));
+  const scope = params.billingScope ?? "base_and_extra";
+  let candidates = workBudgetItemsEligibleForInvoice(params.items, reg);
+  candidates = filterItemsByBillingScope(candidates, scope, params.selectedItemIds);
+  const billSlices = buildBillSlicesForInvoice(
+    candidates,
+    reg,
+    params.partialNetByItemId
+  );
+  assertWorkBudgetInvoiceSelectionValid({ slices: billSlices, regenerateInvoiceId: reg });
+  const billable = billSlices.map((s) => s.item);
+  const normal = aggregateBillSlices(billSlices, isNormalBudgetItem);
+  const extraWork = aggregateBillSlices(billSlices, isApprovedExtraWorkItem);
   const subtotalNet = roundMoney2(normal.net + extraWork.net);
   const subtotalVat = roundMoney2(normal.vat + extraWork.vat);
   const subtotalGross = roundMoney2(normal.gross + extraWork.gross);
@@ -338,6 +416,8 @@ export function buildWorkBudgetInvoicePreview(params: {
 
   return {
     billableItems: billable,
+    billSlices,
+    billingScope: scope,
     linesNormalGross: normal.gross,
     linesExtraGross: extraWork.gross,
     subtotalNet,
@@ -424,8 +504,14 @@ type WorkBudgetInvoiceBuildInput = {
   existingInvoice?: Record<string, unknown> | null;
 };
 
-function buildWorkBudgetInvoiceNotes(preview: WorkBudgetInvoicePreview): string {
-  let notes = "Faktura za provedené práce dle položkového rozpočtu zakázky.";
+function buildWorkBudgetInvoiceNotes(
+  preview: WorkBudgetInvoicePreview,
+  jobDisplayName?: string
+): string {
+  let notes =
+    preview.billingScope === "extra_only"
+      ? `Vícepráce k zakázce${jobDisplayName ? `: ${jobDisplayName}` : ""}.`
+      : "Faktura za provedené práce dle položkového rozpočtu zakázky.";
   if (preview.advancesApplied.length > 0) {
     notes += `\n\nZapočtené zálohy:\n${preview.advancesApplied
       .map((a) => `- ${a.label}: ${a.amountGross.toLocaleString("cs-CZ")} Kč`)
@@ -438,8 +524,9 @@ function buildWorkBudgetInvoiceNotes(preview: WorkBudgetInvoicePreview): string 
 }
 
 function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
+  const billSlices = input.preview.billSlices;
   const billable = input.preview.billableItems;
-  const invoiceLines = buildInvoiceLinesFromWorkBudgetItems(billable, input.budgetCatalog);
+  const invoiceLines = buildInvoiceLinesFromBillSlices(billSlices, input.budgetCatalog);
   const advanceSettlement = buildWorkBudgetAdvanceSettlement({
     subtotalGross: input.preview.subtotalGross,
     deductionGross: input.preview.deductionGross,
@@ -469,7 +556,7 @@ function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
   const legacyCompanyBank = trim(c.bankAccount ?? c.companyBankAccount) || null;
   const notes = input.existingInvoice
     ? resolveWorkBudgetInvoiceNotesForDocument(input.existingInvoice, input.preview)
-    : buildWorkBudgetInvoiceNotes(input.preview);
+    : buildWorkBudgetInvoiceNotes(input.preview, input.jobDisplayName);
   const built = buildPortalManualInvoiceHtml({
     invoiceNumber: input.invoiceNumber,
     issueDate,
@@ -529,40 +616,27 @@ function writeWorkBudgetInvoiceLinksToBatch(params: {
   invoiceId: string;
   allItems: JobWorkBudgetItemDoc[];
   previousItemIds: string[];
-  billable: JobWorkBudgetItemDoc[];
+  billSlices: WorkBudgetBillSlice[];
   previousAdvanceIds: string[];
   appliedAdvanceIds: string[];
 }): void {
   const invoicedAt = new Date().toISOString();
-  const newItemSet = new Set(params.billable.map((r) => r.id));
+  const newItemSet = new Set(params.billSlices.map((s) => s.item.id));
   const prevItemSet = new Set(params.previousItemIds);
   const newAdvSet = new Set(params.appliedAdvanceIds);
   const prevAdvSet = new Set(params.previousAdvanceIds);
   const batch = params.batch;
+  const EPS = 0.009;
 
   for (const row of params.allItems) {
-    if (prevItemSet.has(row.id) && !newItemSet.has(row.id) && row.linkedInvoiceId === params.invoiceId) {
-      batch.update(
-        doc(
-          params.firestore,
-          "companies",
-          params.companyId,
-          "jobs",
-          params.jobId,
-          "workBudgetItems",
-          row.id
-        ),
-        {
-          invoiced: false,
-          invoicedAt: null,
-          linkedInvoiceId: null,
-          updatedAt: serverTimestamp(),
-        }
-      );
-    }
-  }
-
-  for (const row of params.billable) {
+    if (!prevItemSet.has(row.id) || newItemSet.has(row.id)) continue;
+    const hadLink =
+      row.linkedInvoiceId === params.invoiceId ||
+      (row.invoiceItemLinks ?? []).some((l) => l.invoiceId === params.invoiceId);
+    if (!hadLink) continue;
+    const links = removeInvoiceItemLink(row.invoiceItemLinks ?? [], params.invoiceId);
+    const totals = sumInvoicedFromLinks(links);
+    const fullyInvoiced = totals.gross >= row.amountGross - EPS;
     batch.update(
       doc(
         params.firestore,
@@ -574,8 +648,43 @@ function writeWorkBudgetInvoiceLinksToBatch(params: {
         row.id
       ),
       {
-        invoiced: true,
-        invoicedAt,
+        invoiceItemLinks: links,
+        invoicedAmountNet: totals.net,
+        invoicedAmountGross: totals.gross,
+        invoiced: fullyInvoiced,
+        invoicedAt: fullyInvoiced ? row.invoicedAt : null,
+        linkedInvoiceId: links.length ? links[links.length - 1]!.invoiceId : null,
+        updatedAt: serverTimestamp(),
+      }
+    );
+  }
+
+  for (const slice of params.billSlices) {
+    const row = slice.item;
+    const links = mergeInvoiceItemLink(row.invoiceItemLinks ?? [], params.invoiceId, {
+      amountNet: slice.billNet,
+      amountGross: slice.billGross,
+      quantity: slice.billQuantity,
+      invoicedAt,
+    });
+    const totals = sumInvoicedFromLinks(links);
+    const fullyInvoiced = totals.gross >= row.amountGross - EPS;
+    batch.update(
+      doc(
+        params.firestore,
+        "companies",
+        params.companyId,
+        "jobs",
+        params.jobId,
+        "workBudgetItems",
+        row.id
+      ),
+      {
+        invoiceItemLinks: links,
+        invoicedAmountNet: totals.net,
+        invoicedAmountGross: totals.gross,
+        invoiced: fullyInvoiced,
+        invoicedAt: fullyInvoiced ? invoicedAt : row.invoicedAt ?? invoicedAt,
         linkedInvoiceId: params.invoiceId,
         updatedAt: serverTimestamp(),
       }
@@ -628,7 +737,7 @@ async function applyWorkBudgetInvoiceLinks(params: {
   invoiceId: string;
   allItems: JobWorkBudgetItemDoc[];
   previousItemIds: string[];
-  billable: JobWorkBudgetItemDoc[];
+  billSlices: WorkBudgetBillSlice[];
   previousAdvanceIds: string[];
   appliedAdvanceIds: string[];
 }): Promise<void> {
@@ -649,17 +758,27 @@ export async function createInvoiceFromWorkBudgetItems(params: {
   items: JobWorkBudgetItemDoc[];
   advances?: JobWorkBudgetAdvanceDoc[];
   selectedAdvanceIds?: string[];
+  billingScope?: WorkBudgetBillingScope;
+  selectedItemIds?: string[];
+  partialNetByItemId?: Record<string, number>;
   userId: string;
   profileDisplayName?: string;
 }): Promise<{ invoiceId: string; invoiceNumber: string; amountGross: number }> {
   const budgetCatalog = params.items;
-  const selectedAdvanceIds = resolveWorkBudgetSelectedAdvanceIds({
-    selectedAdvanceIds: params.selectedAdvanceIds,
-  });
+  const billingScope = params.billingScope ?? "base_and_extra";
+  const selectedAdvanceIds =
+    billingScope === "extra_only"
+      ? []
+      : resolveWorkBudgetSelectedAdvanceIds({
+          selectedAdvanceIds: params.selectedAdvanceIds,
+        });
   const preview = buildInvoiceFromBudgetAndAdvances({
     items: budgetCatalog,
     advances: params.advances ?? [],
     selectedAdvanceIds,
+    billingScope,
+    selectedItemIds: params.selectedItemIds,
+    partialNetByItemId: params.partialNetByItemId,
   });
   if (preview.billableItems.length === 0) {
     throw new Error("Žádné provedené nevyfakturované položky k fakturaci.");
@@ -733,6 +852,7 @@ export async function createInvoiceFromWorkBudgetItems(params: {
     issueStatus: "issued",
     isDeleted: false,
     workBudgetSource: true,
+    workBudgetBillingScope: billingScope,
     workBudgetItemIds: bundle.itemIds,
     workBudgetAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
     workBudgetAdvancesApplied: preview.advancesApplied.map((a) => ({
@@ -790,7 +910,7 @@ export async function createInvoiceFromWorkBudgetItems(params: {
     invoiceId: invRef.id,
     allItems: budgetCatalog,
     previousItemIds: [],
-    billable: bundle.billable,
+    billSlices: preview.billSlices,
     previousAdvanceIds: [],
     appliedAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
   });
@@ -850,11 +970,20 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     regenerateInvoiceId: params.invoiceId,
     existingAdvanceIds: previousAdvanceIds,
   });
+  const scopeRaw = String(inv.workBudgetBillingScope ?? "").trim();
+  const billingScope: WorkBudgetBillingScope =
+    scopeRaw === "base" ||
+    scopeRaw === "extra_only" ||
+    scopeRaw === "manual" ||
+    scopeRaw === "base_and_extra"
+      ? scopeRaw
+      : "base_and_extra";
   const preview = buildInvoiceFromBudgetAndAdvances({
     items: budgetCatalog,
     advances: params.advances ?? [],
     selectedAdvanceIds,
     regenerateInvoiceId: params.invoiceId,
+    billingScope,
   });
   if (preview.billableItems.length === 0) {
     throw new Error("Žádné položky k fakturaci podle aktuálního rozpočtu.");
@@ -917,7 +1046,7 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     invoiceId: params.invoiceId,
     allItems: budgetCatalog,
     previousItemIds,
-    billable: bundle.billable,
+    billSlices: preview.billSlices,
     previousAdvanceIds,
     appliedAdvanceIds: preview.advancesApplied.map((a) => a.advanceId),
   });
@@ -946,5 +1075,89 @@ export async function regenerateInvoiceFromWorkBudgetItems(params: {
     invoiceId: params.invoiceId,
     invoiceNumber,
     amountGross: bundle.amountGross,
+  };
+}
+
+export type WorkBudgetManualEditTotals = {
+  amountNet: number;
+  vatAmount: number;
+  amountGross: number;
+  subtotalGross: number;
+  workBudgetItemIds: string[];
+  vatBreakdown: Array<{ rate: number; base: number; vat: number }>;
+};
+
+/** Po ruční editaci řádků faktury — přepočet částek a sync invoiceItemLinks na rozpočtu. */
+export async function syncWorkBudgetInvoiceAfterManualEdit(params: {
+  firestore: Firestore;
+  companyId: string;
+  jobId: string;
+  invoiceId: string;
+  invoiceLines: PortalManualFormItem[];
+  inv: Record<string, unknown>;
+}): Promise<WorkBudgetManualEditTotals> {
+  const budgetItems = await fetchJobWorkBudgetItemsFromFirestore(
+    params.firestore,
+    params.companyId,
+    params.jobId
+  );
+  const billSlices = buildBillSlicesFromManualInvoiceLines({
+    budgetItems,
+    invoiceId: params.invoiceId,
+    lines: params.invoiceLines,
+  });
+
+  const lineTotals = computePortalManualInvoiceTotals(params.invoiceLines);
+  const deductionGross = roundMoney2(Number(params.inv.workBudgetAdvanceDeductionGross) || 0);
+  const after = applyAdvanceDeductionsToGross({
+    subtotalGross: lineTotals.amountGross,
+    subtotalNet: lineTotals.amountNet,
+    subtotalVat: lineTotals.vatAmount,
+    deductionGross,
+  });
+
+  let vatBreakdown = lineTotals.vatBreakdown.map((b) => ({
+    rate: b.rate,
+    base: b.base,
+    vat: b.vat,
+  }));
+  if (after.deductionGross > 0 && vatBreakdown.length === 1 && lineTotals.amountGross > 0) {
+    const ratio = after.gross / lineTotals.amountGross;
+    vatBreakdown = vatBreakdown.map((b) => ({
+      rate: b.rate,
+      base: roundMoney2(b.base * ratio),
+      vat: roundMoney2(b.vat * ratio),
+    }));
+  }
+
+  const previousItemIds = Array.isArray(params.inv.workBudgetItemIds)
+    ? (params.inv.workBudgetItemIds as string[])
+    : [];
+  const previousAdvanceIds = Array.isArray(params.inv.workBudgetAdvanceIds)
+    ? (params.inv.workBudgetAdvanceIds as string[])
+    : [];
+
+  const batch = writeBatch(params.firestore);
+  writeWorkBudgetInvoiceLinksToBatch({
+    batch,
+    firestore: params.firestore,
+    companyId: params.companyId,
+    jobId: params.jobId,
+    invoiceId: params.invoiceId,
+    allItems: budgetItems,
+    previousItemIds,
+    billSlices,
+    previousAdvanceIds,
+    appliedAdvanceIds: previousAdvanceIds,
+  });
+  await batch.commit();
+
+  return {
+    amountNet: after.net,
+    vatAmount: after.vat,
+    amountGross: after.gross,
+    subtotalGross: lineTotals.amountGross,
+    workBudgetItemIds: billSlices.map((s) => s.item.id),
+    vatBreakdown,
   };
 }
