@@ -2,11 +2,18 @@
 
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { collection, doc, query, where, orderBy } from "firebase/firestore";
-import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase";
+import {
+  useUser,
+  useFirestore,
+  useDoc,
+  useMemoFirebase,
+  useCollection,
+  useCompany,
+} from "@/firebase";
 import { Button } from "@/components/ui/button";
-import { Loader2, ChevronLeft, Printer, Download, Pencil, Mail } from "lucide-react";
+import { Loader2, ChevronLeft, Printer, Download, Pencil, Mail, Split } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
 import {
@@ -26,9 +33,26 @@ import {
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 import { PortalInvoicePaymentsPanel } from "@/components/invoices/portal-invoice-payments-panel";
+import { isWorkBudgetSourceInvoice } from "@/lib/work-budget-invoice";
+import {
+  canSplitWorkBudgetInvoice,
+  invoiceHasBaseAndExtraForSplit,
+} from "@/lib/work-budget-invoice-split";
+import { JobWorkBudgetSplitInvoiceDialog } from "@/components/jobs/job-work-budget-split-invoice-dialog";
+import {
+  parseJobWorkBudgetItemFromFirestore,
+  WORK_BUDGET_ITEMS_COLLECTION,
+} from "@/lib/work-budget-types";
+import {
+  parseWorkBudgetAdvanceFromFirestore,
+  WORK_BUDGET_ADVANCES_COLLECTION,
+} from "@/lib/work-budget-advances";
+import type { OrgBankAccountRow } from "@/lib/invoice-billing-meta";
+import { logActivitySafe } from "@/lib/activity-log";
 
 export default function InvoiceDocumentPage() {
   const params = useParams();
+  const router = useRouter();
   const invoiceId = typeof params?.invoiceId === "string" ? params.invoiceId : "";
   const { user } = useUser();
   const firestore = useFirestore();
@@ -40,6 +64,7 @@ export default function InvoiceDocumentPage() {
   );
   const { data: profile, isLoading: profileLoading } = useDoc(userRef);
   const companyId = profile?.companyId as string | undefined;
+  const { company } = useCompany();
   const { canRead: canReadInvoices, canWrite: canWriteInvoices } = usePortalModuleAccess("invoices");
   const canPrintInvoice = canPrintPortalInvoices(canReadInvoices);
   const canEditInvoice = canEditPortalInvoicesByModuleAccess(canWriteInvoices);
@@ -95,6 +120,94 @@ export default function InvoiceDocumentPage() {
 
   const [sendOpen, setSendOpen] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
+
+  const invoiceJobId = useMemo(() => {
+    if (!invoice) return "";
+    return String((invoice as { jobId?: string }).jobId ?? "").trim();
+  }, [invoice]);
+
+  const workBudgetItemsColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && invoiceJobId
+        ? collection(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            invoiceJobId,
+            WORK_BUDGET_ITEMS_COLLECTION
+          )
+        : null,
+    [firestore, companyId, invoiceJobId]
+  );
+  const { data: workBudgetItemsRaw = [] } = useCollection(workBudgetItemsColRef);
+  const workBudgetItems = useMemo(
+    () =>
+      (workBudgetItemsRaw ?? []).map((row, idx) =>
+        parseJobWorkBudgetItemFromFirestore(
+          row as Record<string, unknown>,
+          String((row as { id?: string }).id ?? `wb-${idx}`)
+        )
+      ),
+    [workBudgetItemsRaw]
+  );
+
+  const workBudgetAdvancesColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && invoiceJobId
+        ? collection(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            invoiceJobId,
+            WORK_BUDGET_ADVANCES_COLLECTION
+          )
+        : null,
+    [firestore, companyId, invoiceJobId]
+  );
+  const { data: workBudgetAdvancesRaw = [] } = useCollection(workBudgetAdvancesColRef);
+  const workBudgetAdvances = useMemo(
+    () =>
+      (workBudgetAdvancesRaw ?? []).map((row, idx) =>
+        parseWorkBudgetAdvanceFromFirestore(
+          row as Record<string, unknown>,
+          String((row as { id?: string }).id ?? `adv-${idx}`)
+        )
+      ),
+    [workBudgetAdvancesRaw]
+  );
+
+  const bankAccountsColRef = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? collection(firestore, "companies", companyId, "bankAccounts")
+        : null,
+    [firestore, companyId]
+  );
+  const { data: bankAccountsRaw } = useCollection(bankAccountsColRef);
+  const orgBankAccounts = (Array.isArray(bankAccountsRaw)
+    ? bankAccountsRaw
+    : []) as OrgBankAccountRow[];
+
+  const isWorkBudgetInvoice =
+    isPortalManual && invoice != null && isWorkBudgetSourceInvoice(invoice as Record<string, unknown>);
+  const showSplitButton =
+    isWorkBudgetInvoice &&
+    canEditInvoice &&
+    invoice != null &&
+    canSplitWorkBudgetInvoice(invoice as Record<string, unknown>).allowed &&
+    invoiceHasBaseAndExtraForSplit(invoice as Record<string, unknown>, workBudgetItems);
+
+  const jobDisplayName = useMemo(() => {
+    if (!invoice) return "Zakázka";
+    return (
+      String((invoice as { jobName?: string }).jobName ?? "").trim() ||
+      String((invoice as { jobDisplayName?: string }).jobDisplayName ?? "").trim() ||
+      "Zakázka"
+    );
+  }, [invoice]);
 
   const html = useMemo(() => {
     const h =
@@ -284,6 +397,17 @@ export default function InvoiceDocumentPage() {
               </Link>
             </Button>
           ) : null}
+          {showSplitButton ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2 border-neutral-950"
+              onClick={() => setSplitOpen(true)}
+            >
+              <Split className="h-4 w-4" />
+              Rozdělit fakturu
+            </Button>
+          ) : null}
           {isPortalManual ? (
             <Button type="button" variant="outline" className="gap-2 border-neutral-950" onClick={() => setSendOpen(true)}>
               <Mail className="h-4 w-4" />
@@ -433,6 +557,55 @@ export default function InvoiceDocumentPage() {
           invoiceNumber={title}
           defaultTo={defaultRecipientEmail}
           user={user}
+        />
+      ) : null}
+
+      {user &&
+      companyId &&
+      firestore &&
+      isWorkBudgetInvoice &&
+      invoiceJobId &&
+      invoice &&
+      !((invoice as { workBudgetSplitSuperseded?: boolean }).workBudgetSplitSuperseded === true) ? (
+        <JobWorkBudgetSplitInvoiceDialog
+          open={splitOpen}
+          onOpenChange={setSplitOpen}
+          firestore={firestore}
+          companyId={companyId}
+          jobId={invoiceJobId}
+          jobDisplayName={jobDisplayName}
+          invoice={invoice as Record<string, unknown> & { id: string }}
+          budgetCatalog={workBudgetItems}
+          orgBankAccounts={orgBankAccounts}
+          companyDoc={(company as Record<string, unknown> | null | undefined) ?? null}
+          advances={workBudgetAdvances}
+          userId={user.uid}
+          profileDisplayName={
+            String(user.displayName ?? "").trim() || String(user.email ?? "").trim() || "Uživatel"
+          }
+          onSuccess={(result) => {
+            toast({
+              title: "Faktura rozdělena",
+              description: `${result.baseInvoiceNumber} · ${result.extrasInvoiceNumber}`,
+            });
+            void logActivitySafe(firestore, companyId, user, null, {
+              actionType: "INVOICE_SPLIT",
+              actionLabel: `Faktura ${title} rozdělena`,
+              entityType: "invoice",
+              entityId: invoiceId,
+              entityName: title,
+              sourceModule: "invoices",
+              metadata: {
+                organizationId: companyId,
+                jobId: invoiceJobId,
+                originalInvoiceId: invoiceId,
+                baseInvoiceId: result.baseInvoiceId,
+                extrasInvoiceId: result.extrasInvoiceId,
+                userId: user.uid,
+              },
+            });
+            router.push(`/portal/invoices/${result.baseInvoiceId}`);
+          }}
         />
       ) : null}
     </div>

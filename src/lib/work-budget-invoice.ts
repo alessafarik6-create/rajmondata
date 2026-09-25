@@ -608,7 +608,7 @@ function buildWorkBudgetInvoiceHtmlBundle(input: WorkBudgetInvoiceBuildInput) {
   };
 }
 
-function writeWorkBudgetInvoiceLinksToBatch(params: {
+export function writeWorkBudgetInvoiceLinksToBatch(params: {
   batch: ReturnType<typeof writeBatch>;
   firestore: Firestore;
   companyId: string;

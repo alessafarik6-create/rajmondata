@@ -29,7 +29,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, FileText, Printer, PlusCircle, Plus, Trash2, Pencil, RefreshCw } from "lucide-react";
+import {
+  Loader2,
+  FileText,
+  Printer,
+  PlusCircle,
+  Plus,
+  Trash2,
+  Pencil,
+  RefreshCw,
+  Split,
+} from "lucide-react";
 import {
   assessWorkBudgetInvoiceRegeneration,
   isWorkBudgetInvoiceStale,
@@ -46,6 +56,12 @@ import {
   WORK_BUDGET_ADVANCES_COLLECTION,
 } from "@/lib/work-budget-advances";
 import { JobWorkBudgetRegenerateDialog } from "@/components/jobs/job-work-budget-regenerate-dialog";
+import { JobWorkBudgetSplitInvoiceDialog } from "@/components/jobs/job-work-budget-split-invoice-dialog";
+import {
+  canSplitWorkBudgetInvoice,
+  invoiceHasBaseAndExtraForSplit,
+} from "@/lib/work-budget-invoice-split";
+import { logActivitySafe } from "@/lib/activity-log";
 import { sortWorkBudgetItems } from "@/lib/work-budget-calculations";
 import { buildCustomerAddressMultiline } from "@/lib/customer-address-display";
 import type { JobBudgetBreakdown } from "@/lib/vat-calculations";
@@ -236,6 +252,10 @@ export function JobBillingInvoicesSection({
   const [regenerateTarget, setRegenerateTarget] = useState<
     (Record<string, unknown> & { id: string }) | null
   >(null);
+  const [splitDialogOpen, setSplitDialogOpen] = useState(false);
+  const [splitTarget, setSplitTarget] = useState<
+    (Record<string, unknown> & { id: string }) | null
+  >(null);
 
   const workBudgetItemsColRef = useMemoFirebase(
     () =>
@@ -325,7 +345,9 @@ export function JobBillingInvoicesSection({
 
   const jobInvoices = useMemo(() => {
     const rows = (Array.isArray(jobInvoicesRaw) ? jobInvoicesRaw : []).filter(
-      (inv) => isActiveFirestoreDoc(inv as { isDeleted?: unknown })
+      (inv) =>
+        isActiveFirestoreDoc(inv as { isDeleted?: unknown }) &&
+        (inv as { workBudgetSplitSuperseded?: boolean }).workBudgetSplitSuperseded !== true
     );
     return [...rows].sort((a, b) => {
       const ta = (a as { createdAt?: unknown }).createdAt;
@@ -794,6 +816,24 @@ export function JobBillingInvoicesSection({
     setRegenerateDialogOpen(true);
   };
 
+  const openSplitWorkBudgetInvoice = (inv: Record<string, unknown> & { id: string }) => {
+    const gate = canSplitWorkBudgetInvoice(inv);
+    if (!gate.allowed) {
+      toast({ variant: "destructive", title: "Nelze rozdělit", description: gate.reason });
+      return;
+    }
+    if (!invoiceHasBaseAndExtraForSplit(inv, workBudgetItems)) {
+      toast({
+        variant: "destructive",
+        title: "Nelze rozdělit",
+        description: "Faktura neobsahuje zároveň základní práce i vícepráce.",
+      });
+      return;
+    }
+    setSplitTarget(inv);
+    setSplitDialogOpen(true);
+  };
+
   const confirmRegenerateWorkBudgetInvoice = async (selectedAdvanceIds: string[]) => {
     if (!user || !regenerateTarget || !customerId?.trim()) return;
     if (
@@ -985,14 +1025,24 @@ export function JobBillingInvoicesSection({
                 {jobInvoices.map((inv) => {
                   const row = inv as Record<string, unknown> & { id: string };
                   const t = String(row.type ?? "");
+                  const splitRole = String(row.workBudgetSplitRole ?? "").trim();
                   const label =
-                    t === JOB_INVOICE_TYPES.ADVANCE
-                      ? `Zálohová faktura ${advanceOrdinalById.get(row.id) ?? ""}`.trim()
-                      : t === JOB_INVOICE_TYPES.TAX_RECEIPT
-                        ? "Daňový doklad k přijaté platbě"
-                        : t === JOB_INVOICE_TYPES.FINAL_INVOICE
-                          ? "Vyúčtovací faktura"
-                          : "Faktura / doklad";
+                    splitRole === "base"
+                      ? "Faktura – základní práce"
+                      : splitRole === "extra"
+                        ? "Faktura – vícepráce"
+                        : t === JOB_INVOICE_TYPES.ADVANCE
+                          ? `Zálohová faktura ${advanceOrdinalById.get(row.id) ?? ""}`.trim()
+                          : t === JOB_INVOICE_TYPES.TAX_RECEIPT
+                            ? "Daňový doklad k přijaté platbě"
+                            : t === JOB_INVOICE_TYPES.FINAL_INVOICE
+                              ? "Vyúčtovací faktura"
+                              : "Faktura / doklad";
+                  const showSplitButton =
+                    canManage &&
+                    isWorkBudgetSourceInvoice(row) &&
+                    canSplitWorkBudgetInvoice(row).allowed &&
+                    invoiceHasBaseAndExtraForSplit(row, workBudgetItems);
                   const st = String(row.status ?? "");
                   const num = String(row.invoiceNumber ?? row.documentNumber ?? "—");
                   const displayGross =
@@ -1042,6 +1092,22 @@ export function JobBillingInvoicesSection({
                           >
                             <RefreshCw className="h-3.5 w-3.5" />
                             Aktualizovat podle rozpočtu
+                          </Button>
+                        ) : null}
+                        {showSplitButton ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="min-h-9 shrink-0 gap-1 w-full sm:w-auto"
+                            onClick={() =>
+                              openSplitWorkBudgetInvoice(
+                                row as Record<string, unknown> & { id: string }
+                              )
+                            }
+                          >
+                            <Split className="h-3.5 w-3.5" />
+                            Rozdělit fakturu
                           </Button>
                         ) : null}
                         <Button
@@ -1379,6 +1445,52 @@ export function JobBillingInvoicesSection({
         busy={regenerateBusy}
         onConfirm={(ids) => void confirmRegenerateWorkBudgetInvoice(ids)}
       />
+
+      {user && splitTarget ? (
+        <JobWorkBudgetSplitInvoiceDialog
+          open={splitDialogOpen}
+          onOpenChange={(open) => {
+            setSplitDialogOpen(open);
+            if (!open) setSplitTarget(null);
+          }}
+          firestore={firestore}
+          companyId={companyId}
+          jobId={jobId}
+          jobDisplayName={jobName}
+          invoice={splitTarget}
+          budgetCatalog={workBudgetItems}
+          orgBankAccounts={orgBankAccounts}
+          companyDoc={companyDoc}
+          advances={workBudgetAdvances}
+          userId={user.uid}
+          profileDisplayName={profileDisplayName}
+          onSuccess={(result) => {
+            toast({
+              title: "Faktura rozdělena",
+              description: `${result.baseInvoiceNumber} · ${result.extrasInvoiceNumber}`,
+            });
+            void logActivitySafe(firestore, companyId, user, null, {
+              actionType: "INVOICE_SPLIT",
+              actionLabel: `Faktura ${splitTarget.invoiceNumber ?? splitTarget.id} rozdělena`,
+              entityType: "invoice",
+              entityId: splitTarget.id,
+              entityName: String(splitTarget.invoiceNumber ?? splitTarget.id),
+              sourceModule: "invoices",
+              metadata: {
+                organizationId: companyId,
+                jobId,
+                originalInvoiceId: splitTarget.id,
+                baseInvoiceId: result.baseInvoiceId,
+                extrasInvoiceId: result.extrasInvoiceId,
+                baseInvoiceNumber: result.baseInvoiceNumber,
+                extrasInvoiceNumber: result.extrasInvoiceNumber,
+                userId: user.uid,
+              },
+            });
+            setSplitTarget(null);
+          }}
+        />
+      ) : null}
     </>
   );
 }
