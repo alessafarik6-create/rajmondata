@@ -124,10 +124,23 @@ export default function PortalNotificationsPage() {
     [items, filter]
   );
 
-  const pushActive =
-    pushDiagnostics.localDevicePushActive &&
+  const needsPushRestore =
+    pushSupported &&
     pushDiagnostics.permission === "granted" &&
-    pushDiagnostics.vapidConfigured;
+    pushDiagnostics.vapidConfigured &&
+    !pushDiagnostics.localDevicePushActive;
+
+  const needsServerResync =
+    pushSupported &&
+    pushDiagnostics.permission === "granted" &&
+    pushDiagnostics.localDevicePushActive &&
+    !pushDiagnostics.serverRegisteredThisDevice;
+
+  const pushActive =
+    pushDiagnostics.permission === "granted" &&
+    pushDiagnostics.vapidConfigured &&
+    pushDiagnostics.localDevicePushActive &&
+    pushDiagnostics.serverRegisteredThisDevice;
 
   const handleOpen = useCallback(
     async (row: PortalNotificationItem) => {
@@ -166,10 +179,10 @@ export default function PortalNotificationsPage() {
     }
   };
 
-  const onTestPush = async () => {
+  const onTestPush = async (scope: "current" | "all") => {
     setTestBusy(true);
     try {
-      const r = await sendTestPush();
+      const r = await sendTestPush(scope);
       toast({
         title: r.ok ? "Test odeslán" : "Test selhal",
         description: r.message,
@@ -190,10 +203,12 @@ export default function PortalNotificationsPage() {
         <CardDescription className={belowLg ? "text-slate-400" : undefined}>
           {pushSupported
             ? pushActive
-              ? "Push oznámení: Aktivní"
-              : pushDiagnostics.vapidConfigured
-                ? "Push: Nepovoleno — povolte tlačítkem níže."
-                : "Administrátorská konfigurace push oznámení není dokončena (VAPID klíče)."
+              ? "Push oznámení: Aktivní na tomto zařízení i na serveru."
+              : needsServerResync
+                ? "Oprávnění je uděleno, ale server nemá subscription tohoto zařízení — obnovte push."
+                : pushDiagnostics.vapidConfigured
+                  ? "Push: Nepovoleno — povolte tlačítkem níže."
+                  : "Administrátorská konfigurace push oznámení není dokončena (VAPID klíče)."
             : "Web Push není v tomto prohlížeči podporován."}
         </CardDescription>
       </CardHeader>
@@ -209,33 +224,60 @@ export default function PortalNotificationsPage() {
             Zařízení: {pushDiagnostics.deviceLabel}
           </span>
         </div>
+        {pushDiagnostics.activeDeviceCount > 0 ? (
+          <p className={cn("text-muted-foreground", belowLg && "text-slate-400")}>
+            Aktivní zařízení (server): {pushDiagnostics.activeDeviceCount}
+          </p>
+        ) : null}
+        {pushDiagnostics.devices.length > 0 ? (
+          <ul className={cn("space-y-1 text-xs", belowLg ? "text-slate-400" : "text-muted-foreground")}>
+            {pushDiagnostics.devices.map((d) => (
+              <li key={d.id}>
+                {d.isCurrentDevice ? "● " : "○ "}
+                {d.label}
+                {d.isCurrentDevice ? " (toto zařízení)" : ""}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {pushDiagnostics.iosHomeScreenHint ? (
           <p className="text-amber-700 dark:text-amber-400 text-xs">
             iOS: přidejte Rajmondata na Domovskou obrazovku a povolte oznámení (iOS 16.4+).
           </p>
         ) : null}
         <div className="flex flex-wrap gap-2">
-          {pushSupported && !pushActive ? (
+          {pushSupported && (needsPushRestore || needsServerResync || !pushActive) ? (
             <Button type="button" size="sm" disabled={pushBusy} onClick={() => void onEnablePush()}>
               {pushBusy ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-              Povolit push
+              {needsServerResync ? "Obnovit push oznámení" : "Povolit push"}
             </Button>
           ) : null}
           {pushSupported && pushDiagnostics.vapidConfigured ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={testBusy}
-              onClick={() => void onTestPush()}
-            >
-              {testBusy ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-1" />
-              ) : (
-                <Send className="h-4 w-4 mr-1" />
-              )}
-              Poslat testovací oznámení
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={testBusy}
+                onClick={() => void onTestPush("current")}
+              >
+                {testBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                ) : (
+                  <Send className="h-4 w-4 mr-1" />
+                )}
+                Poslat testovací oznámení
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={testBusy}
+                onClick={() => void onTestPush("all")}
+              >
+                Poslat test na všechna moje zařízení
+              </Button>
+            </>
           ) : null}
           <Button type="button" variant="ghost" size="sm" onClick={() => void refreshPushDiagnostics()}>
             Obnovit stav

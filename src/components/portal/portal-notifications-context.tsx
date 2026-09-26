@@ -58,12 +58,23 @@ export type PushRegisterResult = {
   message: string;
 };
 
+export type PushDeviceSummary = {
+  id: string;
+  label: string;
+  platform: string;
+  deviceName: string;
+  isCurrentDevice: boolean;
+};
+
 export type PushDiagnostics = {
   vapidConfigured: boolean;
   subscriptionActive: boolean;
   /** Platná subscription v PushManager na tomto zařízení. */
   localDevicePushActive: boolean;
+  /** Server má uloženou subscription pro aktuální endpoint. */
+  serverRegisteredThisDevice: boolean;
   activeDeviceCount: number;
+  devices: PushDeviceSummary[];
   lastPushError: string | null;
   permission: NotificationPermission | "unsupported";
   deviceLabel: string;
@@ -78,7 +89,7 @@ type PortalNotificationsContextValue = {
   markAllRead: () => Promise<void>;
   clearOsBadge: () => void;
   registerWebPush: () => Promise<PushRegisterResult>;
-  sendTestPush: () => Promise<PushRegisterResult>;
+  sendTestPush: (scope?: "current" | "all") => Promise<PushRegisterResult>;
   refreshPushDiagnostics: () => Promise<void>;
   pushSupported: boolean;
   pushDiagnostics: PushDiagnostics;
@@ -88,7 +99,9 @@ const defaultDiagnostics: PushDiagnostics = {
   vapidConfigured: false,
   subscriptionActive: false,
   localDevicePushActive: false,
+  serverRegisteredThisDevice: false,
   activeDeviceCount: 0,
+  devices: [],
   lastPushError: null,
   permission: "unsupported",
   deviceLabel: "—",
@@ -176,10 +189,25 @@ export function PortalNotificationsProvider({ children }: { children: React.Reac
     let permission: NotificationPermission | "unsupported" =
       typeof Notification !== "undefined" ? Notification.permission : "unsupported";
     const localDevicePushActive = await probeLocalPushSubscription();
+    let currentEndpoint: string | null = null;
+    try {
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        currentEndpoint = sub?.endpoint ?? null;
+      }
+    } catch {
+      currentEndpoint = null;
+    }
     try {
       const token = await user.getIdToken();
       const res = await fetch("/api/notifications/push-status", {
-        headers: { Authorization: `Bearer ${token}` },
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ currentEndpoint }),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
@@ -187,7 +215,9 @@ export function PortalNotificationsProvider({ children }: { children: React.Reac
           vapidConfigured: Boolean(data.vapidConfigured && data.vapidValid),
           subscriptionActive: Boolean(data.subscriptionActive),
           localDevicePushActive,
+          serverRegisteredThisDevice: Boolean(data.serverRegisteredThisDevice),
           activeDeviceCount: Number(data.activeDeviceCount ?? 0),
+          devices: Array.isArray(data.devices) ? data.devices : [],
           lastPushError: data.lastPushError ?? null,
           permission,
           deviceLabel: `${platform.deviceName} / ${platform.platform}`,
@@ -202,6 +232,7 @@ export function PortalNotificationsProvider({ children }: { children: React.Reac
       ...d,
       permission,
       localDevicePushActive,
+      serverRegisteredThisDevice: false,
       deviceLabel: `${platform.deviceName} / ${platform.platform}`,
       iosHomeScreenHint: platform.iosHomeScreenHint,
     }));
@@ -315,24 +346,40 @@ export function PortalNotificationsProvider({ children }: { children: React.Reac
     return { ok: true, message: "Push oznámení jsou aktivní na tomto zařízení." };
   }, [user, refreshPushDiagnostics]);
 
-  const sendTestPush = useCallback(async (): Promise<PushRegisterResult> => {
-    if (!user) return { ok: false, message: "Nejste přihlášeni." };
-    const token = await user.getIdToken();
-    const res = await fetch("/api/notifications/test-push", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({}),
-    });
-    const data = await res.json();
-    await refreshPushDiagnostics();
-    if (!res.ok || !data.ok) {
-      return { ok: false, message: data.error || data.message || "Test selhal." };
-    }
-    return { ok: true, message: data.message || "Test odeslán." };
-  }, [user, refreshPushDiagnostics]);
+  const sendTestPush = useCallback(
+    async (scope: "current" | "all" = "current"): Promise<PushRegisterResult> => {
+      if (!user) return { ok: false, message: "Nejste přihlášeni." };
+      let currentEndpoint: string | null = null;
+      try {
+        if ("serviceWorker" in navigator) {
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.getSubscription();
+          currentEndpoint = sub?.endpoint ?? null;
+        }
+      } catch {
+        currentEndpoint = null;
+      }
+      const token = await user.getIdToken();
+      const res = await fetch("/api/notifications/test-push", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          scope,
+          currentEndpoint: scope === "current" ? currentEndpoint : undefined,
+        }),
+      });
+      const data = await res.json();
+      await refreshPushDiagnostics();
+      if (!res.ok || !data.ok) {
+        return { ok: false, message: data.error || data.message || "Test selhal." };
+      }
+      return { ok: true, message: data.message || "Test odeslán." };
+    },
+    [user, refreshPushDiagnostics]
+  );
 
   const value = useMemo<PortalNotificationsContextValue>(
     () => ({

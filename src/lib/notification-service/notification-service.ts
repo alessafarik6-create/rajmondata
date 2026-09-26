@@ -6,6 +6,10 @@ import { createHash } from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import webpush from "web-push";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import {
+  pushSubscriptionStorageDocId,
+  sendPushToSubscriptions,
+} from "@/lib/notification-service/push-delivery";
 import type { PortalNotificationCategory } from "@/lib/portal-notifications-types";
 import {
   mergeNotificationPreferences,
@@ -43,9 +47,7 @@ export function ensureWebPushVapid(): boolean {
   }
 }
 
-export function pushSubscriptionStorageDocId(endpoint: string): string {
-  return createHash("sha256").update(endpoint).digest("hex").slice(0, 40);
-}
+export { pushSubscriptionStorageDocId };
 
 function defaultCategory(type: CreateNotificationInput["type"]): PortalNotificationCategory {
   if (type.startsWith("JOB") || type === "DOCUMENT_APPROVED") return "job";
@@ -162,88 +164,47 @@ export async function createNotification(
   let pushAttempted = 0;
   let pushOk = 0;
 
-  if (!shouldSendPushForNotification(prefs, input)) {
+  if (input.skipPush) {
+    return { inboxId: inboxRef.id, skippedDuplicate: false, pushAttempted: 0, pushOk: 0 };
+  }
+
+  const allowPush = input.forcePush || shouldSendPushForNotification(prefs, input);
+  if (!allowPush) {
+    console.log("[PUSH] skipped preferences", {
+      userId: input.recipientUserId,
+      organizationId: input.organizationId,
+      type: input.type,
+    });
     return { inboxId: inboxRef.id, skippedDuplicate: false, pushAttempted: 0, pushOk: 0 };
   }
 
   const canPush = ensureWebPushVapid();
   if (!canPush) {
+    console.warn("[PUSH] skipped VAPID not configured", { userId: input.recipientUserId });
     return { inboxId: inboxRef.id, skippedDuplicate: false, pushAttempted: 0, pushOk: 0 };
   }
 
-  const pushPayload = JSON.stringify({
-    title: input.title,
-    body: input.body,
-    url: linkUrl,
-    tag: input.eventId ? `evt-${dedupId}` : `inbox-${inboxRef.id}`,
-    priority,
-    eventType: input.type,
+  const batch = await sendPushToSubscriptions({
+    db,
+    recipientUserId: input.recipientUserId,
+    organizationId: input.organizationId,
+    payload: {
+      title: input.title,
+      body: input.body,
+      url: linkUrl,
+      tag: input.eventId ? `evt-${dedupId}` : `inbox-${inboxRef.id}`,
+      priority,
+      eventType: input.type,
+    },
   });
-
-  const subsSnap = await db
-    .collection("users")
-    .doc(input.recipientUserId)
-    .collection("pushSubscriptions")
-    .where("isActive", "==", true)
-    .get()
-    .catch(async () =>
-      db.collection("users").doc(input.recipientUserId).collection("pushSubscriptions").get()
-    );
-
-  for (const doc of subsSnap.docs) {
-    const data = doc.data() as {
-      endpoint?: string;
-      keys?: { p256dh?: string; auth?: string };
-      isActive?: boolean;
-      failedCount?: number;
-    };
-    if (data.isActive === false || (data as { enabled?: boolean }).enabled === false) continue;
-    const endpoint = data.endpoint;
-    if (!endpoint || !data.keys?.p256dh || !data.keys?.auth) {
-      await doc.ref.delete().catch(() => {});
-      continue;
-    }
-    pushAttempted += 1;
-    try {
-      await webpush.sendNotification(
-        {
-          endpoint,
-          keys: { p256dh: data.keys.p256dh, auth: data.keys.auth },
-        },
-        pushPayload,
-        { TTL: priority === "URGENT" ? 3600 : 86400, urgency: priority === "URGENT" ? "high" : "normal" }
-      );
-      pushOk += 1;
-      await doc.ref.update({
-        lastUsedAt: FieldValue.serverTimestamp(),
-        failedCount: 0,
-        lastPushError: null,
-      });
-    } catch (err: unknown) {
-      const status = (err as { statusCode?: number })?.statusCode;
-      const failedCount = Number(data.failedCount ?? 0) + 1;
-      if (status === 404 || status === 410) {
-        await doc.ref.update({ isActive: false, deactivatedAt: FieldValue.serverTimestamp() }).catch(() =>
-          doc.ref.delete()
-        );
-      } else if (failedCount >= 5) {
-        await doc.ref.update({
-          isActive: false,
-          failedCount,
-          lastPushError: String((err as Error)?.message ?? status ?? "push_failed").slice(0, 500),
-        });
-      } else {
-        await doc.ref.update({
-          failedCount,
-          lastPushError: String((err as Error)?.message ?? status ?? "push_failed").slice(0, 500),
-        });
-      }
-      console.warn("[notification-service] push failed", status, endpoint);
-    }
-  }
+  pushAttempted = batch.pushAttempted;
+  pushOk = batch.pushOk;
 
   return { inboxId: inboxRef.id, skippedDuplicate: false, pushAttempted, pushOk };
 }
+
+/** Centrální vstup — in-app + push (+ deduplikace). */
+export const notify = createNotification;
 
 /** Zpětná kompatibilita se starým API. */
 export async function emitPortalNotification(input: {

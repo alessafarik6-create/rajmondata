@@ -11,8 +11,11 @@ export function mergeNotificationPreferences(
 ): NotificationPreferenceGroups {
   const d = DEFAULT_NOTIFICATION_PREFERENCES;
   if (!raw || typeof raw !== "object") return { ...d };
-  const b = (k: keyof NotificationPreferenceGroups, fallback: boolean) =>
-    typeof raw[k] === "boolean" ? (raw[k] as boolean) : fallback;
+  /** Klíče chybějící v DB = uživatel je nikdy neukládal → povolit (zpětná kompatibilita po 5eb6bcb). */
+  const b = (k: keyof NotificationPreferenceGroups, fallback: boolean) => {
+    if (!(k in raw)) return fallback;
+    return typeof raw[k] === "boolean" ? (raw[k] as boolean) : fallback;
+  };
   const s = (k: "quietHoursStart" | "quietHoursEnd", fallback: string) =>
     typeof raw[k] === "string" && raw[k].trim() ? String(raw[k]).trim() : fallback;
   return {
@@ -100,7 +103,9 @@ export function shouldSendPushForNotification(
   const priority = input.priority ?? "NORMAL";
   if (priority === "URGENT" && !prefs.urgent) return false;
   const group = preferenceGroupForEvent(input.type);
-  if (group && !prefs[group]) return false;
+  if (group && !prefs[group]) {
+    return false;
+  }
   if (isWithinQuietHours(prefs, priority)) return false;
   return true;
 }
