@@ -10,6 +10,8 @@ import {
 
 const OG_IMAGE = `${SITE_URL}/pwa-512.png`;
 
+export const dynamic = "force-static";
+
 export const metadata: Metadata = {
   title: HOME_SEO_TITLE,
   description: HOME_SEO_DESCRIPTION,

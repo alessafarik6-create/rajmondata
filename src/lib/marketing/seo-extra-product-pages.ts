@@ -130,4 +130,27 @@ export const SEO_EXTRA_PRODUCT_PAGES = [
     ],
     relatedSlugs: ["rizeni-zakazek", "ai-pro-firmy", "dochazka-zamestnancu"],
   },
+  {
+    slug: "kamerovy-system",
+    title: "Kamerový systém a monitoring provozu | RAJMONDATA",
+    description:
+      "Propojení kamer (např. Hikvision) s firemním portálem — živý náhled, události a kontext zakázky podle nastavení organizace.",
+    h1: "Kamerový systém v kontextu firmy",
+    kind: "feature",
+    breadcrumbLabel: "Kamerový systém",
+    intro:
+      "Modul kamer doplňuje řízení firmy o vizuální dohled nad provozem, skladem nebo montáží. Integrace závisí na aktivním modulu a konfiguraci — v portálu vidíte kamery a události, ke kterým máte oprávnění.",
+    blocks: [
+      {
+        type: "ul",
+        items: [
+          "Evidence kamer a přístup podle rolí",
+          "Živý náhled a historie událostí (podle integrace)",
+          "Propojení s provozem firmy v jednom přihlášení",
+          "Bezpečný přístup pouze pro oprávněné uživatele organizace",
+        ],
+      },
+    ],
+    relatedSlugs: ["rizeni-zakazek", "vozovy-park", "firemni-portal"],
+  },
 ];

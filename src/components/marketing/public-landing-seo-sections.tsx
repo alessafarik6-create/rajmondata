@@ -158,6 +158,10 @@ function ProductModuleLinks() {
     { href: "/rizeni-vyroby", label: "Řízení výroby" },
     { href: "/skladove-hospodarstvi", label: "Skladové hospodářství" },
     { href: "/vozovy-park", label: "Vozový park" },
+    { href: "/kamerovy-system", label: "Kamerový systém" },
+    { href: "/komunikace-se-zakazniky", label: "Komunikace se zákazníky" },
+    { href: "/ai-smlouvy-a-dodatky", label: "AI smlouvy a dodatky" },
+    { href: "/prace-a-mzdy", label: "Práce a mzdy" },
     { href: "/firemni-portal", label: "Firemní portál" },
   ];
   return (

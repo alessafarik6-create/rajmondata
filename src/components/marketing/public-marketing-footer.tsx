@@ -8,9 +8,12 @@ const productLinks = [
   { href: "/poptavky-a-nabidky", label: "Poptávky a nabídky" },
   { href: "/email-pro-firmy", label: "E-mail" },
   { href: "/fakturace-a-doklady", label: "Fakturace" },
+  { href: "/komunikace-se-zakazniky", label: "Komunikace se zákazníky" },
   { href: "/rizeni-vyroby", label: "Výroba" },
   { href: "/skladove-hospodarstvi", label: "Sklad" },
   { href: "/vozovy-park", label: "Vozový park" },
+  { href: "/kamerovy-system", label: "Kamerový systém" },
+  { href: "/firemni-portal", label: "Firemní portál" },
 ];
 
 const solutionLinks = [

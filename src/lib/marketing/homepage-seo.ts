@@ -1,16 +1,16 @@
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
 export const HOME_SEO_TITLE =
-  "Řízení zakázek, docházka, fakturace a AI pro firmy | RAJMONDATA";
+  "RAJMONDATA | Firemní systém pro řízení zakázek s AI";
 
 export const HOME_SEO_DESCRIPTION =
-  "RAJMONDATA je podnikový portál pro řízení zakázek, zaměstnanců, docházky, e-mailů, poptávek, nabídek, dokumentů, výroby, fakturace a firemních procesů s podporou AI.";
+  "RAJMONDATA je podnikový informační systém s AI: zakázky, CRM, poptávky, nabídky, e-mail, dokumenty, smlouvy, fakturace, docházka, výroba, sklad, vozový park a firemní komunikace v jednom portálu.";
 
 export const HOME_H1 =
-  "Firemní portál pro řízení zakázek, zaměstnanců a celé firmy s podporou AI";
+  "RAJMONDATA – firemní systém pro řízení zakázek s podporou AI";
 
 export const HOME_HERO_LEAD =
-  "RAJMONDATA spojuje poptávky, zákazníky, nabídky, zakázky, zaměření, dokumenty, smlouvy, fakturaci, docházku, zaměstnance, výrobu, sklad a komunikaci do jednoho systému.";
+  "Zakázky, zaměstnanci, docházka, nabídky, fakturace, dokumenty, komunikace a AI na jednom místě — pro firmy, které vedou zakázky na míru.";
 
 export const HOME_HERO_AI =
   "AI pomáhá rychle vytvářet nabídky, smlouvy a dodatky, hledat informace a orientovat se v celé firmě.";
@@ -100,6 +100,7 @@ export function buildHomeJsonLd(siteUrl: string) {
       "@id": orgId,
       name: PLATFORM_NAME,
       url: siteUrl,
+      logo: `${siteUrl}/pwa-512.png`,
       description: HOME_SEO_DESCRIPTION,
     },
     {

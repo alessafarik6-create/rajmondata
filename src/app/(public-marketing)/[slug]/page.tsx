@@ -17,6 +17,8 @@ import { buildMarketingPageJsonLd } from "@/lib/marketing/marketing-page-jsonld"
 
 type Props = { params: Promise<{ slug: string }> };
 
+export const dynamic = "force-static";
+
 export async function generateStaticParams() {
   return getAllMarketingSlugs().map((slug) => ({ slug }));
 }

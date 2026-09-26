@@ -32,9 +32,19 @@ function withNoIndexHeaders(response: NextResponse): NextResponse {
 
 export async function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
+  const url = request.nextUrl.clone();
+
   if (host.toLowerCase().startsWith("www.")) {
-    const url = request.nextUrl.clone();
     url.host = host.slice(4);
+    return NextResponse.redirect(url, 308);
+  }
+
+  const proto = request.headers.get("x-forwarded-proto");
+  if (
+    proto === "http" &&
+    (host.toLowerCase() === "rajmondata.cz" || host.toLowerCase().endsWith(".rajmondata.cz"))
+  ) {
+    url.protocol = "https:";
     return NextResponse.redirect(url, 308);
   }
 

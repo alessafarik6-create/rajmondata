@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "test:public-seo": "npx --yes tsx scripts/test-public-seo-audit.ts",
     "test:payroll-adjustment": "npx --yes tsx src/lib/payroll-day-adjustment.test.ts",
     "test:manual-attendance": "npx --yes tsx src/lib/manual-attendance-payout.test.ts",
     "test:email-mailbox-access": "npx --yes tsx src/lib/email-mailbox/account-access.test.ts",
