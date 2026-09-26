@@ -664,6 +664,38 @@ function costCategoryFilterLabelCs(filter: string): string {
   }
 }
 
+function documentMatchesSourceOriginFilter(
+  row: CompanyDocumentRow,
+  filter: string
+): boolean {
+  if (filter === "__all__") return true;
+  const st = String(row.sourceType ?? "").toLowerCase();
+  const src = String(row.source ?? "").toLowerCase();
+  if (filter === "email") return st === "email" || src.includes("email");
+  if (filter === "chat") return st === "chat" || src.includes("chat");
+  if (filter === "upload") {
+    return (
+      st === "upload" ||
+      src === "manual" ||
+      (!st && !src.includes("email") && !src.includes("chat"))
+    );
+  }
+  return true;
+}
+
+function documentMatchesPlacementFilter(
+  row: CompanyDocumentRow,
+  filter: string
+): boolean {
+  if (filter === "__all__") return true;
+  const at = row.assignmentType;
+  if (filter === "job") return at === "job_cost" || Boolean(documentJobLinkId(row));
+  if (filter === "overhead") return at === "overhead";
+  if (filter === "company") return at === "company";
+  if (filter === "unassigned") return documentShowsAsPendingAssignment(row);
+  return true;
+}
+
 function documentRowMoneyCzkParts(row: CompanyDocumentRow): {
   netCzk: number;
   vatCzk: number;
@@ -5269,6 +5301,8 @@ function DocumentTableReceived({
   const [jobAssignmentFilter, setJobAssignmentFilter] = useState<
     "all" | "assigned" | "unassigned"
   >("all");
+  const [sourceOriginFilter, setSourceOriginFilter] = useState("__all__");
+  const [placementFilter, setPlacementFilter] = useState("__all__");
   const [docTypeFilter, setDocTypeFilter] = useState<string>("__all__");
   const [typeFilter, setTypeFilter] = useState<string>("__all__");
   const [dateFrom, setDateFrom] = useState("");
@@ -5439,6 +5473,14 @@ function DocumentTableReceived({
         companyDocumentMatchesJobFilterRow(d, jobFilter)
       );
     }
+    if (sourceOriginFilter !== "__all__") {
+      list = list.filter((d) =>
+        documentMatchesSourceOriginFilter(d, sourceOriginFilter)
+      );
+    }
+    if (placementFilter !== "__all__") {
+      list = list.filter((d) => documentMatchesPlacementFilter(d, placementFilter));
+    }
     if (docTypeFilter !== "__all__") {
       list = list.filter((d) => {
         if (docTypeFilter === "delivery_note") return isDeliveryNote(d);
@@ -5515,6 +5557,8 @@ function DocumentTableReceived({
     data,
     jobFilter,
     jobAssignmentFilter,
+    sourceOriginFilter,
+    placementFilter,
     docTypeFilter,
     typeFilter,
     paymentFilter,
@@ -5575,7 +5619,36 @@ function DocumentTableReceived({
             onChange={(e) => onSearchChange(e.target.value)}
           />
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-6 lg:gap-x-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 lg:gap-x-3">
+          <div className="space-y-1 min-w-0">
+            <Label className="text-[11px] font-medium text-gray-800">Zdroj</Label>
+            <Select value={sourceOriginFilter} onValueChange={setSourceOriginFilter}>
+              <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Všechny zdroje</SelectItem>
+                <SelectItem value="email">E-mail</SelectItem>
+                <SelectItem value="chat">Chat</SelectItem>
+                <SelectItem value="upload">Ruční upload</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1 min-w-0">
+            <Label className="text-[11px] font-medium text-gray-800">Zařazení</Label>
+            <Select value={placementFilter} onValueChange={setPlacementFilter}>
+              <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Vše</SelectItem>
+                <SelectItem value="job">Zakázka</SelectItem>
+                <SelectItem value="overhead">Režie</SelectItem>
+                <SelectItem value="company">Firma</SelectItem>
+                <SelectItem value="unassigned">Nezařazené</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div className="space-y-1 min-w-0">
             <Label className="text-[11px] font-medium text-gray-800">
               Zařazení dokladu

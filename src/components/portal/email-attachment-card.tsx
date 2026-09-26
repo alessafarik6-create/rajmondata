@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { FileSpreadsheet, FileArchive, File, ImageIcon, Loader2 } from "lucide-react";
+import { FileSpreadsheet, FileArchive, File, ImageIcon, Loader2, Check } from "lucide-react";
 import {
   attachmentKindLabel,
   formatAttachmentSizeBytes,
@@ -22,7 +22,9 @@ type Props = {
   messageId: string;
   canWrite: boolean;
   busy?: boolean;
-  onAssign?: () => void;
+  documentId?: string | null;
+  documentOpenHref?: string | null;
+  onClassifyDocument?: () => void;
   onOpen?: () => void;
   onDownload?: () => void;
   getPdfBlobUrl?: () => Promise<string | null>;
@@ -36,6 +38,9 @@ export function EmailAttachmentCard(props: Props) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [thumbError, setThumbError] = useState(false);
   const [thumbLoading, setThumbLoading] = useState(false);
+
+  const hasDocument = Boolean(props.documentId?.trim());
+  const assignmentLabel = a.documentAssignmentLabel?.trim();
 
   useEffect(() => {
     if (!isPdf || disabled || !props.getPdfBlobUrl) return;
@@ -116,9 +121,17 @@ export function EmailAttachmentCard(props: Props) {
         {a.aiSummary ? (
           <p className="text-xs text-primary/90 mt-1 line-clamp-3">{a.aiSummary}</p>
         ) : null}
-        {linkedLabel ? (
+        {hasDocument && assignmentLabel ? (
+          <p className="mt-1 flex items-center gap-1 text-xs text-emerald-800 font-medium">
+            <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {assignmentLabel}
+          </p>
+        ) : hasDocument ? (
+          <p className="mt-1 text-xs text-emerald-800 font-medium">Doklad zařazen</p>
+        ) : null}
+        {linkedLabel && !hasDocument ? (
           <div className="mt-1 space-y-0.5 text-xs text-emerald-800">
-            <p className="font-medium">Přiřazeno: {linkedLabel}</p>
+            <p className="font-medium">V médiích zakázky: {linkedLabel}</p>
             {folderName ? <p>Složka: {folderName}</p> : null}
           </div>
         ) : null}
@@ -130,31 +143,32 @@ export function EmailAttachmentCard(props: Props) {
         <Button size="sm" variant="outline" disabled={disabled} onClick={() => props.onDownload?.()}>
           Stáhnout
         </Button>
-        {linkedLabel && jobMediaUrl ? (
-          <>
-            <Button size="sm" variant="outline" asChild>
-              <Link href={jobMediaUrl}>Otevřít složku</Link>
-            </Button>
-            <Button size="sm" variant="ghost" asChild>
-              <Link href={`/portal/jobs/${encodeURIComponent(a.linkedJobId!)}`}>Otevřít zakázku</Link>
-            </Button>
-            <Button size="sm" variant="ghost" asChild>
-              <Link href={buildPortalEmailMessageUrl(props.messageId)}>Původní e-mail</Link>
-            </Button>
-          </>
-        ) : null}
-        {props.canWrite && props.onAssign ? (
+        {hasDocument && props.documentOpenHref ? (
+          <Button size="sm" variant="secondary" asChild>
+            <Link href={props.documentOpenHref}>Otevřít doklad</Link>
+          </Button>
+        ) : props.canWrite && props.onClassifyDocument ? (
           <Button
             size="sm"
             variant="secondary"
             disabled={props.busy || disabled}
             onClick={(e) => {
               e.stopPropagation();
-              props.onAssign?.();
+              props.onClassifyDocument?.();
             }}
           >
-            {linkedLabel ? "Změnit zakázku" : "Přiřadit k zakázce"}
+            {hasDocument ? "Doklad již zařazen" : "Zařadit doklad"}
           </Button>
+        ) : null}
+        {linkedLabel && jobMediaUrl ? (
+          <>
+            <Button size="sm" variant="ghost" asChild>
+              <Link href={jobMediaUrl}>Složka zakázky</Link>
+            </Button>
+            <Button size="sm" variant="ghost" asChild>
+              <Link href={buildPortalEmailMessageUrl(props.messageId)}>Původní e-mail</Link>
+            </Button>
+          </>
         ) : null}
       </div>
     </div>

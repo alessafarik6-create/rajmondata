@@ -456,6 +456,7 @@ export function EmailPortalDetailPanel(props: Props) {
         busy={props.busy}
         getToken={props.getToken}
         onLinked={props.onAttachmentsLinked}
+        suggestedJobIdFromEmail={d.suggestedJobId ?? d.jobId ?? null}
       />
 
       {props.timeline.length > 0 ? (

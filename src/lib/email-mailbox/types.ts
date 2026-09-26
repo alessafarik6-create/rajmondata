@@ -95,7 +95,19 @@ export type EmailMessageAttachmentMeta = {
   linkedFolderName?: string | null;
   linkedJobMediaImageId?: string | null;
   linkedDocumentId?: string | null;
+  createdDocumentId?: string | null;
+  createdDocumentType?: string | null;
+  documentAssignmentLabel?: string | null;
   documentCategory?: string | null;
+  aiDocumentAnalysisId?: string | null;
+  analysisStatus?:
+    | "idle"
+    | "analyzing"
+    | "recognized"
+    | "needs_review"
+    | "saved"
+    | "error"
+    | null;
   aiSummary?: string | null;
   aiSuggestedAction?: string | null;
 };
