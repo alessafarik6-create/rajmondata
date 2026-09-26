@@ -10,7 +10,8 @@ import {
 } from "@/components/ui/dialog";
 import { EmailAttachmentCard } from "@/components/portal/email-attachment-card";
 import { EmailPdfViewerDialog } from "@/components/portal/email-pdf-viewer-dialog";
-import { EmailDocumentFromAttachmentDialog } from "@/components/portal/email-document-from-attachment-dialog";
+import { EmailAssignAttachmentDialog } from "@/components/portal/email-document-from-attachment-dialog";
+import { EmailBulkAssignAttachmentsDialog } from "@/components/portal/email-bulk-assign-attachments-dialog";
 import {
   userVisibleAttachments,
   isPreviewablePdf,
@@ -44,7 +45,9 @@ export function EmailAttachmentsSection(props: Props) {
   );
 
   const [classifyAttId, setClassifyAttId] = useState<string | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [resolvedDocs, setResolvedDocs] = useState<Record<string, string>>({});
+  const [resolvedOpenHref, setResolvedOpenHref] = useState<Record<string, string>>({});
 
   const [viewerBlobUrl, setViewerBlobUrl] = useState<string | null>(null);
   const [viewerTitle, setViewerTitle] = useState("");
@@ -177,13 +180,7 @@ export function EmailAttachmentsSection(props: Props) {
             size="sm"
             variant="outline"
             disabled={props.busy}
-            onClick={() =>
-              toast({
-                title: "Zařazení po jednotlivých přílohách",
-                description:
-                  "U každé přílohy zvolte „Zařadit doklad“ — faktura může jít do režie, jiná příloha k zakázce.",
-              })
-            }
+            onClick={() => setBulkOpen(true)}
           >
             Zařadit všechny přílohy
           </Button>
@@ -212,18 +209,19 @@ export function EmailAttachmentsSection(props: Props) {
                   ? () => getPdfBlobUrlFor(att.id)
                   : undefined
               }
-              onClassifyDocument={
-                props.canWrite && docsAccess.canWrite
-                  ? () => setClassifyAttId(att.id)
-                  : undefined
+              fileOpenHref={
+                att.linkedJobId
+                  ? `/portal/jobs/${encodeURIComponent(att.linkedJobId)}?mediaSection=1`
+                  : null
               }
+              onClassifyDocument={props.canWrite ? () => setClassifyAttId(att.id) : undefined}
             />
           );
         })}
       </div>
 
       {classifyAttachment ? (
-        <EmailDocumentFromAttachmentDialog
+        <EmailAssignAttachmentDialog
           open={Boolean(classifyAttId)}
           onOpenChange={(o) => {
             if (!o) setClassifyAttId(null);
@@ -233,15 +231,32 @@ export function EmailAttachmentsSection(props: Props) {
           attachment={classifyAttachment}
           getToken={props.getToken}
           canWriteDocuments={docsAccess.canWrite}
+          canWriteEmail={props.canWrite}
           suggestedJobIdFromEmail={props.suggestedJobIdFromEmail}
-          onSaved={(documentId, label) => {
-            setResolvedDocs((prev) => ({ ...prev, [classifyAttachment.id]: documentId }));
+          onSaved={({ documentId, openHref }) => {
+            if (documentId) {
+              setResolvedDocs((prev) => ({ ...prev, [classifyAttachment.id]: documentId }));
+            }
+            if (openHref) {
+              setResolvedOpenHref((prev) => ({ ...prev, [classifyAttachment.id]: openHref }));
+            }
             setClassifyAttId(null);
             props.onLinked?.();
-            void label;
           }}
         />
       ) : null}
+
+      <EmailBulkAssignAttachmentsDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        companyId={props.companyId}
+        messageId={props.messageId}
+        attachments={visible}
+        getToken={props.getToken}
+        canWriteDocuments={docsAccess.canWrite}
+        canWriteEmail={props.canWrite}
+        onDone={() => props.onLinked?.()}
+      />
 
       <EmailPdfViewerDialog
         open={pdfViewerOpen}

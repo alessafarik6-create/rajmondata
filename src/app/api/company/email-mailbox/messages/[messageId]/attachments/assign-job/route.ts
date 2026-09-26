@@ -156,8 +156,36 @@ export async function POST(request: NextRequest, ctx: Ctx) {
           linkedFolderId: linked.folderId,
           linkedFolderName: linked.folderName,
           linkedJobMediaImageId: linked.imageId,
-          linkedDocumentId: linked.documentId,
+          linkedDocumentId: category === "invoice" ? linked.documentId : null,
+          createdDocumentId: category === "invoice" ? linked.documentId : null,
           documentCategory: category,
+          emailPlacement: {
+            target: "job",
+            jobId,
+            jobLabel: linked.jobLabel,
+            jobAttachmentRole:
+              category === "invoice"
+                ? "invoice"
+                : category === "drawing"
+                  ? "drawing"
+                  : category === "photo"
+                    ? "photo"
+                    : category === "contract"
+                      ? "contract"
+                      : category === "order"
+                        ? "order"
+                        : "other",
+            contentKind:
+              category === "invoice"
+                ? "ACCOUNTING_DOCUMENT"
+                : category === "drawing"
+                  ? "DRAWING"
+                  : category === "photo"
+                    ? "PHOTO"
+                    : "OTHER",
+            accountingDocumentId: category === "invoice" ? linked.documentId : null,
+            classifiedAt: new Date().toISOString(),
+          },
         };
       }
     } catch (e) {

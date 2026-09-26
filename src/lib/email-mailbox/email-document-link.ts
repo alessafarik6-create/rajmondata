@@ -29,12 +29,33 @@ export function resolveEmailDocumentIdFromAttachment(
   messageId: string,
   att: EmailMessageAttachmentMeta
 ): string | null {
+  const deterministic =
+    messageId && att.id
+      ? companyDocumentIdForEmailAttachmentClient(messageId, att.id)
+      : null;
+  const fromPlacement = att.emailPlacement?.accountingDocumentId?.trim();
+  if (fromPlacement) return fromPlacement;
   const explicit =
     String(att.linkedDocumentId ?? "").trim() ||
     String(att.createdDocumentId ?? "").trim();
-  if (explicit) return explicit;
-  if (messageId && att.id) {
-    return companyDocumentIdForEmailAttachmentClient(messageId, att.id);
+  if (explicit) {
+    const kind = att.emailPlacement?.contentKind;
+    if (kind && kind !== "ACCOUNTING_DOCUMENT") return null;
+    if (
+      att.emailPlacement?.target === "job" &&
+      att.emailPlacement.jobAttachmentRole &&
+      att.emailPlacement.jobAttachmentRole !== "invoice"
+    ) {
+      return null;
+    }
+    if (
+      !att.emailPlacement?.target &&
+      att.documentCategory &&
+      !["invoice"].includes(att.documentCategory)
+    ) {
+      return null;
+    }
+    return explicit;
   }
   return null;
 }

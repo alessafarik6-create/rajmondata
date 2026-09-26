@@ -16,6 +16,10 @@ import {
   buildJobEmailAttachmentMediaUrl,
   buildPortalEmailMessageUrl,
 } from "@/lib/email-mailbox/email-attachment-job-ui-links";
+import {
+  attachmentHasPlacement,
+  formatAttachmentPlacementStatus,
+} from "@/lib/email-mailbox/email-attachment-classification";
 
 type Props = {
   attachment: EmailMessageAttachmentMeta;
@@ -24,6 +28,7 @@ type Props = {
   busy?: boolean;
   documentId?: string | null;
   documentOpenHref?: string | null;
+  fileOpenHref?: string | null;
   onClassifyDocument?: () => void;
   onOpen?: () => void;
   onDownload?: () => void;
@@ -39,8 +44,9 @@ export function EmailAttachmentCard(props: Props) {
   const [thumbError, setThumbError] = useState(false);
   const [thumbLoading, setThumbLoading] = useState(false);
 
-  const hasDocument = Boolean(props.documentId?.trim());
-  const assignmentLabel = a.documentAssignmentLabel?.trim();
+  const classified = attachmentHasPlacement(a);
+  const status = formatAttachmentPlacementStatus(a);
+  const hasAccountingDoc = Boolean(props.documentId?.trim() && props.documentOpenHref);
 
   useEffect(() => {
     if (!isPdf || disabled || !props.getPdfBlobUrl) return;
@@ -75,8 +81,6 @@ export function EmailAttachmentCard(props: Props) {
     };
   }, [isPdf, disabled, props.getPdfBlobUrl, a.id]);
 
-  const linkedLabel = a.linkedJobLabel?.trim() || (a.linkedJobId ? a.linkedJobId : null);
-  const folderName = a.linkedFolderName?.trim();
   const jobMediaUrl =
     a.linkedJobId && a.linkedFolderId
       ? buildJobEmailAttachmentMediaUrl(
@@ -87,6 +91,10 @@ export function EmailAttachmentCard(props: Props) {
       : a.linkedJobId
         ? `/portal/jobs/${encodeURIComponent(a.linkedJobId)}?mediaSection=1`
         : null;
+
+  const openHref = hasAccountingDoc
+    ? props.documentOpenHref
+    : props.fileOpenHref ?? jobMediaUrl;
 
   return (
     <div className="rounded-lg border p-3 space-y-2 bg-card">
@@ -121,18 +129,14 @@ export function EmailAttachmentCard(props: Props) {
         {a.aiSummary ? (
           <p className="text-xs text-primary/90 mt-1 line-clamp-3">{a.aiSummary}</p>
         ) : null}
-        {hasDocument && assignmentLabel ? (
-          <p className="mt-1 flex items-center gap-1 text-xs text-emerald-800 font-medium">
-            <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            {assignmentLabel}
-          </p>
-        ) : hasDocument ? (
-          <p className="mt-1 text-xs text-emerald-800 font-medium">Doklad zařazen</p>
-        ) : null}
-        {linkedLabel && !hasDocument ? (
-          <div className="mt-1 space-y-0.5 text-xs text-emerald-800">
-            <p className="font-medium">V médiích zakázky: {linkedLabel}</p>
-            {folderName ? <p>Složka: {folderName}</p> : null}
+        {status ? (
+          <div className="mt-1 space-y-0.5 text-xs text-emerald-800 font-medium">
+            <p className="flex items-center gap-1">
+              <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              {status.line1}
+            </p>
+            {status.line2 ? <p className="pl-5 font-normal">{status.line2}</p> : null}
+            {status.line3 ? <p className="pl-5 font-normal text-muted-foreground">{status.line3}</p> : null}
           </div>
         ) : null}
       </button>
@@ -143,11 +147,7 @@ export function EmailAttachmentCard(props: Props) {
         <Button size="sm" variant="outline" disabled={disabled} onClick={() => props.onDownload?.()}>
           Stáhnout
         </Button>
-        {hasDocument && props.documentOpenHref ? (
-          <Button size="sm" variant="secondary" asChild>
-            <Link href={props.documentOpenHref}>Otevřít doklad</Link>
-          </Button>
-        ) : props.canWrite && props.onClassifyDocument ? (
+        {props.canWrite && props.onClassifyDocument ? (
           <Button
             size="sm"
             variant="secondary"
@@ -157,18 +157,20 @@ export function EmailAttachmentCard(props: Props) {
               props.onClassifyDocument?.();
             }}
           >
-            {hasDocument ? "Doklad již zařazen" : "Zařadit doklad"}
+            {classified ? "Změnit zařazení" : "Zařadit"}
           </Button>
         ) : null}
-        {linkedLabel && jobMediaUrl ? (
-          <>
-            <Button size="sm" variant="ghost" asChild>
-              <Link href={jobMediaUrl}>Složka zakázky</Link>
-            </Button>
-            <Button size="sm" variant="ghost" asChild>
-              <Link href={buildPortalEmailMessageUrl(props.messageId)}>Původní e-mail</Link>
-            </Button>
-          </>
+        {classified && openHref ? (
+          <Button size="sm" variant="ghost" asChild>
+            <Link href={openHref}>
+              {hasAccountingDoc ? "Otevřít doklad" : "Otevřít soubor"}
+            </Link>
+          </Button>
+        ) : null}
+        {a.linkedJobId && jobMediaUrl ? (
+          <Button size="sm" variant="ghost" asChild>
+            <Link href={buildPortalEmailMessageUrl(props.messageId)}>Původní e-mail</Link>
+          </Button>
         ) : null}
       </div>
     </div>

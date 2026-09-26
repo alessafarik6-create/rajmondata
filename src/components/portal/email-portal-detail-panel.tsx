@@ -1,6 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
+import { useEmailJobSearch } from "@/hooks/use-email-job-search";
+import { useEmailCustomerSearch } from "@/hooks/use-email-customer-search";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -118,6 +121,93 @@ type Props = {
   onRajmondataRefsChange: (refs: (JobDocumentEmailAttachmentRef & { jobId: string })[]) => void;
   forwardMode?: boolean;
 };
+
+function EmailCustomerJobLinkFields(props: Pick<
+  Props,
+  | "companyId"
+  | "getToken"
+  | "busy"
+  | "assignCustomerId"
+  | "assignJobId"
+  | "shareWithJob"
+  | "onAssignCustomerId"
+  | "onAssignJobId"
+  | "onShareWithJob"
+  | "onAssignLinks"
+  | "canWrite"
+>) {
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [jobQuery, setJobQuery] = useState("");
+
+  const { customers, loading: customersLoading } = useEmailCustomerSearch({
+    companyId: props.companyId,
+    enabled: props.canWrite,
+    query: customerQuery,
+    getToken: props.getToken,
+  });
+
+  const { jobs, loading: jobsLoading } = useEmailJobSearch({
+    companyId: props.companyId,
+    enabled: props.canWrite,
+    query: jobQuery,
+    getToken: props.getToken,
+  });
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 border-t pt-4">
+      <p className="col-span-full text-sm font-medium">Zákazník / zakázka</p>
+      <div className="space-y-1">
+        <Input
+          placeholder="Hledat zákazníka…"
+          value={customerQuery}
+          onChange={(e) => setCustomerQuery(e.target.value)}
+        />
+        <Select value={props.assignCustomerId} onValueChange={props.onAssignCustomerId}>
+          <SelectTrigger>
+            <SelectValue placeholder={customersLoading ? "Načítám…" : "Vyberte zákazníka"} />
+          </SelectTrigger>
+          <SelectContent>
+            {customers.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-1">
+        <Input
+          placeholder="Hledat zakázku (číslo, název, adresa…)"
+          value={jobQuery}
+          onChange={(e) => setJobQuery(e.target.value)}
+        />
+        <Select value={props.assignJobId} onValueChange={props.onAssignJobId}>
+          <SelectTrigger>
+            <SelectValue placeholder={jobsLoading ? "Načítám…" : "Vyberte zakázku"} />
+          </SelectTrigger>
+          <SelectContent>
+            {jobs.map((j) => (
+              <SelectItem key={j.id} value={j.id}>
+                {j.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <label className="flex items-center gap-2 text-sm col-span-full">
+        <Checkbox
+          checked={props.shareWithJob}
+          onCheckedChange={(v) => props.onShareWithJob(Boolean(v))}
+          disabled={!props.assignJobId.trim()}
+        />
+        Zveřejnit obsah u zakázky
+      </label>
+      <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onAssignLinks}>
+        Uložit propojení
+      </Button>
+    </div>
+  );
+}
 
 function EmailAiCategoryActions(props: {
   category: EmailAiCategory;
@@ -433,18 +523,7 @@ export function EmailPortalDetailPanel(props: Props) {
             </Button>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-2 border-t pt-4">
-            <p className="col-span-full text-sm font-medium">Zákazník / zakázka (ruční nebo vyhledání)</p>
-            <Input placeholder="ID zákazníka" value={props.assignCustomerId} onChange={(e) => props.onAssignCustomerId(e.target.value)} />
-            <Input placeholder="ID zakázky" value={props.assignJobId} onChange={(e) => props.onAssignJobId(e.target.value)} />
-            <label className="flex items-center gap-2 text-sm col-span-full">
-              <Checkbox checked={props.shareWithJob} onCheckedChange={(v) => props.onShareWithJob(Boolean(v))} disabled={!props.assignJobId.trim()} />
-              Zveřejnit obsah u zakázky
-            </label>
-            <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onAssignLinks}>
-              Uložit propojení
-            </Button>
-          </div>
+          <EmailCustomerJobLinkFields {...props} />
         </>
       ) : null}
 

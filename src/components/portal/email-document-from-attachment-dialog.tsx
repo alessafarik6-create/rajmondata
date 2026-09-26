@@ -24,13 +24,25 @@ import { Loader2, Sparkles } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import type { EmailMessageAttachmentMeta } from "@/lib/email-mailbox/types";
 import {
-  EMAIL_JOB_COST_CATEGORIES,
-  EMAIL_JOB_COST_LABELS,
   EMAIL_OVERHEAD_EXPENSE_CATEGORIES,
   EMAIL_OVERHEAD_EXPENSE_LABELS,
   type EmailDocumentAssignmentTarget,
   type EmailOverheadExpenseCategory,
 } from "@/lib/email-mailbox/email-document-assignment";
+import {
+  EMAIL_COMPANY_DOC_TYPES,
+  EMAIL_COMPANY_DOC_TYPE_LABELS,
+  EMAIL_JOB_ATTACHMENT_ROLES,
+  EMAIL_JOB_ATTACHMENT_ROLE_LABELS,
+  EMAIL_OVERHEAD_DOC_TYPES,
+  EMAIL_OVERHEAD_DOC_TYPE_LABELS,
+  jobRoleCreatesAccountingDocument,
+  companyDocTypeCreatesAccounting,
+  type EmailCompanyDocType,
+  type EmailJobAttachmentRole,
+  type EmailOverheadDocType,
+} from "@/lib/email-mailbox/email-attachment-classification";
+import { attachmentKindLabel } from "@/lib/email-mailbox/attachment-meta";
 import { useEmailJobSearch } from "@/hooks/use-email-job-search";
 import { useToast } from "@/hooks/use-toast";
 import type { DocumentCostCategoryKey } from "@/lib/ai/document-extraction-types";
@@ -53,6 +65,8 @@ type AnalysisPayload = {
   duplicateCandidates?: { id: string; number?: string | null; entityName?: string | null; date?: string | null }[];
   supplierMatch?: { found?: boolean; name?: string | null; ico?: string | null };
   confidence?: number;
+  suggestedContentKind?: string | null;
+  suggestedJobRole?: EmailJobAttachmentRole | null;
 };
 
 type Props = {
@@ -63,9 +77,13 @@ type Props = {
   attachment: EmailMessageAttachmentMeta;
   getToken: () => Promise<string>;
   canWriteDocuments: boolean;
-  /** Návrh zakázky z e-mailu — ne automatické přiřazení dokladu. */
+  canWriteEmail: boolean;
   suggestedJobIdFromEmail?: string | null;
-  onSaved?: (documentId: string, assignmentLabel: string) => void;
+  onSaved?: (payload: {
+    documentId: string | null;
+    assignmentLabel: string;
+    openHref?: string | null;
+  }) => void;
 };
 
 function isDocLike(att: EmailMessageAttachmentMeta): boolean {
@@ -75,12 +93,31 @@ function isDocLike(att: EmailMessageAttachmentMeta): boolean {
 }
 
 export function EmailDocumentFromAttachmentDialog(props: Props) {
+  return <EmailAssignAttachmentDialog {...props} />;
+}
+
+export function EmailAssignAttachmentDialog(props: Props) {
   const { toast } = useToast();
-  const [target, setTarget] = useState<EmailDocumentAssignmentTarget>("pending");
-  const [overheadCategory, setOverheadCategory] = useState<EmailOverheadExpenseCategory>("other");
-  const [jobCostCategory, setJobCostCategory] = useState<string>("material");
+  const att = props.attachment;
+  const isClassified = Boolean(att.emailPlacement?.target || att.documentAssignmentLabel);
+
+  const [target, setTarget] = useState<EmailDocumentAssignmentTarget>(
+    att.emailPlacement?.target ?? "pending"
+  );
+  const [overheadCategory, setOverheadCategory] = useState<EmailOverheadExpenseCategory>(
+    (att.emailPlacement?.overheadCategory as EmailOverheadExpenseCategory) ?? "other"
+  );
+  const [overheadDocType, setOverheadDocType] = useState<EmailOverheadDocType>(
+    att.emailPlacement?.overheadDocType ?? "received_invoice"
+  );
+  const [companyDocType, setCompanyDocType] = useState<EmailCompanyDocType>(
+    att.emailPlacement?.companyDocType ?? "other"
+  );
+  const [jobRole, setJobRole] = useState<EmailJobAttachmentRole>(
+    att.emailPlacement?.jobAttachmentRole ?? "other"
+  );
   const [jobQuery, setJobQuery] = useState("");
-  const [selectedJobId, setSelectedJobId] = useState("");
+  const [selectedJobId, setSelectedJobId] = useState(att.emailPlacement?.jobId ?? "");
   const [analyzing, setAnalyzing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [analysisId, setAnalysisId] = useState<string | null>(
@@ -112,17 +149,24 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
 
   const selectedJob = jobs.find((j) => j.id === selectedJobId);
 
+  const needsAccountingFields = useMemo(() => {
+    if (target === "overhead") return true;
+    if (target === "pending") return true;
+    if (target === "company") return companyDocTypeCreatesAccounting(companyDocType);
+    if (target === "job") return jobRoleCreatesAccountingDocument(jobRole);
+    return false;
+  }, [target, jobRole, companyDocType]);
+
   useEffect(() => {
     if (!props.open) return;
-    setTarget("pending");
-    setOverheadCategory("other");
-    setJobCostCategory("material");
-    setSelectedJobId("");
+    setTarget(att.emailPlacement?.target ?? "pending");
+    setJobRole(att.emailPlacement?.jobAttachmentRole ?? "other");
+    setSelectedJobId(att.emailPlacement?.jobId ?? "");
     setJobQuery("");
     setAnalysis(null);
     setAiHint(null);
-    setAnalysisId(props.attachment.aiDocumentAnalysisId ?? null);
-  }, [props.open, props.attachment.id, props.attachment.aiDocumentAnalysisId]);
+    setAnalysisId(att.aiDocumentAnalysisId ?? null);
+  }, [props.open, att.id, att.emailPlacement, att.aiDocumentAnalysisId]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -134,40 +178,43 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
 
   function applyAnalysisPayload(payload: AnalysisPayload) {
     const patch = payload.formPatch;
-    if (!patch) return;
-    setNumber(patch.number ?? "");
-    setEntityName(patch.entityName ?? "");
-    setDescription(patch.description ?? "");
-    setDate(patch.date ?? new Date().toISOString().slice(0, 10));
-    setDueDate(patch.dueDate ?? "");
-    setVatRate(patch.vat ?? "21");
-    const net = Number(patch.amount) || 0;
-    const rate = Number(patch.vat) || 0;
-    const vat = net * (rate / 100);
-    setAmountNet(net ? String(net) : "");
-    setVatAmount(String(Math.round(vat * 100) / 100));
-    setAmountGross(String(Math.round((net + vat) * 100) / 100));
-    if (patch.costCategory) {
-      setJobCostCategory(patch.costCategory);
+    if (patch) {
+      setNumber(patch.number ?? "");
+      setEntityName(patch.entityName ?? "");
+      setDescription(patch.description ?? "");
+      setDate(patch.date ?? new Date().toISOString().slice(0, 10));
+      setDueDate(patch.dueDate ?? "");
+      setVatRate(patch.vat ?? "21");
+      const net = Number(patch.amount) || 0;
+      const rate = Number(patch.vat) || 0;
+      const vat = net * (rate / 100);
+      setAmountNet(net ? String(net) : "");
+      setVatAmount(String(Math.round(vat * 100) / 100));
+      setAmountGross(String(Math.round((net + vat) * 100) / 100));
+      if (payload.supplierMatch?.ico) setSupplierIco(payload.supplierMatch.ico);
     }
-    if (payload.supplierMatch?.ico) setSupplierIco(payload.supplierMatch.ico);
+
+    const role = payload.suggestedJobRole;
+    const kind = payload.suggestedContentKind;
+    if (kind === "DRAWING" || kind === "PROJECT_DOCUMENT") {
+      setAiHint("AI doporučuje: pravděpodobně výkres / projektová dokumentace → Zakázka");
+      setJobRole("drawing");
+    } else if (kind === "CONTRACT") {
+      setAiHint("AI doporučuje: pravděpodobně smlouva");
+      setJobRole("contract");
+    } else if (role === "invoice" || kind === "ACCOUNTING_DOCUMENT") {
+      setAiHint("AI doporučuje: pravděpodobně faktura — zkontrolujte cíl zařazení");
+      setJobRole("invoice");
+    }
 
     const topJob = payload.suggestedJobs?.[0];
-    if (topJob?.id) {
-      setAiHint(
-        `RAJMONDATA AI doporučuje: Zakázka → ${topJob.name}${
-          topJob.customerName ? ` (${topJob.customerName})` : ""
-        }`
-      );
-      if (target === "pending") setTarget("job");
-      if (!selectedJobId) setSelectedJobId(topJob.id);
-    } else if (patch.costCategory === "other" || patch.costCategory === "transport") {
-      setAiHint("RAJMONDATA AI doporučuje: Režie → Ostatní režie");
+    if (topJob?.id && !selectedJobId) {
+      setSelectedJobId(topJob.id);
     }
   }
 
   async function runAnalyze() {
-    if (!props.canWriteDocuments || !isDocLike(props.attachment)) return;
+    if (!props.canWriteEmail || !isDocLike(att)) return;
     setAnalyzing(true);
     try {
       const token = await props.getToken();
@@ -181,7 +228,7 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
           },
           body: JSON.stringify({
             companyId: props.companyId,
-            attachmentId: props.attachment.id,
+            attachmentId: att.id,
           }),
         }
       );
@@ -207,19 +254,25 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
     }
   }
 
-  useEffect(() => {
-    if (!props.open || !isDocLike(props.attachment)) return;
-    if (props.attachment.analysisStatus === "saved") return;
-    void runAnalyze();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.open, props.attachment.id]);
-
   async function save() {
-    if (!props.canWriteDocuments) return;
+    if (!props.canWriteEmail) return;
+    if (needsAccountingFields && !props.canWriteDocuments) {
+      toast({
+        variant: "destructive",
+        title: "Oprávnění",
+        description: "Účetní doklad vyžaduje oprávnění k zápisu v modulu Doklady.",
+      });
+      return;
+    }
     if (target === "job" && !selectedJobId) {
       toast({ variant: "destructive", title: "Vyberte zakázku." });
       return;
     }
+    if (needsAccountingFields && (!number.trim() || !entityName.trim())) {
+      toast({ variant: "destructive", title: "Vyplňte údaje dokladu." });
+      return;
+    }
+
     setSaving(true);
     try {
       const token = await props.getToken();
@@ -233,15 +286,19 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
           },
           body: JSON.stringify({
             companyId: props.companyId,
-            attachmentId: props.attachment.id,
+            attachmentId: att.id,
             analysisId,
             assignmentTarget: target,
+            updateExisting: true,
             jobId: target === "job" ? selectedJobId : null,
             jobName: selectedJob?.label ?? null,
+            jobAttachmentRole: target === "job" ? jobRole : null,
+            companyDocType: target === "company" ? companyDocType : null,
+            overheadDocType: target === "overhead" ? overheadDocType : null,
             overheadExpenseCategory: target === "overhead" ? overheadCategory : null,
             form: {
-              number,
-              entityName,
+              number: needsAccountingFields ? number : att.filename,
+              entityName: needsAccountingFields ? entityName : att.filename,
               description,
               date,
               taxDate,
@@ -254,12 +311,7 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
               amountGross: Number(amountGross) || 0,
               vatRate: Number(vatRate) || 0,
               currency: analysis?.formPatch?.currency ?? "CZK",
-              costCategory:
-                target === "job"
-                  ? jobCostCategory === "services"
-                    ? "other"
-                    : jobCostCategory
-                  : "other",
+              costCategory: "other",
               requiresPayment: analysis?.formPatch?.requiresPayment,
               paymentMethod: analysis?.formPatch?.paymentMethod,
             },
@@ -270,19 +322,17 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
       if (!res.ok || !data.ok) {
         throw new Error(data.error ?? "Uložení se nezdařilo.");
       }
-      if (data.duplicate) {
-        toast({ title: "Doklad již zařazen", description: "Otevřete existující záznam." });
-        props.onSaved?.(String(data.documentId), props.attachment.documentAssignmentLabel ?? "");
-        props.onOpenChange(false);
-        return;
-      }
-      toast({ title: "Doklad uložen", description: data.assignmentLabel ?? "" });
-      props.onSaved?.(String(data.documentId), String(data.assignmentLabel ?? ""));
+      toast({ title: "Příloha zařazena", description: data.assignmentLabel ?? "" });
+      props.onSaved?.({
+        documentId: data.documentId ?? null,
+        assignmentLabel: String(data.assignmentLabel ?? ""),
+        openHref: data.openHref ?? null,
+      });
       props.onOpenChange(false);
     } catch (e) {
       toast({
         variant: "destructive",
-        title: "Uložení dokladu",
+        title: "Zařazení přílohy",
         description: e instanceof Error ? e.message : "Chyba.",
       });
     } finally {
@@ -290,56 +340,34 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
     }
   }
 
-  const duplicates = analysis?.duplicateCandidates ?? [];
-
   const targetOptions = useMemo(
     () =>
       [
-        { value: "job", label: "K zakázce" },
+        { value: "job", label: "Zakázka" },
         { value: "overhead", label: "Režie firmy" },
-        { value: "company", label: "Obecný firemní doklad" },
-        { value: "pending", label: "Pouze uložit do Dokladů (nezařazený)" },
+        { value: "company", label: "Firemní doklady" },
+        { value: "pending", label: "Nezařazené" },
       ] as const,
     []
   );
+
+  const kindLabel = attachmentKindLabel(att.contentType, att.filename);
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Zařadit doklad z přílohy</DialogTitle>
+          <DialogTitle>{isClassified ? "Změnit zařazení přílohy" : "Zařadit přílohu"}</DialogTitle>
           <DialogDescription>
-            Typ dokladu: Přijatá faktura / účtenka — zkontrolujte údaje před uložením.
+            {att.filename} · {kindLabel}
           </DialogDescription>
         </DialogHeader>
-
-        {!props.canWriteDocuments ? (
-          <Alert>
-            <AlertTitle>Jen náhled</AlertTitle>
-            <AlertDescription>
-              Uložit doklad smí uživatel s oprávněním k zápisu v modulu Doklady.
-            </AlertDescription>
-          </Alert>
-        ) : null}
 
         {aiHint ? (
           <Alert>
             <Sparkles className="h-4 w-4" />
             <AlertTitle>AI doporučení</AlertTitle>
             <AlertDescription>{aiHint}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {duplicates.length > 0 ? (
-          <Alert variant="destructive">
-            <AlertTitle>Podobný doklad už existuje</AlertTitle>
-            <AlertDescription className="text-xs space-y-1">
-              {duplicates.slice(0, 3).map((d) => (
-                <div key={d.id}>
-                  {d.entityName ?? "—"} · {d.number ?? "—"} · {d.date ?? "—"}
-                </div>
-              ))}
-            </AlertDescription>
           </Alert>
         ) : null}
 
@@ -353,8 +381,8 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
             >
               {targetOptions.map((o) => (
                 <div key={o.value} className="flex items-center space-x-2">
-                  <RadioGroupItem value={o.value} id={`email-doc-target-${o.value}`} />
-                  <Label htmlFor={`email-doc-target-${o.value}`} className="font-normal">
+                  <RadioGroupItem value={o.value} id={`email-att-target-${o.value}`} />
+                  <Label htmlFor={`email-att-target-${o.value}`} className="font-normal">
                     {o.label}
                   </Label>
                 </div>
@@ -365,7 +393,7 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
           {target === "job" ? (
             <>
               <div className="grid gap-1">
-                <Label>Hledat zakázku</Label>
+                <Label>Hledat zakázku (číslo, název, zákazník, adresa)</Label>
                 <Input value={jobQuery} onChange={(e) => setJobQuery(e.target.value)} />
                 <Select value={selectedJobId} onValueChange={setSelectedJobId}>
                   <SelectTrigger>
@@ -379,17 +407,22 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
                     ))}
                   </SelectContent>
                 </Select>
+                {selectedJob ? (
+                  <p className="text-xs text-muted-foreground">
+                    Vybraná zakázka: {selectedJob.label}
+                  </p>
+                ) : null}
               </div>
               <div className="grid gap-1">
-                <Label>Kategorie nákladu na zakázce</Label>
-                <Select value={jobCostCategory} onValueChange={setJobCostCategory}>
+                <Label>Typ přílohy</Label>
+                <Select value={jobRole} onValueChange={(v) => setJobRole(v as EmailJobAttachmentRole)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {EMAIL_JOB_COST_CATEGORIES.map((c) => (
+                    {EMAIL_JOB_ATTACHMENT_ROLES.map((c) => (
                       <SelectItem key={c} value={c}>
-                        {EMAIL_JOB_COST_LABELS[c]}
+                        {EMAIL_JOB_ATTACHMENT_ROLE_LABELS[c]}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -399,19 +432,60 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
           ) : null}
 
           {target === "overhead" ? (
+            <>
+              <div className="grid gap-1">
+                <Label>Typ</Label>
+                <Select
+                  value={overheadDocType}
+                  onValueChange={(v) => setOverheadDocType(v as EmailOverheadDocType)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EMAIL_OVERHEAD_DOC_TYPES.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {EMAIL_OVERHEAD_DOC_TYPE_LABELS[c]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1">
+                <Label>Kategorie režie</Label>
+                <Select
+                  value={overheadCategory}
+                  onValueChange={(v) => setOverheadCategory(v as EmailOverheadExpenseCategory)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EMAIL_OVERHEAD_EXPENSE_CATEGORIES.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {EMAIL_OVERHEAD_EXPENSE_LABELS[c]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          ) : null}
+
+          {target === "company" ? (
             <div className="grid gap-1">
-              <Label>Kategorie režie</Label>
+              <Label>Typ firemního dokumentu</Label>
               <Select
-                value={overheadCategory}
-                onValueChange={(v) => setOverheadCategory(v as EmailOverheadExpenseCategory)}
+                value={companyDocType}
+                onValueChange={(v) => setCompanyDocType(v as EmailCompanyDocType)}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {EMAIL_OVERHEAD_EXPENSE_CATEGORIES.map((c) => (
+                  {EMAIL_COMPANY_DOC_TYPES.map((c) => (
                     <SelectItem key={c} value={c}>
-                      {EMAIL_OVERHEAD_EXPENSE_LABELS[c]}
+                      {EMAIL_COMPANY_DOC_TYPE_LABELS[c]}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -419,66 +493,42 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
             </div>
           ) : null}
 
-          <div className="grid gap-1">
-            <Label>Dodavatel</Label>
-            <Input value={entityName} onChange={(e) => setEntityName(e.target.value)} />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="grid gap-1">
-              <Label>IČO</Label>
-              <Input value={supplierIco} onChange={(e) => setSupplierIco(e.target.value)} />
-            </div>
-            <div className="grid gap-1">
-              <Label>DIČ</Label>
-              <Input value={supplierDic} onChange={(e) => setSupplierDic(e.target.value)} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="grid gap-1">
-              <Label>Číslo dokladu</Label>
-              <Input value={number} onChange={(e) => setNumber(e.target.value)} />
-            </div>
-            <div className="grid gap-1">
-              <Label>Variabilní symbol</Label>
-              <Input value={variableSymbol} onChange={(e) => setVariableSymbol(e.target.value)} />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="grid gap-1">
-              <Label>Vystaveno</Label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </div>
-            <div className="grid gap-1">
-              <Label>DUZP</Label>
-              <Input type="date" value={taxDate} onChange={(e) => setTaxDate(e.target.value)} />
-            </div>
-            <div className="grid gap-1">
-              <Label>Splatnost</Label>
-              <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="grid gap-1">
-              <Label>Bez DPH</Label>
-              <Input value={amountNet} onChange={(e) => setAmountNet(e.target.value)} />
-            </div>
-            <div className="grid gap-1">
-              <Label>DPH</Label>
-              <Input value={vatAmount} onChange={(e) => setVatAmount(e.target.value)} />
-            </div>
-            <div className="grid gap-1">
-              <Label>S DPH</Label>
-              <Input value={amountGross} onChange={(e) => setAmountGross(e.target.value)} />
-            </div>
-          </div>
-          <div className="grid gap-1">
-            <Label>Poznámka</Label>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} />
-          </div>
+          {needsAccountingFields ? (
+            <>
+              <div className="grid gap-1">
+                <Label>Dodavatel</Label>
+                <Input value={entityName} onChange={(e) => setEntityName(e.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="grid gap-1">
+                  <Label>Číslo dokladu</Label>
+                  <Input value={number} onChange={(e) => setNumber(e.target.value)} />
+                </div>
+                <div className="grid gap-1">
+                  <Label>Vystaveno</Label>
+                  <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="grid gap-1">
+                  <Label>Bez DPH</Label>
+                  <Input value={amountNet} onChange={(e) => setAmountNet(e.target.value)} />
+                </div>
+                <div className="grid gap-1">
+                  <Label>DPH</Label>
+                  <Input value={vatAmount} onChange={(e) => setVatAmount(e.target.value)} />
+                </div>
+                <div className="grid gap-1">
+                  <Label>S DPH</Label>
+                  <Input value={amountGross} onChange={(e) => setAmountGross(e.target.value)} />
+                </div>
+              </div>
+            </>
+          ) : null}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0 flex-col sm:flex-row">
-          {isDocLike(props.attachment) ? (
+          {isDocLike(att) ? (
             <Button
               type="button"
               variant="outline"
@@ -490,7 +540,7 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <>
-                  <Sparkles className="h-4 w-4 mr-1" /> Znovu analyzovat
+                  <Sparkles className="h-4 w-4 mr-1" /> AI doporučení
                 </>
               )}
             </Button>
@@ -500,16 +550,10 @@ export function EmailDocumentFromAttachmentDialog(props: Props) {
           </Button>
           <Button
             type="button"
-            disabled={
-              saving ||
-              !props.canWriteDocuments ||
-              !number.trim() ||
-              !entityName.trim() ||
-              analyzing
-            }
+            disabled={saving || !props.canWriteEmail || analyzing}
             onClick={() => void save()}
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit doklad"}
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit zařazení"}
           </Button>
         </DialogFooter>
       </DialogContent>

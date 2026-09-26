@@ -110,6 +110,10 @@ export type EmailMessageAttachmentMeta = {
     | null;
   aiSummary?: string | null;
   aiSuggestedAction?: string | null;
+  /** Kam je příloha zařazena (bez nutnosti účetního dokladu). */
+  emailPlacement?: import("@/lib/email-mailbox/email-attachment-classification").EmailAttachmentPlacement | null;
+  aiSuggestedContentKind?: string | null;
+  aiSuggestedJobAttachmentRole?: string | null;
 };
 
 import type {

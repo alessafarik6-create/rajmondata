@@ -117,49 +117,51 @@ export async function linkEmailAttachmentToJob(params: {
   }
 
   const documentId = companyDocumentIdForEmailAttachment(params.messageId, params.attachment.id);
-  const docRef = params.db
-    .collection(COMPANIES_COLLECTION)
-    .doc(params.companyId)
-    .collection("documents")
-    .doc(documentId);
-
   const jobName = params.jobDisplayName?.trim() || jobCheck.jobName;
   const ts = FieldValue.serverTimestamp();
-  const dateIso = new Date().toISOString().slice(0, 10);
 
-  await docRef.set(
-    {
-      type: "received",
-      documentKind: category === "invoice" ? "prijate" : "prijate",
-      source: "email-attachment",
-      sourceType: "email",
-      sourceId: params.messageId,
-      emailMessageId: params.messageId,
-      emailAttachmentId: params.attachment.id,
-      emailAccountId: params.emailAccountId,
-      jobId: params.jobId,
-      jobName,
-      folderId,
-      jobMediaFolderId: folderId,
-      jobMediaImageId: media.imageId,
-      number: params.attachment.filename.slice(0, 120),
-      entityName: jobName,
-      description: `E-mailová příloha: ${params.attachment.filename}`,
-      date: dateIso,
-      fileName: params.attachment.filename,
-      fileType: params.attachment.contentType,
-      mimeType: params.attachment.contentType,
-      storagePath: media.storagePath,
-      fileUrl: media.fileUrl,
-      emailAttachmentCategory: category,
-      vat: 0,
-      organizationId: params.companyId,
-      createdBy: params.createdByUserId,
-      createdAt: ts,
-      updatedAt: ts,
-    },
-    { merge: true }
-  );
+  /** Výkresy a dokumentace — pouze média zakázky, bez účetního dokladu. */
+  if (category === "invoice") {
+    const docRef = params.db
+      .collection(COMPANIES_COLLECTION)
+      .doc(params.companyId)
+      .collection("documents")
+      .doc(documentId);
+    const dateIso = new Date().toISOString().slice(0, 10);
+    await docRef.set(
+      {
+        type: "received",
+        documentKind: "prijate",
+        source: "email-attachment",
+        sourceType: "email",
+        sourceId: params.messageId,
+        emailMessageId: params.messageId,
+        emailAttachmentId: params.attachment.id,
+        emailAccountId: params.emailAccountId,
+        jobId: params.jobId,
+        jobName,
+        folderId,
+        jobMediaFolderId: folderId,
+        jobMediaImageId: media.imageId,
+        number: params.attachment.filename.slice(0, 120),
+        entityName: jobName,
+        description: `E-mailová příloha: ${params.attachment.filename}`,
+        date: dateIso,
+        fileName: params.attachment.filename,
+        fileType: params.attachment.contentType,
+        mimeType: params.attachment.contentType,
+        storagePath: media.storagePath,
+        fileUrl: media.fileUrl,
+        emailAttachmentCategory: category,
+        vat: 0,
+        organizationId: params.companyId,
+        createdBy: params.createdByUserId,
+        createdAt: ts,
+        updatedAt: ts,
+      },
+      { merge: true }
+    );
+  }
 
   const linkRef = await params.db
     .collection(COMPANIES_COLLECTION)
