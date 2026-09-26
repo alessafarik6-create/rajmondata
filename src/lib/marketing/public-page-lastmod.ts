@@ -1,6 +1,9 @@
 /** Poslední významná úprava obsahu (ISO) — pro sitemap lastModified. */
 const PAGE_LAST_MOD: Record<string, string> = {
-  home: "2026-03-26",
+  home: "2026-09-26",
+  crm: "2026-09-26",
+  "erp-system": "2026-09-26",
+  "crm-zdarma": "2026-09-26",
   funkce: "2026-03-26",
   "rizeni-zakazek": "2026-03-26",
   "dochazka-zamestnancu": "2026-03-26",

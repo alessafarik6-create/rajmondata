@@ -46,6 +46,8 @@ const nextConfig: NextConfig = {
       { source: "/software-pro-remeslniky", destination: "/pro-remeslniky", permanent: true },
       { source: "/software-pro-montazni-firmy", destination: "/pro-montazni-firmy", permanent: true },
       { source: "/portal/emails", destination: "/portal/email", permanent: false },
+      { source: "/dochazkovy-system", destination: "/dochazka-zamestnancu", permanent: true },
+      { source: "/skladova-evidence", destination: "/skladove-hospodarstvi", permanent: true },
     ];
   },
   eslint: {

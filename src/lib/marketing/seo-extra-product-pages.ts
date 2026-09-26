@@ -1,6 +1,155 @@
 /** Doplňkové indexovatelné produktové landing pages (SEO). */
 export const SEO_EXTRA_PRODUCT_PAGES = [
   {
+    slug: "crm",
+    title: "CRM systém pro firmy s AI | RAJMONDATA",
+    description:
+      "Online CRM pro firmy: evidence zákazníků, poptávky, obchodní případy, nabídky, zakázky, e-mail a kalendář propojené s řízením firmy v českém systému RAJMONDATA.",
+    h1: "CRM systém pro zákazníky, obchod a zakázky",
+    kind: "feature",
+    breadcrumbLabel: "CRM",
+    intro:
+      "CRM v RAJMONDATA není samostatná tabulka kontaktů. Zákazník, poptávka, nabídka a zakázka sdílejí stejnou historii — obchodník i realizace vidí, co bylo domluveno, co zbývá dodat a jaká faktura navazuje na rozpočet.",
+    blocks: [
+      { type: "h3", text: "Co je CRM systém" },
+      {
+        type: "p",
+        text: "CRM (Customer Relationship Management) je software pro správu vztahů se zákazníky — kontakty, obchodní příležitosti, komunikaci a navazující zakázky. Pro montážní a zakázkové firmy znamená CRM především přehled: kdo poptával, jaká nabídka šla ven, kdo zakázku realizuje a jak dopadla marže.",
+      },
+      { type: "h3", text: "CRM v RAJMONDATA" },
+      {
+        type: "p",
+        text: "RAJMONDATA je český online CRM software integrovaný s ERP oblastmi portálu. Obchod nekončí u karty zákazníka — pokračuje v řízení zakázek, docházce, výrobě, skladu a fakturaci. CRM pro firmy s vlastní výrobou tak nemusí synchronizovat data mezi několika aplikacemi.",
+      },
+      { type: "h3", text: "Evidence zákazníků a správa zákazníků" },
+      {
+        type: "ul",
+        items: [
+          "Karty zákazníků s adresami, kontakty a poznámkami",
+          "Historie poptávek, nabídek a zakázek u jednoho subjektu",
+          "Dokumenty a komunikace navázané na zákazníka nebo obchodní případ",
+          "Globální vyhledávání zákazníka, zakázky nebo faktury v portálu",
+        ],
+      },
+      { type: "h3", text: "Poptávky a obchodní případy" },
+      {
+        type: "p",
+        text: "Poptávka z webu nebo ruční záznam má stav, přiřazeného obchodníka a přílohy. Obchodní případ můžete vést od první reakce až po převod na zakázku — bez přepisování do jiného systému.",
+      },
+      { type: "h3", text: "Nabídky a zakázky" },
+      {
+        type: "p",
+        text: "Cenová nabídka vychází z poptávky nebo obchodního případu. Po schválení zákazníkem vznikne zakázka se stejným kontextem: rozpočet, termíny, pracovníci a fakturace. CRM s AI umí připravit návrh nabídky z údajů poptávky a firemních ceníků — výsledek vždy kontrolujete.",
+      },
+      { type: "h3", text: "E-mailová komunikace a kalendář" },
+      {
+        type: "ul",
+        items: [
+          "Firemní e-mail v portálu s vazbou na zakázku nebo poptávku",
+          "Historie odeslaných nabídek a příloh",
+          "Schůzky a plánování v kontextu zákazníka (podle aktivních modulů)",
+        ],
+      },
+      { type: "h3", text: "Dokumenty, AI a reporting" },
+      {
+        type: "p",
+        text: "Smlouvy, dodatky a složky u zakázky doplňují CRM vrstvu. AI asistent pomáhá s odpověďmi na e-maily, tvorbou nabídek a orientací v portálu. Reporting nad obchodem a zakázkami poskytuje vedení přehled o stavu pipeline — v rozsahu modulů vaší licence.",
+      },
+    ],
+    relatedSlugs: ["rizeni-zakazek", "poptavky-a-nabidky", "erp-system", "ai-pro-firmy"],
+  },
+  {
+    slug: "erp-system",
+    title: "ERP systém pro firmy | RAJMONDATA",
+    description:
+      "ERP a firemní informační systém v jednom webovém portálu: zakázky, zaměstnanci, docházka, výroba, sklad, fakturace, vozový park a AI — bez náhrady plného účetnictví.",
+    h1: "ERP systém pro řízení firmy v jednom prostředí",
+    kind: "feature",
+    breadcrumbLabel: "ERP",
+    intro:
+      "RAJMONDATA spojuje CRM oblast s provozními procesy firmy. Jde o podnikový informační systém pro řízení firmy — zakázky, lidi, materiál a doklady — v jednom přihlášení. Nenahrazuje kompletní účetní agendu; fakturaci a podklady exportujete dál podle vašeho účetního software.",
+    blocks: [
+      { type: "h3", text: "CRM vs ERP — jak to v RAJMONDATA funguje" },
+      {
+        type: "p",
+        text: "CRM se soustředí na zákazníka a obchod: poptávky, nabídky, komunikaci a převod do zakázky. ERP v širším smyslu pokrývá řízení procesů ve firmě — realizaci zakázek, zaměstnance, docházku, výrobu, sklad, fakturaci a reporting. RAJMONDATA obě oblasti propojuje: stejná zakázka prochází obchodem i dílnou.",
+      },
+      { type: "h3", text: "Zakázky a řízení procesů" },
+      {
+        type: "p",
+        text: "Zakázkový systém je jádro ERP vrstvy — termíny, úkoly, rozpočty, vícepráce, dokumenty a fakturace u jednoho obchodního případu.",
+      },
+      { type: "h3", text: "Zaměstnanci a docházka" },
+      {
+        type: "ul",
+        items: [
+          "Evidence zaměstnanců, rolí a oprávnění",
+          "Docházkový terminál na tabletu, výkazy práce na zakázkách",
+          "Podklady pro mzdy — bez náhrady mzdového účetnictví",
+        ],
+      },
+      { type: "h3", text: "Výroba a sklad" },
+      {
+        type: "p",
+        text: "Řízení výroby a skladová evidence materiálu navazují na konkrétní zakázku. Vedení vidí spotřebu a stav ve výrobě v kontextu zakázky, ne v oddělené tabulce.",
+      },
+      { type: "h3", text: "Dokumenty, fakturace a vozový park" },
+      {
+        type: "ul",
+        items: [
+          "Přijaté a vydané doklady, PDF a fotografie u zakázky",
+          "Fakturace, zálohy a položkové rozpočty",
+          "Evidence vozidel a GPS monitoring (podle integrace)",
+        ],
+      },
+      { type: "h3", text: "Reporting a AI" },
+      {
+        type: "p",
+        text: "Manažerské reporty a finanční přehledy v portálu doplňují každodenní řízení firem. AI automatizuje část administrativy — e-maily, nabídky a dokumenty — v rámci pravidel vaší organizace.",
+      },
+    ],
+    relatedSlugs: ["crm", "rizeni-zakazek", "firemni-portal", "dochazka-zamestnancu"],
+  },
+  {
+    slug: "crm-zdarma",
+    title: "CRM zdarma vs. placený CRM | RAJMONDATA",
+    description:
+      "Co znamená CRM zdarma, co je zkušební verze a proč zakázková firma potřebuje CRM propojené se zakázkami a fakturací — bez falešných slibů.",
+    h1: "CRM zdarma vs. placený CRM systém — co firma skutečně potřebuje?",
+    kind: "feature",
+    breadcrumbLabel: "CRM zdarma",
+    intro:
+      "Vyhledávání „CRM zdarma“ často vede k jednoduchým seznamům kontaktů. Pro firmu, která vede zakázky na míru, rozhoduje propojení s nabídkami, realizací a fakturací. RAJMONDATA není bezplatný CRM navždy — nabízí registraci firmy a zkušební období podle aktuálních podmínek platformy (délku a rozsah modulů určuje provozovatel po schválení registrace).",
+    blocks: [
+      { type: "h3", text: "Co bývá „CRM zdarma“" },
+      {
+        type: "ul",
+        items: [
+          "Omezený počet kontaktů nebo uživatelů",
+          "Chybějící vazba na zakázky, sklad nebo fakturaci",
+          "Export dat až v placeném tarifu",
+          "Reklama nebo sdílení dat s třetími stranami",
+        ],
+      },
+      { type: "h3", text: "Zkušební verze vs. trvalě zdarma" },
+      {
+        type: "p",
+        text: "Zkušební období umožní ověřit workflow — poptávka, nabídka, zakázka — v reálném portálu. To není totéž jako neomezený free tarif. Před registrací si ověřte aktuální délku trialu a ceník na stránce funkcí; podmínky se mohou lišit podle licence organizace.",
+      },
+      { type: "h3", text: "Proč placený CRM systém dává smysl" },
+      {
+        type: "p",
+        text: "Malá firma potřebuje CRM software, který šetří čas: méně přepisování mezi e-mailem a tabulkami, jasná historie u zákazníka a návaznost na docházku montérů i fakturu. Investice do jednoho českého online systému se vrací v rychlejší reakci na poptávky a menší chybovosti v dokumentech.",
+      },
+      { type: "h3", text: "Jak vyzkoušet RAJMONDATA" },
+      {
+        type: "p",
+        text: "Registrace probíhá online. Po schválení firmy aktivuje provozovatel moduly podle licence — včetně CRM, řízení zakázek a dalších oblastí. Pro detail CRM funkcí navštivte stránku CRM systému; pro celkový přehled modulů stránku funkcí.",
+      },
+    ],
+    relatedSlugs: ["crm", "funkce", "rizeni-zakazek"],
+  },
+  {
     slug: "email-pro-firmy",
     title: "Firemní e-mail v portálu | RAJMONDATA",
     description:

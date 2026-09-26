@@ -147,8 +147,113 @@ function CtaBand() {
   );
 }
 
+type SystemCard = { title: string; text: string; href: string; anchor: string };
+
+function OneSystemForCompany() {
+  const cards: SystemCard[] = [
+    {
+      title: "CRM a zákazníci",
+      text: "Evidence zákazníků, obchodní případy a historie komunikace navázaná na poptávky a zakázky — bez duplicitních kontaktů v tabulkách.",
+      href: "/crm",
+      anchor: "CRM systém",
+    },
+    {
+      title: "Řízení zakázek",
+      text: "Zakázkový systém od schválené nabídky po fakturaci: termíny, rozpočet, dokumenty, pracovníci a vyhodnocení zakázky na jednom místě.",
+      href: "/rizeni-zakazek",
+      anchor: "řízení zakázek",
+    },
+    {
+      title: "Poptávky a nabídky",
+      text: "Poptávky z webu i ruční záznamy, tvorba cenových nabídek a převod do zakázky. AI může připravit návrh nabídky k vaší kontrole.",
+      href: "/poptavky-a-nabidky",
+      anchor: "poptávky a cenové nabídky",
+    },
+    {
+      title: "AI pro firmy",
+      text: "Umělá inteligence pro firmy v portálu: e-maily, nabídky, smlouvy, rozpoznání faktur a nápověda v systému podle vašich pravidel.",
+      href: "/ai-pro-firmy",
+      anchor: "AI pro firmy",
+    },
+    {
+      title: "Fakturace a doklady",
+      text: "Fakturační systém v návaznosti na rozpočet zakázky — zálohy, vícepráce, PDF a evidence dokladů. Nenahrazuje plné účetnictví.",
+      href: "/fakturace-a-doklady",
+      anchor: "fakturace a doklady",
+    },
+    {
+      title: "Docházka zaměstnanců",
+      text: "Docházkový terminál na tabletu, evidence pracovní doby a výkazy navázané na zakázky pro přehled nákladů i mezd.",
+      href: "/dochazka-zamestnancu",
+      anchor: "docházkový systém",
+    },
+    {
+      title: "Výroba",
+      text: "Plánování a stav výroby u zakázky, propojení s dílnou a materiálem — vhodné pro zakázkovou výrobu i montáž s vlastní dílnou.",
+      href: "/rizeni-vyroby",
+      anchor: "řízení výroby",
+    },
+    {
+      title: "Sklad",
+      text: "Skladová evidence položek a pohybů materiálu s vazbou na zakázku nebo výrobu, aby vedení vidělo reálnou spotřebu.",
+      href: "/skladove-hospodarstvi",
+      anchor: "skladová evidence",
+    },
+    {
+      title: "Firemní komunikace",
+      text: "Firemní e-mail, chat u zakázky a zákaznický portál — komunikace zůstává u obchodního případu, ne v roztříštěných kanálech.",
+      href: "/email-pro-firmy",
+      anchor: "firemní e-mail a komunikace",
+    },
+    {
+      title: "Vozový park",
+      text: "Evidence vozidel firmy a GPS monitoring podle integrace — kontext pro montáže a provoz vozového parku.",
+      href: "/vozovy-park",
+      anchor: "vozový park a GPS",
+    },
+    {
+      title: "Reporting",
+      text: "Manažerské reporty a finanční přehledy v rozsahu aktivních modulů — podklad pro řízení firem bez exportů do desítek souborů.",
+      href: "/erp-system",
+      anchor: "ERP a reporting",
+    },
+  ];
+  return (
+    <section id="jeden-system" className="scroll-mt-20 border-t border-white/10 py-10 sm:py-14">
+      <div className="mx-auto max-w-6xl px-3 sm:px-4 md:px-6">
+        <h2 className="text-xl font-bold tracking-tight text-slate-50 sm:text-2xl md:text-3xl">
+          Jeden systém pro řízení celé firmy
+        </h2>
+        <p className="mt-3 max-w-3xl text-sm text-slate-300 sm:text-base">
+          Software pro řízení firmy funguje nejlépe, když obchod, realizace a administrativa sdílejí data.
+          RAJMONDATA je online firemní systém — digitalizace firmy bez přepisování mezi CRM tabulkou a
+          fakturačním programem.
+        </p>
+        <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {cards.map((c) => (
+            <li
+              key={c.title}
+              className="flex flex-col rounded-xl border border-white/10 bg-slate-950/50 p-4 sm:p-5"
+            >
+              <h3 className="text-base font-semibold text-slate-100">{c.title}</h3>
+              <p className="mt-2 flex-1 text-sm leading-relaxed text-slate-400">{c.text}</p>
+              <p className="mt-3 text-sm">
+                <Link href={c.href} className="font-medium text-primary hover:underline underline-offset-2">
+                  {c.anchor}
+                </Link>
+              </p>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 function ProductModuleLinks() {
   const links = [
+    { href: "/crm", label: "CRM systém" },
+    { href: "/erp-system", label: "ERP systém" },
     { href: "/rizeni-zakazek", label: "Řízení zakázek" },
     { href: "/ai-pro-firmy", label: "AI pro firmy" },
     { href: "/dochazka-zamestnancu", label: "Docházka zaměstnanců" },
@@ -194,17 +299,89 @@ function ProductModuleLinks() {
 export function PublicLandingSeoSections() {
   return (
     <>
+      <OneSystemForCompany />
+      <Section
+        id="crm"
+        title="CRM systém pro přehled o zákaznících a zakázkách"
+        altBg
+        moreHref="/crm"
+        moreLabel="Zjistit více o CRM →"
+      >
+        <p>
+          CRM pro firmy v RAJMONDATA propojuje{" "}
+          <strong className="font-medium text-slate-200">evidenci zákazníků</strong> a{" "}
+          <strong className="font-medium text-slate-200">správu zákazníků</strong> s obchodními případy,
+          poptávkami, nabídkami a zakázkami. Obchodník vidí historii komunikace u stejného záznamu, na
+          který navazuje montáž, fakturace nebo výroba — CRM software není oddělený od zbytku portálu.
+        </p>
+        <p>
+          Online CRM běží v prohlížeči pro celý tým. Malá firma získá přehled pipeline; větší tým sdílí
+          kontext u zákazníka bez přeposílání e-mailů. Detail modulů najdete na stránce{" "}
+          <Link href="/crm" className="text-primary hover:underline underline-offset-2">
+            CRM systém
+          </Link>
+          .
+        </p>
+      </Section>
+      <Section
+        id="erp"
+        title="ERP a firemní informační systém v jednom prostředí"
+        moreHref="/erp-system"
+        moreLabel="ERP a řízení firmy →"
+      >
+        <p>
+          ERP systém v RAJMONDATA pokrývá{" "}
+          <strong className="font-medium text-slate-200">řízení firmy</strong> a provozní procesy: zakázky,
+          zaměstnance, docházku, sklad, výrobu, fakturaci a reporting. Jde o podnikový informační systém
+          pro firmy, které vedou zakázky na míru — nikoli o kompletní účetní program.
+        </p>
+        <p>
+          Firemní systém sdílí data s CRM vrstvou: stejná zakázka prochází obchodem, dílnou i
+          administrativou. Více o rozdílu CRM a ERP a o modulech na stránce{" "}
+          <Link href="/erp-system" className="text-primary hover:underline underline-offset-2">
+            ERP systém pro firmy
+          </Link>
+          .
+        </p>
+      </Section>
+      <Section
+        id="ai-pro-firmy-prehled"
+        title="AI asistent pro každodenní práci firmy"
+        altBg
+        moreHref="/ai-pro-firmy"
+        moreLabel="AI pro firmy →"
+      >
+        <p>
+          AI asistent v portálu řeší reálné úkoly administrativy — ne obecné chatboty bez vazby na vaše
+          data. Umělá inteligence pro firmy v RAJMONDATA zahrnuje:
+        </p>
+        <BulletList
+          items={[
+            "AI zpracování e-mailů a návrhy odpovědí v firemní schránce",
+            "AI tvorba cenových nabídek z poptávky a ceníků",
+            "AI práce s dokumenty, smlouvami a dodatky u zakázky",
+            "AI rozpoznávání faktur a účtenek (podle aktivních modulů)",
+            "AI pomoc v systému — orientace v portálu a firemní znalostní báze",
+          ]}
+        />
+        <p>
+          Automatizace administrativy šetří čas obchodníkům i vedení; finální schválení textů a částek
+          zůstává na uživatelích. CRM s AI a ERP s AI sdílejí stejný kontext zakázky.
+        </p>
+      </Section>
       <ProductModuleLinks />
       <Section
         id="rizeni-zakazek"
-        title="Řízení zakázek od první poptávky až po fakturu"
+        title="Řízení zakázek od poptávky po fakturaci"
         moreHref="/rizeni-zakazek"
-        moreLabel="Řízení zakázek — kompletní přehled funkcí →"
+        moreLabel="Řízení zakázek →"
       >
         <p>
-          RAJMONDATA je systém pro řízení zakázek a firemní portál, který pokrývá celý workflow — od
-          první poptávky po fakturaci. Evidence zakázek, zákazníků a dokumentů zůstává na jednom místě,
-          bez přepisování mezi tabulkami a e-maily.
+          Správa zakázek a evidence zakázek v jednom zakázkovém systému: poptávka, cenová nabídka,
+          zákazník, zakázka, rozpočet, dokumenty, zaměstnanci, realizace, vícepráce, fakturace a
+          vyhodnocení zakázky. RAJMONDATA podporuje i{" "}
+          <strong className="font-medium text-slate-200">řízení zakázkové výroby</strong> a montáže — od
+          první reakce na lead po zaplacenou fakturu.
         </p>
         <WorkflowPipeline />
         <p className="pt-2">V jedné zakázce máte mimo jiné:</p>

@@ -89,7 +89,7 @@ const pages: MarketingPageDef[] = [
         text: "CRM pro stavební i montážní firmy v praxi znamená rychlý přehled — kdo má zakázku na starosti, co zbývá dodat a jaká faktura navazuje na rozpočet.",
       },
     ],
-    relatedSlugs: ["poptavky-a-nabidky", "fakturace-a-doklady", "komunikace-se-zakazniky"],
+    relatedSlugs: ["crm", "poptavky-a-nabidky", "fakturace-a-doklady", "komunikace-se-zakazniky"],
   },
   {
     slug: "dochazka-zamestnancu",

@@ -34,17 +34,19 @@ export function PublicLandingPage() {
             </p>
             <p className="mt-3 max-w-prose text-sm text-slate-400 sm:text-base">{HOME_HERO_AI}</p>
             <p className="mt-3 max-w-prose text-sm text-slate-400 sm:text-base">
-              Pro montážní a řemeslné firmy, které chtějí software pro řízení zakázek, správu poptávek
-              a přehled nad celým provozem — od první poptávky po fakturu. Podrobnosti najdete na
-              stránkách{" "}
+              Český online firemní systém pro montážní, stavební a výrobní firmy — od{" "}
+              <Link href="/crm" className="text-primary hover:underline underline-offset-2">
+                CRM systému
+              </Link>{" "}
+              a{" "}
+              <Link href="/erp-system" className="text-primary hover:underline underline-offset-2">
+                ERP pro řízení firmy
+              </Link>{" "}
+              přes{" "}
               <Link href="/rizeni-zakazek" className="text-primary hover:underline underline-offset-2">
                 řízení zakázek
-              </Link>
-              ,{" "}
-              <Link href="/poptavky-a-nabidky" className="text-primary hover:underline underline-offset-2">
-                poptávek a nabídek
               </Link>{" "}
-              nebo{" "}
+              až po{" "}
               <Link href="/ai-pro-firmy" className="text-primary hover:underline underline-offset-2">
                 AI pro firmy
               </Link>

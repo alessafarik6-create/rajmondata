@@ -1,19 +1,18 @@
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
 export const HOME_SEO_TITLE =
-  "RAJMONDATA | Firemní systém pro řízení zakázek s AI";
+  "RAJMONDATA | CRM a ERP systém pro řízení firmy s AI";
 
 export const HOME_SEO_DESCRIPTION =
-  "RAJMONDATA je podnikový informační systém s AI: zakázky, CRM, poptávky, nabídky, e-mail, dokumenty, smlouvy, fakturace, docházka, výroba, sklad, vozový park a firemní komunikace v jednom portálu.";
+  "RAJMONDATA je český CRM a ERP firemní systém pro řízení zakázek, zákazníků, zaměstnanců, docházky, nabídek, fakturace, výroby a firemní komunikace s podporou AI.";
 
-export const HOME_H1 =
-  "RAJMONDATA – firemní systém pro řízení zakázek s podporou AI";
+export const HOME_H1 = "CRM a ERP systém pro řízení celé firmy s podporou AI";
 
 export const HOME_HERO_LEAD =
-  "Zakázky, zaměstnanci, docházka, nabídky, fakturace, dokumenty, komunikace a AI na jednom místě — pro firmy, které vedou zakázky na míru.";
+  "RAJMONDATA propojuje CRM, řízení zakázek, zaměstnance, docházku, nabídky, fakturaci, dokumenty, sklad, výrobu a firemní komunikaci do jednoho online systému — pro firmy, které chtějí mít provoz pod kontrolou bez roztříštěných tabulek.";
 
 export const HOME_HERO_AI =
-  "AI pomáhá rychle vytvářet nabídky, smlouvy a dodatky, hledat informace a orientovat se v celé firmě.";
+  "AI pomáhá zpracovávat e-maily, vytvářet cenové nabídky, smlouvy a další firemní dokumenty. Návrhy vždy kontrolujete před odesláním zákazníkovi nebo uložením do zakázky.";
 
 export type HomeFaqItem = { question: string; answer: string };
 
@@ -22,6 +21,11 @@ export const HOME_FAQ: HomeFaqItem[] = [
     question: "Co je RAJMONDATA?",
     answer:
       "RAJMONDATA je podnikový portál pro montážní, stavební, výrobní a řemeslné firmy. Slouží k řízení poptávek, zakázek, nabídek, zaměstnanců, docházky, dokumentů, fakturace, výroby a komunikace se zákazníky.",
+  },
+  {
+    question: "Jaký je rozdíl mezi CRM a ERP v RAJMONDATA?",
+    answer:
+      "CRM pokrývá zákazníky, poptávky, nabídky a obchodní komunikaci. ERP vrstva v portálu zahrnuje realizaci zakázek, zaměstnance, docházku, výrobu, sklad, fakturaci a reporting — vše propojené v jednom systému.",
   },
   {
     question: "Pro jaké firmy je RAJMONDATA vhodná?",

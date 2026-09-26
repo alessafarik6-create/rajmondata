@@ -1,19 +1,25 @@
 import Link from "next/link";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
-const productLinks = [
+const solutionLinksSeo = [
+  { href: "/crm", label: "CRM systém" },
+  { href: "/erp-system", label: "ERP systém" },
   { href: "/rizeni-zakazek", label: "Řízení zakázek" },
   { href: "/ai-pro-firmy", label: "AI pro firmy" },
-  { href: "/dochazka-zamestnancu", label: "Docházka" },
+  { href: "/dochazka-zamestnancu", label: "Docházkový systém" },
   { href: "/poptavky-a-nabidky", label: "Poptávky a nabídky" },
-  { href: "/email-pro-firmy", label: "E-mail" },
-  { href: "/fakturace-a-doklady", label: "Fakturace" },
+  { href: "/fakturace-a-doklady", label: "Fakturace a doklady" },
+  { href: "/rizeni-vyroby", label: "Řízení výroby" },
+  { href: "/skladove-hospodarstvi", label: "Skladová evidence" },
+];
+
+const productLinks = [
+  { href: "/email-pro-firmy", label: "E-mail pro firmy" },
   { href: "/komunikace-se-zakazniky", label: "Komunikace se zákazníky" },
-  { href: "/rizeni-vyroby", label: "Výroba" },
-  { href: "/skladove-hospodarstvi", label: "Sklad" },
   { href: "/vozovy-park", label: "Vozový park" },
   { href: "/kamerovy-system", label: "Kamerový systém" },
   { href: "/firemni-portal", label: "Firemní portál" },
+  { href: "/funkce", label: "Přehled funkcí" },
 ];
 
 const solutionLinks = [
@@ -41,8 +47,20 @@ export function PublicMarketingFooter({ contactEmail }: { contactEmail?: string 
         <div>
           <p className="text-base font-semibold text-slate-100">{PLATFORM_NAME}</p>
           <p className="mt-2 text-xs leading-relaxed">
-            Firemní portál a CRM pro řízení zakázek, zaměstnanců, docházky a fakturace s podporou AI.
+            Český CRM a ERP firemní systém pro řízení zakázek, zákazníků, zaměstnanců a fakturace s AI.
           </p>
+        </div>
+        <div>
+          <p className="font-medium text-slate-200">Řešení</p>
+          <ul className="mt-3 space-y-2">
+            {solutionLinksSeo.map((l) => (
+              <li key={l.href}>
+                <Link href={l.href} className="hover:text-primary hover:underline underline-offset-2">
+                  {l.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
         <div>
           <p className="font-medium text-slate-200">Produkt</p>
@@ -55,9 +73,7 @@ export function PublicMarketingFooter({ contactEmail }: { contactEmail?: string 
               </li>
             ))}
           </ul>
-        </div>
-        <div>
-          <p className="font-medium text-slate-200">Pro firmy</p>
+          <p className="mt-4 font-medium text-slate-200">Pro firmy</p>
           <ul className="mt-3 space-y-2">
             {solutionLinks.map((l) => (
               <li key={l.href}>

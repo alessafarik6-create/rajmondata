@@ -37,6 +37,18 @@ export function buildMarketingPageJsonLd(page: MarketingPageDef, canonical: stri
     },
   ];
 
+  if (page.kind === "feature") {
+    out.push({
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      name: "RAJMONDATA",
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Web",
+      url: canonical,
+      description: page.description,
+    });
+  }
+
   const faq = MARKETING_PAGE_FAQ[page.slug];
   if (faq?.length) {
     out.push({

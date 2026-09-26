@@ -1,6 +1,67 @@
 import type { HomeFaqItem } from "@/lib/marketing/homepage-seo";
 
 export const MARKETING_PAGE_FAQ: Record<string, HomeFaqItem[]> = {
+  crm: [
+    {
+      question: "Co je CRM systém?",
+      answer:
+        "CRM je software pro evidenci zákazníků, obchodní komunikaci a navazující zakázky. V RAJMONDATA je CRM propojené s poptávkami, nabídkami, e-mailem a realizací — nejde o izolovaný seznam kontaktů.",
+    },
+    {
+      question: "Pro koho je CRM vhodné?",
+      answer:
+        "Pro obchodníky a vedení firem, které vedou zakázky na míru — montáže, stavby, výroba na zakázku nebo servis. Hodí se i menším týmům, které chtějí online CRM bez synchronizace několika aplikací.",
+    },
+    {
+      question: "Lze CRM používat online?",
+      answer:
+        "Ano. RAJMONDATA je webový CRM software — funguje v prohlížeči na počítači, tabletu i mobilu bez instalace na každé stanici.",
+    },
+    {
+      question: "Umí RAJMONDATA CRM propojit se zakázkami?",
+      answer:
+        "Ano. Poptávka nebo nabídka se převede na zakázku se stejným zákazníkem, dokumenty a rozpočtem. Realizace, docházka a fakturace navazují na stejný záznam.",
+    },
+    {
+      question: "Jak AI pomáhá v CRM?",
+      answer:
+        "AI navrhne odpovědi na e-maily, připraví návrh cenové nabídky z poptávky a ceníků a pomůže s dokumenty u obchodního případu. Finální text a ceny vždy schvaluje uživatel.",
+    },
+  ],
+  "erp-system": [
+    {
+      question: "Co je ERP systém?",
+      answer:
+        "ERP (Enterprise Resource Planning) je firemní informační systém pro řízení procesů — zakázky, zdroje, sklad, výrobu a finance v provozu. RAJMONDATA pokrývá tyto oblasti v jednom portálu spolu s CRM.",
+    },
+    {
+      question: "Jaký je rozdíl mezi CRM a ERP v RAJMONDATA?",
+      answer:
+        "CRM se zaměřuje na zákazníka a obchod od poptávky po zakázku. ERP vrstva zahrnuje realizaci, zaměstnance, docházku, výrobu, sklad a fakturaci. Data jsou ve stejném systému.",
+    },
+    {
+      question: "Nahrazuje RAJMONDATA účetnictví?",
+      answer:
+        "Ne. Slouží k fakturaci a dokladům v návaznosti na zakázku; kompletní účetní agendu řeší váš účetní software nebo účetní.",
+    },
+    {
+      question: "Je ERP vhodné pro malou firmu?",
+      answer:
+        "Ano, pokud potřebujete řídit zakázky, lidi a materiál na jednom místě. Moduly se aktivují podle licence — nemusíte hned používat všechny oblasti.",
+    },
+  ],
+  "crm-zdarma": [
+    {
+      question: "Je RAJMONDATA CRM zdarma navždy?",
+      answer:
+        "Ne. Jde o placenou platformu s registrací firmy. Může být k dispozici zkušební období podle aktuálních podmínek — délku a rozsah určuje provozovatel po schválení registrace.",
+    },
+    {
+      question: "Co znamená vyzkoušet zdarma?",
+      answer:
+        "Registrace umožní ověřit portál včetně CRM a zakázek v rámci trialu nebo schválené licence. Podmínky a ceník najdete na stránce funkcí; nejde o neomezený free tarif bez licencování.",
+    },
+  ],
   "rizeni-zakazek": [
     {
       question: "Co lze u zakázky evidovat?",
