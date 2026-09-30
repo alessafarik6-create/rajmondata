@@ -50,6 +50,10 @@ export default function RootLayout({
   return (
     <html lang="cs" className="dark">
       <head>
+        <script
+          defer
+          src="https://minio.rails.cz/assets/rfcookies.js?id=GTM-NP47CGG5"
+        />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link

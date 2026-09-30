@@ -104,6 +104,16 @@ export function PublicMarketingFooter({ contactEmail }: { contactEmail?: string 
                 </Link>
               </li>
             ))}
+            <li>
+              <a
+                href="#"
+                data-cc="c-settings"
+                aria-haspopup="dialog"
+                className="hover:text-primary hover:underline underline-offset-2"
+              >
+                Nastavit cookies
+              </a>
+            </li>
           </ul>
           {contactEmail ? (
             <p className="mt-4 text-xs">
