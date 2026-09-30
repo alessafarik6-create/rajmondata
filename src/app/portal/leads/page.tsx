@@ -1,14 +1,12 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Loader2,
   Inbox,
-  RefreshCw,
-  Search,
   Ruler,
-  Tags,
   Pencil,
   Trash2,
   Plus,
@@ -105,10 +103,28 @@ import {
   InquiryAiQuoteButton,
   InquiryAiQuotePreviewDialog,
 } from "@/components/leads/inquiry-ai-quote-dialog";
+import { LeadsFiltersPanel } from "@/components/leads/leads-filters-panel";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import type {
   AiQuoteApplyInitial,
   AiValidatedQuoteResult,
 } from "@/lib/ai/types";
+import {
+  buildLeadsFilterSearchParams,
+  computeLeadDatePresetRange,
+  leadMatchesDateRange,
+  leadsFilterStateHasActive,
+  parseLeadsFiltersFromSearchParams,
+  type LeadDatePresetId,
+  type LeadsFilterState,
+} from "@/lib/leads/lead-filters";
+import { leadReceivedDate } from "@/lib/leads/lead-received-date";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -170,28 +186,6 @@ type LeadOverlayRow = {
   customerContacted?: boolean | null;
 };
 
-function overlayReceivedDate(ov: LeadOverlayRow | undefined): Date | null {
-  if (!ov) return null;
-  const r = ov.receivedAt;
-  if (
-    r &&
-    typeof r === "object" &&
-    "toDate" in r &&
-    typeof (r as Timestamp).toDate === "function"
-  ) {
-    return (r as Timestamp).toDate();
-  }
-  return null;
-}
-
-function leadReceivedDate(lead: LeadImportRow, ov: LeadOverlayRow | undefined): Date | null {
-  if (lead.receivedAtIso) {
-    const d = new Date(lead.receivedAtIso);
-    if (!Number.isNaN(d.getTime())) return d;
-  }
-  return overlayReceivedDate(ov);
-}
-
 function formatReceivedDay(d: Date): string {
   return format(d, "d. M. yyyy", { locale: cs });
 }
@@ -233,6 +227,10 @@ export default function PortalLeadsPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
   const { company, companyName } = useCompany();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const lastUrlQueryRef = useRef<string | null>(null);
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -335,6 +333,10 @@ export default function PortalLeadsPage() {
   const [filterTag, setFilterTag] = useState<string>("");
   const [filterContact, setFilterContact] = useState<LeadContactFilter>("");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [datePreset, setDatePreset] = useState<LeadDatePresetId | "">("");
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [optimisticContactKeys, setOptimisticContactKeys] = useState<Record<string, true>>({});
 
   const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
@@ -508,6 +510,82 @@ export default function PortalLeadsPage() {
     return () => window.clearInterval(t);
   }, [companyId, user, loadLeads]);
 
+  const leadsFilterState: LeadsFilterState = useMemo(
+    () => ({
+      search,
+      filterTyp,
+      filterTag,
+      filterContact,
+      sortOrder,
+      dateFrom,
+      dateTo,
+      datePreset,
+    }),
+    [search, filterTyp, filterTag, filterContact, sortOrder, dateFrom, dateTo, datePreset]
+  );
+
+  const hasActiveLeadsFilters = useMemo(
+    () => leadsFilterStateHasActive(leadsFilterState),
+    [leadsFilterState]
+  );
+
+  const patchLeadsFilters = useCallback((patch: Partial<LeadsFilterState>) => {
+    if (patch.search !== undefined) setSearch(patch.search);
+    if (patch.filterTyp !== undefined) setFilterTyp(patch.filterTyp);
+    if (patch.filterTag !== undefined) setFilterTag(patch.filterTag);
+    if (patch.filterContact !== undefined) setFilterContact(patch.filterContact);
+    if (patch.sortOrder !== undefined) setSortOrder(patch.sortOrder);
+    if (patch.dateFrom !== undefined) setDateFrom(patch.dateFrom);
+    if (patch.dateTo !== undefined) setDateTo(patch.dateTo);
+    if (patch.datePreset !== undefined) {
+      setDatePreset(patch.datePreset);
+      if (patch.datePreset && patch.datePreset !== "custom") {
+        const range = computeLeadDatePresetRange(patch.datePreset);
+        setDateFrom(range.dateFrom);
+        setDateTo(range.dateTo);
+      } else if (patch.datePreset === "") {
+        setDateFrom("");
+        setDateTo("");
+      }
+    }
+  }, []);
+
+  const clearAllLeadsFilters = useCallback(() => {
+    setSearch("");
+    setFilterTyp("");
+    setFilterTag("");
+    setFilterContact("");
+    setSortOrder("newest");
+    setDateFrom("");
+    setDateTo("");
+    setDatePreset("");
+  }, []);
+
+  useEffect(() => {
+    const qs = searchParams.toString();
+    if (lastUrlQueryRef.current === qs) return;
+    lastUrlQueryRef.current = qs;
+    const parsed = parseLeadsFiltersFromSearchParams(searchParams);
+    setSearch(parsed.search);
+    setFilterTyp(parsed.filterTyp);
+    setFilterTag(parsed.filterTag);
+    setFilterContact(parsed.filterContact);
+    setSortOrder(parsed.sortOrder);
+    setDateFrom(parsed.dateFrom);
+    setDateTo(parsed.dateTo);
+    setDatePreset(parsed.datePreset);
+  }, [searchParams]);
+
+  useEffect(() => {
+    const built = buildLeadsFilterSearchParams(leadsFilterState);
+    const openLead = searchParams.get("openLead");
+    if (openLead) built.set("openLead", openLead);
+    const qs = built.toString();
+    if (lastUrlQueryRef.current === qs) return;
+    lastUrlQueryRef.current = qs;
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [leadsFilterState, pathname, router, searchParams]);
+
   const typOptions = useMemo(() => {
     const s = new Set<string>();
     for (const r of rows) {
@@ -551,6 +629,13 @@ export default function PortalLeadsPage() {
         return leadMatchesContactFilter(filterContact, ov, offers);
       });
     }
+    if (dateFrom.trim() || dateTo.trim()) {
+      list = list.filter((r) => {
+        const key = stableImportLeadDocumentId(r);
+        const ov = overlayByDocId.get(key);
+        return leadMatchesDateRange(r, ov, dateFrom, dateTo);
+      });
+    }
     return list;
   }, [
     rows,
@@ -558,6 +643,8 @@ export default function PortalLeadsPage() {
     filterTyp,
     filterTag,
     filterContact,
+    dateFrom,
+    dateTo,
     overlayByDocId,
     sentOffersByLeadKey,
     optimisticContactKeys,
@@ -928,119 +1015,81 @@ export default function PortalLeadsPage() {
         ) : null}
       </div>
 
-      <Card className="border-slate-200 shadow-sm">
+      <Card className="border-slate-200 shadow-sm overflow-hidden">
         <CardHeader className="pb-3 space-y-0">
-          <CardTitle className="text-base">Filtry a akce</CardTitle>
-          <CardDescription>Vyhledávání v načtených datech, filtr typu ze zdroje a štítku.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end">
-            <div className="flex-1 min-w-[200px] space-y-1.5">
-              <Label htmlFor="lead-search" className="text-xs text-slate-800">
-                Vyhledávání
-              </Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-800" />
-                <Input
-                  id="lead-search"
-                  className="pl-9"
-                  placeholder="Jméno, telefon, e-mail, adresa, typ, zpráva…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="text-base">Filtry a akce</CardTitle>
+              <CardDescription>
+                Vyhledávání, typ, štítek, kontakt a období podle data přijetí.
+              </CardDescription>
             </div>
-            <div className="w-full sm:w-[200px] space-y-1.5">
-              <Label className="text-xs text-slate-800">Typ poptávky (ze zdroje)</Label>
-              <select
-                className={NATIVE_SELECT_CLASS}
-                value={filterTyp}
-                onChange={(e) => setFilterTyp(e.target.value)}
-              >
-                <option value="">Všechny typy</option>
-                {typOptions.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="w-full sm:w-[220px] space-y-1.5">
-              <Label className="text-xs text-slate-800">Štítek</Label>
-              <select
-                className={NATIVE_SELECT_CLASS}
-                value={filterTag}
-                onChange={(e) => setFilterTag(e.target.value)}
-              >
-                <option value="">Všechny</option>
-                <option value="__none__">Bez štítku</option>
-                {tags.map((t) => (
-                  <option key={t.id} value={t.id!}>
-                    {t.name || t.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {canManageOffers ? (
-              <div className="w-full sm:w-[220px] space-y-1.5">
-                <Label className="text-xs text-slate-800">Kontakt se zákazníkem</Label>
-                <select
-                  className={NATIVE_SELECT_CLASS}
-                  value={filterContact}
-                  onChange={(e) => setFilterContact(e.target.value as LeadContactFilter)}
-                >
-                  <option value="">Všechny</option>
-                  <option value="uncontacted">Neukontaktované</option>
-                  <option value="contacted">Kontaktované</option>
-                  <option value="offer_sent">Nabídka odeslána</option>
-                </select>
-              </div>
-            ) : null}
-            <div className="w-full sm:w-[200px] space-y-1.5">
-              <Label className="text-xs text-slate-800">Řazení podle data přijetí</Label>
-              <select
-                className={NATIVE_SELECT_CLASS}
-                value={sortOrder}
-                onChange={(e) => setSortOrder(e.target.value as "newest" | "oldest")}
-              >
-                <option value="newest">Nejnovější nahoře</option>
-                <option value="oldest">Nejstarší nahoře</option>
-              </select>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                className="gap-2 min-h-[44px]"
-                onClick={() => void loadLeads({ silent: false })}
-                disabled={loading}
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-                Obnovit
-              </Button>
-              {canManageTags ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="gap-2 min-h-[44px]"
-                  onClick={() => setTagsDialogOpen(true)}
-                >
-                  <Tags className="h-4 w-4" />
-                  Správa štítků
-                </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="md:hidden min-h-11 shrink-0"
+              onClick={() => setMobileFiltersOpen(true)}
+            >
+              Filtry
+              {hasActiveLeadsFilters ? (
+                <span className="ml-1.5 rounded-full bg-primary/15 px-1.5 text-xs text-primary">
+                  •
+                </span>
               ) : null}
-            </div>
+            </Button>
           </div>
+        </CardHeader>
+        <CardContent className="space-y-4 hidden md:block">
+          <LeadsFiltersPanel
+            state={leadsFilterState}
+            onChange={patchLeadsFilters}
+            typOptions={typOptions}
+            tags={tags}
+            canManageOffers={canManageOffers}
+            canManageTags={canManageTags}
+            loading={loading}
+            onRefresh={() => void loadLeads({ silent: false })}
+            onOpenTagsDialog={() => setTagsDialogOpen(true)}
+            onClearFilters={clearAllLeadsFilters}
+            hasActiveFilters={hasActiveLeadsFilters}
+          />
           <p className="text-xs text-slate-800">
-            Automatické obnovení každých 5 minut. Pole „typ“ se bere z importního JSON (např. typ, type,
-            kategorie, productType) — záleží na vašem zdroji.
+            Automatické obnovení každých 5 minut. Datum přijetí = pole z importu (
+            <code className="text-[11px]">receivedAtIso</code>) nebo overlay{" "}
+            <code className="text-[11px]">receivedAt</code> (kalendářní den v Europe/Prague).
           </p>
         </CardContent>
       </Card>
+
+      <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
+        <SheetContent side="bottom" className="max-h-[90dvh] overflow-y-auto rounded-t-xl">
+          <SheetHeader>
+            <SheetTitle>Filtry poptávek</SheetTitle>
+            <SheetDescription>Nastavte období, typ, štítek a další kritéria.</SheetDescription>
+          </SheetHeader>
+          <LeadsFiltersPanel
+            className="mt-4 pb-6"
+            state={leadsFilterState}
+            onChange={patchLeadsFilters}
+            typOptions={typOptions}
+            tags={tags}
+            canManageOffers={canManageOffers}
+            canManageTags={canManageTags}
+            loading={loading}
+            onRefresh={() => void loadLeads({ silent: false })}
+            onOpenTagsDialog={() => {
+              setMobileFiltersOpen(false);
+              setTagsDialogOpen(true);
+            }}
+            onClearFilters={() => {
+              clearAllLeadsFilters();
+              setMobileFiltersOpen(false);
+            }}
+            hasActiveFilters={hasActiveLeadsFilters}
+            onApplyMobile={() => setMobileFiltersOpen(false)}
+          />
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={tagsDialogOpen} onOpenChange={setTagsDialogOpen}>
         <DialogContent className="sm:max-w-md bg-white border-slate-200">
@@ -1349,6 +1398,20 @@ export default function PortalLeadsPage() {
                 </p>
               ) : (
                 <div className="divide-y divide-slate-200">
+                  <p className="px-4 py-2 text-xs text-slate-600 border-b border-slate-100 bg-slate-50/80">
+                    Nalezeno:{" "}
+                    <span className="font-medium text-slate-800">
+                      {sortedFilteredRows.length}{" "}
+                      {sortedFilteredRows.length === 1
+                        ? "poptávka"
+                        : sortedFilteredRows.length >= 2 && sortedFilteredRows.length <= 4
+                          ? "poptávky"
+                          : "poptávek"}
+                    </span>
+                    {rows.length !== sortedFilteredRows.length ? (
+                      <span className="text-slate-500"> (z {rows.length} načtených)</span>
+                    ) : null}
+                  </p>
                   {sortedFilteredRows.map((r, idx) => {
                     const key = stableImportLeadDocumentId(r);
                     const ov = overlayByDocId.get(key);
