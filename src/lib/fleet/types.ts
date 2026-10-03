@@ -1,10 +1,11 @@
 import type { Timestamp } from "firebase-admin/firestore";
 
-export type FleetTrackingProviderKind = "ECOFLEET";
+export type FleetTrackingProviderKind = "ECOFLEET" | "SATELITNI_SLEDOVANI";
 
 export type FleetIntegrationStatus =
   | "not_connected"
   | "configured"
+  | "connected"
   | "error"
   | "disabled";
 
@@ -40,6 +41,8 @@ export type FleetVehicleDoc = {
   lastPositionAt?: Timestamp | null;
   todayDistanceKm?: number | null;
   ignitionOn?: boolean | null;
+  /** Poslední telemetrie z API v2 (switches, sources). */
+  lastTelemetry?: Record<string, unknown> | null;
   active?: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
@@ -124,6 +127,12 @@ export type FleetIntegrationDoc = {
   provider: FleetTrackingProviderKind;
   status: FleetIntegrationStatus;
   apiBaseUrl?: string | null;
+  oauthClientId?: string | null;
+  connectedAt?: Timestamp | null;
+  connectedByUserId?: string | null;
+  lastSyncAt?: Timestamp | null;
+  lastSyncVehicleCount?: number | null;
+  lastSyncError?: string | null;
   lastTestAt?: Timestamp | null;
   lastError?: string | null;
   configuredByUserId?: string | null;

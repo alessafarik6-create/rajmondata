@@ -26,8 +26,26 @@ export async function GET(request: NextRequest) {
   const from = fromParam ? new Date(fromParam) : undefined;
   const to = toParam ? new Date(toParam) : undefined;
 
-  const { configured } = await resolveFleetProviderForOrg(perm.db, companyId);
+  const { configured, provider, providerKind } = await resolveFleetProviderForOrg(perm.db, companyId);
   let trips = await listFleetTrips(perm.db, companyId, { vehicleId, from, to, limit: 300 });
+
+  if (configured && providerKind === "SATELITNI_SLEDOVANI" && vehicleId && from && to) {
+    const vehSnap = await perm.db
+      .collection("companies")
+      .doc(companyId)
+      .collection("fleet_vehicles")
+      .doc(vehicleId)
+      .get();
+    const ext = String(vehSnap.data()?.externalVehicleId ?? "").trim();
+    if (ext && "syncTripsForVehicle" in provider) {
+      await (provider as import("@/lib/fleet/providers/satelitni-sledovani-provider").SatelitniSledovaniProvider).syncTripsForVehicle(
+        ext,
+        from,
+        to
+      );
+      trips = await listFleetTrips(perm.db, companyId, { vehicleId, from, to, limit: 300 });
+    }
+  }
 
   if (trips.length === 0 && isFleetDemoModeEnabled() && !configured && vehicleId) {
     trips = demoTrips(vehicleId) as typeof trips;

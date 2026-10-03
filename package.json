@@ -70,6 +70,7 @@
     "mailparser": "^3.9.28",
     "next": "15.5.9",
     "nodemailer": "^8.0.7",
+    "openid-client": "^6.8.8",
     "papaparse": "^5.5.3",
     "patch-package": "^8.0.0",
     "pdfjs-dist": "^4.10.38",

@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     {
       lastTestAt: FieldValue.serverTimestamp(),
       lastError: test.ok ? null : test.message.slice(0, 500),
-      status: test.ok ? "configured" : "error",
+      status: test.ok ? "connected" : "error",
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true }

@@ -1,4 +1,7 @@
-import type { FleetTrackingProvider, FleetProviderConnectionTest } from "@/lib/fleet/providers/types";
+import type {
+  FleetTrackingProvider,
+  FleetProviderConnectionTest,
+} from "@/lib/fleet/providers/types";
 import type { FleetProviderContext } from "@/lib/fleet/providers/types";
 
 const NOT_CONFIGURED: FleetProviderConnectionTest = {
@@ -20,7 +23,7 @@ const NOT_CONFIGURED: FleetProviderConnectionTest = {
  * - rozhodnutí A vs B: query-on-demand vs sync do Firestore
  */
 export class EcofleetProvider implements FleetTrackingProvider {
-  readonly kind = "ECOFLEET" as const;
+  readonly kind = "ECOFLEET" as const satisfies FleetTrackingProvider["kind"];
 
   constructor(private readonly ctx: FleetProviderContext) {}
 

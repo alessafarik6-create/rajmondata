@@ -3,34 +3,37 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/firebase";
-import { Loader2, Car } from "lucide-react";
+import { Loader2, Car, Satellite } from "lucide-react";
+
+type SatelitniStatus = {
+  connected: boolean;
+  status: string;
+  tokenActive?: boolean;
+  lastSyncAt?: string | null;
+  vehicleCount?: number;
+  lastSyncError?: string | null;
+};
 
 export function FleetIntegrationSettingsCard({ companyId }: { companyId: string | null }) {
   const { user } = useUser();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [apiBaseUrl, setApiBaseUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [status, setStatus] = useState("not_connected");
+  const [satelitni, setSatelitni] = useState<SatelitniStatus | null>(null);
 
   const load = useCallback(async () => {
     if (!user || !companyId) return;
     setLoading(true);
     try {
       const token = await user.getIdToken();
-      const res = await fetch(`/api/company/fleet/integration?companyId=${encodeURIComponent(companyId)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(
+        `/api/integrations/satelitni-sledovani/status?companyId=${encodeURIComponent(companyId)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       const data = await res.json();
-      if (data.ok && data.integration) {
-        setStatus(data.integration.status ?? "not_connected");
-        setApiBaseUrl(String(data.integration.apiBaseUrl ?? ""));
-      }
+      if (data.ok) setSatelitni(data);
     } finally {
       setLoading(false);
     }
@@ -40,27 +43,42 @@ export function FleetIntegrationSettingsCard({ companyId }: { companyId: string 
     void load();
   }, [load]);
 
-  async function save() {
+  async function connect() {
     if (!user || !companyId) return;
     setBusy(true);
     try {
       const token = await user.getIdToken();
-      const res = await fetch("/api/company/fleet/integration", {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          companyId,
-          apiBaseUrl,
-          apiKey: apiKey.trim() || undefined,
-        }),
-      });
+      const res = await fetch(
+        `/api/integrations/satelitni-sledovani/connect?companyId=${encodeURIComponent(companyId)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       const data = await res.json();
-      if (!data.ok) {
-        toast({ variant: "destructive", title: "Integrace", description: data.error });
+      if (!data.ok || !data.authorizeUrl) {
+        toast({ variant: "destructive", title: "Připojení", description: data.error ?? "Chyba" });
         return;
       }
-      toast({ title: "Uloženo", description: data.message });
-      setApiKey("");
+      window.location.href = String(data.authorizeUrl);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    if (!user || !companyId) return;
+    setBusy(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/integrations/satelitni-sledovani/disconnect", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId }),
+      });
+      const data = await res.json();
+      toast({
+        variant: data.ok ? "default" : "destructive",
+        title: "Odpojení",
+        description: data.message ?? data.error,
+      });
       await load();
     } finally {
       setBusy(false);
@@ -80,7 +98,29 @@ export function FleetIntegrationSettingsCard({ companyId }: { companyId: string 
       const data = await res.json();
       toast({
         variant: data.ok ? "default" : "destructive",
-        title: "Test Ecofleet",
+        title: "Test SatelitníSledování.cz",
+        description: data.message ?? data.error,
+      });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function syncNow() {
+    if (!user || !companyId) return;
+    setBusy(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/fleet/sync", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId }),
+      });
+      const data = await res.json();
+      toast({
+        variant: data.ok ? "default" : "destructive",
+        title: "Synchronizace vozového parku",
         description: data.message ?? data.error,
       });
       await load();
@@ -91,56 +131,72 @@ export function FleetIntegrationSettingsCard({ companyId }: { companyId: string 
 
   if (!companyId) return null;
 
-  const statusLabel =
-    status === "configured"
-      ? "Nakonfigurováno (čeká na API implementaci)"
-      : status === "error"
-        ? "Chyba"
-        : "Nepřipojeno";
+  const statusLabel = !satelitni?.connected
+    ? "Nepřipojeno"
+    : satelitni.status === "error"
+      ? "Chyba"
+      : "Připojeno";
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Car className="h-5 w-5" /> GPS / Vozový park — Ecofleet
+          <Satellite className="h-5 w-5" /> GPS / Vozový park — SatelitníSledování.cz
         </CardTitle>
         <CardDescription>
-          Integrace Ecofleet CZ. API klíč se ukládá pouze na serveru (šifrovaně). Skutečné volání API doplníme po
-          dodání dokumentace.
+          REST API v2 s OAuth 2.1 (PKCE). Tokeny zůstávají pouze na serveru RAJMONDATA, šifrovaně.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm">
           Stav: <span className="font-medium">{statusLabel}</span>
+          {satelitni?.connected ? (
+            <>
+              {" "}
+              · Token:{" "}
+              <span className="font-medium">{satelitni.tokenActive ? "aktivní" : "obnoví se při dalším požadavku"}</span>
+            </>
+          ) : null}
         </p>
-        <div className="space-y-2">
-          <Label>API URL (Ecofleet)</Label>
-          <Input
-            value={apiBaseUrl}
-            onChange={(e) => setApiBaseUrl(e.target.value)}
-            placeholder="https://… (dle dokumentace Ecofleet)"
-            disabled={loading}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>API Key / Token</Label>
-          <Input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="Zadejte nový klíč (neukládá se do prohlížeče)"
-            autoComplete="new-password"
-          />
-        </div>
+        {satelitni?.connected ? (
+          <ul className="text-sm text-muted-foreground space-y-1">
+            <li>Počet vozidel v RAJMONDATA: {satelitni.vehicleCount ?? 0}</li>
+            <li>
+              Poslední synchronizace:{" "}
+              {satelitni.lastSyncAt
+                ? new Date(satelitni.lastSyncAt).toLocaleString("cs-CZ")
+                : "—"}
+            </li>
+            {satelitni.lastSyncError ? <li className="text-destructive">{satelitni.lastSyncError}</li> : null}
+          </ul>
+        ) : null}
+
         <div className="flex flex-wrap gap-2">
-          <Button disabled={busy || loading} onClick={() => void save()}>
-            Nastavit
-          </Button>
-          <Button variant="outline" disabled={busy} onClick={() => void testConn()}>
-            Otestovat připojení
-          </Button>
+          {!satelitni?.connected ? (
+            <Button disabled={busy || loading} onClick={() => void connect()}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Připojit účet"}
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" disabled={busy} onClick={() => void testConn()}>
+                Otestovat spojení
+              </Button>
+              <Button variant="outline" disabled={busy} onClick={() => void syncNow()}>
+                Spustit synchronizaci
+              </Button>
+              <Button variant="destructive" disabled={busy} onClick={() => void disconnect()}>
+                Odpojit
+              </Button>
+            </>
+          )}
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
         </div>
+
+        <p className="text-xs text-muted-foreground flex items-center gap-1">
+          <Car className="h-3 w-3" />
+          Legacy Ecofleet (API klíč) lze ponechat v kódu pro jiné organizace; tato organizace používá SatelitníSledování.cz
+          v2.
+        </p>
       </CardContent>
     </Card>
   );

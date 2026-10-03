@@ -25,7 +25,7 @@ export type FleetProviderTripRoute = {
  * Skutečné HTTP volání doplníme až po dodání API dokumentace.
  */
 export interface FleetTrackingProvider {
-  readonly kind: "ECOFLEET";
+  readonly kind: "ECOFLEET" | "SATELITNI_SLEDOVANI";
   testConnection(): Promise<FleetProviderConnectionTest>;
   getVehicles(): Promise<FleetVehicleDoc[]>;
   getVehiclePosition(vehicleExternalId: string): Promise<FleetPositionSnapshot | null>;

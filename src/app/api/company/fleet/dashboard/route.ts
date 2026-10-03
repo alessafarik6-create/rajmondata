@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
       ? null
       : demo
         ? null
-        : "GPS monitoring zatím není připojen. Nastavte Ecofleet v Nastavení → Integrace → GPS / Vozový park.",
+        : "GPS monitoring není připojen. Propojte SatelitníSledování.cz v Nastavení → Integrace → GPS / Vozový park.",
     stats,
     vehicles: vehicles.map(serializeVehicle),
     positions,

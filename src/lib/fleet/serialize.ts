@@ -24,6 +24,7 @@ export function serializeVehicle(row: FleetVehicleDoc & { id: string }) {
     lastPositionAt: row.lastPositionAt?.toDate?.()?.toISOString?.() ?? null,
     todayDistanceKm: row.todayDistanceKm ?? null,
     ignitionOn: row.ignitionOn ?? null,
+    lastTelemetry: row.lastTelemetry ?? null,
     active: row.active !== false,
   };
 }
