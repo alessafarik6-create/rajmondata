@@ -46,6 +46,14 @@ export function FleetIntegrationSettingsCard({ companyId }: { companyId: string 
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("gps") === "connected") {
+      void load();
+    }
+  }, [load]);
+
   async function connect() {
     if (!user || !companyId) return;
     setBusy(true);

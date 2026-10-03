@@ -10,6 +10,12 @@ import { exchangeSatelitniAuthorizationCode } from "@/lib/integrations/satelitni
 import { fleetIntegrationRef } from "@/lib/fleet/stores";
 import { satelitniOAuthClientId } from "@/lib/integrations/satelitni-sledovani/config";
 import { writeSatelitniFleetAudit } from "@/lib/integrations/satelitni-sledovani/fleet-audit";
+import {
+  buildIntegraceOAuthRedirect,
+  logGpsOAuthCallbackError,
+  logGpsOAuthCallbackTokenExchangeError,
+  sanitizeOAuthLogValue,
+} from "@/lib/integrations/satelitni-sledovani/oauth-diagnostics";
 
 export const dynamic = "force-dynamic";
 
@@ -20,29 +26,109 @@ function appOrigin(request: NextRequest): string {
   );
 }
 
+function providerErrorRedirect(
+  origin: string,
+  input: {
+    error: string;
+    errorDescription: string | null;
+    errorUri: string | null;
+    statePresent: boolean;
+  }
+): NextResponse {
+  logGpsOAuthCallbackError({
+    error: input.error,
+    errorDescription: input.errorDescription,
+    errorUri: input.errorUri,
+    statePresent: input.statePresent,
+  });
+  return NextResponse.redirect(
+    buildIntegraceOAuthRedirect(origin, {
+      gps_oauth_error: input.error,
+      gps_oauth_error_description: sanitizeOAuthLogValue(input.errorDescription),
+    })
+  );
+}
+
 export async function GET(request: NextRequest) {
   const db = getAdminFirestore();
   const origin = appOrigin(request);
+  const params = request.nextUrl.searchParams;
+  const state = String(params.get("state") ?? "");
+  const oauthError = params.get("error");
+  const errorDescription = params.get("error_description");
+  const errorUri = params.get("error_uri");
+
   if (!db) {
-    return NextResponse.redirect(new URL("/portal/settings?satelitni=error", origin));
+    logGpsOAuthCallbackError({
+      error: "server_misconfigured",
+      errorDescription: "Firebase Admin není k dispozici.",
+      errorUri: null,
+      statePresent: Boolean(state),
+    });
+    return NextResponse.redirect(
+      buildIntegraceOAuthRedirect(origin, {
+        gps_oauth_error: "server_misconfigured",
+        gps_oauth_error_description: "Server není nakonfigurován.",
+      })
+    );
   }
 
-  const state = String(request.nextUrl.searchParams.get("state") ?? "");
-  const error = request.nextUrl.searchParams.get("error");
-  if (error) {
-    return NextResponse.redirect(
-      new URL(`/portal/settings?satelitni=denied&reason=${encodeURIComponent(error)}`, origin)
-    );
+  if (oauthError) {
+    return providerErrorRedirect(origin, {
+      error: oauthError,
+      errorDescription,
+      errorUri,
+      statePresent: Boolean(state),
+    });
   }
 
   const parsed = parseOAuthState(state);
   if (!parsed) {
-    return NextResponse.redirect(new URL("/portal/settings?satelitni=invalid_state", origin));
+    logGpsOAuthCallbackError({
+      error: "invalid_state",
+      errorDescription: "Nepodařilo se ověřit parametr state.",
+      errorUri: null,
+      statePresent: Boolean(state),
+    });
+    return NextResponse.redirect(
+      buildIntegraceOAuthRedirect(origin, {
+        gps_oauth_error: "invalid_state",
+        gps_oauth_error_description: "Neplatný stav OAuth. Zkuste připojení znovu.",
+      })
+    );
   }
 
   const pending = await consumeOAuthPending(db, parsed.organizationId, state);
   if (!pending) {
-    return NextResponse.redirect(new URL("/portal/settings?satelitni=expired", origin));
+    logGpsOAuthCallbackError({
+      error: "pending_not_found",
+      errorDescription: "Chybí nebo vypršel uložený PKCE stav (state/code_verifier).",
+      errorUri: null,
+      statePresent: true,
+    });
+    return NextResponse.redirect(
+      buildIntegraceOAuthRedirect(origin, {
+        gps_oauth_error: "pending_not_found",
+        gps_oauth_error_description:
+          "Platnost připojení vypršela nebo byl stav již použit. Spusťte OAuth znovu.",
+      })
+    );
+  }
+
+  const code = params.get("code");
+  if (!code) {
+    logGpsOAuthCallbackError({
+      error: "missing_code",
+      errorDescription: "Callback neobsahuje authorization code.",
+      errorUri: null,
+      statePresent: true,
+    });
+    return NextResponse.redirect(
+      buildIntegraceOAuthRedirect(origin, {
+        gps_oauth_error: "missing_code",
+        gps_oauth_error_description: "Poskytovatel nevrátil autorizační kód.",
+      })
+    );
   }
 
   try {
@@ -78,8 +164,17 @@ export async function GET(request: NextRequest) {
       action: "GPS_CONNECTED",
     });
 
-    return NextResponse.redirect(new URL("/portal/fleet?satelitni=connected", origin));
-  } catch {
-    return NextResponse.redirect(new URL("/portal/fleet?satelitni=error", origin));
+    return NextResponse.redirect(
+      buildIntegraceOAuthRedirect(origin, { gps: "connected" })
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Token exchange selhal.";
+    logGpsOAuthCallbackTokenExchangeError(msg);
+    return NextResponse.redirect(
+      buildIntegraceOAuthRedirect(origin, {
+        gps_oauth_error: "token_exchange_failed",
+        gps_oauth_error_description: sanitizeOAuthLogValue(msg),
+      })
+    );
   }
 }

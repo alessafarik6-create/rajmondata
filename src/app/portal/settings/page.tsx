@@ -30,6 +30,7 @@ import { InquiryEmailIdentitySettingsCard } from "@/components/settings/inquiry-
 import { EmailMailboxAccountsSettingsCard } from "@/components/settings/email-mailbox-accounts-settings-card";
 import { EmailMyMailboxSettingsCard } from "@/components/settings/email-my-mailbox-settings-card";
 import { FleetIntegrationSettingsCard } from "@/components/settings/fleet-integration-settings-card";
+import { gpsOAuthUserMessage } from "@/lib/integrations/satelitni-sledovani/oauth-diagnostics";
 import { HikvisionIntegrationSettingsCard } from "@/components/settings/hikvision-integration-settings-card";
 import { useCameraPermissions } from "@/hooks/use-camera-permissions";
 import { InquiryOfferTemplatesSettingsCard } from "@/components/settings/inquiry-offer-templates-settings-card";
@@ -98,19 +99,52 @@ export default function SettingsPage() {
   }, [initialTab]);
 
   useEffect(() => {
+    const gps = searchParams.get('gps');
+    if (gps === 'connected') {
+      toast({ title: 'SatelitníSledování.cz připojeno' });
+      router.replace('/portal/settings?tab=integrace');
+      return;
+    }
+
+    const oauthError = searchParams.get('gps_oauth_error');
+    const oauthDesc = searchParams.get('gps_oauth_error_description');
+    if (oauthError) {
+      toast({
+        variant: 'destructive',
+        title: 'SatelitníSledování.cz',
+        description: gpsOAuthUserMessage({
+          error: oauthError,
+          errorDescription: oauthDesc,
+        }),
+      });
+      router.replace('/portal/settings?tab=integrace');
+      return;
+    }
+
     const sat = searchParams.get('satelitni');
     if (!sat || sat === 'connected') return;
-    const messages: Record<string, string> = {
-      error: 'OAuth se nepodařilo dokončit.',
-      denied: 'Připojení bylo zrušeno u poskytovatele.',
-      invalid_state: 'Neplatný stav OAuth. Zkuste připojení znovu.',
-      expired: 'Platnost připojení vypršela. Spusťte OAuth znovu.',
-    };
-    toast({
-      variant: 'destructive',
-      title: 'SatelitníSledování.cz',
-      description: messages[sat] ?? 'Připojení se nepodařilo.',
-    });
+    const legacyReason = searchParams.get('reason');
+    if (sat === 'denied' && legacyReason) {
+      toast({
+        variant: 'destructive',
+        title: 'SatelitníSledování.cz',
+        description: gpsOAuthUserMessage({
+          error: legacyReason,
+          errorDescription: searchParams.get('error_description'),
+        }),
+      });
+    } else {
+      const messages: Record<string, string> = {
+        error: 'OAuth se nepodařilo dokončit.',
+        invalid_state: 'Neplatný stav OAuth. Zkuste připojení znovu.',
+        expired: 'Platnost připojení vypršela. Spusťte OAuth znovu.',
+      };
+      toast({
+        variant: 'destructive',
+        title: 'SatelitníSledování.cz',
+        description: messages[sat] ?? 'Připojení se nepodařilo.',
+      });
+    }
     router.replace('/portal/settings?tab=integrace');
   }, [searchParams, toast, router]);
 

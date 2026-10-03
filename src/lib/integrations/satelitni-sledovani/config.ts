@@ -18,7 +18,14 @@ export function satelitniOAuthRedirectUri(): string {
   const raw =
     String(process.env.SATELITNI_SLEDOVANI_REDIRECT_URI ?? "").trim() ||
     "https://rajmondata.cz/api/integrations/satelitni-sledovani/callback";
-  return raw;
+  return raw.replace(/\/$/, "");
+}
+
+/** Poskytovatel podporuje pouze scope z discovery (typicky „mcp“). */
+export function satelitniOAuthScope(): string {
+  const fromEnv = String(process.env.SATELITNI_SLEDOVANI_OAUTH_SCOPE ?? "").trim();
+  if (fromEnv) return fromEnv;
+  return "mcp";
 }
 
 export function satelitniOAuthClientId(): string {

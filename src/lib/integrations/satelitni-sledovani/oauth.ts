@@ -4,7 +4,9 @@ import {
   satelitniOAuthClientId,
   satelitniOAuthRedirectUri,
   satelitniOAuthRegisterUrl,
+  satelitniOAuthScope,
 } from "@/lib/integrations/satelitni-sledovani/config";
+import { logGpsOAuthStart } from "@/lib/integrations/satelitni-sledovani/oauth-diagnostics";
 import { generatePkceCodeVerifier, pkceCodeChallengeS256 } from "@/lib/integrations/satelitni-sledovani/pkce";
 
 let cachedConfig: client.Configuration | null = null;
@@ -57,13 +59,23 @@ export async function buildSatelitniAuthorizeUrl(input: {
 }): Promise<string> {
   const config = await getSatelitniOAuthConfiguration();
   const redirectUri = satelitniOAuthRedirectUri();
+  const scope = satelitniOAuthScope();
+  const meta = config.serverMetadata();
+  logGpsOAuthStart({
+    clientIdConfigured: Boolean(satelitniOAuthClientId()),
+    redirectUri,
+    authorizationEndpoint: String(meta.authorization_endpoint ?? ""),
+    tokenEndpoint: String(meta.token_endpoint ?? ""),
+    scope,
+  });
   const codeChallenge = pkceCodeChallengeS256(input.codeVerifier);
   const url = client.buildAuthorizationUrl(config, {
     redirect_uri: redirectUri,
-    scope: "openid offline_access",
+    scope,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
     state: input.state,
+    response_type: "code",
   });
   return url.href;
 }
