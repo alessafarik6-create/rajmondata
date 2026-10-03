@@ -78,8 +78,8 @@ export async function GET(request: NextRequest) {
       action: "GPS_CONNECTED",
     });
 
-    return NextResponse.redirect(new URL("/portal/settings?satelitni=connected", origin));
+    return NextResponse.redirect(new URL("/portal/fleet?satelitni=connected", origin));
   } catch {
-    return NextResponse.redirect(new URL("/portal/settings?satelitni=error", origin));
+    return NextResponse.redirect(new URL("/portal/fleet?satelitni=error", origin));
   }
 }

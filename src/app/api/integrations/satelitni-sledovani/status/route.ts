@@ -28,6 +28,15 @@ export async function GET(request: NextRequest) {
     tokenActive = tokens.expiresAt.getTime() > Date.now();
   }
 
+  let connectedByLabel: string | null = null;
+  const connectedByUserId = String(integration?.connectedByUserId ?? "").trim();
+  if (connectedByUserId) {
+    const userSnap = await auth.db.collection("users").doc(connectedByUserId).get();
+    const u = userSnap.data();
+    connectedByLabel =
+      String(u?.displayName ?? u?.email ?? "").trim() || connectedByUserId;
+  }
+
   return NextResponse.json({
     ok: true,
     provider: "satelitnisledovani",
@@ -36,6 +45,8 @@ export async function GET(request: NextRequest) {
     tokenActive,
     encryptionConfigured: isSatelitniEncryptionConfigured(),
     lastSyncAt: integration?.lastSyncAt?.toDate?.()?.toISOString?.() ?? null,
+    connectedAt: integration?.connectedAt?.toDate?.()?.toISOString?.() ?? null,
+    connectedByLabel,
     vehicleCount: satelitniCount,
     lastSyncError: integration?.lastSyncError ?? null,
   });

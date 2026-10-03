@@ -1,7 +1,8 @@
 
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,7 +21,7 @@ import {
   collection,
 } from 'firebase/firestore';
 import Link from 'next/link';
-import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail, FileText, DatabaseBackup } from 'lucide-react';
+import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail, FileText, DatabaseBackup, Plug } from 'lucide-react';
 import { OrganizationBackupsSettingsCard } from '@/components/settings/organization-backups-settings-card';
 import { EmailNotificationsSettings } from '@/components/settings/email-notifications-settings';
 import { OrganizationSignatureSettingsCard } from "@/components/settings/organization-signature-settings";
@@ -53,10 +54,24 @@ type CompanyBankAccountDoc = {
   isDefault?: boolean;
 };
 
+const SETTINGS_TAB_IDS = [
+  'profile',
+  'organization',
+  'integrace',
+  'management',
+  'email-notifications',
+  'email-mailbox',
+  'employee-doc-templates',
+  'backups',
+  'notifications',
+] as const;
+
 export default function SettingsPage() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
@@ -68,6 +83,36 @@ export default function SettingsPage() {
 
   const isOwner =
     profile?.role === 'owner' || profile?.globalRoles?.includes('super_admin');
+
+  const tabFromUrl = searchParams.get('tab');
+  const initialTab = useMemo(() => {
+    if (tabFromUrl && SETTINGS_TAB_IDS.includes(tabFromUrl as (typeof SETTINGS_TAB_IDS)[number])) {
+      return tabFromUrl;
+    }
+    return 'profile';
+  }, [tabFromUrl]);
+  const [settingsTab, setSettingsTab] = useState(initialTab);
+
+  useEffect(() => {
+    setSettingsTab(initialTab);
+  }, [initialTab]);
+
+  useEffect(() => {
+    const sat = searchParams.get('satelitni');
+    if (!sat || sat === 'connected') return;
+    const messages: Record<string, string> = {
+      error: 'OAuth se nepodařilo dokončit.',
+      denied: 'Připojení bylo zrušeno u poskytovatele.',
+      invalid_state: 'Neplatný stav OAuth. Zkuste připojení znovu.',
+      expired: 'Platnost připojení vypršela. Spusťte OAuth znovu.',
+    };
+    toast({
+      variant: 'destructive',
+      title: 'SatelitníSledování.cz',
+      description: messages[sat] ?? 'Připojení se nepodařilo.',
+    });
+    router.replace('/portal/settings?tab=integrace');
+  }, [searchParams, toast, router]);
 
   const { company, companyName, companyId } = useCompany();
   const cameraPerms = useCameraPermissions();
@@ -471,10 +516,22 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      <Tabs defaultValue="profile" className="w-full overflow-hidden">
+      <Tabs
+        value={settingsTab}
+        onValueChange={(value) => {
+          setSettingsTab(value);
+          router.replace(`/portal/settings?tab=${encodeURIComponent(value)}`);
+        }}
+        className="w-full overflow-hidden"
+      >
         <TabsList className="bg-white border border-slate-200 w-full flex flex-wrap justify-start h-auto p-1 gap-1">
           <TabsTrigger value="profile" className="gap-2 min-h-[44px] sm:min-h-0"><Building2 className="w-4 h-4 shrink-0" /> Profil</TabsTrigger>
           {isAdmin && <TabsTrigger value="organization" className="gap-2 min-h-[44px] sm:min-h-0"><ShieldCheck className="w-4 h-4 shrink-0" /> Organizace</TabsTrigger>}
+          {isAdmin && (
+            <TabsTrigger value="integrace" className="gap-2 min-h-[44px] sm:min-h-0">
+              <Plug className="w-4 h-4 shrink-0" /> Integrace
+            </TabsTrigger>
+          )}
           {isAdmin && <TabsTrigger value="management" className="gap-2 min-h-[44px] sm:min-h-0"><Users className="w-4 h-4 shrink-0" /> Správa týmu</TabsTrigger>}
           {isAdmin && (
             <TabsTrigger value="email-notifications" className="gap-2 min-h-[44px] sm:min-h-0">
@@ -688,15 +745,6 @@ export default function SettingsPage() {
                         companyId={companyId}
                         company={company as Record<string, unknown> | null | undefined}
                       />
-                      <div className="pt-2">
-                        <h3 className="font-semibold mb-2">Integrace → GPS / Vozový park</h3>
-                        <FleetIntegrationSettingsCard companyId={companyId} />
-                      </div>
-                      {cameraPerms.admin ? (
-                        <div className="pt-2">
-                          <HikvisionIntegrationSettingsCard companyId={companyId} />
-                        </div>
-                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -1225,6 +1273,24 @@ export default function SettingsPage() {
                 </Button>
               </CardContent>
             </Card>
+          </TabsContent>
+        )}
+
+        {isAdmin && (
+          <TabsContent value="integrace" className="mt-6 space-y-6">
+            <div>
+              <h2 className="text-lg font-semibold">GPS / Vozový park</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Propojení telematiky a map v modulu Vozový park.
+              </p>
+            </div>
+            {companyId ? <FleetIntegrationSettingsCard companyId={companyId} /> : null}
+            {cameraPerms.admin && companyId ? (
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold">Kamerový systém</h2>
+                <HikvisionIntegrationSettingsCard companyId={companyId} />
+              </div>
+            ) : null}
           </TabsContent>
         )}
 

@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useUser, useCompany } from "@/firebase";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { useToast } from "@/hooks/use-toast";
 import { FleetSubnav } from "@/components/fleet/fleet-subnav";
 import { FleetMap } from "@/components/fleet/fleet-map";
+import { FleetGpsNotConnectedPanel } from "@/components/fleet/fleet-gps-not-connected-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -51,11 +54,19 @@ type DashData = {
 
 export function FleetDashboardPage() {
   const { user } = useUser();
-  const { companyId } = useCompany();
+  const { companyId, userProfile } = useCompany();
   const access = usePortalModuleAccess("fleet");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { toast } = useToast();
   const [data, setData] = useState<DashData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const role = String((userProfile as { role?: string } | null)?.role ?? "");
+  const globalRoles = (userProfile as { globalRoles?: string[] } | null)?.globalRoles ?? [];
+  const canManageIntegration =
+    role === "owner" || role === "admin" || globalRoles.includes("super_admin");
 
   const load = useCallback(async () => {
     if (!user || !companyId || !access.canRead) return;
@@ -75,6 +86,22 @@ export function FleetDashboardPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const sat = searchParams.get("satelitni");
+    if (!sat) return;
+    if (sat === "connected") {
+      toast({ title: "SatelitníSledování.cz připojeno" });
+      void load();
+    } else if (sat === "error") {
+      toast({
+        variant: "destructive",
+        title: "Připojení SatelitníSledování.cz",
+        description: "OAuth se nepodařilo dokončit. Zkuste to znovu v Nastavení → Integrace.",
+      });
+    }
+    router.replace("/portal/fleet");
+  }, [searchParams, toast, router, load]);
 
   const markers = useMemo(() => {
     if (!data) return [];
@@ -121,7 +148,12 @@ export function FleetDashboardPage() {
         <h1 className="text-2xl font-semibold">Vozový park</h1>
         {data?.demoMode ? <Badge variant="secondary">DEMO DATA</Badge> : null}
       </div>
-      {data?.message ? (
+      {data && !data.gpsConnected && companyId ? (
+        <FleetGpsNotConnectedPanel
+          companyId={companyId}
+          canManageIntegration={canManageIntegration}
+        />
+      ) : data?.message ? (
         <Card className="border-dashed">
           <CardContent className="pt-6 text-sm text-muted-foreground">{data.message}</CardContent>
         </Card>
