@@ -2,7 +2,8 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, Send, Flame, ChevronDown, ChevronUp } from "lucide-react";
+import { Loader2, Send, Flame, ChevronDown, ChevronUp, Mic } from "lucide-react";
+import { AiSecretaryVoicePanel } from "@/components/portal/ai-secretary-voice-panel";
 import { useUser } from "@/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +44,7 @@ export function DashboardAiSecretaryPanel({ companyId }: { companyId: string }) 
   const [answer, setAnswer] = useState<string | null>(null);
   const [refs, setRefs] = useState<OrganizationAiEntityRef[]>([]);
   const [showAllItems, setShowAllItems] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   const prefCollapsed = preferences.aiSecretaryCollapsed;
   const collapsed =
@@ -170,21 +172,36 @@ export function DashboardAiSecretaryPanel({ companyId }: { companyId: string }) 
                 </Button>
               ) : null}
               {!mobileDark || !collapsed ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className={cn(
-                    "h-8 shrink-0",
-                    mobileDark
-                      ? "border-orange-500/40 bg-orange-500/10 text-orange-200 hover:bg-orange-500/20"
-                      : "border-orange-200 text-orange-700 hover:bg-orange-50"
-                  )}
-                  onClick={() => void ask("Co dnes hoří?")}
-                  disabled={asking}
-                >
-                  <Flame className="h-3.5 w-3.5 mr-1" /> Co dnes hoří?
-                </Button>
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className={cn(
+                      "h-9 min-h-[44px] sm:min-h-8 shrink-0",
+                      mobileDark
+                        ? "bg-orange-500 text-white hover:bg-orange-600"
+                        : "bg-orange-600 text-white hover:bg-orange-700"
+                    )}
+                    onClick={() => setVoiceOpen(true)}
+                  >
+                    <Mic className="h-3.5 w-3.5 mr-1" /> Zařídit
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className={cn(
+                      "h-9 min-h-[44px] sm:min-h-8 shrink-0",
+                      mobileDark
+                        ? "border-orange-500/40 bg-orange-500/10 text-orange-200 hover:bg-orange-500/20"
+                        : "border-orange-200 text-orange-700 hover:bg-orange-50"
+                    )}
+                    onClick={() => void ask("Co dnes hoří?")}
+                    disabled={asking}
+                  >
+                    <Flame className="h-3.5 w-3.5 mr-1" /> Co dnes hoří?
+                  </Button>
+                </>
               ) : null}
             </div>
           </div>
@@ -357,6 +374,12 @@ export function DashboardAiSecretaryPanel({ companyId }: { companyId: string }) 
           )}
         </div>
       </div>
+      <AiSecretaryVoicePanel
+        companyId={companyId}
+        open={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        assistantName={branding.assistantName}
+      />
     </section>
   );
 }

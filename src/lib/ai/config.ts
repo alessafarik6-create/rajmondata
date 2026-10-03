@@ -40,3 +40,14 @@ export function isAiFeatureEnabled(): boolean {
 }
 
 export const OPENAI_REQUEST_TIMEOUT_MS = 90_000;
+
+export function getOpenAiRealtimeModel(): string {
+  return (
+    String(process.env.OPENAI_REALTIME_MODEL ?? "").trim() ||
+    "gpt-4o-realtime-preview-2024-12-17"
+  );
+}
+
+export function getOpenAiTranscriptionModel(): string {
+  return String(process.env.OPENAI_TRANSCRIPTION_MODEL ?? "").trim() || "whisper-1";
+}

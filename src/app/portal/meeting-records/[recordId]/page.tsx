@@ -47,6 +47,12 @@ import {
   staffCanEditMeetingRecords,
   staffCanViewMeetingRecords,
 } from "@/lib/meeting-records-access";
+import { MeetingRecordMediaPanel } from "@/components/meeting-records/meeting-record-media-panel";
+import type {
+  MeetingAiSummaryMeta,
+  MeetingAudioMeta,
+  MeetingTranscriptMeta,
+} from "@/lib/meeting-records-media-types";
 
 export default function MeetingRecordDetailPage() {
   const params = useParams();
@@ -426,6 +432,23 @@ export default function MeetingRecordDetailPage() {
           ) : null}
 
           <Separator />
+
+          {companyId && recordIdStr ? (
+            <MeetingRecordMediaPanel
+              companyId={companyId}
+              recordId={recordIdStr}
+              canEdit={canEdit}
+              audio={(row as { audio?: MeetingAudioMeta }).audio ?? null}
+              transcript={(row as { transcript?: MeetingTranscriptMeta }).transcript ?? null}
+              aiSummary={(row as { aiSummary?: MeetingAiSummaryMeta }).aiSummary ?? null}
+              onReload={() => router.refresh()}
+              userDisplayName={
+                (userProfile as { displayName?: string })?.displayName ??
+                user?.displayName ??
+                undefined
+              }
+            />
+          ) : null}
 
           <div>
             <p className="text-xs font-medium text-slate-500">Poznámky</p>

@@ -104,10 +104,22 @@ export function buildMeetingRecordPdfHtml(params: {
     (typeof r.jobId === "string" && r.jobId.trim() ? r.jobId.trim() : "");
   const customer =
     typeof r.customerName === "string" && r.customerName.trim() ? r.customerName.trim() : "—";
+  const aiSummary =
+    typeof (r.aiSummary as { markdown?: string } | undefined)?.markdown === "string"
+      ? String((r.aiSummary as { markdown?: string }).markdown).trim()
+      : "";
+  const transcript =
+    typeof (r.transcript as { text?: string } | undefined)?.text === "string"
+      ? String((r.transcript as { text?: string }).text).trim()
+      : "";
+  const includeFullTranscript = r.includeFullTranscriptInPdf === true;
   const notes =
-    typeof r.meetingNotes === "string" && r.meetingNotes.trim() ? r.meetingNotes.trim() : "—";
+    aiSummary ||
+    (typeof r.meetingNotes === "string" && r.meetingNotes.trim() ? r.meetingNotes.trim() : "—");
   const next =
     typeof r.nextSteps === "string" && r.nextSteps.trim() ? r.nextSteps.trim() : "";
+  const author =
+    typeof r.createdByName === "string" && r.createdByName.trim() ? r.createdByName.trim() : "—";
 
   const stamp = buildOrganizationElectronicStampBlock({
     organizationSignatureUrl: params.organizationSignatureUrl,
@@ -122,6 +134,7 @@ export function buildMeetingRecordPdfHtml(params: {
     { k: "Účastníci", v: participants || "—" },
     { k: "Zakázka", v: jobName || "—" },
     { k: "Zákazník", v: customer },
+    { k: "Autor záznamu", v: author },
   ];
 
   const metaHtml = rows
@@ -146,9 +159,17 @@ export function buildMeetingRecordPdfHtml(params: {
     <p class="sub">Zápis ze schůzky</p>
     <table class="meta">${metaHtml}</table>
     <div class="block">
-      <div class="section-title">Poznámky</div>
+      <div class="section-title">${aiSummary ? "AI shrnutí / zápis" : "Poznámky"}</div>
       <div class="body">${notes === "—" ? "—" : withLineBreaks(notes)}</div>
     </div>
+    ${
+      includeFullTranscript && transcript
+        ? `<div class="block">
+      <div class="section-title">Kompletní přepis</div>
+      <div class="body">${withLineBreaks(transcript)}</div>
+    </div>`
+        : ""
+    }
     ${
       next
         ? `<div class="block">

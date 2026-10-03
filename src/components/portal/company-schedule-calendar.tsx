@@ -650,6 +650,7 @@ export function CompanyScheduleCalendar({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [meetingRecordBusy, setMeetingRecordBusy] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingCustomerName, setMeetingCustomerName] = useState("");
   const [meetingPlace, setMeetingPlace] = useState("");
@@ -2873,7 +2874,52 @@ export function CompanyScheduleCalendar({
             </div>
           </div>
 
-          <SheetFooter className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <SheetFooter className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end sm:flex-wrap">
+            {editingEvent?.sourceId &&
+            (editingEvent.kind === "meeting" || editingEvent.kind === "installation") ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="min-h-[44px] sm:mr-auto"
+                disabled={meetingRecordBusy || !user}
+                onClick={() => {
+                  void (async () => {
+                    if (!user || !editingEvent?.sourceId) return;
+                    setMeetingRecordBusy(true);
+                    try {
+                      const token = await user.getIdToken();
+                      const res = await fetch("/api/company/meeting-records/from-calendar", {
+                        method: "POST",
+                        headers: {
+                          Authorization: `Bearer ${token}`,
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                          companyId,
+                          calendarEventId: editingEvent.sourceId,
+                        }),
+                      });
+                      const data = await res.json();
+                      if (!data.ok) throw new Error(data.error ?? "Záznam schůzky se nepodařil.");
+                      router.push(`/portal/meeting-records/${encodeURIComponent(data.recordId)}`);
+                    } catch (e) {
+                      toast({
+                        variant: "destructive",
+                        title: "Záznam schůzky",
+                        description: e instanceof Error ? e.message : "Chyba",
+                      });
+                    } finally {
+                      setMeetingRecordBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {meetingRecordBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                ) : null}
+                🎙 Zahájit záznam schůzky
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
