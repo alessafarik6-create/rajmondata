@@ -119,10 +119,13 @@ export async function upsertBankConnectionSettings(
   await ref.set(patch, { merge: true });
 }
 
-export async function testBankConnectionForOrg(db: Firestore, organizationId: string): Promise<void> {
+export async function testBankConnectionForOrg(
+  db: Firestore,
+  organizationId: string
+): Promise<import("@/lib/bank/raiffeisen-client").RbTestConnectionResult> {
   const loaded = await getRaiffeisenClientForOrg(db, organizationId);
   if ("error" in loaded) throw new Error(loaded.error);
-  await rbTestConnection(loaded.cfg);
+  const result = await rbTestConnection(loaded.cfg);
   await bankConnectionsCol(db, organizationId).doc(DEFAULT_CONNECTION_ID).set(
     {
       status: "connected",
@@ -131,6 +134,7 @@ export async function testBankConnectionForOrg(db: Firestore, organizationId: st
     },
     { merge: true }
   );
+  return result;
 }
 
 export async function setBankConnectionStatus(

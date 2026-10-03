@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireBankIntegrationAdmin, bankTenantOk } from "@/lib/bank/api-auth";
 import { testBankConnectionForOrg } from "@/lib/bank/connection-store";
 import { writeBankAuditLog } from "@/lib/bank/audit";
+import { RbPremiumApiError } from "@/lib/bank/rb-premium-errors";
+import { FieldValue } from "firebase-admin/firestore";
+import { bankConnectionsCol } from "@/lib/bank/collections";
 
 export const dynamic = "force-dynamic";
 
@@ -17,16 +20,44 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await testBankConnectionForOrg(perm.db, organizationId);
+    const result = await testBankConnectionForOrg(perm.db, organizationId);
     await writeBankAuditLog(perm.db, {
       organizationId,
       userId: perm.caller.uid,
       action: "BANK_CONNECTION_UPDATED",
-      metadata: { test: "ok" },
+      metadata: { test: "ok", httpStatus: result.httpStatus },
     });
-    return NextResponse.json({ ok: true, message: "Spojení s bankou je v pořádku." });
+    return NextResponse.json({
+      ok: true,
+      httpStatus: result.httpStatus,
+      message: result.message,
+      display: result.display,
+      requestUrl: result.requestUrl,
+    });
   } catch (e) {
+    if (e instanceof RbPremiumApiError) {
+      await bankConnectionsCol(perm.db, organizationId).doc("raiffeisen").set(
+        {
+          status: e.httpStatus === 401 || e.httpStatus === 403 ? "auth_error" : "error",
+          lastSyncError: e.display.slice(0, 500),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      return NextResponse.json(
+        {
+          ok: false,
+          httpStatus: e.httpStatus,
+          error: e.rbError ?? null,
+          errorDescription: e.rbErrorDescription ?? null,
+          message: e.userMessage,
+          display: e.display,
+          requestUrl: e.requestUrl,
+        },
+        { status: 400 }
+      );
+    }
     const msg = e instanceof Error ? e.message : "Test spojení selhal.";
-    return NextResponse.json({ ok: false, error: msg }, { status: 400 });
+    return NextResponse.json({ ok: false, error: msg, message: msg }, { status: 400 });
   }
 }

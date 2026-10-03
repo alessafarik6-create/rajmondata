@@ -1,5 +1,17 @@
+import crypto from "node:crypto";
 import https from "node:https";
 import type { BankAccountDoc } from "@/lib/bank/types";
+import { maskClientId } from "@/lib/bank/secrets-crypto";
+import {
+  buildRbPremiumRequestUrl,
+  resolveRaiffeisenApiOrigin,
+} from "@/lib/bank/rb-premium-url";
+import {
+  formatRbPremiumTestDisplay,
+  parseRbPremiumErrorBody,
+  RbPremiumApiError,
+  rbPremiumTestUserMessage,
+} from "@/lib/bank/rb-premium-errors";
 
 export type RaiffeisenClientConfig = {
   baseUrl: string;
@@ -33,80 +45,47 @@ export type RaiffeisenTransactionDto = {
   reference?: string | null;
 };
 
+export type RbTestConnectionResult = {
+  ok: true;
+  httpStatus: 200;
+  message: string;
+  display: string;
+  requestUrl: string;
+};
+
 function isMockMode(): boolean {
   return String(process.env.RAIFFEISENBANK_MOCK ?? "").trim() === "1";
 }
 
-function defaultBaseUrl(): string {
-  return (
-    String(process.env.RAIFFEISENBANK_API_BASE_URL ?? "").trim() ||
-    "https://api.rb.cz/premium"
-  ).replace(/\/$/, "");
+function newRequestId(): string {
+  return crypto.randomUUID();
 }
 
-function httpsJson<T>(
-  cfg: RaiffeisenClientConfig,
-  path: string,
-  method: "GET" | "POST" = "GET"
-): Promise<T> {
-  const url = new URL(`${cfg.baseUrl.replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`);
-  const agent = new https.Agent({
-    pfx: cfg.p12,
-    passphrase: cfg.p12Password,
-    rejectUnauthorized: true,
-  });
+type HttpsResponse = {
+  status: number;
+  body: string;
+  requestUrl: string;
+};
 
-  return new Promise((resolve, reject) => {
-    const req = https.request(
-      url,
-      {
-        method,
-        agent,
-        headers: {
-          Accept: "application/json",
-          "X-Client-Id": cfg.clientId,
-        },
-        timeout: 60_000,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          const body = Buffer.concat(chunks).toString("utf8");
-          if (res.statusCode && res.statusCode >= 400) {
-            reject(new Error(mapRbHttpError(res.statusCode, body)));
-            return;
-          }
-          try {
-            resolve(body ? (JSON.parse(body) as T) : ({} as T));
-          } catch {
-            reject(new Error("Banka vrátila neplatnou odpověď."));
-          }
-        });
-      }
-    );
-    req.on("timeout", () => {
-      req.destroy();
-      reject(new Error("Časový limit bankovního API vypršel."));
-    });
-    req.on("error", (err) => {
-      reject(new Error(humanizeTlsError(err)));
-    });
-    req.end();
-  });
-}
-
-function mapRbHttpError(status: number, _body: string): string {
-  if (status === 401 || status === 403) {
-    return "Neplatné ClientID nebo certifikát. Ověřte přihlašovací údaje k Raiffeisenbank Premium API.";
+function logRbTest(input: {
+  requestUrl: string;
+  httpStatus: number;
+  clientId: string;
+  error?: string;
+  errorDescription?: string;
+  tlsMessage?: string;
+}): void {
+  console.info("[RB TEST] URL", input.requestUrl);
+  console.info("[RB TEST] HTTP status", input.httpStatus);
+  console.info("[RB TEST] clientId", maskClientId(input.clientId));
+  if (input.tlsMessage) {
+    console.info("[RB TEST] error", input.tlsMessage);
+    return;
   }
-  if (status === 429) {
-    return "Banka dočasně omezila počet požadavků. Zkuste synchronizaci později.";
+  if (input.error) console.info("[RB TEST] error", input.error);
+  if (input.errorDescription) {
+    console.info("[RB TEST] error_description", input.errorDescription);
   }
-  if (status >= 500) {
-    return "Bankovní služba je dočasně nedostupná.";
-  }
-  return "Bankovní API vrátilo chybu.";
 }
 
 function humanizeTlsError(err: Error): string {
@@ -121,6 +100,80 @@ function humanizeTlsError(err: Error): string {
     return "Nepodařilo se navázat spojení s bankou.";
   }
   return "Chyba spojení s bankou.";
+}
+
+function rbHttpsRequest(
+  cfg: RaiffeisenClientConfig,
+  subpath: string,
+  method: "GET" | "POST" = "GET"
+): Promise<HttpsResponse> {
+  const requestUrl = buildRbPremiumRequestUrl(cfg.baseUrl, subpath);
+  const agent = new https.Agent({
+    pfx: cfg.p12,
+    passphrase: cfg.p12Password,
+    rejectUnauthorized: true,
+  });
+
+  return new Promise((resolve, reject) => {
+    const url = new URL(requestUrl);
+    const req = https.request(
+      url,
+      {
+        method,
+        agent,
+        headers: {
+          Accept: "application/json",
+          "X-IBM-Client-Id": cfg.clientId,
+          "X-Request-Id": newRequestId(),
+        },
+        timeout: 60_000,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+            requestUrl,
+          });
+        });
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Časový limit bankovního API vypršel."));
+    });
+    req.on("error", (err) => {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    });
+    req.end();
+  });
+}
+
+async function httpsJson<T>(
+  cfg: RaiffeisenClientConfig,
+  subpath: string,
+  method: "GET" | "POST" = "GET"
+): Promise<T> {
+  const res = await rbHttpsRequest(cfg, subpath, method);
+  if (res.status >= 400) {
+    const body = parseRbPremiumErrorBody(res.body);
+    throw new RbPremiumApiError({
+      httpStatus: res.status,
+      requestUrl: res.requestUrl,
+      body,
+    });
+  }
+  try {
+    return res.body ? (JSON.parse(res.body) as T) : ({} as T);
+  } catch {
+    throw new RbPremiumApiError({
+      httpStatus: res.status || 502,
+      requestUrl: res.requestUrl,
+      body: { error_description: "Neplatná JSON odpověď banky." },
+    });
+  }
 }
 
 function mockAccounts(): RaiffeisenAccountDto[] {
@@ -193,9 +246,71 @@ export async function rbFetchTransactions(
   return Array.isArray(data.transactions) ? data.transactions : [];
 }
 
-export async function rbTestConnection(cfg: RaiffeisenClientConfig): Promise<{ ok: true }> {
-  await rbFetchAccounts(cfg);
-  return { ok: true };
+/**
+ * Test připojení: GET /rbcz/premium/api/accounts (mTLS + X-IBM-Client-Id).
+ */
+export async function rbTestConnection(cfg: RaiffeisenClientConfig): Promise<RbTestConnectionResult> {
+  if (isMockMode()) {
+    const requestUrl = buildRbPremiumRequestUrl(cfg.baseUrl, "/accounts");
+    return {
+      ok: true,
+      httpStatus: 200,
+      message: "Připojení k Raiffeisenbank je funkční (mock režim).",
+      display: formatRbPremiumTestDisplay(200, {}),
+      requestUrl,
+    };
+  }
+
+  const requestUrl = buildRbPremiumRequestUrl(cfg.baseUrl, "/accounts");
+
+  try {
+    const res = await rbHttpsRequest(cfg, "/accounts", "GET");
+    const body = parseRbPremiumErrorBody(res.body);
+
+    if (res.status === 200) {
+      logRbTest({
+        requestUrl: res.requestUrl,
+        httpStatus: 200,
+        clientId: cfg.clientId,
+      });
+      return {
+        ok: true,
+        httpStatus: 200,
+        message: rbPremiumTestUserMessage(200, body),
+        display: formatRbPremiumTestDisplay(200, body),
+        requestUrl: res.requestUrl,
+      };
+    }
+
+    logRbTest({
+      requestUrl: res.requestUrl,
+      httpStatus: res.status,
+      clientId: cfg.clientId,
+      error: body.error,
+      errorDescription: body.error_description ?? body.message ?? body.moreInformation,
+    });
+
+    throw new RbPremiumApiError({
+      httpStatus: res.status,
+      requestUrl: res.requestUrl,
+      body,
+    });
+  } catch (e) {
+    if (e instanceof RbPremiumApiError) throw e;
+    const tlsMsg = e instanceof Error ? humanizeTlsError(e) : "Chyba spojení s bankou.";
+    logRbTest({
+      requestUrl,
+      httpStatus: 0,
+      clientId: cfg.clientId,
+      tlsMessage: tlsMsg,
+    });
+    throw new RbPremiumApiError({
+      httpStatus: 0,
+      requestUrl,
+      body: { error_description: tlsMsg },
+      userMessage: tlsMsg,
+    });
+  }
 }
 
 export function buildRaiffeisenClientConfig(input: {
@@ -204,12 +319,14 @@ export function buildRaiffeisenClientConfig(input: {
   p12Password: string;
 }): RaiffeisenClientConfig {
   return {
-    baseUrl: defaultBaseUrl(),
+    baseUrl: resolveRaiffeisenApiOrigin(),
     clientId: input.clientId.trim(),
     p12: input.p12,
     p12Password: input.p12Password,
   };
 }
+
+export { RbPremiumApiError } from "@/lib/bank/rb-premium-errors";
 
 export function serializeAccountPreview(row: BankAccountDoc) {
   return {

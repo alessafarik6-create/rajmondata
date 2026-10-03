@@ -6,6 +6,7 @@ import {
 } from "../portal-permissions";
 import { bankTransactionRawHash, resolveBankTransactionDocId } from "./transaction-id";
 import { pickAutoMatch, suggestBankTransactionMatches } from "./matching";
+import { buildRbPremiumRequestUrl, resolveRaiffeisenApiOrigin } from "./rb-premium-url";
 
 function test(name: string, fn: () => void) {
   try {
@@ -53,6 +54,14 @@ test("transaction idempotent hash", () => {
     bankTransactionRawHash({ ...input, amount: 100 }),
     bankTransactionRawHash({ ...input, amount: 200 })
   );
+});
+
+test("RB premium URL without duplicate prefix", () => {
+  const origin = "https://api.rb.cz";
+  const url = buildRbPremiumRequestUrl(origin, "/accounts");
+  assert.equal(url, "https://api.rb.cz/rbcz/premium/api/accounts");
+  const url2 = buildRbPremiumRequestUrl(origin, "/rbcz/premium/api/accounts");
+  assert.equal(url2, "https://api.rb.cz/rbcz/premium/api/accounts");
 });
 
 test("matching VS + amount", () => {

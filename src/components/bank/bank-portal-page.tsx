@@ -257,9 +257,20 @@ export function BankPortalPage() {
       body: JSON.stringify({ companyId }),
     });
     const json = await res.json();
+    const httpStatus = json.httpStatus as number | undefined;
+    const title = json.ok
+      ? "Test připojení"
+      : httpStatus != null && httpStatus > 0
+        ? `Raiffeisenbank HTTP ${httpStatus}`
+        : "Test připojení – chyba";
+    const description =
+      (typeof json.display === "string" && json.display.trim()) ||
+      (typeof json.message === "string" && json.message.trim()) ||
+      (typeof json.error === "string" && json.error.trim()) ||
+      "Test spojení selhal.";
     toast({
-      title: json.ok ? "OK" : "Chyba",
-      description: json.message || json.error,
+      title,
+      description,
       variant: json.ok ? "default" : "destructive",
     });
   };
