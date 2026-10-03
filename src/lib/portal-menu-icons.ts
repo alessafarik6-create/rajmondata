@@ -48,6 +48,7 @@ export const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
   fleet: Car,
   cameras: Cctv,
   finance: Landmark,
+  bank: Landmark,
   invoices: Receipt,
   documents: FileText,
   sklad: Package,

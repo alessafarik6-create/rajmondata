@@ -28,6 +28,7 @@ const SENSITIVE_MODULE_IDS = new Set<PortalModuleId>([
   "employees",
   "labor",
   "finance",
+  "bank",
   "invoices",
   "billing",
   "settings",
@@ -90,6 +91,7 @@ export function buildAccountantPermissionPreset(): Record<PortalModuleId, Portal
     "help",
   ];
   for (const id of readIds) out[id] = "read";
+  out.bank = "none";
   out.settings = "none";
   out.billing = "none";
   out.aiCenter = "none";

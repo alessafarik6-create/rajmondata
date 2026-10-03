@@ -21,7 +21,8 @@ export type PortalExportAuditPayload = {
     | "DOCUMENT_PRINTED"
     | "DOCUMENT_EXPORTED"
     | "JOB_EXPORTED"
-    | "FINANCE_EXPORT_CREATED";
+    | "FINANCE_EXPORT_CREATED"
+    | "BANK_EXPORT_CREATED";
   moduleId?: PortalModuleId;
   entityType?: string;
   entityId?: string | null;

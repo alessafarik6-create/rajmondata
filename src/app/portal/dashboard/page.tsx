@@ -90,6 +90,7 @@ import { useInstallationCalendarBadgeCount } from "@/hooks/use-installation-cale
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
+import { BankDashboardWidget } from "@/components/bank/bank-dashboard-widget";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
 
@@ -1309,6 +1310,8 @@ export default function CompanyDashboard() {
                   </CardContent>
                 </Card>
               )}
+
+              <BankDashboardWidget />
             </>
           )}
         </div>

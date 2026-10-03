@@ -12,6 +12,7 @@
     "test:payroll-adjustment": "npx --yes tsx src/lib/payroll-day-adjustment.test.ts",
     "test:manual-attendance": "npx --yes tsx src/lib/manual-attendance-payout.test.ts",
     "test:email-mailbox-access": "npx --yes tsx src/lib/email-mailbox/account-access.test.ts",
+    "test:bank-module": "npx --yes tsx src/lib/bank/bank-module.test.ts",
     "postinstall": "node scripts/copy-pdf-fonts.mjs && node scripts/copy-pdf-worker.mjs && node scripts/copy-hikvision-jssdk.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
     "seed-superadmin": "node scripts/seed-superadmin.js"

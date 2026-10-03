@@ -5,6 +5,11 @@
 import type { Firestore } from "firebase-admin/firestore";
 import type { VerifiedCompanyCaller } from "@/lib/api-verify-company-user";
 import type { SearchEntityType, SearchIndexDoc } from "@/lib/search/types";
+import {
+  canAccessPortalModule,
+  resolveEffectivePortalPermissions,
+  type PortalModuleId,
+} from "@/lib/portal-permissions";
 
 const PRIVILEGED_ROLES = new Set(["owner", "admin", "manager", "accountant"]);
 const FINANCE_ENTITY_TYPES = new Set<SearchEntityType>(["document", "invoice"]);
@@ -88,35 +93,67 @@ export type SearchAccessContext = {
   isPrivileged: boolean;
   role: string;
   accessibleJobIds: Set<string> | null;
+  /** Modul Banka — odděleně od Finance. */
+  canReadBank: boolean;
 };
+
+async function resolveCanReadBank(
+  db: Firestore,
+  caller: VerifiedCompanyCaller
+): Promise<boolean> {
+  const userSnap = await db.collection("users").doc(caller.uid).get();
+  const employeeId = String(userSnap.data()?.employeeId ?? "").trim();
+  let employeeDoc: Record<string, unknown> | null = null;
+  if (employeeId) {
+    const empSnap = await db
+      .collection("companies")
+      .doc(caller.companyId)
+      .collection("employees")
+      .doc(employeeId)
+      .get();
+    if (empSnap.exists) employeeDoc = empSnap.data() as Record<string, unknown>;
+  }
+  const permissions = resolveEffectivePortalPermissions({
+    role: caller.role,
+    globalRoles: caller.globalRoles,
+    employeeDoc,
+  });
+  return canAccessPortalModule(permissions, "bank" as PortalModuleId, "read");
+}
 
 export async function buildSearchAccessContext(
   db: Firestore,
   caller: VerifiedCompanyCaller
 ): Promise<SearchAccessContext> {
+  const canReadBank = await resolveCanReadBank(db, caller);
+
   if (caller.isSuperAdmin || isPrivilegedSearchRole(caller.role)) {
-    return { isPrivileged: true, role: caller.role, accessibleJobIds: null };
+    return { isPrivileged: true, role: caller.role, accessibleJobIds: null, canReadBank };
   }
 
   if (caller.role === "customer") {
     const jobIds = await loadCustomerJobIds(db, caller.companyId, caller.uid);
-    return { isPrivileged: false, role: caller.role, accessibleJobIds: jobIds };
+    return { isPrivileged: false, role: caller.role, accessibleJobIds: jobIds, canReadBank };
   }
 
   const userSnap = await db.collection("users").doc(caller.uid).get();
   const employeeId = String(userSnap.data()?.employeeId ?? "").trim();
   if (!employeeId) {
-    return { isPrivileged: false, role: caller.role, accessibleJobIds: new Set() };
+    return { isPrivileged: false, role: caller.role, accessibleJobIds: new Set(), canReadBank };
   }
 
   const jobIds = await loadEmployeeAccessibleJobIds(db, caller.companyId, employeeId);
-  return { isPrivileged: false, role: caller.role, accessibleJobIds: jobIds };
+  return { isPrivileged: false, role: caller.role, accessibleJobIds: jobIds, canReadBank };
 }
 
 export function canViewSearchIndexEntry(
   entry: SearchIndexDoc,
   access: SearchAccessContext
 ): boolean {
+  if (entry.entityType === ("bank_transaction" as SearchEntityType)) {
+    return access.canReadBank;
+  }
+
   if (access.isPrivileged) return true;
 
   if (access.role === "customer") {
