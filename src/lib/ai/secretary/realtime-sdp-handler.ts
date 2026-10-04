@@ -10,7 +10,7 @@ import {
   buildUnifiedRealtimeSessionJson,
   mapRealtimeSessionErrorForClient,
 } from "@/lib/ai/secretary/realtime-session";
-import { openAiRealtimeCallsExchange } from "@/lib/ai/openai-realtime-fetch";
+import { logVoiceOpenAiConfig, openAiRealtimeCallsExchange } from "@/lib/ai/openai-realtime-fetch";
 
 const LOG = "[VOICE]";
 
@@ -68,6 +68,8 @@ export async function handleSecretaryRealtimeSdpPost(
     return NextResponse.json({ error: "forbidden", code: "forbidden" }, { status: 403 });
   }
 
+  logVoiceOpenAiConfig();
+
   const apiKeyPresent = Boolean(getOpenAiApiKey());
   console.info(LOG, "OPENAI_API_KEY configured:", apiKeyPresent);
   if (!apiKeyPresent) {
@@ -85,7 +87,14 @@ export async function handleSecretaryRealtimeSdpPost(
   }
 
   const sdp = await readSdpOffer(request);
-  if (!sdp || !sdp.startsWith("v=")) {
+  console.log("[VOICE] SDP received", {
+    length: sdp.length,
+    startsWithV: sdp.startsWith("v="),
+  });
+  if (!sdp || !sdp.trim()) {
+    return NextResponse.json({ error: "missing_sdp_offer" }, { status: 400 });
+  }
+  if (!sdp.startsWith("v=")) {
     return NextResponse.json(
       { error: "invalid_sdp", code: "invalid_sdp", message: "Chybí platná SDP offer." },
       { status: 400 }

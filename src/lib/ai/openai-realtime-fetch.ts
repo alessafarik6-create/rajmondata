@@ -35,6 +35,41 @@ export function parseOpenAiErrorBody(
   return { httpStatus, requestId, errorType, errorCode, message };
 }
 
+/** Pro logy — bez API klíčů a bearer tokenů. */
+export function sanitizeOpenAiResponseBodyForLog(bodyText: string, maxLen = 2000): string {
+  let out = bodyText.trim().slice(0, maxLen);
+  out = out.replace(/Bearer\s+[^\s"']+/gi, "Bearer [REDACTED]");
+  out = out.replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "sk-[REDACTED]");
+  return out;
+}
+
+export function logVoiceOpenAiConfig(): void {
+  console.log("[VOICE CONFIG]", {
+    apiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
+    model: process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-2.1",
+    voice: process.env.OPENAI_REALTIME_VOICE || "marin",
+  });
+}
+
+function logVoiceOpenAiError(
+  res: Response,
+  bodyText: string,
+  model: string,
+  info: OpenAiErrorInfo
+): void {
+  const requestId = res.headers.get("x-request-id") ?? res.headers.get("openai-request-id");
+  console.error("[VOICE OPENAI ERROR]", {
+    status: res.status,
+    statusText: res.statusText,
+    requestId,
+    model: process.env.OPENAI_REALTIME_MODEL || model || "gpt-realtime-2.1",
+    errorType: info.errorType,
+    errorCode: info.errorCode,
+    sanitizedMessage: info.message.slice(0, 500),
+    body: sanitizeOpenAiResponseBodyForLog(bodyText),
+  });
+}
+
 export async function openAiRealtimeCallsExchange(params: {
   apiKey: string;
   sdpOffer: string;
@@ -47,16 +82,20 @@ export async function openAiRealtimeCallsExchange(params: {
 > {
   const url = OPENAI_REALTIME_CALLS_URL();
   const model = params.model ?? "gpt-realtime-2.1";
-  console.info(LOG, "realtime request start", { endpoint: "realtime/calls" });
-  console.info(LOG, "model", { model });
+  console.info(LOG, "realtime request start", { endpoint: "realtime/calls", model });
 
-  const fd = new FormData();
-  fd.set(
-    "sdp",
-    new Blob([params.sdpOffer], { type: "application/sdp" }),
-    "offer.sdp"
-  );
-  fd.set("session", params.sessionJson);
+  const sdp = params.sdpOffer;
+  const formData = new FormData();
+  formData.append("sdp", sdp);
+  formData.append("session", params.sessionJson);
+
+  console.log("[VOICE] OpenAI realtime request", {
+    endpoint: url,
+    model: process.env.OPENAI_REALTIME_MODEL || model,
+    sdpPresent: formData.has("sdp"),
+    sessionPresent: formData.has("session"),
+    sdpLength: sdp.length,
+  });
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${params.apiKey}`,
@@ -67,7 +106,7 @@ export async function openAiRealtimeCallsExchange(params: {
   const res = await fetch(url, {
     method: "POST",
     headers,
-    body: fd,
+    body: formData,
   });
 
   const requestId =
@@ -78,31 +117,15 @@ export async function openAiRealtimeCallsExchange(params: {
 
   if (!res.ok) {
     const info = parseOpenAiErrorBody(res.status, bodyText, requestId);
-    console.error("[VOICE OPENAI ERROR]", {
-      status: res.status,
-      statusText: res.statusText,
-      body: bodyText.slice(0, 2000),
-      model,
-      requestId,
-      errorType: info.errorType,
-      errorCode: info.errorCode,
-    });
-    console.error(LOG, "OpenAI HTTP status", res.status);
-    if (requestId) console.error(LOG, "OpenAI request id", requestId);
-    if (info.errorType) console.error(LOG, "OpenAI error type", info.errorType);
-    if (info.errorCode) console.error(LOG, "OpenAI error code", info.errorCode);
-    console.error(LOG, "sanitized OpenAI error message", info.message.slice(0, 300));
+    logVoiceOpenAiError(res, bodyText, model, info);
     return { ok: false, info };
   }
 
   if (!bodyText.trim().startsWith("v=")) {
     const info = parseOpenAiErrorBody(res.status, bodyText, requestId);
-    console.error("[VOICE OPENAI ERROR]", {
-      status: res.status,
-      statusText: "invalid_sdp_answer",
-      body: bodyText.slice(0, 2000),
-      model,
-      requestId,
+    logVoiceOpenAiError(res, bodyText, model, {
+      ...info,
+      message: info.message || "OpenAI nevrátilo platné SDP answer.",
     });
     return {
       ok: false,
