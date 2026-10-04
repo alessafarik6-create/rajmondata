@@ -100,7 +100,7 @@ export function useAiSecretaryRealtime({
         response: {
           modalities: ["audio", "text"],
           instructions:
-            "Řekni stručně a přesně česky: Dobrý den, co pro vás mohu udělat?",
+            "Řekni stručně a přesně česky: Dobrý den, co pro vás můžu udělat?",
         },
       })
     );
@@ -324,19 +324,12 @@ export function useAiSecretaryRealtime({
         }
       };
 
-      pc.addTrack(stream.getAudioTracks()[0]!, stream);
+      for (const track of stream.getTracks()) {
+        pc.addTrack(track, stream);
+      }
 
       const dc = pc.createDataChannel("oai-events");
       dcRef.current = dc;
-
-      dc.onopen = () => {
-        voiceDebugLog("data channel open");
-        setPhaseSafe("connected");
-        sendGreeting(dc);
-        setPhaseSafe("assistant_speaking");
-        onStatusHint?.("Sekretářka mluví…");
-        voiceDebugLog("assistant speaking");
-      };
 
       dc.onmessage = (ev) => {
         try {
@@ -345,6 +338,15 @@ export function useAiSecretaryRealtime({
         } catch {
           /* ignore */
         }
+      };
+
+      dc.onopen = () => {
+        voiceDebugLog("data channel open");
+        setPhaseSafe("connected");
+        sendGreeting(dc);
+        setPhaseSafe("assistant_speaking");
+        onStatusHint?.("Sekretářka mluví…");
+        voiceDebugLog("assistant speaking");
       };
 
       dc.onclose = () => {
@@ -360,35 +362,53 @@ export function useAiSecretaryRealtime({
       const localSdp = pc.localDescription?.sdp ?? offer.sdp ?? "";
       voiceDebugLog("peer connection created");
 
-      const sdpRes = await fetch("/api/company/ai/secretary/realtime/calls", {
+      const sdpUrl = `/api/company/ai/secretary/realtime?companyId=${encodeURIComponent(companyId)}`;
+      const sdpRes = await fetch(sdpUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
+          "Content-Type": "application/sdp",
         },
-        body: JSON.stringify({ companyId, sdp: localSdp }),
+        body: localSdp,
         signal,
       });
 
-      const sdpData = (await sdpRes.json().catch(() => ({}))) as {
-        ok?: boolean;
-        sdp?: string;
-        error?: string;
-        code?: string;
-        openAiStatus?: number | null;
-        openAiCode?: string | null;
-      };
+      const answerRaw = await sdpRes.text();
 
-      if (!sdpRes.ok || !sdpData.ok || !sdpData.sdp) {
-        voiceDebugError("SDP exchange failed", sdpData.code ?? `HTTP ${sdpRes.status}`);
-        onError?.(mapVoiceErrorForUser(sdpData.error), {
-          code: sdpData.code ?? "openai_sdp_exchange_failed",
-          openAiStatus: sdpData.openAiStatus ?? sdpRes.status,
+      if (!sdpRes.ok) {
+        let errCode = "openai_sdp_exchange_failed";
+        let errMsg: string | undefined;
+        try {
+          const errJson = JSON.parse(answerRaw) as {
+            code?: string;
+            message?: string;
+            upstreamStatus?: number;
+          };
+          errCode = errJson.code ?? errCode;
+          errMsg = errJson.message;
+        } catch {
+          /* plain text */
+        }
+        voiceDebugError(
+          "SDP exchange failed",
+          `HTTP ${sdpRes.status} ${answerRaw.slice(0, 500)}`
+        );
+        onError?.(mapVoiceErrorForUser(errMsg ?? answerRaw), {
+          code: errCode,
+          openAiStatus: sdpRes.status,
         });
-        throw new Error(sdpData.error ?? "SDP exchange failed");
+        throw new Error("openai_sdp_exchange_failed");
       }
 
-      await pc.setRemoteDescription({ type: "answer", sdp: sdpData.sdp });
+      if (!answerRaw.trim().startsWith("v=")) {
+        voiceDebugError("[VOICE] SDP exchange failed", "invalid answer body");
+        onError?.(mapVoiceErrorForUser("Neplatná SDP odpověď serveru."), {
+          code: "invalid_sdp_answer",
+        });
+        throw new Error("openai_sdp_exchange_failed");
+      }
+
+      await pc.setRemoteDescription({ type: "answer", sdp: answerRaw });
 
       activeRef.current = true;
       startingRef.current = false;

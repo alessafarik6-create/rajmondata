@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { handleSecretaryRealtimeSdpPost } from "@/lib/ai/secretary/realtime-sdp-handler";
 
-/** @deprecated Prefer POST /api/company/ai/secretary/realtime with Content-Type: application/sdp */
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 

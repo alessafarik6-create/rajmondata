@@ -10,8 +10,14 @@ export type RealtimeClientSecret = {
 
 const LOG = "[VOICE]";
 
+function realtimeToolsEnabled(): boolean {
+  const flag = String(process.env.OPENAI_REALTIME_ENABLE_TOOLS ?? "").trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes";
+}
+
 export function assertOpenAiVoiceConfigured(): { ok: true; model: string } | { ok: false; reason: string } {
   const apiKey = getOpenAiApiKey();
+  console.info(LOG, "OPENAI_API_KEY configured:", Boolean(apiKey));
   if (!apiKey) {
     console.error(LOG, "OPENAI_API_KEY missing");
     return { ok: false, reason: "Hlasová AI není na serveru nakonfigurována." };
@@ -26,22 +32,15 @@ export function buildUnifiedRealtimeSessionJson(ctx: SecretaryContext): string {
   const model = getOpenAiRealtimeModel();
   const voice = String(process.env.OPENAI_REALTIME_VOICE ?? "marin").trim() || "marin";
   const instructions = secretarySystemInstructions(ctx);
-  const tools = secretaryRealtimeToolDefinitions();
 
-  const session = {
-    type: "realtime" as const,
+  const session: Record<string, unknown> = {
+    type: "realtime",
     model,
     instructions,
-    tools,
-    tool_choice: "auto" as const,
     audio: {
       input: {
-        transcription: {
-          model: "gpt-4o-mini-transcribe",
-          language: "cs",
-        },
         turn_detection: {
-          type: "server_vad" as const,
+          type: "server_vad",
           interrupt_response: true,
           create_response: true,
           silence_duration_ms: 500,
@@ -52,6 +51,11 @@ export function buildUnifiedRealtimeSessionJson(ctx: SecretaryContext): string {
       },
     },
   };
+
+  if (realtimeToolsEnabled()) {
+    session.tools = secretaryRealtimeToolDefinitions();
+    session.tool_choice = "auto";
+  }
 
   return JSON.stringify(session);
 }

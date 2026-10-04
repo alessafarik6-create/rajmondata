@@ -35,16 +35,6 @@ export function parseOpenAiErrorBody(
   return { httpStatus, requestId, errorType, errorCode, message };
 }
 
-export function logOpenAiVoiceError(info: OpenAiErrorInfo, context: string) {
-  console.error(LOG, context, {
-    httpStatus: info.httpStatus,
-    requestId: info.requestId,
-    errorType: info.errorType,
-    errorCode: info.errorCode,
-    message: info.message.slice(0, 300),
-  });
-}
-
 export async function openAiRealtimeCallsExchange(params: {
   apiKey: string;
   sdpOffer: string;
@@ -56,11 +46,16 @@ export async function openAiRealtimeCallsExchange(params: {
   | { ok: false; info: OpenAiErrorInfo }
 > {
   const url = OPENAI_REALTIME_CALLS_URL();
+  const model = params.model ?? "gpt-realtime-2.1";
   console.info(LOG, "realtime request start", { endpoint: "realtime/calls" });
-  if (params.model) console.info(LOG, "model", { model: params.model });
+  console.info(LOG, "model", { model });
 
   const fd = new FormData();
-  fd.set("sdp", params.sdpOffer);
+  fd.set(
+    "sdp",
+    new Blob([params.sdpOffer], { type: "application/sdp" }),
+    "offer.sdp"
+  );
   fd.set("session", params.sessionJson);
 
   const headers: Record<string, string> = {
@@ -83,6 +78,15 @@ export async function openAiRealtimeCallsExchange(params: {
 
   if (!res.ok) {
     const info = parseOpenAiErrorBody(res.status, bodyText, requestId);
+    console.error("[VOICE OPENAI ERROR]", {
+      status: res.status,
+      statusText: res.statusText,
+      body: bodyText.slice(0, 2000),
+      model,
+      requestId,
+      errorType: info.errorType,
+      errorCode: info.errorCode,
+    });
     console.error(LOG, "OpenAI HTTP status", res.status);
     if (requestId) console.error(LOG, "OpenAI request id", requestId);
     if (info.errorType) console.error(LOG, "OpenAI error type", info.errorType);
@@ -93,7 +97,13 @@ export async function openAiRealtimeCallsExchange(params: {
 
   if (!bodyText.trim().startsWith("v=")) {
     const info = parseOpenAiErrorBody(res.status, bodyText, requestId);
-    logOpenAiVoiceError(info, "OpenAI realtime/calls invalid SDP answer");
+    console.error("[VOICE OPENAI ERROR]", {
+      status: res.status,
+      statusText: "invalid_sdp_answer",
+      body: bodyText.slice(0, 2000),
+      model,
+      requestId,
+    });
     return {
       ok: false,
       info: {
@@ -103,6 +113,6 @@ export async function openAiRealtimeCallsExchange(params: {
     };
   }
 
-  console.info(LOG, "OpenAI SDP answer received", { requestId, bytes: bodyText.length });
+  console.info(LOG, "OpenAI SDP answer received", { requestId, bytes: bodyText.length, model });
   return { ok: true, answerSdp: bodyText, requestId };
 }
