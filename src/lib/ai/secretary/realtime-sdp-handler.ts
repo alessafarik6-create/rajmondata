@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import type { Auth } from "firebase-admin/auth";
 import type { Firestore } from "firebase-admin/firestore";
@@ -14,18 +14,12 @@ import { logVoiceOpenAiConfig, openAiRealtimeCallsExchange } from "@/lib/ai/open
 
 const LOG = "[VOICE]";
 
-async function readSdpOffer(request: NextRequest): Promise<string> {
-  const ct = (request.headers.get("content-type") ?? "").toLowerCase();
-  if (ct.includes("application/sdp") || ct.startsWith("text/plain")) {
-    return (await request.text()).trim();
-  }
-  try {
-    const body = (await request.json()) as { sdp?: string };
-    return String(body.sdp ?? "").trim();
-  } catch {
-    return "";
-  }
-}
+export type RealtimeSdpExchangeInput = {
+  /** Raw SDP z request.text() — bez trim před OpenAI */
+  sdpRaw: string;
+  authHeader: string;
+  companyIdParam: string | null;
+};
 
 function voiceErrorJson(
   status: number,
@@ -49,21 +43,38 @@ function voiceErrorJson(
   return NextResponse.json(payload, { status });
 }
 
-export async function handleSecretaryRealtimeSdpPost(
-  request: NextRequest,
+function validateClientSdp(sdpRaw: string): { ok: true } | { ok: false; reason: string } {
+  const normalizedSdp = sdpRaw.trim();
+  if (
+    !normalizedSdp ||
+    !normalizedSdp.startsWith("v=") ||
+    !normalizedSdp.includes("m=audio")
+  ) {
+    console.error("[VOICE] invalid incoming SDP", {
+      length: normalizedSdp.length,
+      startsWithV: normalizedSdp.startsWith("v="),
+      containsAudio: normalizedSdp.includes("m=audio"),
+    });
+    return { ok: false, reason: "invalid_client_sdp" };
+  }
+  return { ok: true };
+}
+
+/** Request body musí být přečteno v route — zde už jen string sdpRaw. */
+export async function exchangeSecretaryRealtimeSdp(
+  input: RealtimeSdpExchangeInput,
   db: Firestore,
   auth: Auth
 ): Promise<Response> {
-  const authHeader = request.headers.get("authorization") || "";
-  const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const idToken = input.authHeader.startsWith("Bearer ")
+    ? input.authHeader.slice(7).trim()
+    : "";
   const caller = await verifyBearerAndLoadCaller(auth, db, idToken);
   if (!caller) {
     return NextResponse.json({ error: "unauthorized", code: "unauthorized" }, { status: 401 });
   }
 
-  const companyId = String(
-    request.nextUrl.searchParams.get("companyId") ?? caller.companyId
-  ).trim();
+  const companyId = String(input.companyIdParam ?? caller.companyId).trim();
   if (companyId !== caller.companyId) {
     return NextResponse.json({ error: "forbidden", code: "forbidden" }, { status: 403 });
   }
@@ -86,20 +97,21 @@ export async function handleSecretaryRealtimeSdpPost(
     return voiceErrorJson(500, "openai_api_key_missing", configured.reason);
   }
 
-  const sdp = await readSdpOffer(request);
-  console.log("[VOICE] SDP received", {
-    length: sdp.length,
-    startsWithV: sdp.startsWith("v="),
-  });
-  if (!sdp || !sdp.trim()) {
+  const sdpRaw = input.sdpRaw;
+  if (!sdpRaw || !sdpRaw.trim()) {
     return NextResponse.json({ error: "missing_sdp_offer" }, { status: 400 });
   }
-  if (!sdp.startsWith("v=")) {
-    return NextResponse.json(
-      { error: "invalid_sdp", code: "invalid_sdp", message: "Chybí platná SDP offer." },
-      { status: 400 }
-    );
+
+  const sdpCheck = validateClientSdp(sdpRaw);
+  if (!sdpCheck.ok) {
+    return NextResponse.json({ error: "invalid_client_sdp" }, { status: 400 });
   }
+
+  console.log("[VOICE] SDP received", {
+    length: sdpRaw.length,
+    startsWithV: sdpRaw.startsWith("v="),
+    containsAudio: sdpRaw.includes("m=audio"),
+  });
 
   const apiKey = getOpenAiApiKey()!;
 
@@ -111,16 +123,16 @@ export async function handleSecretaryRealtimeSdpPost(
       .digest("hex")
       .slice(0, 64);
 
-    console.info(LOG, "peer connection SDP exchange", {
-      userId: caller.uid,
-      companyId,
-      model: configured.model,
-      endpoint: "/v1/realtime/calls",
+    console.log("[VOICE] forwarding SDP", {
+      length: sdpRaw.length,
+      startsWithV: sdpRaw.startsWith("v="),
+      containsAudio: sdpRaw.includes("m=audio"),
+      containsIce: sdpRaw.includes("a=ice-ufrag"),
     });
 
     const result = await openAiRealtimeCallsExchange({
       apiKey,
-      sdpOffer: sdp,
+      sdpOffer: sdpRaw,
       sessionJson,
       model: configured.model,
       safetyIdentifier: safetyId,

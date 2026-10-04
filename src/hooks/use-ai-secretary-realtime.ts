@@ -28,16 +28,25 @@ type Options = {
   onStatusHint?: (hint: string | null) => void;
 };
 
-async function waitForIceGathering(pc: RTCPeerConnection, timeoutMs = 5000): Promise<void> {
-  if (pc.iceGatheringState === "complete") return;
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    pc.onicegatheringstatechange = () => {
+function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
+  if (pc.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const checkState = () => {
       if (pc.iceGatheringState === "complete") {
-        clearTimeout(timer);
+        pc.removeEventListener("icegatheringstatechange", checkState);
         resolve();
       }
     };
+
+    pc.addEventListener("icegatheringstatechange", checkState);
+
+    setTimeout(() => {
+      pc.removeEventListener("icegatheringstatechange", checkState);
+      resolve();
+    }, 5000);
   });
 }
 
@@ -358,8 +367,22 @@ export function useAiSecretaryRealtime({
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await waitForIceGathering(pc);
-      const localSdp = pc.localDescription?.sdp ?? offer.sdp ?? "";
+      await waitForIceGatheringComplete(pc);
+
+      const finalSdp = pc.localDescription?.sdp;
+      if (!finalSdp) {
+        throw new Error("missing_local_sdp");
+      }
+
+      console.log("[VOICE] browser SDP", {
+        length: finalSdp.length,
+        startsWithV: finalSdp.startsWith("v="),
+        containsAudio: finalSdp.includes("m=audio"),
+        containsIce: finalSdp.includes("a=ice-ufrag"),
+        signalingState: pc.signalingState,
+        iceGatheringState: pc.iceGatheringState,
+      });
+
       voiceDebugLog("peer connection created");
 
       const sdpUrl = `/api/company/ai/secretary/realtime?companyId=${encodeURIComponent(companyId)}`;
@@ -369,17 +392,17 @@ export function useAiSecretaryRealtime({
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/sdp",
         },
-        body: localSdp,
+        body: finalSdp,
         signal,
       });
 
-      const answerRaw = await sdpRes.text();
+      const answerSdp = await sdpRes.text();
 
       if (!sdpRes.ok) {
         let errCode = "openai_sdp_exchange_failed";
         let errMsg: string | undefined;
         try {
-          const errJson = JSON.parse(answerRaw) as {
+          const errJson = JSON.parse(answerSdp) as {
             code?: string;
             message?: string;
             upstreamStatus?: number;
@@ -391,24 +414,24 @@ export function useAiSecretaryRealtime({
         }
         voiceDebugError(
           "SDP exchange failed",
-          `HTTP ${sdpRes.status} ${answerRaw.slice(0, 500)}`
+          `HTTP ${sdpRes.status} ${answerSdp.slice(0, 500)}`
         );
-        onError?.(mapVoiceErrorForUser(errMsg ?? answerRaw), {
+        onError?.(mapVoiceErrorForUser(errMsg ?? answerSdp), {
           code: errCode,
           openAiStatus: sdpRes.status,
         });
         throw new Error("openai_sdp_exchange_failed");
       }
 
-      if (!answerRaw.trim().startsWith("v=")) {
-        voiceDebugError("[VOICE] SDP exchange failed", "invalid answer body");
+      if (!answerSdp || !answerSdp.startsWith("v=")) {
+        voiceDebugError("SDP exchange failed", "invalid_openai_sdp_answer");
         onError?.(mapVoiceErrorForUser("Neplatná SDP odpověď serveru."), {
           code: "invalid_sdp_answer",
         });
-        throw new Error("openai_sdp_exchange_failed");
+        throw new Error("invalid_openai_sdp_answer");
       }
 
-      await pc.setRemoteDescription({ type: "answer", sdp: answerRaw });
+      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
       activeRef.current = true;
       startingRef.current = false;

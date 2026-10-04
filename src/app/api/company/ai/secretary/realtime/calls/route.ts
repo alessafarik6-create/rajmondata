@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
-import { handleSecretaryRealtimeSdpPost } from "@/lib/ai/secretary/realtime-sdp-handler";
+import { exchangeSecretaryRealtimeSdp } from "@/lib/ai/secretary/realtime-sdp-handler";
 
 /** @deprecated Prefer POST /api/company/ai/secretary/realtime with Content-Type: application/sdp */
 export const dynamic = "force-dynamic";
@@ -15,5 +15,16 @@ export async function POST(request: NextRequest) {
       headers: { "Content-Type": "application/json" },
     });
   }
-  return handleSecretaryRealtimeSdpPost(request, db, auth);
+
+  const sdpRaw = await request.text();
+
+  return exchangeSecretaryRealtimeSdp(
+    {
+      sdpRaw,
+      authHeader: request.headers.get("authorization") || "",
+      companyIdParam: request.nextUrl.searchParams.get("companyId"),
+    },
+    db,
+    auth
+  );
 }

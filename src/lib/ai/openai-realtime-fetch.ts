@@ -136,6 +136,12 @@ export async function openAiRealtimeCallsExchange(params: {
     };
   }
 
-  console.info(LOG, "OpenAI SDP answer received", { requestId, bytes: bodyText.length, model });
+  console.log("[VOICE] OpenAI SDP answer", {
+    status: res.status,
+    length: bodyText.length,
+    startsWithV: bodyText.startsWith("v="),
+    requestId,
+    model,
+  });
   return { ok: true, answerSdp: bodyText, requestId };
 }
