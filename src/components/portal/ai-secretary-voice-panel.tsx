@@ -110,7 +110,7 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/50 p-4">
-      <audio ref={setAudioEl} autoPlay playsInline className="hidden" />
+      <audio ref={setAudioEl} autoPlay playsInline className="hidden" aria-hidden />
       <div className="w-full max-w-md rounded-2xl border bg-background shadow-xl p-5 space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div>

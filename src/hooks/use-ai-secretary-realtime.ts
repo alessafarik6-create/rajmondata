@@ -67,6 +67,17 @@ export function useAiSecretaryRealtime({
   const activeRef = useRef(false);
   const fnCallRef = useRef<{ callId: string; name: string; args: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const responseInProgressRef = useRef(false);
+  const cancelSentRef = useRef(false);
+  const assistantSpeakingRef = useRef(false);
+  const processedFnCallIdsRef = useRef<Set<string>>(new Set());
+  const remoteAudioBoundRef = useRef(false);
+  const disconnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionObjectsLoggedRef = useRef(false);
+
+  const voiceMetric = useCallback((message: string, detail?: Record<string, string | number | boolean>) => {
+    voiceDebugLog(message, detail);
+  }, []);
 
   const setPhaseSafe = useCallback(
     (p: VoiceSecretaryPhase) => {
@@ -81,6 +92,16 @@ export function useAiSecretaryRealtime({
     abortRef.current = null;
     activeRef.current = false;
     startingRef.current = false;
+    responseInProgressRef.current = false;
+    cancelSentRef.current = false;
+    assistantSpeakingRef.current = false;
+    processedFnCallIdsRef.current.clear();
+    remoteAudioBoundRef.current = false;
+    if (disconnectGraceTimerRef.current) {
+      clearTimeout(disconnectGraceTimerRef.current);
+      disconnectGraceTimerRef.current = null;
+    }
+    sessionObjectsLoggedRef.current = false;
     dcRef.current?.close();
     dcRef.current = null;
     pcRef.current?.close();
@@ -102,27 +123,40 @@ export function useAiSecretaryRealtime({
     setTimeout(() => setPhaseSafe("idle"), 0);
   }, [cleanupMedia, setPhaseSafe, onStatusHint]);
 
-  const sendGreeting = useCallback((dc: RTCDataChannel) => {
-    dc.send(
-      JSON.stringify({
-        type: "response.create",
-        response: {
-          instructions:
-            "Pozdrav uživatele česky přesně větou: Dobrý den, co pro vás můžu udělat?",
-        },
-      })
-    );
-  }, []);
+  const sendResponseCreate = useCallback(
+    (dc: RTCDataChannel, response?: { instructions?: string }) => {
+      if (responseInProgressRef.current) return;
+      responseInProgressRef.current = true;
+      cancelSentRef.current = false;
+      const payload: Record<string, unknown> = { type: "response.create" };
+      if (response?.instructions) {
+        payload.response = { instructions: response.instructions };
+      }
+      dc.send(JSON.stringify(payload));
+      voiceMetric("response_started");
+    },
+    [voiceMetric]
+  );
 
-  const playRemoteAudio = useCallback(async () => {
-    const audio = audioElRef.current;
-    if (!audio) return;
-    try {
-      await audio.play();
-    } catch {
-      onError?.("Pro přehrání hlasu AI klepněte znovu na mikrofon.", { code: "autoplay_blocked" });
-    }
-  }, [onError]);
+  const sendResponseCancelOnce = useCallback(
+    (dc: RTCDataChannel) => {
+      if (cancelSentRef.current || !responseInProgressRef.current) return;
+      cancelSentRef.current = true;
+      dc.send(JSON.stringify({ type: "response.cancel" }));
+      voiceMetric("response_cancelled");
+    },
+    [voiceMetric]
+  );
+
+  const sendGreeting = useCallback(
+    (dc: RTCDataChannel) => {
+      sendResponseCreate(dc, {
+        instructions:
+          "Pozdrav uživatele česky přesně větou: Dobrý den, co pro vás můžu udělat?",
+      });
+    },
+    [sendResponseCreate]
+  );
 
   const invokeTool = useCallback(
     async (toolName: string, args: Record<string, unknown>, signal: AbortSignal) => {
@@ -156,11 +190,28 @@ export function useAiSecretaryRealtime({
         return;
       }
 
+      if (type === "response.created" || type === "response.started") {
+        responseInProgressRef.current = true;
+        cancelSentRef.current = false;
+        voiceMetric("response_started");
+      }
+
+      if (type === "response.done" || type === "response.completed" || type === "response.cancelled") {
+        responseInProgressRef.current = false;
+        assistantSpeakingRef.current = false;
+        cancelSentRef.current = false;
+        voiceMetric(type === "response.cancelled" ? "response_cancelled" : "response_finished");
+        setPhaseSafe("listening");
+        onStatusHint?.("Poslouchám…");
+      }
+
       if (
         type === "response.output_audio_transcript.delta" ||
         type === "response.audio_transcript.delta" ||
-        type === "response.audio.delta"
+        type === "response.audio.delta" ||
+        type === "response.output_audio.delta"
       ) {
+        assistantSpeakingRef.current = true;
         setPhaseSafe("assistant_speaking");
         onStatusHint?.("Sekretářka mluví…");
       }
@@ -169,6 +220,7 @@ export function useAiSecretaryRealtime({
         type === "response.output_audio_transcript.done" ||
         type === "response.audio_transcript.done"
       ) {
+        assistantSpeakingRef.current = false;
         const text = String(
           (msg as { transcript?: string }).transcript ??
             (msg as { text?: string }).text ??
@@ -178,7 +230,6 @@ export function useAiSecretaryRealtime({
           onTranscript?.({ role: "assistant", text });
           setPhaseSafe("listening");
           onStatusHint?.("Poslouchám…");
-          voiceDebugLog("listening");
         }
       }
 
@@ -191,8 +242,16 @@ export function useAiSecretaryRealtime({
       }
 
       if (type === "input_audio_buffer.speech_started") {
+        voiceMetric("speech_started");
+        if (assistantSpeakingRef.current || responseInProgressRef.current) {
+          sendResponseCancelOnce(dc);
+        }
         setPhaseSafe("listening");
         onStatusHint?.("Poslouchám…");
+      }
+
+      if (type === "input_audio_buffer.speech_stopped") {
+        voiceMetric("speech_stopped");
       }
 
       if (type === "response.function_call_arguments.delta") {
@@ -209,10 +268,13 @@ export function useAiSecretaryRealtime({
       }
 
       const runToolFromCall = (name: string, callId: string, argsRaw: string) => {
+        if (!callId || processedFnCallIdsRef.current.has(callId)) return;
+        processedFnCallIdsRef.current.add(callId);
+
         void (async () => {
           setPhaseSafe("processing_tool");
           onStatusHint?.("Provádím…");
-          voiceDebugLog("tool proposed", { name });
+          voiceMetric("tool_started", { name });
           let args: Record<string, unknown> = {};
           try {
             args = JSON.parse(argsRaw) as Record<string, unknown>;
@@ -264,7 +326,7 @@ export function useAiSecretaryRealtime({
         }
       }
     },
-    [invokeTool, onError, onTranscript, onStatusHint, setPhaseSafe]
+    [invokeTool, onTranscript, onStatusHint, sendResponseCancelOnce, sendResponseCreate, setPhaseSafe, voiceMetric]
   );
 
   const attachAudioElement = useCallback((el: HTMLAudioElement | null) => {
@@ -312,6 +374,10 @@ export function useAiSecretaryRealtime({
         return;
       }
       streamRef.current = stream;
+      if (!sessionObjectsLoggedRef.current) {
+        sessionObjectsLoggedRef.current = true;
+        voiceMetric("stream created");
+      }
       voiceDebugLog("microphone granted", {
         track: stream.getAudioTracks()[0]?.readyState === "live",
       });
@@ -320,6 +386,11 @@ export function useAiSecretaryRealtime({
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
       });
       pcRef.current = pc;
+      voiceMetric("pc created");
+
+      pc.oniceconnectionstatechange = () => {
+        voiceMetric("ice_state", { state: pc.iceConnectionState });
+      };
 
       pc.ontrack = (event) => {
         console.log("[VOICE] remote audio track received", {
@@ -328,9 +399,14 @@ export function useAiSecretaryRealtime({
         });
         const audioElement = audioElRef.current;
         const remoteStream = event.streams[0];
-        if (audioElement && remoteStream) {
+        if (!audioElement || !remoteStream) return;
+        audioElement.autoplay = true;
+        audioElement.setAttribute("playsinline", "true");
+        audioElement.volume = 1;
+        audioElement.muted = false;
+        if (audioElement.srcObject !== remoteStream) {
           audioElement.srcObject = remoteStream;
-          audioElement.autoplay = true;
+          remoteAudioBoundRef.current = true;
           audioElement.play().catch((error) => {
             console.error("[VOICE] audio play failed", error);
           });
@@ -338,7 +414,22 @@ export function useAiSecretaryRealtime({
       };
 
       pc.onconnectionstatechange = () => {
-        voiceDebugLog("peer connection state", { state: pc.connectionState });
+        voiceMetric("pc_state", { state: pc.connectionState });
+        if (pc.connectionState === "connected" && disconnectGraceTimerRef.current) {
+          clearTimeout(disconnectGraceTimerRef.current);
+          disconnectGraceTimerRef.current = null;
+        }
+        if (pc.connectionState === "disconnected") {
+          if (!disconnectGraceTimerRef.current) {
+            disconnectGraceTimerRef.current = setTimeout(() => {
+              if (pcRef.current?.connectionState === "disconnected") {
+                onError?.(mapVoiceErrorForUser("Spojení bylo přerušeno."), { code: "pc_disconnected" });
+                setPhaseSafe("error");
+              }
+            }, 5000);
+          }
+          return;
+        }
         if (pc.connectionState === "failed") {
           onError?.(mapVoiceErrorForUser("Spojení selhalo."), { code: "pc_failed" });
           setPhaseSafe("error");
@@ -351,6 +442,7 @@ export function useAiSecretaryRealtime({
 
       const dc = pc.createDataChannel("oai-events");
       dcRef.current = dc;
+      voiceMetric("dc created");
 
       dc.onmessage = (ev) => {
         try {
@@ -475,9 +567,9 @@ export function useAiSecretaryRealtime({
     handleRealtimeEvent,
     onError,
     onStatusHint,
-    playRemoteAudio,
     setPhaseSafe,
     cleanupMedia,
+    voiceMetric,
   ]);
 
   return {

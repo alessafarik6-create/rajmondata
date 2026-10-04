@@ -15,7 +15,8 @@ export type SecretaryToolPermission =
   | "customers_read"
   | "email_read"
   | "email_write"
-  | "tasks_write";
+  | "tasks_write"
+  | "tasks_assign";
 
 export type SecretaryPermissions = {
   calendar: CalendarPermissionsResolved;
@@ -27,6 +28,7 @@ export type SecretaryPermissions = {
   canReadEmail: boolean;
   canWriteEmail: boolean;
   canWriteTasks: boolean;
+  canAssignTasksToOthers: boolean;
 };
 
 async function loadEmployeeDoc(
@@ -72,6 +74,11 @@ export async function resolveSecretaryPermissions(
     canReadEmail: portal.emails === "read" || portal.emails === "write",
     canWriteEmail: portal.emails === "write",
     canWriteTasks: portal.jobs === "write" || caller.role === "owner" || caller.role === "admin",
+    canAssignTasksToOthers:
+      caller.role === "owner" ||
+      caller.role === "admin" ||
+      caller.role === "manager" ||
+      portal.jobs === "write",
   };
 }
 
@@ -112,6 +119,10 @@ export function assertSecretaryPermission(
       return perms.canWriteTasks
         ? { ok: true }
         : { ok: false, message: "Úkoly nemůžete vytvářet." };
+    case "tasks_assign":
+      return perms.canAssignTasksToOthers
+        ? { ok: true }
+        : { ok: false, message: "Úkoly nemůžete přiřazovat jiným zaměstnancům." };
     default:
       return { ok: false, message: "Neznámé oprávnění." };
   }

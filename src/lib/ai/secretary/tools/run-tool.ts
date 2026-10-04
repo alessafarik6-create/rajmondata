@@ -13,6 +13,12 @@ import {
   getCalendarEventsTool,
   updateCalendarMeetingDraftTool,
 } from "@/lib/ai/secretary/tools/calendar";
+import {
+  confirmEmployeeTaskTool,
+  createEmployeeTaskDraftTool,
+  searchEmployeesTool,
+  updateEmployeeTaskDraftTool,
+} from "@/lib/ai/secretary/tools/tasks";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 
 export type SecretaryToolName =
@@ -29,7 +35,11 @@ export type SecretaryToolName =
   | "searchCustomers"
   | "search_jobs"
   | "searchJobs"
-  | "getTodayOverview";
+  | "getTodayOverview"
+  | "search_employees"
+  | "create_employee_task_draft"
+  | "update_employee_task_draft"
+  | "confirm_employee_task";
 
 function normalizeToolName(name: string): SecretaryToolName | null {
   const map: Record<string, SecretaryToolName> = {
@@ -47,6 +57,10 @@ function normalizeToolName(name: string): SecretaryToolName | null {
     search_jobs: "search_jobs",
     searchJobs: "search_jobs",
     getTodayOverview: "getTodayOverview",
+    search_employees: "search_employees",
+    create_employee_task_draft: "create_employee_task_draft",
+    update_employee_task_draft: "update_employee_task_draft",
+    confirm_employee_task: "confirm_employee_task",
   };
   return map[name] ?? null;
 }
@@ -205,6 +219,79 @@ export async function runSecretaryTool(
           .slice(0, 8);
         return { ok: true, jobs };
       }
+      case "search_employees": {
+        const gate = assertSecretaryPermission(perms, "tasks_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await searchEmployeesTool(db, companyId, {
+          query: String(args.query ?? ""),
+        });
+        return { ok: true, ...result };
+      }
+      case "create_employee_task_draft": {
+        const gate = assertSecretaryPermission(perms, "tasks_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const employeeId = String(args.employeeId ?? "").trim();
+        if (employeeId) {
+          const assignGate = assertSecretaryPermission(perms, "tasks_assign");
+          if (!assignGate.ok) return { ok: false, error: assignGate.message };
+        }
+        await logSecretaryAudit(db, {
+          companyId,
+          userId: caller.uid,
+          action: "ai_action_proposed",
+          toolName: toolNameRaw,
+        });
+        const result = await createEmployeeTaskDraftTool(db, ctx, args);
+        return { ok: true, ...result, pendingId: result.pendingActionId };
+      }
+      case "update_employee_task_draft": {
+        const gate = assertSecretaryPermission(perms, "tasks_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        return await updateEmployeeTaskDraftTool(db, ctx, args);
+      }
+      case "confirm_employee_task": {
+        const gate = assertSecretaryPermission(perms, "tasks_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        await logSecretaryAudit(db, {
+          companyId,
+          userId: caller.uid,
+          action: "ai_action_confirmed",
+          toolName: toolNameRaw,
+        });
+        const result = await confirmEmployeeTaskTool(db, ctx, {
+          pendingActionId: String(args.pendingActionId ?? args.pendingId ?? ""),
+          userConfirmationText:
+            args.userConfirmationText != null ? String(args.userConfirmationText) : undefined,
+        });
+        if (result.ok && result.taskId) {
+          await logSecretaryAudit(db, {
+            companyId,
+            userId: caller.uid,
+            action: "task_created_via_ai_voice",
+            toolName: toolNameRaw,
+            detail: JSON.stringify({
+              taskId: result.taskId,
+              createdByUserId: caller.uid,
+            }),
+          });
+          await logSecretaryAudit(db, {
+            companyId,
+            userId: caller.uid,
+            action: "ai_action_executed",
+            toolName: toolNameRaw,
+            detail: result.taskId,
+          });
+        } else if (!result.ok) {
+          await logSecretaryAudit(db, {
+            companyId,
+            userId: caller.uid,
+            action: "ai_action_failed",
+            toolName: toolNameRaw,
+            detail: result.message,
+          });
+        }
+        return { ok: result.ok, message: result.message, taskId: result.taskId ?? null };
+      }
       case "getTodayOverview": {
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
@@ -353,6 +440,70 @@ export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown
         type: "object",
         properties: { query: { type: "string" } },
         required: ["query"],
+      },
+    },
+    {
+      type: "function",
+      name: "search_employees",
+      description: "Vyhledá zaměstnance podle jména nebo e-mailu.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+      },
+    },
+    {
+      type: "function",
+      name: "create_employee_task_draft",
+      description: "Připraví návrh úkolu pro zaměstnance. Neukládá — vyžaduje confirm_employee_task.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          description: { type: "string" },
+          employeeName: { type: "string" },
+          employeeId: { type: "string" },
+          dueDate: { type: "string", description: "YYYY-MM-DD" },
+          dueTime: { type: "string" },
+          priority: { type: "string", enum: ["low", "normal", "high"] },
+          jobId: { type: "string" },
+          jobName: { type: "string" },
+          customerId: { type: "string" },
+        },
+        required: ["title"],
+      },
+    },
+    {
+      type: "function",
+      name: "update_employee_task_draft",
+      description: "Upraví pending návrh úkolu (např. jiný zaměstnanec).",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          title: { type: "string" },
+          description: { type: "string" },
+          employeeName: { type: "string" },
+          employeeId: { type: "string" },
+          dueDate: { type: "string" },
+          priority: { type: "string", enum: ["low", "normal", "high"] },
+          jobId: { type: "string" },
+          jobName: { type: "string" },
+        },
+        required: ["pendingActionId"],
+      },
+    },
+    {
+      type: "function",
+      name: "confirm_employee_task",
+      description: "Po slovním ano uloží návrh úkolu do modulu Úkoly.",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          userConfirmationText: { type: "string" },
+        },
+        required: ["pendingActionId", "userConfirmationText"],
       },
     },
   ];

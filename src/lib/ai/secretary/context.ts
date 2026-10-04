@@ -57,5 +57,9 @@ export function secretarySystemInstructions(ctx: SecretaryContext): string {
     "Po slovním ano/jo/potvrzuji zavolej create_calendar_meeting s pendingActionId z předchozí odpovědi.",
     "Při opravě použij update_calendar_meeting_draft.",
     "Čtení kalendáře: get_calendar_events / getTodayOverview.",
+    "Úkoly: search_employees pro výběr zaměstnance; create_employee_task_draft; po ano confirm_employee_task.",
+    "Při více shodách jmen se doptej. Nevymýšlej employeeId.",
+    "Termíny úkolů: dnes, zítra, v pondělí, do pátku — před potvrzením zopakuj konkrétní datum.",
+    "Urgentní = priority high. Oprava návrhu: update_employee_task_draft.",
   ].join("\n");
 }

@@ -11,8 +11,8 @@ export type RealtimeClientSecret = {
 const LOG = "[VOICE]";
 
 function realtimeToolsEnabled(): boolean {
-  const flag = String(process.env.OPENAI_REALTIME_ENABLE_TOOLS ?? "").trim().toLowerCase();
-  return flag === "1" || flag === "true" || flag === "yes";
+  const flag = String(process.env.OPENAI_REALTIME_ENABLE_TOOLS ?? "true").trim().toLowerCase();
+  return flag !== "0" && flag !== "false" && flag !== "no";
 }
 
 export function assertOpenAiVoiceConfigured(): { ok: true; model: string } | { ok: false; reason: string } {
@@ -41,9 +41,11 @@ export function buildUnifiedRealtimeSessionJson(ctx: SecretaryContext): string {
       input: {
         turn_detection: {
           type: "server_vad",
+          threshold: 0.55,
+          prefix_padding_ms: 350,
+          silence_duration_ms: 900,
           interrupt_response: true,
           create_response: true,
-          silence_duration_ms: 500,
         },
       },
       output: {
