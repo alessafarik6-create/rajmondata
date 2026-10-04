@@ -9,7 +9,8 @@ import {
   sendInquiryOfferEmail,
 } from "@/lib/inquiry-offer-send-admin";
 import { parseAttachmentRefs } from "@/lib/inquiry-offer-attachments";
-import { INQUIRY_OFFER_STANDALONE_LEAD_KEY, readInquiryEmailIdentity } from "@/lib/inquiry-offer-email";
+import { INQUIRY_OFFER_STANDALONE_LEAD_KEY } from "@/lib/inquiry-offer-email";
+import { loadInquiryOfferEmailConfig } from "@/lib/company-email-settings";
 import { validateOfferCopyEmailsRaw } from "@/lib/inquiry-offer-copy";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { normalizeInquiryVatRate, parseInquiryPriceInput } from "@/lib/inquiry-offer-pricing";
@@ -41,10 +42,6 @@ type Body = {
   aiGenerationId?: string | null;
   inquiryType?: string | null;
 };
-
-function canSendInquiryOffers(role: string): boolean {
-  return ["owner", "admin", "manager"].includes(role);
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -80,13 +77,6 @@ export async function POST(request: NextRequest) {
     if (caller.role === "customer") {
       return NextResponse.json({ ok: false, error: "Zákazník nemá přístup." }, { status: 403 });
     }
-    if (!canSendInquiryOffers(caller.role)) {
-      return NextResponse.json(
-        { ok: false, error: "Nemáte oprávnění odesílat nabídky." },
-        { status: 403 }
-      );
-    }
-
     const body = (await request.json()) as Body;
     const companyId = String(body.companyId ?? "").trim();
     const isStandalone =
@@ -111,21 +101,18 @@ export async function POST(request: NextRequest) {
     }
 
     const { requirePortalModuleAccess } = await import("@/lib/portal-permissions-server");
-    const perm = await requirePortalModuleAccess(
-      db,
-      {
-        uid: caller.uid,
-        companyId: caller.companyId,
-        role: caller.role,
-        employeeId:
-          userData.employeeId != null && String(userData.employeeId).trim()
-            ? String(userData.employeeId).trim()
-            : null,
-        globalRoles: caller.globalRoles,
-      },
-      "leads",
-      "write"
-    );
+    const portalCaller = {
+      uid: caller.uid,
+      companyId: caller.companyId,
+      role: caller.role,
+      employeeId:
+        userData.employeeId != null && String(userData.employeeId).trim()
+          ? String(userData.employeeId).trim()
+          : null,
+      globalRoles: caller.globalRoles,
+    };
+    const moduleId = isStandalone ? "offers" : "leads";
+    const perm = await requirePortalModuleAccess(db, portalCaller, moduleId, "write");
     if (!perm.ok) {
       return NextResponse.json({ ok: false, error: perm.error }, { status: perm.status });
     }
@@ -141,8 +128,8 @@ export async function POST(request: NextRequest) {
     if (action === "send") {
       const companySnap = await db.collection(COMPANIES_COLLECTION).doc(companyId).get();
       const company = (companySnap.data() ?? {}) as Record<string, unknown>;
-      const identity = readInquiryEmailIdentity(company);
-      const copyCheck = validateOfferCopyEmailsRaw(identity.offerCopyEmails);
+      const emailConfig = await loadInquiryOfferEmailConfig(db, companyId, company);
+      const copyCheck = validateOfferCopyEmailsRaw(emailConfig.offerCopyEmails);
       if (!copyCheck.ok) {
         return NextResponse.json({ ok: false, error: copyCheck.error }, { status: 400 });
       }
@@ -197,7 +184,7 @@ export async function POST(request: NextRequest) {
       sendNotice: sent.sendNotice,
       sendMethod: sent.sendPlan.method,
       fromHeader: sent.sendPlan.fromHeader,
-      replyTo: sent.sendPlan.replyTo,
+      replyTo: sent.sendPlan.replyToDisplay,
     });
   } catch (err) {
     return NextResponse.json(

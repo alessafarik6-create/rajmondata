@@ -32,6 +32,7 @@ import {
   INQUIRY_OFFER_LEGACY_DETAIL_MESSAGE,
   INQUIRY_OFFER_STATUS_LABELS,
   formatInquiryOfferAttachmentLine,
+  formatInquiryOfferAuditCopyForUser,
   listInquiryOfferAttachments,
   getInquiryOfferAuthorDisplayMeta,
   parseInquiryOfferFooterFromRecord,
@@ -68,6 +69,8 @@ export function LeadInquiryOfferDetailDialog(props: {
   canResend?: boolean;
   onReuse?: (offer: InquiryOfferRecord) => void;
   onResend?: (offer: InquiryOfferRecord) => void;
+  /** Owner/admin — zobrazí seznam BCC adres. */
+  canViewAuditCopyAddresses?: boolean;
   /** Volitelný blok pod náhledem (např. AI metadata v AI centru). */
   extraContent?: React.ReactNode;
 }) {
@@ -107,9 +110,30 @@ export function LeadInquiryOfferDetailDialog(props: {
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 sm:px-6">
             <div className="space-y-4">
               <DetailRow label="Datum odeslání" value={formatSentAt(offer)} />
-              <DetailRow label="Hlavní příjemce" value={offer.to || "—"} />
-              {meta?.copyLabel ? (
-                <DetailRow label="Kopie nabídky" value={meta.copyLabel} />
+              <DetailRow label="Odesláno zákazníkovi" value={offer.to || "—"} />
+              {offer.status === "sent" ? (
+                <DetailRow
+                  label="Odeslal"
+                  value={
+                    <div className="space-y-0.5">
+                      <p>{offer.sentByName ?? offer.authorName ?? "—"}</p>
+                      {(offer.sentByEmail ?? offer.authorEmail) ? (
+                        <p className="break-all text-slate-700">
+                          {offer.sentByEmail ?? offer.authorEmail}
+                        </p>
+                      ) : null}
+                    </div>
+                  }
+                />
+              ) : null}
+              {offer.status === "sent" ? (
+                <DetailRow
+                  label="Kontrolní kopie"
+                  value={formatInquiryOfferAuditCopyForUser(
+                    offer,
+                    props.canViewAuditCopyAddresses === true
+                  )}
+                />
               ) : null}
               <DetailRow label="Předmět" value={offer.subject || "—"} />
               <DetailRow label="Cena" value={formatInquiryOfferPricingBlock(offer)} />
@@ -167,7 +191,7 @@ export function LeadInquiryOfferDetailDialog(props: {
                 <DetailRow label="Odesláno jako (odesílatel)" value={meta.displayFrom} />
               ) : null}
               {meta?.replyTo ? (
-                <DetailRow label="Reply-to" value={meta.replyTo} />
+                <DetailRow label="Odpověď zákazníka směřuje na" value={meta.replyTo} />
               ) : null}
               {meta?.modeLabel ? <DetailRow label="Způsob odeslání" value={meta.modeLabel} /> : null}
               {offer.messageId ? (

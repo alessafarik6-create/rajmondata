@@ -15,7 +15,7 @@ import { isExcludedInquiryReplyToEmail } from "@/lib/inquiry-offer-resend";
 export const INQUIRY_OFFER_STANDALONE_LEAD_KEY = "__standalone__";
 
 export const INQUIRY_OFFER_MISSING_REPLY_ERROR =
-  "Doplňte e-mail pro odpovědi v nastavení organizace.";
+  "Chybí platný e-mail pro odpovědi — doplňte ho u profilu odesílatele nebo v nastavení organizace (fallback).";
 
 export const INQUIRY_WORKFLOW_STATUSES = [
   "nova",
@@ -65,6 +65,8 @@ export type InquiryEmailIdentity = {
   offerReplyEmail?: string | null;
   /** E-mail(y) pro automatickou kopii každé odeslané nabídky (čárkou oddělené). */
   offerCopyEmails?: string | null;
+  /** Zapnout BCC kontrolní kopie odeslaných nabídek. */
+  offerAuditCopyEnabled?: boolean;
   phone?: string | null;
   web?: string | null;
   emailSignatureHtml?: string | null;
@@ -101,12 +103,19 @@ export type InquiryOfferRecord = {
   templateName?: string | null;
   sentAt?: unknown;
   sentByUid?: string | null;
+  sentByUserId?: string | null;
   sentByEmail?: string | null;
   sentByName?: string | null;
+  createdByUserId?: string | null;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
   /** Snímek autora při odeslání (pro historii). */
   authorId?: string | null;
   authorName?: string | null;
   authorEmail?: string | null;
+  replyToDisplay?: string | null;
+  auditCopyEnabled?: boolean | null;
+  auditCopyCount?: number | null;
   authorPhotoUrl?: string | null;
   /** Technická adresa odesílatele (From). */
   fromEmail?: string | null;
@@ -164,6 +173,12 @@ export function readInquiryEmailIdentity(
     replyToEmail: strOrNull(o.replyToEmail),
     offerReplyEmail: strOrNull(o.offerReplyEmail),
     offerCopyEmails: strOrNull(o.offerCopyEmails),
+    offerAuditCopyEnabled:
+      o.offerAuditCopyEnabled === true
+        ? true
+        : o.offerAuditCopyEnabled === false
+          ? false
+          : undefined,
     phone: strOrNull(o.phone),
     web: strOrNull(o.web),
     emailSignatureHtml: strOrNull(o.emailSignatureHtml),
@@ -189,22 +204,17 @@ export function resolveOrganizationDisplayName(
 }
 
 /**
- * Priorita Reply-To u nabídek:
- * 1. e-mail pro odpovědi na nabídky
- * 2. reply-to e-mail
- * 3. e-mail odesílatele organizace
- * 4. hlavní kontaktní e-mail organizace
- * (nikdy platformní noreply)
+ * Firemní fallback Reply-To (když odesílatel nemá platný e-mail).
  */
-export function resolveInquiryReplyToEmail(
+export function resolveOrganizationFallbackReplyToEmail(
   identity: InquiryEmailIdentity,
   company: Record<string, unknown>
 ): string | null {
   const candidates = [
     identity.offerReplyEmail,
     identity.replyToEmail,
-    identity.senderEmail,
     identity.contactEmail,
+    identity.senderEmail,
     String(company.email ?? "").trim() || null,
   ];
   for (const c of candidates) {
@@ -215,6 +225,40 @@ export function resolveInquiryReplyToEmail(
     return norm;
   }
   return null;
+}
+
+/** @deprecated alias */
+export function resolveInquiryReplyToEmail(
+  identity: InquiryEmailIdentity,
+  company: Record<string, unknown>
+): string | null {
+  return resolveOrganizationFallbackReplyToEmail(identity, company);
+}
+
+/**
+ * Reply-To při odeslání nabídky — preferuje e-mail přihlášeného odesílatele.
+ */
+export function resolveOfferSenderReplyToEmail(params: {
+  senderEmail: string | null | undefined;
+  identity: InquiryEmailIdentity;
+  company: Record<string, unknown>;
+}): string | null {
+  const personal = String(params.senderEmail ?? "").trim();
+  if (
+    personal &&
+    isValidEmailAddress(personal) &&
+    !isExcludedInquiryReplyToEmail(personal.toLowerCase())
+  ) {
+    return personal.toLowerCase();
+  }
+  return resolveOrganizationFallbackReplyToEmail(params.identity, params.company);
+}
+
+export function formatOfferReplyToHeader(displayName: string | null | undefined, email: string): string {
+  const addr = email.trim().toLowerCase();
+  const name = String(displayName ?? "").trim().replace(/"/g, "'");
+  if (name) return `${name} <${addr}>`;
+  return addr;
 }
 
 export function resolveInquirySenderEmail(

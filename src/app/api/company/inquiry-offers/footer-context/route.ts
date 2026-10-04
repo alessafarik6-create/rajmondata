@@ -6,7 +6,7 @@ import {
   verifyBearerAndLoadCaller,
 } from "@/lib/api-verify-company-user";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
-import { readInquiryEmailIdentity } from "@/lib/inquiry-offer-email";
+import { loadInquiryOfferEmailConfig } from "@/lib/company-email-settings";
 import { buildInquiryOfferFooterData } from "@/lib/inquiry-offer-footer";
 import {
   buildInquiryOfferSendPlan,
@@ -47,23 +47,28 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Organizace nenalezena." }, { status: 404 });
     }
     const company = (snap.data() ?? {}) as Record<string, unknown>;
-    const identity = readInquiryEmailIdentity(company);
+    const emailConfig = await loadInquiryOfferEmailConfig(db, companyId, company);
     const author = await resolveInquiryOfferAuthor({
       db,
       auth,
       companyId,
       userId: caller.uid,
     });
-    const footer = buildInquiryOfferFooterData({ company, identity, author });
+    const footer = buildInquiryOfferFooterData({ company, identity: emailConfig, author });
 
-    const planResult = await buildInquiryOfferSendPlan({ company, identity });
+    const planResult = await buildInquiryOfferSendPlan({
+      company,
+      identity: emailConfig,
+      senderEmail: author.email,
+      senderName: author.displayName,
+    });
     const sendPreview =
       "error" in planResult
         ? null
         : {
             methodLabel: INQUIRY_OFFER_SEND_METHOD_LABELS[planResult.method],
             fromHeader: planResult.fromHeader,
-            replyTo: planResult.replyTo,
+            replyTo: planResult.replyToDisplay,
             notice: planResult.sendNotice,
           };
 

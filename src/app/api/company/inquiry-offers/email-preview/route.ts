@@ -5,10 +5,10 @@ import {
   verifyBearerAndLoadCaller,
 } from "@/lib/api-verify-company-user";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
+import { loadInquiryOfferEmailConfig } from "@/lib/company-email-settings";
 import {
   buildInquiryOfferEmailHtml,
   plainTextToHtmlParagraphs,
-  readInquiryEmailIdentity,
 } from "@/lib/inquiry-offer-email";
 import {
   buildInquiryOfferSentBodyPlain,
@@ -77,11 +77,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Organizace nenalezena." }, { status: 404 });
     }
     const company = (snap.data() ?? {}) as Record<string, unknown>;
-    const identity = readInquiryEmailIdentity(company);
-    const planResult = await buildInquiryOfferSendPlan({ company, identity });
-    if ("error" in planResult) {
-      return NextResponse.json({ ok: false, error: planResult.error }, { status: 400 });
-    }
+    const emailConfig = await loadInquiryOfferEmailConfig(db, companyId, company);
 
     const author = await resolveInquiryOfferAuthor({
       db,
@@ -89,7 +85,18 @@ export async function POST(request: NextRequest) {
       companyId,
       userId: caller.uid,
     });
-    const footer = buildInquiryOfferFooterData({ company, identity, author });
+
+    const planResult = await buildInquiryOfferSendPlan({
+      company,
+      identity: emailConfig,
+      senderEmail: author.email,
+      senderName: author.displayName,
+    });
+    if ("error" in planResult) {
+      return NextResponse.json({ ok: false, error: planResult.error }, { status: 400 });
+    }
+
+    const footer = buildInquiryOfferFooterData({ company, identity: emailConfig, author });
 
     const userBodyPlain = String(body.bodyText ?? "").trim();
     const pricing = calculateInquiryOfferPricing(
@@ -112,16 +119,19 @@ export async function POST(request: NextRequest) {
     const toNorm = String(body.to ?? "").trim().toLowerCase();
 
     let copyLabel: string | null = null;
-    const copyValidation = validateOfferCopyEmailsRaw(identity.offerCopyEmails);
-    if (copyValidation.ok && toNorm) {
+    const copyValidation = validateOfferCopyEmailsRaw(emailConfig.offerCopyEmails);
+    const auditEnabled = emailConfig.offerAuditCopyEnabled === true;
+    if (copyValidation.ok && toNorm && auditEnabled) {
       try {
-        const delivery = resolveInquiryOfferCopyDelivery(identity, toNorm);
+        const delivery = resolveInquiryOfferCopyDelivery(emailConfig, toNorm);
         if (delivery?.emails.length) {
-          copyLabel = `${formatOfferCopyEmailsForDisplay(delivery.emails)} (${INQUIRY_OFFER_COPY_MODE_LABELS[delivery.mode]})`;
+          copyLabel = `${delivery.emails.length} interní příjemce (BCC)`;
         }
       } catch {
         copyLabel = null;
       }
+    } else if (!auditEnabled) {
+      copyLabel = "Ne";
     }
 
     return NextResponse.json({
@@ -146,10 +156,11 @@ export async function POST(request: NextRequest) {
           line: formatInquiryOfferAttachmentLine(a),
         })),
         fromHeader: planResult.fromHeader,
-        replyTo: planResult.replyTo,
+        replyTo: planResult.replyToDisplay,
         methodLabel: INQUIRY_OFFER_SEND_METHOD_LABELS[planResult.method],
         sendNotice: planResult.sendNotice,
         copyLabel,
+        auditCopyEnabled: auditEnabled,
       },
     });
   } catch (err) {

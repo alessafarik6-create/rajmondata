@@ -4,10 +4,11 @@
 
 import {
   INQUIRY_OFFER_MISSING_REPLY_ERROR,
+  formatOfferReplyToHeader,
   isInquirySmtpConfigured,
   isValidEmailAddress,
   readInquiryEmailIdentity,
-  resolveInquiryReplyToEmail,
+  resolveOfferSenderReplyToEmail,
   resolveInquirySenderEmail,
   resolveOrganizationDisplayName,
   type InquiryEmailIdentity,
@@ -27,6 +28,8 @@ export type InquiryOfferSendPlan = {
   /** Stejné jako technical pro historii — zobrazované jméno je fromDisplayName. */
   fromHeader: string;
   replyTo: string;
+  /** Pro UI — jméno + e-mail odesílatele odpovědí. */
+  replyToDisplay: string;
   usedPlatformFallback: boolean;
   /** Preferovaný e-mail organizace (může být neověřený). */
   orgPreferredSenderEmail: string | null;
@@ -62,8 +65,9 @@ export function buildInquiryOfferHistoryFields(plan: InquiryOfferSendPlan) {
   return {
     technicalFrom: plan.fromEmailTechnical,
     displayFrom: plan.fromHeader,
-    replyTo: plan.replyTo,
+    replyTo: plan.replyToDisplay,
     replyToEmail: plan.replyTo,
+    replyToDisplay: plan.replyToDisplay,
     fromEmail: plan.fromEmailTechnical,
     fromDisplayName: plan.fromDisplayName,
     sendingMode: plan.method,
@@ -76,15 +80,22 @@ export function buildInquiryOfferHistoryFields(plan: InquiryOfferSendPlan) {
 export async function buildInquiryOfferSendPlan(params: {
   company: Record<string, unknown>;
   identity?: InquiryEmailIdentity;
+  senderEmail?: string | null;
+  senderName?: string | null;
   /** Vynutit systémový fallback (retry po chybě Resend). */
   forcePlatformFallback?: boolean;
 }): Promise<InquiryOfferSendPlan | { error: string }> {
   const identity = params.identity ?? readInquiryEmailIdentity(params.company);
   const orgName = resolveOrganizationDisplayName(params.company, identity);
-  const replyTo = resolveInquiryReplyToEmail(identity, params.company);
+  const replyTo = resolveOfferSenderReplyToEmail({
+    senderEmail: params.senderEmail,
+    identity,
+    company: params.company,
+  });
   if (!replyTo || !isValidEmailAddress(replyTo) || isExcludedInquiryReplyToEmail(replyTo)) {
     return { error: INQUIRY_OFFER_MISSING_REPLY_ERROR };
   }
+  const replyToDisplay = formatOfferReplyToHeader(params.senderName, replyTo);
 
   const orgPreferred = resolveInquirySenderEmail(identity, params.company, false);
 
@@ -100,6 +111,7 @@ export async function buildInquiryOfferSendPlan(params: {
       fromEmailTechnical: fromEmail,
       fromHeader: formatInquiryOfferFromHeader(orgName, fromEmail),
       replyTo,
+      replyToDisplay,
       usedPlatformFallback: false,
       orgPreferredSenderEmail: orgPreferred,
       sendNotice: null,
@@ -125,6 +137,7 @@ export async function buildInquiryOfferSendPlan(params: {
       fromEmailTechnical: orgPreferred,
       fromHeader: formatInquiryOfferFromHeader(orgName, orgPreferred),
       replyTo,
+      replyToDisplay,
       usedPlatformFallback: false,
       orgPreferredSenderEmail: orgPreferred,
       sendNotice: null,
@@ -144,6 +157,7 @@ export async function buildInquiryOfferSendPlan(params: {
     fromEmailTechnical: platformEmail,
     fromHeader: formatInquiryOfferFromHeader(orgName, platformEmail),
     replyTo,
+    replyToDisplay,
     usedPlatformFallback: true,
     orgPreferredSenderEmail: orgPreferred,
     sendNotice: notice,

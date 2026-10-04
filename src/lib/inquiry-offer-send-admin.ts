@@ -54,6 +54,11 @@ import {
   type InquiryOfferFooterData,
 } from "@/lib/inquiry-offer-footer";
 import { markAiGenerationOfferSent } from "@/lib/ai/generation-store";
+import { loadInquiryOfferEmailConfig } from "@/lib/company-email-settings";
+import { logInquiryOfferSentAudit } from "@/lib/inquiry-offer-audit";
+import {
+  buildInquiryOfferCreatedByFields,
+} from "@/lib/inquiry-offer-author-resolve";
 
 export type SendInquiryOfferEmailParams = {
   companyId: string;
@@ -131,7 +136,7 @@ async function deliverViaSmtp(
     const mailOpts: nodemailer.SendMailOptions = {
       from: plan.fromHeader,
       to: params.to,
-      replyTo: plan.replyTo,
+      replyTo: plan.replyToDisplay,
       subject: params.subject,
       html: params.html,
       text: stripHtmlToPlain(params.bodyPlain),
@@ -147,11 +152,7 @@ async function deliverViaSmtp(
       },
     };
     if (copy?.emails.length) {
-      if (copy.mode === "cc") {
-        mailOpts.cc = copy.emails;
-      } else {
-        mailOpts.bcc = copy.emails;
-      }
+      mailOpts.bcc = copy.emails;
     }
     const info = await transporter.sendMail(mailOpts);
     const messageId = String(info.messageId ?? params.headers["Message-ID"] ?? "").trim();
@@ -186,11 +187,7 @@ function resendPayloadWithCopy(
     replyTo: base.replyTo,
     headers: base.headers,
     ...(base.attachments.length > 0 ? { attachments: base.attachments } : {}),
-    ...(copy?.emails.length
-      ? copy.mode === "cc"
-        ? { cc: copy.emails }
-        : { bcc: copy.emails }
-      : {}),
+    ...(copy?.emails.length ? { bcc: copy.emails } : {}),
   };
 }
 
@@ -213,28 +210,15 @@ async function deliverViaResend(
     subject: params.subject,
     html: params.html,
     from: plan.fromHeader,
-    replyTo: plan.replyTo,
+    replyTo: plan.replyToDisplay,
     headers: params.headers,
     attachments: params.attachments,
   };
 
-  let copyModeUsed: InquiryOfferCopyMode | null = params.copy?.emails.length
+  const copyModeUsed: InquiryOfferCopyMode | null = params.copy?.emails.length
     ? params.copy.mode
     : null;
-  let send = await sendTransactionalEmail(resendPayloadWithCopy(base, params.copy));
-
-  if (
-    !send.ok &&
-    params.copy?.emails.length &&
-    params.copy.mode === "bcc"
-  ) {
-    const fallbackCopy: InquiryOfferCopyDelivery = {
-      emails: params.copy.emails,
-      mode: "cc",
-    };
-    send = await sendTransactionalEmail(resendPayloadWithCopy(base, fallbackCopy));
-    if (send.ok) copyModeUsed = "cc";
-  }
+  const send = await sendTransactionalEmail(resendPayloadWithCopy(base, params.copy));
 
   if (!send.ok) {
     const raw = `${send.error} ${send.detail ?? ""}`;
@@ -286,7 +270,7 @@ export async function sendInquiryOfferEmail(
     return { ok: false, error: "Organizace nenalezena.", detail: null };
   }
   const company = (companySnap.data() ?? {}) as Record<string, unknown>;
-  const identity = readInquiryEmailIdentity(company);
+  const emailConfig = await loadInquiryOfferEmailConfig(db, params.companyId, company);
 
   const userBodyPlain = params.bodyText.trim();
   if (!userBodyPlain) {
@@ -299,7 +283,19 @@ export async function sendInquiryOfferEmail(
   );
   const bodyPlain = buildInquiryOfferSentBodyPlain(userBodyPlain, pricing);
 
-  let planResult = await buildInquiryOfferSendPlan({ company, identity });
+  const author = await resolveInquiryOfferAuthor({
+    db,
+    auth: getAdminAuth(),
+    companyId: params.companyId,
+    userId: params.userId,
+  });
+
+  let planResult = await buildInquiryOfferSendPlan({
+    company,
+    identity: emailConfig,
+    senderEmail: author.email ?? params.sentByEmail,
+    senderName: author.displayName ?? params.sentByName,
+  });
   if ("error" in planResult) {
     return { ok: false, error: planResult.error, detail: null };
   }
@@ -315,15 +311,9 @@ export async function sendInquiryOfferEmail(
     replyTo: plan.replyTo,
   });
 
-  const author = await resolveInquiryOfferAuthor({
-    db,
-    auth: getAdminAuth(),
-    companyId: params.companyId,
-    userId: params.userId,
-  });
   const offerFooter: InquiryOfferFooterData = buildInquiryOfferFooterData({
     company,
-    identity,
+    identity: emailConfig,
     author,
   });
   const authorHistory = buildInquiryOfferAuthorHistoryFields(author);
@@ -356,13 +346,13 @@ export async function sendInquiryOfferEmail(
   const isStandalone =
     params.isStandalone === true || params.leadKey === INQUIRY_OFFER_STANDALONE_LEAD_KEY;
 
-  const copyValidation = validateOfferCopyEmailsRaw(identity.offerCopyEmails);
+  const copyValidation = validateOfferCopyEmailsRaw(emailConfig.offerCopyEmails);
   if (!copyValidation.ok) {
     return { ok: false, error: copyValidation.error, detail: null };
   }
   let offerCopyDelivery: InquiryOfferCopyDelivery | null = null;
   try {
-    offerCopyDelivery = resolveInquiryOfferCopyDelivery(identity, toNorm);
+    offerCopyDelivery = resolveInquiryOfferCopyDelivery(emailConfig, toNorm);
   } catch (err) {
     return {
       ok: false,
@@ -373,7 +363,7 @@ export async function sendInquiryOfferEmail(
   let offerCopyModeUsed: InquiryOfferCopyMode | null = null;
 
   if (plan.method === "org_smtp") {
-    const smtpOut = await deliverViaSmtp(plan, identity, {
+    const smtpOut = await deliverViaSmtp(plan, emailConfig, {
       to: toNorm,
       subject,
       html,
@@ -403,7 +393,9 @@ export async function sendInquiryOfferEmail(
     ) {
       planResult = await buildInquiryOfferSendPlan({
         company,
-        identity,
+        identity: emailConfig,
+        senderEmail: author.email ?? params.sentByEmail,
+        senderName: author.displayName ?? params.sentByName,
         forcePlatformFallback: true,
       });
       if ("error" in planResult) {
@@ -469,12 +461,11 @@ export async function sendInquiryOfferEmail(
     internalNote: params.internalNote?.trim() || null,
     templateId: params.templateId ?? null,
     templateName: params.templateName ?? null,
-    sentByUid: params.userId,
-    sentByEmail: params.sentByEmail ?? null,
-    sentByName: params.sentByName ?? null,
     ...buildInquiryOfferHistoryFields(plan),
     offerCopyTo: offerCopyDelivery?.emails ?? [],
     offerCopyMode: offerCopyModeUsed ?? offerCopyDelivery?.mode ?? null,
+    auditCopyEnabled: emailConfig.offerAuditCopyEnabled === true,
+    auditCopyCount: offerCopyDelivery?.emails.length ?? 0,
     offerFooter,
     ...authorHistory,
     messageId,
@@ -491,10 +482,23 @@ export async function sendInquiryOfferEmail(
   } else {
     const ref = await offersCol.add({
       ...offerPayload,
+      ...buildInquiryOfferCreatedByFields(author),
       createdAt: FieldValue.serverTimestamp(),
     });
     offerId = ref.id;
   }
+
+  await logInquiryOfferSentAudit(db, {
+    companyId: params.companyId,
+    userId: params.userId,
+    offerId,
+    leadId: isStandalone ? null : params.leadKey,
+    recipientEmail: toNorm,
+    sentByName: author.displayName,
+    sentByEmail: author.email,
+    auditCopyEnabled: emailConfig.offerAuditCopyEnabled === true,
+    auditCopyCount: offerCopyDelivery?.emails.length ?? 0,
+  });
 
   if (!isStandalone) {
     await markLeadCustomerContacted(db, params.companyId, params.leadKey, {
@@ -549,8 +553,21 @@ export async function saveInquiryOfferDraft(
 
   const companySnap = await db.collection(COMPANIES_COLLECTION).doc(params.companyId).get();
   const company = (companySnap.data() ?? {}) as Record<string, unknown>;
-  const identity = readInquiryEmailIdentity(company);
-  const planResult = await buildInquiryOfferSendPlan({ company, identity });
+  const emailConfig = await loadInquiryOfferEmailConfig(db, params.companyId, company);
+
+  const author = await resolveInquiryOfferAuthor({
+    db,
+    auth: getAdminAuth(),
+    companyId: params.companyId,
+    userId: params.userId,
+  });
+
+  const planResult = await buildInquiryOfferSendPlan({
+    company,
+    identity: emailConfig,
+    senderEmail: author.email ?? params.sentByEmail,
+    senderName: author.displayName ?? params.sentByName,
+  });
   const plan = "error" in planResult ? null : planResult;
 
   const pricing = calculateInquiryOfferPricing(
@@ -561,14 +578,9 @@ export async function saveInquiryOfferDraft(
   const bodyPlain = userBodyPlain
     ? buildInquiryOfferSentBodyPlain(userBodyPlain, pricing)
     : "";
-  const author = await resolveInquiryOfferAuthor({
-    db,
-    auth: getAdminAuth(),
-    companyId: params.companyId,
-    userId: params.userId,
-  });
-  const offerFooter = buildInquiryOfferFooterData({ company, identity, author });
+  const offerFooter = buildInquiryOfferFooterData({ company, identity: emailConfig, author });
   const authorHistory = buildInquiryOfferAuthorHistoryFields(author);
+  const createdByFields = buildInquiryOfferCreatedByFields(author);
 
   const bodyInnerHtml = bodyPlain ? plainTextToHtmlParagraphs(bodyPlain) : "";
   const html =
@@ -618,9 +630,6 @@ export async function saveInquiryOfferDraft(
     internalNote: params.internalNote?.trim() || null,
     templateId: params.templateId ?? null,
     templateName: params.templateName ?? null,
-    sentByUid: params.userId,
-    sentByEmail: params.sentByEmail ?? null,
-    sentByName: params.sentByName ?? null,
     ...(plan ? buildInquiryOfferHistoryFields(plan) : {}),
     offerFooter,
     ...authorHistory,
@@ -639,6 +648,7 @@ export async function saveInquiryOfferDraft(
 
   const ref = await offersCol.add({
     ...payload,
+    ...createdByFields,
     createdAt: FieldValue.serverTimestamp(),
   });
   if (!isStandalone) {

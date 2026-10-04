@@ -6,6 +6,7 @@ import {
   isValidEmailAddress,
   type InquiryEmailIdentity,
 } from "@/lib/inquiry-offer-email";
+import type { InquiryOfferEmailConfig } from "@/lib/company-email-settings";
 
 export type InquiryOfferCopyMode = "bcc" | "cc";
 
@@ -40,19 +41,46 @@ export function validateOfferCopyEmailsRaw(
   return { ok: true, emails: [...new Set(emails)] };
 }
 
-/** Kopie z identity — bez duplicity s hlavním příjemcem. Preferuje BCC. */
+/** Kopie z identity — bez duplicity s hlavním příjemcem. Pouze BCC. */
 export function resolveInquiryOfferCopyDelivery(
-  identity: InquiryEmailIdentity,
+  identity: InquiryEmailIdentity | InquiryOfferEmailConfig,
   primaryTo: string
 ): InquiryOfferCopyDelivery | null {
-  const validated = validateOfferCopyEmailsRaw(identity.offerCopyEmails);
-  if (!validated.ok) {
-    throw new Error(validated.error);
+  const cfg = identity as InquiryOfferEmailConfig;
+  if (cfg.offerAuditCopyEnabled !== true) return null;
+
+  let emailsList: string[] = [];
+  if (Array.isArray(cfg.offerAuditEmails) && cfg.offerAuditEmails.length > 0) {
+    emailsList = [...new Set(cfg.offerAuditEmails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  } else {
+    const validated = validateOfferCopyEmailsRaw(identity.offerCopyEmails);
+    if (!validated.ok) {
+      throw new Error(validated.error);
+    }
+    emailsList = validated.emails;
   }
+
   const primary = primaryTo.trim().toLowerCase();
-  const emails = validated.emails.filter((e) => e !== primary);
+  const emails = emailsList.filter((e) => e !== primary);
   if (emails.length === 0) return null;
   return { emails, mode: "bcc" };
+}
+
+export function formatAuditCopySummary(params: {
+  enabled: boolean;
+  count: number;
+  canViewAddresses: boolean;
+  emails?: string[];
+}): string {
+  if (!params.enabled || params.count <= 0) return "Ne";
+  if (!params.canViewAddresses) {
+    return params.count === 1
+      ? "Ano, 1 interní příjemce"
+      : `Ano, ${params.count} interní příjemci`;
+  }
+  const list = (params.emails ?? []).filter(Boolean);
+  if (list.length === 0) return "Ano";
+  return `Ano — ${list.join(", ")}`;
 }
 
 export function formatOfferCopyEmailsForDisplay(emails: string[] | null | undefined): string {

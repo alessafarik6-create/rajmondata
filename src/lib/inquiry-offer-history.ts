@@ -19,6 +19,7 @@ import {
   type InquiryOfferAttachmentRef,
 } from "@/lib/inquiry-offer-attachments";
 import {
+  formatAuditCopySummary,
   formatOfferCopyEmailsForDisplay,
   INQUIRY_OFFER_COPY_MODE_LABELS,
   type InquiryOfferCopyMode,
@@ -95,7 +96,38 @@ export function resolveInquiryOfferSendMeta(offer: InquiryOfferRecord) {
           copyMode ? ` (${INQUIRY_OFFER_COPY_MODE_LABELS[copyMode]})` : ""
         }`
       : null;
-  return { sendingMode, technicalFrom, displayFrom, replyTo, modeLabel, copyEmails, copyLabel, copyMode };
+  const auditCopyEnabled = offer.auditCopyEnabled === true;
+  const auditCopyCount =
+    typeof offer.auditCopyCount === "number"
+      ? offer.auditCopyCount
+      : copyEmails.length;
+  return {
+    sendingMode,
+    technicalFrom,
+    displayFrom,
+    replyTo: offer.replyToDisplay ?? replyTo,
+    modeLabel,
+    copyEmails,
+    copyLabel,
+    copyMode,
+    auditCopyEnabled,
+    auditCopyCount,
+  };
+}
+
+export function formatInquiryOfferAuditCopyForUser(
+  offer: InquiryOfferRecord,
+  canViewAuditAddresses: boolean
+): string {
+  const meta = resolveInquiryOfferSendMeta(offer);
+  const enabled =
+    offer.auditCopyEnabled === true || (meta.auditCopyEnabled && meta.auditCopyCount > 0);
+  return formatAuditCopySummary({
+    enabled,
+    count: meta.auditCopyCount,
+    canViewAddresses: canViewAuditAddresses,
+    emails: meta.copyEmails,
+  });
 }
 
 export type InquiryOfferReuseInitial = {

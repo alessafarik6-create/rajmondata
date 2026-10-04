@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { Plus, Trash2 } from "lucide-react";
 import { useFirestore } from "@/firebase";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,8 +19,15 @@ import {
 } from "@/lib/inquiry-offer-email";
 import {
   INQUIRY_OFFER_INVALID_COPY_EMAILS_ERROR,
+  splitOfferCopyEmailsInput,
   validateOfferCopyEmailsRaw,
 } from "@/lib/inquiry-offer-copy";
+import {
+  buildCompanyEmailSettingsPayload,
+  COMPANY_EMAIL_SETTINGS_COLLECTION,
+  COMPANY_EMAIL_SETTINGS_DOC_ID,
+  mergeInquiryOfferEmailConfig,
+} from "@/lib/company-email-settings";
 
 const VAR_HINT =
   "Proměnné v šablonách nabídek: {jmeno}, {email}, {telefon}, {adresa}, {typ_poptavky}, {zprava}, {cena}, {firma}, {datum}";
@@ -38,7 +46,8 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
   const [senderEmail, setSenderEmail] = useState("");
   const [replyToEmail, setReplyToEmail] = useState("");
   const [offerReplyEmail, setOfferReplyEmail] = useState("");
-  const [offerCopyEmails, setOfferCopyEmails] = useState("");
+  const [offerAuditCopyEnabled, setOfferAuditCopyEnabled] = useState(false);
+  const [auditEmailRows, setAuditEmailRows] = useState<string[]>([""]);
   const [phone, setPhone] = useState("");
   const [web, setWeb] = useState("");
   const [emailSignatureHtml, setEmailSignatureHtml] = useState("");
@@ -56,7 +65,13 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
     setSenderEmail(id.senderEmail ?? "");
     setReplyToEmail(id.replyToEmail ?? "");
     setOfferReplyEmail(id.offerReplyEmail ?? "");
-    setOfferCopyEmails(id.offerCopyEmails ?? "");
+    const merged = mergeInquiryOfferEmailConfig(company ?? undefined, null);
+    setOfferAuditCopyEnabled(merged.offerAuditCopyEnabled === true);
+    const rows =
+      merged.offerAuditEmails.length > 0
+        ? merged.offerAuditEmails
+        : splitOfferCopyEmailsInput(String(id.offerCopyEmails ?? ""));
+    setAuditEmailRows(rows.length > 0 ? rows : [""]);
     setPhone(id.phone ?? String(company?.phone ?? "").trim());
     setWeb(id.web ?? String(company?.web ?? "").trim());
     setEmailSignatureHtml(id.emailSignatureHtml ?? "");
@@ -75,7 +90,9 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
     senderEmail: senderEmail.trim() || null,
     replyToEmail: replyToEmail.trim() || null,
     offerReplyEmail: offerReplyEmail.trim() || null,
-    offerCopyEmails: offerCopyEmails.trim() || null,
+    offerCopyEmails:
+      auditEmailRows.map((e) => e.trim()).filter(Boolean).join(", ") || null,
+    offerAuditCopyEnabled: offerAuditCopyEnabled,
     phone: phone.trim() || null,
     web: web.trim() || null,
     emailSignatureHtml: emailSignatureHtml.trim() || null,
@@ -91,7 +108,7 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
 
   const handleSave = async () => {
     if (!firestore || !companyId) return;
-    const copyCheck = validateOfferCopyEmailsRaw(offerCopyEmails);
+    const copyCheck = validateOfferCopyEmailsRaw(auditEmailRows.join(", "));
     if (!copyCheck.ok) {
       toast({
         variant: "destructive",
@@ -106,9 +123,25 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
         inquiryEmailIdentity: buildPayload(),
         updatedAt: serverTimestamp(),
       };
+      const auditEmails = copyCheck.ok ? copyCheck.emails : [];
+      const emailSettingsPayload = buildCompanyEmailSettingsPayload({
+        offerAuditCopyEnabled: offerAuditCopyEnabled,
+        offerAuditEmails: auditEmails,
+      });
       await Promise.all([
         setDoc(doc(firestore, COMPANIES_COLLECTION, companyId), payload, { merge: true }),
         setDoc(doc(firestore, ORGANIZATIONS_COLLECTION, companyId), payload, { merge: true }),
+        setDoc(
+          doc(
+            firestore,
+            COMPANIES_COLLECTION,
+            companyId,
+            COMPANY_EMAIL_SETTINGS_COLLECTION,
+            COMPANY_EMAIL_SETTINGS_DOC_ID
+          ),
+          { ...emailSettingsPayload, updatedAt: serverTimestamp() },
+          { merge: true }
+        ),
       ]);
       toast({ title: "Uloženo", description: "E-mailová identita organizace byla aktualizována." });
     } catch (e) {
@@ -127,8 +160,9 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
       <CardHeader>
         <CardTitle>E-mailový podpis a identita</CardTitle>
         <CardDescription>
-          Nabídky k poptávkám vypadají jako e-maily vaší organizace. Odpovědi zákazníka směřují na
-          reply-to organizace, ne na platformu.
+          Nabídky odcházejí technicky z firemního / systémového From. Odpovědi zákazníka směřují na
+          e-mail zaměstnance, který nabídku odeslal (Reply-To). Níže nastavíte fallback a kontrolní
+          kopie.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -152,23 +186,62 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
             label="E-mail pro odpovědi na nabídky"
             value={offerReplyEmail}
             onChange={setOfferReplyEmail}
-            hint="Má prioritu před reply-to"
+            hint="Fallback, pokud odesílatel nemá vlastní e-mail"
           />
-          <div className="space-y-2 md:col-span-2">
-            <Label htmlFor="inq-offer-copy">Kopie nabídek (BCC/CC)</Label>
-            <Input
-              id="inq-offer-copy"
-              type="text"
-              inputMode="email"
-              className="w-full break-all"
-              value={offerCopyEmails}
-              onChange={(e) => setOfferCopyEmails(e.target.value)}
-              placeholder="např. obchod@firma.cz, ucetni@firma.cz"
-            />
-            <p className="text-xs text-muted-foreground break-words">
-              Na tyto adresy odejde automatická kopie každé odeslané nabídky (včetně příloh). Více
-              adres oddělte čárkou. Preferovaně se použije skrytá kopie (BCC).
-            </p>
+          <div className="space-y-3 md:col-span-2 rounded-lg border border-border p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <Label htmlFor="inq-audit-copy">Kontrolní kopie odeslaných nabídek</Label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Skrytá kopie (BCC) — zákazník interní adresy neuvidí.
+                </p>
+              </div>
+              <Switch
+                id="inq-audit-copy"
+                checked={offerAuditCopyEnabled}
+                onCheckedChange={setOfferAuditCopyEnabled}
+              />
+            </div>
+            {offerAuditCopyEnabled ? (
+              <div className="space-y-2">
+                {auditEmailRows.map((row, idx) => (
+                  <div key={idx} className="flex gap-2">
+                    <Input
+                      type="email"
+                      className="flex-1"
+                      value={row}
+                      onChange={(e) => {
+                        const next = [...auditEmailRows];
+                        next[idx] = e.target.value;
+                        setAuditEmailRows(next);
+                      }}
+                      placeholder="např. nabidky@firma.cz"
+                    />
+                    {auditEmailRows.length > 1 ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Odebrat e-mail"
+                        onClick={() =>
+                          setAuditEmailRows(auditEmailRows.filter((_, i) => i !== idx))
+                        }
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAuditEmailRows([...auditEmailRows, ""])}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Přidat další e-mail
+                </Button>
+              </div>
+            ) : null}
           </div>
           <PhoneFieldRow value={phone} onChange={setPhone} />
           <WebFieldRow value={web} onChange={setWeb} />

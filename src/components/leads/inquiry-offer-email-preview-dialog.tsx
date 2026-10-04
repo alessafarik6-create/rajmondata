@@ -25,6 +25,7 @@ export type InquiryOfferEmailPreviewData = {
   methodLabel: string;
   sendNotice: string | null;
   copyLabel: string | null;
+  auditCopyEnabled?: boolean;
   pricing: {
     priceNet: number | null;
     vatRate: number;
@@ -163,21 +164,21 @@ export function InquiryOfferEmailPreviewDialog(props: {
                     <dd className="break-all text-sm">{preview.fromHeader}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-slate-500">Reply-to</dt>
+                    <dt className="text-xs text-slate-500">Odpověď půjde na</dt>
                     <dd className="break-all font-medium text-slate-900">
                       {preview.replyTo}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-slate-500">Interní kontrolní kopie</dt>
+                    <dd className="break-all text-sm">
+                      {preview.copyLabel ?? (preview.auditCopyEnabled ? "Ano" : "Ne")}
                     </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-slate-500">Způsob</dt>
                     <dd>{preview.methodLabel}</dd>
                   </div>
-                  {preview.copyLabel ? (
-                    <div>
-                      <dt className="text-xs text-slate-500">Kopie nabídky</dt>
-                      <dd className="break-all text-sm">{preview.copyLabel}</dd>
-                    </div>
-                  ) : null}
                 </dl>
                 {preview.sendNotice ? (
                   <p className="mt-2 text-xs text-amber-800">{preview.sendNotice}</p>

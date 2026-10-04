@@ -325,6 +325,7 @@ export default function StandaloneOffersPage() {
         onOpenChange={(o) => {
           if (!o) setDetailOffer(null);
         }}
+        canViewAuditCopyAddresses={role === "owner" || role === "admin"}
         canResend={canWriteOffers}
         onReuse={
           canWriteOffers

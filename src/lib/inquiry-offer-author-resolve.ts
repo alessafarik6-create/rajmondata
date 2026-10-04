@@ -257,5 +257,17 @@ export function buildInquiryOfferAuthorHistoryFields(author: InquiryOfferAuthorS
     authorName: author.displayName,
     authorEmail: author.email,
     authorPhotoUrl: author.photoUrl,
+    sentByUserId: author.uid,
+    sentByUid: author.uid,
+    sentByName: author.displayName,
+    sentByEmail: author.email,
+  };
+}
+
+export function buildInquiryOfferCreatedByFields(author: InquiryOfferAuthorSnapshot) {
+  return {
+    createdByUserId: author.uid,
+    createdByName: author.displayName,
+    createdByEmail: author.email,
   };
 }
