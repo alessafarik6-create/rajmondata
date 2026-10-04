@@ -25,6 +25,21 @@ import {
   searchTasksTool,
   updateEmployeeTaskDraftTool,
 } from "@/lib/ai/secretary/tools/tasks";
+import {
+  assignEmailEmployeeTool,
+  confirmEmailSendTool,
+  createEmailComposeDraftTool,
+  createEmailForwardDraftTool,
+  createEmailReplyDraftTool,
+  getEmailDetailTool,
+  getRecentEmailsTool,
+  logEmailReadAudit,
+  markEmailResolvedTool,
+  searchEmailsTool,
+  showEmailAttachmentTool,
+  showEmailTool,
+  updateEmailSendDraftTool,
+} from "@/lib/ai/secretary/tools/email";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 
 export type SecretaryToolName =
@@ -54,7 +69,19 @@ export type SecretaryToolName =
   | "update_task_draft"
   | "confirm_task_update"
   | "cancel_task_draft"
-  | "confirm_task_cancel";
+  | "confirm_task_cancel"
+  | "get_recent_emails"
+  | "search_emails"
+  | "get_email_detail"
+  | "show_email"
+  | "show_email_attachment"
+  | "create_email_reply_draft"
+  | "update_email_send_draft"
+  | "create_email_forward_draft"
+  | "create_email_compose_draft"
+  | "confirm_email_send"
+  | "mark_email_resolved"
+  | "assign_email_employee";
 
 function normalizeToolName(name: string): SecretaryToolName | null {
   const map: Record<string, SecretaryToolName> = {
@@ -85,6 +112,19 @@ function normalizeToolName(name: string): SecretaryToolName | null {
     confirm_task_update: "confirm_task_update",
     cancel_task_draft: "cancel_task_draft",
     confirm_task_cancel: "confirm_task_cancel",
+    get_recent_emails: "get_recent_emails",
+    search_emails: "search_emails",
+    get_email_detail: "get_email_detail",
+    show_email: "show_email",
+    show_email_attachment: "show_email_attachment",
+    create_email_reply_draft: "create_email_reply_draft",
+    update_email_send_draft: "update_email_send_draft",
+    update_email_reply_draft: "update_email_send_draft",
+    create_email_forward_draft: "create_email_forward_draft",
+    create_email_compose_draft: "create_email_compose_draft",
+    confirm_email_send: "confirm_email_send",
+    mark_email_resolved: "mark_email_resolved",
+    assign_email_employee: "assign_email_employee",
   };
   return map[name] ?? null;
 }
@@ -405,6 +445,135 @@ export async function runSecretaryTool(
           });
         }
         return { ok: result.ok, message: result.message, taskId: result.taskId ?? null };
+      }
+      case "get_recent_emails": {
+        const gate = assertSecretaryPermission(perms, "email_read");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await getRecentEmailsTool(db, ctx, {
+          mailboxId: args.mailboxId != null ? String(args.mailboxId) : undefined,
+          limit: args.limit != null ? Number(args.limit) : undefined,
+          folder: args.folder != null ? String(args.folder) : undefined,
+          unreadOnly: Boolean(args.unreadOnly),
+        });
+        return { ok: true, ...result };
+      }
+      case "search_emails": {
+        const gate = assertSecretaryPermission(perms, "email_read");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await searchEmailsTool(db, ctx, {
+          query: args.query != null ? String(args.query) : undefined,
+          mailboxId: args.mailboxId != null ? String(args.mailboxId) : undefined,
+          unreadOnly: Boolean(args.unreadOnly),
+          requiresReplyOnly: Boolean(args.requiresReplyOnly),
+          receivedAfterIso:
+            args.receivedAfterIso != null ? String(args.receivedAfterIso) : undefined,
+          limit: args.limit != null ? Number(args.limit) : undefined,
+        });
+        return { ok: true, ...result };
+      }
+      case "get_email_detail": {
+        const gate = assertSecretaryPermission(perms, "email_read");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await getEmailDetailTool(db, ctx, {
+          emailId: args.emailId != null ? String(args.emailId) : undefined,
+          messageId: args.messageId != null ? String(args.messageId) : undefined,
+          mailboxId: args.mailboxId != null ? String(args.mailboxId) : undefined,
+        });
+        const emailId = String(
+          (result.email as { emailId?: string } | undefined)?.emailId ??
+            args.emailId ??
+            args.messageId ??
+            ""
+        ).trim();
+        if (emailId) await logEmailReadAudit(db, ctx, emailId);
+        return { ok: Boolean(result.email), ...result };
+      }
+      case "show_email": {
+        const gate = assertSecretaryPermission(perms, "email_read");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        return await showEmailTool(db, ctx, {
+          emailId: args.emailId != null ? String(args.emailId) : undefined,
+          messageId: args.messageId != null ? String(args.messageId) : undefined,
+          mailboxId: args.mailboxId != null ? String(args.mailboxId) : undefined,
+        });
+      }
+      case "show_email_attachment": {
+        const gate = assertSecretaryPermission(perms, "email_read");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        return await showEmailAttachmentTool(db, ctx, {
+          emailId: args.emailId != null ? String(args.emailId) : undefined,
+          messageId: args.messageId != null ? String(args.messageId) : undefined,
+          attachmentId: args.attachmentId != null ? String(args.attachmentId) : undefined,
+          filenameHint: args.filenameHint != null ? String(args.filenameHint) : undefined,
+        });
+      }
+      case "create_email_reply_draft": {
+        const gate = assertSecretaryPermission(perms, "email_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await createEmailReplyDraftTool(db, ctx, args);
+        if (result.ok) {
+          await logSecretaryAudit(db, {
+            companyId,
+            userId: caller.uid,
+            action: "email_reply_draft_created_via_ai_voice",
+            toolName: toolNameRaw,
+            detail: String(result.draft?.emailId ?? ""),
+          });
+        }
+        return { ...result, pendingId: result.pendingActionId };
+      }
+      case "update_email_send_draft": {
+        const gate = assertSecretaryPermission(perms, "email_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await updateEmailSendDraftTool(db, ctx, args);
+        return { ...result, pendingId: result.pendingActionId };
+      }
+      case "create_email_forward_draft": {
+        const gate = assertSecretaryPermission(perms, "email_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await createEmailForwardDraftTool(db, ctx, args);
+        return { ...result, pendingId: result.pendingActionId };
+      }
+      case "create_email_compose_draft": {
+        const gate = assertSecretaryPermission(perms, "email_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await createEmailComposeDraftTool(db, ctx, args);
+        return { ...result, pendingId: result.pendingActionId };
+      }
+      case "confirm_email_send": {
+        const gate = assertSecretaryPermission(perms, "email_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        await logSecretaryAudit(db, {
+          companyId,
+          userId: caller.uid,
+          action: "ai_action_confirmed",
+          toolName: toolNameRaw,
+        });
+        const result = await confirmEmailSendTool(db, ctx, {
+          pendingActionId: String(args.pendingActionId ?? args.pendingId ?? ""),
+          userConfirmationText:
+            args.userConfirmationText != null ? String(args.userConfirmationText) : undefined,
+        });
+        if (!result.ok) {
+          await logSecretaryAudit(db, {
+            companyId,
+            userId: caller.uid,
+            action: "ai_action_failed",
+            toolName: toolNameRaw,
+            detail: result.message,
+          });
+        }
+        return { ok: result.ok, message: result.message, messageDocId: result.messageDocId ?? null };
+      }
+      case "mark_email_resolved": {
+        const gate = assertSecretaryPermission(perms, "email_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        return await markEmailResolvedTool(db, ctx, args);
+      }
+      case "assign_email_employee": {
+        const gate = assertSecretaryPermission(perms, "email_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        return await assignEmailEmployeeTool(db, ctx, args);
       }
       case "getTodayOverview": {
         const tomorrow = new Date();
@@ -739,6 +908,177 @@ export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown
           userConfirmationText: { type: "string" },
         },
         required: ["pendingActionId", "userConfirmationText"],
+      },
+    },
+    {
+      type: "function",
+      name: "get_recent_emails",
+      description:
+        "Načte několik nejnovějších e-mailů (odesílatel, předmět, krátké shrnutí). Nečti celý obsah hned.",
+      parameters: {
+        type: "object",
+        properties: {
+          mailboxId: { type: "string" },
+          limit: { type: "number" },
+          folder: { type: "string" },
+          unreadOnly: { type: "boolean" },
+        },
+      },
+    },
+    {
+      type: "function",
+      name: "search_emails",
+      description: "Vyhledá e-maily podle textu, odesílatele, předmětu nebo stavu.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          mailboxId: { type: "string" },
+          unreadOnly: { type: "boolean" },
+          requiresReplyOnly: { type: "boolean" },
+          receivedAfterIso: { type: "string" },
+          limit: { type: "number" },
+        },
+      },
+    },
+    {
+      type: "function",
+      name: "get_email_detail",
+      description: "Detail jedné zprávy pro přečtení obsahu (až na požádání celý text).",
+      parameters: {
+        type: "object",
+        properties: {
+          emailId: { type: "string" },
+          mailboxId: { type: "string" },
+        },
+        required: ["emailId"],
+      },
+    },
+    {
+      type: "function",
+      name: "show_email",
+      description:
+        "Zobrazí e-mail na obrazovce uživatele (monitor/telefon) v modulu Pošta. Použij po „ukaž/otevři/zobraz“.",
+      parameters: {
+        type: "object",
+        properties: {
+          emailId: { type: "string" },
+          mailboxId: { type: "string" },
+        },
+        required: ["emailId"],
+      },
+    },
+    {
+      type: "function",
+      name: "show_email_attachment",
+      description: "Otevře náhled přílohy e-mailu na zařízení uživatele.",
+      parameters: {
+        type: "object",
+        properties: {
+          emailId: { type: "string" },
+          attachmentId: { type: "string" },
+          filenameHint: { type: "string" },
+        },
+        required: ["emailId"],
+      },
+    },
+    {
+      type: "function",
+      name: "create_email_reply_draft",
+      description: "Vytvoří návrh odpovědi (neodesílá). Vyžaduje později confirm_email_send.",
+      parameters: {
+        type: "object",
+        properties: {
+          emailId: { type: "string" },
+          mailboxId: { type: "string" },
+          instruction: { type: "string" },
+        },
+        required: ["emailId"],
+      },
+    },
+    {
+      type: "function",
+      name: "update_email_send_draft",
+      description: "Upraví pending návrh e-mailu podle hlasového pokynu (stručněji, CC, podpis…).",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          instruction: { type: "string" },
+          cc: { type: "array", items: { type: "string" } },
+          bcc: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+    {
+      type: "function",
+      name: "create_email_forward_draft",
+      description: "Připraví návrh přeposlání e-mailu (neodesílá).",
+      parameters: {
+        type: "object",
+        properties: {
+          emailId: { type: "string" },
+          toEmail: { type: "string" },
+          to: { type: "array", items: { type: "string" } },
+          instruction: { type: "string" },
+        },
+        required: ["emailId", "toEmail"],
+      },
+    },
+    {
+      type: "function",
+      name: "create_email_compose_draft",
+      description: "Připraví návrh nového e-mailu (neodesílá).",
+      parameters: {
+        type: "object",
+        properties: {
+          toEmail: { type: "string" },
+          to: { type: "array", items: { type: "string" } },
+          subject: { type: "string" },
+          instruction: { type: "string" },
+          mailboxId: { type: "string" },
+        },
+      },
+    },
+    {
+      type: "function",
+      name: "confirm_email_send",
+      description:
+        "Po explicitním ano odešle e-mail z uloženého server-side návrhu (pendingActionId). Nikdy neposílej vlastní to/body.",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          userConfirmationText: { type: "string" },
+        },
+        required: ["pendingActionId", "userConfirmationText"],
+      },
+    },
+    {
+      type: "function",
+      name: "mark_email_resolved",
+      description: "Označí e-mail jako vyřízený.",
+      parameters: {
+        type: "object",
+        properties: {
+          emailId: { type: "string" },
+          resolved: { type: "boolean" },
+        },
+        required: ["emailId"],
+      },
+    },
+    {
+      type: "function",
+      name: "assign_email_employee",
+      description: "Přiřadí e-mail zaměstnanci (assigneeUserId nebo employeeId).",
+      parameters: {
+        type: "object",
+        properties: {
+          emailId: { type: "string" },
+          assigneeUserId: { type: "string" },
+          employeeId: { type: "string" },
+        },
+        required: ["emailId"],
       },
     },
   ];

@@ -40,6 +40,7 @@ import {
 import type { JobDocumentEmailAttachmentRef } from "@/lib/job-document-email-attachments";
 import { EMAIL_ACCOUNT_ALL_MAILBOXES } from "@/lib/email-mailbox/account-default";
 import { EmailAssignMessageJobDialog } from "@/components/portal/email-assign-message-job-dialog";
+import { SECRETARY_SHOW_EMAIL_EVENT } from "@/lib/ai/secretary/email-voice-ui";
 
 type AccountRow = {
   id: string;
@@ -421,6 +422,20 @@ export function EmailPortalPage() {
     },
     [user, companyId, getToken, access.canWrite]
   );
+
+  useEffect(() => {
+    const onVoiceShow = (ev: Event) => {
+      const emailId = String((ev as CustomEvent<{ emailId?: string }>).detail?.emailId ?? "").trim();
+      if (!emailId) return;
+      if (typeof window !== "undefined") {
+        const url = `/portal/email?messageId=${encodeURIComponent(emailId)}`;
+        window.history.replaceState(null, "", url);
+      }
+      void loadDetail(emailId);
+    };
+    window.addEventListener(SECRETARY_SHOW_EMAIL_EVENT, onVoiceShow);
+    return () => window.removeEventListener(SECRETARY_SHOW_EMAIL_EVENT, onVoiceShow);
+  }, [loadDetail]);
 
   useEffect(() => {
     if (loadingList || loadingAccounts) return;

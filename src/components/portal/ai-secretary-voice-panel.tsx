@@ -6,6 +6,11 @@ import { useUser } from "@/firebase";
 import { Button } from "@/components/ui/button";
 import { useAiSecretaryRealtime, type VoiceSecretaryPhase } from "@/hooks/use-ai-secretary-realtime";
 import { cn } from "@/lib/utils";
+import {
+  dispatchSecretaryShowEmail,
+  SECRETARY_VOICE_EMAIL_CONTEXT_EVENT,
+  type SecretaryShowEmailDetail,
+} from "@/lib/ai/secretary/email-voice-ui";
 
 type Props = {
   companyId: string;
@@ -46,6 +51,15 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const autoStartedRef = useRef(false);
+  const [emailContext, setEmailContext] = useState<SecretaryShowEmailDetail | null>(null);
+
+  useEffect(() => {
+    const onCtx = (ev: Event) => {
+      setEmailContext((ev as CustomEvent<SecretaryShowEmailDetail | null>).detail ?? null);
+    };
+    window.addEventListener(SECRETARY_VOICE_EMAIL_CONTEXT_EVENT, onCtx);
+    return () => window.removeEventListener(SECRETARY_VOICE_EMAIL_CONTEXT_EVENT, onCtx);
+  }, []);
 
   const voice = useAiSecretaryRealtime({
     user,
@@ -191,6 +205,32 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
               </>
             )}
           </div>
+
+          {emailContext?.emailId ? (
+            <div className="rounded-lg border bg-muted/20 p-3 text-sm space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">E-mail</p>
+              <p className="font-medium truncate">{emailContext.subject ?? "Zpráva"}</p>
+              {emailContext.senderName ? (
+                <p className="text-muted-foreground truncate">{emailContext.senderName}</p>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2 w-full"
+                onClick={() =>
+                  dispatchSecretaryShowEmail({
+                    emailId: emailContext.emailId,
+                    mailboxId: emailContext.mailboxId,
+                    subject: emailContext.subject,
+                    senderName: emailContext.senderName,
+                  })
+                }
+              >
+                Zobrazit
+              </Button>
+            </div>
+          ) : null}
 
           {sessionLive ? (
             <p className="text-sm text-center text-muted-foreground">

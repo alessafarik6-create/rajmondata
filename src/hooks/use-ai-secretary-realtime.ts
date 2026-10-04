@@ -4,6 +4,11 @@ import { useCallback, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import { voiceDebugError, voiceDebugLog } from "@/lib/ai/secretary/voice-debug";
 import { mapVoiceErrorForUser } from "@/lib/ai/secretary/voice-user-errors";
+import {
+  dispatchSecretaryShowEmail,
+  dispatchSecretaryShowEmailAttachment,
+  dispatchSecretaryVoiceEmailContext,
+} from "@/lib/ai/secretary/email-voice-ui";
 
 export type VoiceSecretaryPhase =
   | "idle"
@@ -306,6 +311,38 @@ export function useAiSecretaryRealtime({
             }
             if (result.eventId) {
               window.dispatchEvent(new CustomEvent("rajmondata-calendar-changed"));
+            }
+            if (result.messageDocId) {
+              window.dispatchEvent(new CustomEvent("rajmondata-email-mailbox-changed"));
+            }
+            if (result.showEmail && result.emailId) {
+              dispatchSecretaryShowEmail({
+                emailId: String(result.emailId),
+                mailboxId: result.mailboxId != null ? String(result.mailboxId) : undefined,
+              });
+            }
+            if (result.showEmailAttachment && result.emailId && result.attachmentId) {
+              dispatchSecretaryShowEmailAttachment({
+                emailId: String(result.emailId),
+                attachmentId: String(result.attachmentId),
+                filename: result.filename != null ? String(result.filename) : undefined,
+                mailboxId: result.mailboxId != null ? String(result.mailboxId) : undefined,
+              });
+            }
+            if (result.draft && typeof result.draft === "object") {
+              const d = result.draft as Record<string, unknown>;
+              dispatchSecretaryVoiceEmailContext({
+                emailId: String(d.emailId ?? result.emailId ?? ""),
+                subject: d.subject != null ? String(d.subject) : undefined,
+                senderName: undefined,
+              });
+            } else if (result.email && typeof result.email === "object") {
+              const e = result.email as Record<string, unknown>;
+              dispatchSecretaryVoiceEmailContext({
+                emailId: String(e.emailId ?? ""),
+                subject: e.subject != null ? String(e.subject) : undefined,
+                senderName: e.senderName != null ? String(e.senderName) : undefined,
+              });
             }
           }
           if (!dcRef.current || dcRef.current.readyState !== "open") return;
