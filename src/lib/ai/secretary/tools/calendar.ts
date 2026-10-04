@@ -49,7 +49,14 @@ function draftFromArgs(
     endTime: args.endTime != null ? String(args.endTime) : null,
     customerName: args.customerName != null ? String(args.customerName) : null,
     place: args.place != null ? String(args.place) : args.address != null ? String(args.address) : null,
-    note: args.note != null ? String(args.note) : args.description != null ? String(args.description) : null,
+    note: (() => {
+      const base =
+        args.note != null ? String(args.note) : args.description != null ? String(args.description) : "";
+      const participants = args.participants != null ? String(args.participants).trim() : "";
+      if (participants && base) return `${base}\nÚčastníci: ${participants}`;
+      if (participants) return `Účastníci: ${participants}`;
+      return base || null;
+    })(),
     phone: args.phone != null ? String(args.phone) : null,
     calendarEventType:
       String(args.calendarEventType ?? "meeting") === "installation" ? "installation" : "meeting",

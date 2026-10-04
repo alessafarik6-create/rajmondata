@@ -1,20 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import { getOpenAiApiKey } from "@/lib/ai/config";
 import { verifyBearerAndLoadCaller } from "@/lib/api-verify-company-user";
-import { OPENAI_REALTIME_CALLS_URL } from "@/lib/ai/openai-realtime-api";
-import { mapRealtimeSessionErrorForClient } from "@/lib/ai/secretary/realtime-session";
+import { buildSecretaryContext } from "@/lib/ai/secretary/context";
+import {
+  assertOpenAiVoiceConfigured,
+  buildUnifiedRealtimeSessionJson,
+  voiceErrorPayloadForClient,
+} from "@/lib/ai/secretary/realtime-session";
+import { openAiRealtimeCallsExchange } from "@/lib/ai/openai-realtime-fetch";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type Body = {
   sdp?: string;
-  ephemeralKey?: string;
+  companyId?: string;
 };
 
-/**
- * Proxy SDP výměny — browser posílá pouze RAJMONDATA, ne OpenAI URL.
- */
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
   const auth = getAdminAuth();
@@ -36,47 +40,91 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatné JSON." }, { status: 400 });
   }
 
+  const companyId = String(body.companyId ?? caller.companyId).trim();
   const sdp = String(body.sdp ?? "").trim();
-  const ephemeralKey = String(body.ephemeralKey ?? "").trim();
-  if (!sdp || !ephemeralKey) {
-    return NextResponse.json({ ok: false, error: "Chybí SDP nebo session token." }, { status: 400 });
+  if (!sdp || !sdp.startsWith("v=")) {
+    return NextResponse.json(
+      { ok: false, error: "Chybí platná SDP offer.", code: "invalid_sdp" },
+      { status: 400 }
+    );
+  }
+  if (companyId !== caller.companyId) {
+    return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
+  }
+
+  const configured = assertOpenAiVoiceConfigured();
+  if (!configured.ok) {
+    return NextResponse.json(
+      voiceErrorPayloadForClient({
+        message: configured.reason,
+        code: "openai_not_configured",
+      }),
+      { status: 503 }
+    );
+  }
+
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    console.error("[VOICE] OPENAI_API_KEY missing");
+    return NextResponse.json(
+      voiceErrorPayloadForClient({
+        message: "missing key",
+        code: "openai_not_configured",
+      }),
+      { status: 503 }
+    );
   }
 
   try {
-    const url = OPENAI_REALTIME_CALLS_URL();
-    console.info("[VOICE] peer connection SDP exchange", { endpoint: "realtime/calls" });
+    const ctx = await buildSecretaryContext(db, caller, companyId);
+    const sessionJson = buildUnifiedRealtimeSessionJson(ctx);
+    const safetyId = createHash("sha256")
+      .update(`${caller.uid}:${companyId}`)
+      .digest("hex")
+      .slice(0, 64);
 
-    const sdpRes = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ephemeralKey}`,
-        "Content-Type": "application/sdp",
-      },
-      body: sdp,
+    console.info("[VOICE] peer connection SDP exchange", {
+      userId: caller.uid,
+      companyId,
+      model: configured.model,
     });
 
-    const answerSdp = await sdpRes.text();
-    if (!sdpRes.ok) {
-      console.error(
-        "[VOICE] SDP exchange failed",
-        `HTTP ${sdpRes.status}`,
-        answerSdp.slice(0, 300)
-      );
+    const result = await openAiRealtimeCallsExchange({
+      apiKey,
+      sdpOffer: sdp,
+      sessionJson,
+      model: configured.model,
+      safetyIdentifier: safetyId,
+    });
+
+    if (!result.ok) {
       return NextResponse.json(
         {
-          ok: false,
-          error: mapRealtimeSessionErrorForClient(answerSdp),
+          ...voiceErrorPayloadForClient({
+            message: result.info.message,
+            code: "openai_sdp_exchange_failed",
+            openAiStatus: result.info.httpStatus,
+            openAiCode: result.info.errorCode,
+          }),
         },
         { status: 502 }
       );
     }
 
-    return NextResponse.json({ ok: true, sdp: answerSdp });
+    return NextResponse.json({
+      ok: true,
+      sdp: result.answerSdp,
+      model: configured.model,
+      requestId: result.requestId,
+    });
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
     console.error("[VOICE] error", raw);
     return NextResponse.json(
-      { ok: false, error: mapRealtimeSessionErrorForClient(raw) },
+      voiceErrorPayloadForClient({
+        message: raw,
+        code: "voice_internal_error",
+      }),
       { status: 502 }
     );
   }

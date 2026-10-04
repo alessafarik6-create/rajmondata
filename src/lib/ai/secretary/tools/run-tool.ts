@@ -18,6 +18,7 @@ import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 export type SecretaryToolName =
   | "get_calendar_events"
   | "getCalendarEvents"
+  | "create_calendar_meeting"
   | "create_calendar_meeting_draft"
   | "proposeCreateCalendarEvent"
   | "update_calendar_meeting_draft"
@@ -34,6 +35,7 @@ function normalizeToolName(name: string): SecretaryToolName | null {
   const map: Record<string, SecretaryToolName> = {
     get_calendar_events: "get_calendar_events",
     getCalendarEvents: "get_calendar_events",
+    create_calendar_meeting: "create_calendar_meeting",
     create_calendar_meeting_draft: "create_calendar_meeting_draft",
     proposeCreateCalendarEvent: "create_calendar_meeting_draft",
     update_calendar_meeting_draft: "update_calendar_meeting_draft",
@@ -72,6 +74,44 @@ export async function runSecretaryTool(
           toIso: String(args.toIso ?? ""),
         });
         return { ok: true, ...result };
+      }
+      case "create_calendar_meeting": {
+        const gate = assertSecretaryPermission(perms, "calendar_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const pendingId = String(args.pendingActionId ?? args.pendingId ?? "").trim();
+        if (pendingId) {
+          await logSecretaryAudit(db, {
+            companyId,
+            userId: caller.uid,
+            action: "ai_action_confirmed",
+            toolName: toolNameRaw,
+          });
+          const result = await confirmCalendarMeetingTool(db, ctx, {
+            pendingActionId: pendingId,
+            userConfirmationText:
+              args.userConfirmationText != null
+                ? String(args.userConfirmationText)
+                : "ano",
+          });
+          if (result.ok) {
+            await logSecretaryAudit(db, {
+              companyId,
+              userId: caller.uid,
+              action: "ai_action_executed",
+              toolName: toolNameRaw,
+              detail: result.eventId,
+            });
+          }
+          return { ok: result.ok, message: result.message, eventId: result.eventId ?? null };
+        }
+        await logSecretaryAudit(db, {
+          companyId,
+          userId: caller.uid,
+          action: "ai_action_proposed",
+          toolName: toolNameRaw,
+        });
+        const draftResult = await createCalendarMeetingDraftTool(db, ctx, args);
+        return { ok: true, ...draftResult, pendingId: draftResult.pendingActionId };
       }
       case "create_calendar_meeting_draft": {
         const gate = assertSecretaryPermission(perms, "calendar_write");
@@ -206,8 +246,33 @@ export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown
     },
     {
       type: "function",
+      name: "create_calendar_meeting",
+      description:
+        "Kalendář: bez pendingActionId připraví návrh schůzky; s pendingActionId a potvrzením uživatele schůzku uloží.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          date: { type: "string", description: "YYYY-MM-DD v timezone organizace" },
+          startTime: { type: "string", description: "HH:mm" },
+          endTime: { type: "string" },
+          customerName: { type: "string" },
+          customerId: { type: "string" },
+          leadId: { type: "string" },
+          jobId: { type: "string" },
+          address: { type: "string" },
+          description: { type: "string" },
+          participants: { type: "string" },
+          pendingActionId: { type: "string" },
+          userConfirmationText: { type: "string" },
+        },
+        required: ["title"],
+      },
+    },
+    {
+      type: "function",
       name: "create_calendar_meeting_draft",
-      description: "Připraví návrh schůzky. Neukládá — vyžaduje confirm_calendar_meeting.",
+      description: "Alias: připraví návrh schůzky (stejné jako create_calendar_meeting bez pendingActionId).",
       parameters: {
         type: "object",
         properties: {

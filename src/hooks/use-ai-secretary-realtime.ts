@@ -22,11 +22,24 @@ type TranscriptLine = { role: "user" | "assistant" | "system"; text: string };
 type Options = {
   user: User | null | undefined;
   companyId: string;
-  onError?: (message: string) => void;
+  onError?: (message: string, detail?: { code?: string; openAiStatus?: number | null }) => void;
   onPhaseChange?: (phase: VoiceSecretaryPhase) => void;
   onTranscript?: (line: TranscriptLine) => void;
   onStatusHint?: (hint: string | null) => void;
 };
+
+async function waitForIceGathering(pc: RTCPeerConnection, timeoutMs = 5000): Promise<void> {
+  if (pc.iceGatheringState === "complete") return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === "complete") {
+        clearTimeout(timer);
+        resolve();
+      }
+    };
+  });
+}
 
 export function useAiSecretaryRealtime({
   user,
@@ -44,6 +57,7 @@ export function useAiSecretaryRealtime({
   const startingRef = useRef(false);
   const activeRef = useRef(false);
   const fnCallRef = useRef<{ callId: string; name: string; args: string } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const setPhaseSafe = useCallback(
     (p: VoiceSecretaryPhase) => {
@@ -54,6 +68,8 @@ export function useAiSecretaryRealtime({
   );
 
   const cleanupMedia = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
     activeRef.current = false;
     startingRef.current = false;
     dcRef.current?.close();
@@ -62,9 +78,12 @@ export function useAiSecretaryRealtime({
     pcRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-    if (audioElRef.current) {
-      audioElRef.current.srcObject = null;
+    const audio = audioElRef.current;
+    if (audio) {
+      audio.pause();
+      audio.srcObject = null;
     }
+    voiceDebugLog("session closed");
   }, []);
 
   const stop = useCallback(async () => {
@@ -81,20 +100,31 @@ export function useAiSecretaryRealtime({
         response: {
           modalities: ["audio", "text"],
           instructions:
-            "Řekni stručně a přesně česky: Dobrý den, co pro vás můžu udělat?",
+            "Řekni stručně a přesně česky: Dobrý den, co pro vás mohu udělat?",
         },
       })
     );
   }, []);
 
+  const playRemoteAudio = useCallback(async () => {
+    const audio = audioElRef.current;
+    if (!audio) return;
+    try {
+      await audio.play();
+    } catch {
+      onError?.("Pro přehrání hlasu AI klepněte znovu na mikrofon.", { code: "autoplay_blocked" });
+    }
+  }, [onError]);
+
   const invokeTool = useCallback(
-    async (toolName: string, args: Record<string, unknown>) => {
+    async (toolName: string, args: Record<string, unknown>, signal: AbortSignal) => {
       if (!user) return { ok: false, error: "Nepřihlášen" };
       const token = await user.getIdToken();
       const res = await fetch("/api/company/ai/secretary/tools", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ companyId, toolName, arguments: args }),
+        signal,
       });
       return res.json();
     },
@@ -108,15 +138,17 @@ export function useAiSecretaryRealtime({
       if (type === "error") {
         const err = msg.error as { message?: string } | undefined;
         voiceDebugError("realtime error event", err?.message);
-        onError?.(mapVoiceErrorForUser(err?.message));
+        onError?.(mapVoiceErrorForUser(err?.message), { code: "realtime_event_error" });
         return;
       }
 
       if (
         type === "response.output_audio_transcript.delta" ||
-        type === "response.audio_transcript.delta"
+        type === "response.audio_transcript.delta" ||
+        type === "response.audio.delta"
       ) {
         setPhaseSafe("assistant_speaking");
+        onStatusHint?.("Sekretářka mluví…");
       }
 
       if (
@@ -132,6 +164,7 @@ export function useAiSecretaryRealtime({
           onTranscript?.({ role: "assistant", text });
           setPhaseSafe("listening");
           onStatusHint?.("Poslouchám…");
+          voiceDebugLog("listening");
         }
       }
 
@@ -164,7 +197,7 @@ export function useAiSecretaryRealtime({
       const runToolFromCall = (name: string, callId: string, argsRaw: string) => {
         void (async () => {
           setPhaseSafe("processing_tool");
-          onStatusHint?.("Přemýšlím…");
+          onStatusHint?.("Provádím…");
           voiceDebugLog("tool proposed", { name });
           let args: Record<string, unknown> = {};
           try {
@@ -172,7 +205,11 @@ export function useAiSecretaryRealtime({
           } catch {
             args = {};
           }
-          const result = (await invokeTool(name, args)) as Record<string, unknown>;
+          const signal = abortRef.current?.signal ?? undefined;
+          const result = (await invokeTool(name, args, signal ?? new AbortController().signal)) as Record<
+            string,
+            unknown
+          >;
           if (result.pendingId || result.pendingActionId) {
             setPhaseSafe("waiting_confirmation");
             onStatusHint?.("Čekám na potvrzení…");
@@ -223,37 +260,46 @@ export function useAiSecretaryRealtime({
   const start = useCallback(async () => {
     if (!user || !companyId || startingRef.current || activeRef.current) return;
     startingRef.current = true;
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    const signal = abortRef.current.signal;
+
     setPhaseSafe("requesting_microphone");
     onStatusHint?.("Žádám o mikrofon…");
 
     try {
       const token = await user.getIdToken();
       setPhaseSafe("connecting");
-      onStatusHint?.("Připojuji hlasovou AI…");
+      onStatusHint?.("Připojuji…");
 
       const sessionRes = await fetch("/api/company/ai/secretary/realtime/session", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ companyId }),
+        signal,
       });
-      const sessionData = await sessionRes.json();
+      const sessionData = (await sessionRes.json()) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+        openAiStatus?: number | null;
+      };
       if (!sessionData.ok) {
-        throw new Error(
-          mapVoiceErrorForUser(String(sessionData.error ?? "Nepodařilo se vytvořit realtime session."))
-        );
+        onError?.(mapVoiceErrorForUser(sessionData.error), {
+          code: sessionData.code,
+          openAiStatus: sessionData.openAiStatus,
+        });
+        throw new Error(sessionData.error ?? "Session preflight failed");
       }
 
-      const ephemeralKey = String(sessionData.clientSecret ?? sessionData.ephemeralKey ?? "");
-      if (!ephemeralKey) throw new Error("Chybí ephemeral token pro realtime.");
-
-      voiceDebugLog("session created", { session: true });
-
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (signal.aborted) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
-      const audioTrack = stream.getAudioTracks()[0];
-      voiceDebugLog("microphone permission", {
-        granted: true,
-        track: audioTrack?.readyState === "live",
+      voiceDebugLog("microphone granted", {
+        track: stream.getAudioTracks()[0]?.readyState === "live",
       });
 
       const pc = new RTCPeerConnection({
@@ -262,41 +308,34 @@ export function useAiSecretaryRealtime({
       pcRef.current = pc;
 
       pc.ontrack = (event) => {
-        voiceDebugLog("remote track received", { remote: true });
+        voiceDebugLog("remote audio received");
         const remoteStream = event.streams[0];
         if (audioElRef.current && remoteStream) {
           audioElRef.current.srcObject = remoteStream;
-          void audioElRef.current.play().catch(() => {
-            onError?.("Pro přehrání hlasu AI klikněte znovu na oblast hlasu.");
-          });
+          void playRemoteAudio();
         }
       };
 
       pc.onconnectionstatechange = () => {
         voiceDebugLog("peer connection state", { state: pc.connectionState });
         if (pc.connectionState === "failed") {
-          onError?.(mapVoiceErrorForUser("Spojení s hlasovou AI selhalo."));
+          onError?.(mapVoiceErrorForUser("Spojení selhalo."), { code: "pc_failed" });
           setPhaseSafe("error");
         }
       };
 
-      pc.addTrack(audioTrack, stream);
+      pc.addTrack(stream.getAudioTracks()[0]!, stream);
 
       const dc = pc.createDataChannel("oai-events");
       dcRef.current = dc;
 
       dc.onopen = () => {
-        voiceDebugLog("data channel", { open: true });
+        voiceDebugLog("data channel open");
         setPhaseSafe("connected");
         sendGreeting(dc);
         setPhaseSafe("assistant_speaking");
-        onStatusHint?.("RAJMONDATA AI mluví…");
-        setTimeout(() => {
-          if (activeRef.current) {
-            setPhaseSafe("listening");
-            onStatusHint?.("Poslouchám…");
-          }
-        }, 4000);
+        onStatusHint?.("Sekretářka mluví…");
+        voiceDebugLog("assistant speaking");
       };
 
       dc.onmessage = (ev) => {
@@ -309,17 +348,17 @@ export function useAiSecretaryRealtime({
       };
 
       dc.onclose = () => {
-        voiceDebugLog("data channel closed");
         if (activeRef.current) {
-          onError?.(mapVoiceErrorForUser("Realtime session skončila."));
+          onError?.(mapVoiceErrorForUser("Spojení skončilo."), { code: "dc_closed" });
           setPhaseSafe("error");
         }
       };
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-
-      voiceDebugLog("peer connection created", { pc: true });
+      await waitForIceGathering(pc);
+      const localSdp = pc.localDescription?.sdp ?? offer.sdp ?? "";
+      voiceDebugLog("peer connection created");
 
       const sdpRes = await fetch("/api/company/ai/secretary/realtime/calls", {
         method: "POST",
@@ -327,18 +366,26 @@ export function useAiSecretaryRealtime({
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ sdp: offer.sdp, ephemeralKey }),
+        body: JSON.stringify({ companyId, sdp: localSdp }),
+        signal,
       });
 
       const sdpData = (await sdpRes.json().catch(() => ({}))) as {
         ok?: boolean;
         sdp?: string;
         error?: string;
+        code?: string;
+        openAiStatus?: number | null;
+        openAiCode?: string | null;
       };
 
       if (!sdpRes.ok || !sdpData.ok || !sdpData.sdp) {
-        voiceDebugError("SDP exchange failed", sdpData.error ?? `HTTP ${sdpRes.status}`);
-        throw new Error(sdpData.error ?? "Nepodařilo se připojit hlasovou AI.");
+        voiceDebugError("SDP exchange failed", sdpData.code ?? `HTTP ${sdpRes.status}`);
+        onError?.(mapVoiceErrorForUser(sdpData.error), {
+          code: sdpData.code ?? "openai_sdp_exchange_failed",
+          openAiStatus: sdpData.openAiStatus ?? sdpRes.status,
+        });
+        throw new Error(sdpData.error ?? "SDP exchange failed");
       }
 
       await pc.setRemoteDescription({ type: "answer", sdp: sdpData.sdp });
@@ -347,7 +394,9 @@ export function useAiSecretaryRealtime({
       startingRef.current = false;
       setPhaseSafe("listening");
       onStatusHint?.("Poslouchám…");
+      voiceDebugLog("listening");
     } catch (e) {
+      if (signal.aborted) return;
       startingRef.current = false;
       activeRef.current = false;
       const raw =
@@ -356,8 +405,10 @@ export function useAiSecretaryRealtime({
           : e instanceof Error
             ? e.message
             : "start failed";
-      voiceDebugError("start failed", raw);
-      onError?.(mapVoiceErrorForUser(raw));
+      if (!(e instanceof Error && e.message.includes("Session preflight"))) {
+        voiceDebugError("start failed", raw);
+        onError?.(mapVoiceErrorForUser(raw), { code: "start_failed" });
+      }
       cleanupMedia();
       setPhaseSafe("error");
       onStatusHint?.(null);
@@ -369,7 +420,7 @@ export function useAiSecretaryRealtime({
     handleRealtimeEvent,
     onError,
     onStatusHint,
-    onTranscript,
+    playRemoteAudio,
     setPhaseSafe,
     cleanupMedia,
   ]);

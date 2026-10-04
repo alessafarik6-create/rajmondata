@@ -3,8 +3,9 @@ import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyBearerAndLoadCaller } from "@/lib/api-verify-company-user";
 import { buildSecretaryContext } from "@/lib/ai/secretary/context";
 import {
+  assertOpenAiVoiceConfigured,
   createOpenAiRealtimeSession,
-  mapRealtimeSessionErrorForClient,
+  voiceErrorPayloadForClient,
 } from "@/lib/ai/secretary/realtime-session";
 import { logSecretaryAudit } from "@/lib/ai/secretary/audit";
 
@@ -34,6 +35,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
+  const configured = assertOpenAiVoiceConfigured();
+  if (!configured.ok) {
+    return NextResponse.json(
+      voiceErrorPayloadForClient({
+        message: configured.reason,
+        code: "openai_not_configured",
+      }),
+      { status: 503 }
+    );
+  }
+
   try {
     console.info("[VOICE] session request", { userId: caller.uid, companyId });
     const ctx = await buildSecretaryContext(db, caller, companyId);
@@ -45,15 +57,17 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({
       ok: true,
-      clientSecret: session.clientSecret,
-      expiresAt: session.expiresAt,
       model: session.model,
+      unified: true,
     });
   } catch (e) {
     const raw = e instanceof Error ? e.message : "Realtime session selhala.";
     console.error("[VOICE] error", raw);
     return NextResponse.json(
-      { ok: false, error: mapRealtimeSessionErrorForClient(raw) },
+      voiceErrorPayloadForClient({
+        message: raw,
+        code: "session_preflight_failed",
+      }),
       { status: 502 }
     );
   }

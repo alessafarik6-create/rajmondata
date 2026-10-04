@@ -21,7 +21,7 @@ function phaseLabel(phase: VoiceSecretaryPhase): string {
     case "connecting":
       return "Připojuji…";
     case "processing_tool":
-      return "Přemýšlím…";
+      return "Provádím…";
     case "connected":
     case "listening":
       return "● Poslouchám…";
@@ -44,12 +44,14 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
   const [showTranscript, setShowTranscript] = useState(false);
   const [statusHint, setStatusHint] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
 
   const voice = useAiSecretaryRealtime({
     user,
     companyId,
-    onError: (m) => {
+    onError: (m, detail) => {
       setErrorMsg(m);
+      setErrorCode(detail?.code ?? null);
       setLines((l) => [...l, `⚠ ${m}`]);
     },
     onStatusHint: setStatusHint,
@@ -77,6 +79,7 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
     if (!open) {
       void stopRef.current();
       setErrorMsg(null);
+      setErrorCode(null);
       setStatusHint(null);
       setLines([]);
     }
@@ -88,6 +91,7 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
 
   const handleStartMic = () => {
     setErrorMsg(null);
+    setErrorCode(null);
     setLines([]);
     void startRef.current();
   };
@@ -123,14 +127,37 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
 
         <div
           className={cn(
-            "flex h-28 items-center justify-center rounded-xl bg-muted/50",
-            listening && "animate-pulse ring-2 ring-primary/30"
+            "flex h-28 flex-col items-center justify-center gap-2 rounded-xl bg-muted/50",
+            listening && "ring-2 ring-primary/30"
           )}
         >
           {voice.phase === "connecting" || voice.phase === "requesting_microphone" ? (
             <Loader2 className="h-10 w-10 animate-spin text-primary" />
           ) : sessionLive ? (
-            <Mic className="h-12 w-12 text-primary" />
+            <>
+              <Mic
+                className={cn(
+                  "h-10 w-10 text-primary",
+                  voice.phase === "assistant_speaking" && "animate-pulse"
+                )}
+              />
+              {(voice.phase === "listening" ||
+                voice.phase === "assistant_speaking" ||
+                voice.phase === "connected") && (
+                <div className="flex h-6 items-end gap-1" aria-hidden>
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <span
+                      key={i}
+                      className="w-1 rounded-full bg-primary/70 animate-pulse"
+                      style={{
+                        height: `${10 + (i % 3) * 8}px`,
+                        animationDelay: `${i * 0.12}s`,
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           ) : (
             <Button
               type="button"
@@ -152,7 +179,12 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
         ) : null}
 
         {errorMsg ? (
-          <p className="text-sm text-destructive text-center">{errorMsg}</p>
+          <div className="text-center space-y-1">
+            <p className="text-sm text-destructive">{errorMsg}</p>
+            {errorCode && process.env.NODE_ENV === "development" ? (
+              <p className="text-xs text-muted-foreground font-mono">{errorCode}</p>
+            ) : null}
+          </div>
         ) : null}
 
         {showTranscript && lines.length > 0 ? (

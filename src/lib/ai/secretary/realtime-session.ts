@@ -1,5 +1,4 @@
 import { getOpenAiApiKey, getOpenAiRealtimeModel } from "@/lib/ai/config";
-import { OPENAI_REALTIME_CLIENT_SECRETS_URL } from "@/lib/ai/openai-realtime-api";
 import { secretarySystemInstructions, type SecretaryContext } from "@/lib/ai/secretary/context";
 import { secretaryRealtimeToolDefinitions } from "@/lib/ai/secretary/tools/run-tool";
 
@@ -11,26 +10,62 @@ export type RealtimeClientSecret = {
 
 const LOG = "[VOICE]";
 
-function voiceServerLog(message: string, detail?: Record<string, unknown>) {
-  if (detail) {
-    console.info(LOG, message, detail);
-  } else {
-    console.info(LOG, message);
+export function assertOpenAiVoiceConfigured(): { ok: true; model: string } | { ok: false; reason: string } {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    console.error(LOG, "OPENAI_API_KEY missing");
+    return { ok: false, reason: "Hlasová AI není na serveru nakonfigurována." };
   }
+  const model = getOpenAiRealtimeModel();
+  console.info(LOG, "model", { model });
+  return { ok: true, model };
 }
 
-function voiceServerError(message: string, detail?: string) {
-  console.error(LOG, message, detail ?? "");
+/** Unified interface: JSON pro FormData pole `session` u POST /v1/realtime/calls */
+export function buildUnifiedRealtimeSessionJson(ctx: SecretaryContext): string {
+  const model = getOpenAiRealtimeModel();
+  const voice = String(process.env.OPENAI_REALTIME_VOICE ?? "marin").trim() || "marin";
+  const instructions = secretarySystemInstructions(ctx);
+  const tools = secretaryRealtimeToolDefinitions();
+
+  const session = {
+    type: "realtime" as const,
+    model,
+    instructions,
+    tools,
+    tool_choice: "auto" as const,
+    audio: {
+      input: {
+        transcription: {
+          model: "gpt-4o-mini-transcribe",
+          language: "cs",
+        },
+        turn_detection: {
+          type: "server_vad" as const,
+          interrupt_response: true,
+          create_response: true,
+          silence_duration_ms: 500,
+        },
+      },
+      output: {
+        voice,
+      },
+    },
+  };
+
+  return JSON.stringify(session);
 }
 
-export function mapRealtimeSessionErrorForClient(raw: string): string {
+export function mapRealtimeSessionErrorForClient(
+  raw: string,
+  code?: string | null
+): string {
   const t = raw.trim();
-  if (!t) return "Hlasovou asistentku se nepodařilo připojit.";
-  if (/invalid url.*realtime\/sessions/i.test(t)) {
-    return "Hlasovou asistentku se nepodařilo připojit.";
+  if (code === "openai_not_configured") {
+    return "Hlasová AI není na serveru nakonfigurována.";
   }
-  if (/openai api není nakonfigurováno/i.test(t)) {
-    return "OpenAI API není nakonfigurováno.";
+  if (/openai api není nakonfigurováno|OPENAI_API_KEY missing/i.test(t)) {
+    return "Hlasová AI není na serveru nakonfigurována.";
   }
   if (/401|invalid api key|incorrect api key/i.test(t)) {
     return "Hlasovou asistentku se nepodařilo připojit.";
@@ -38,102 +73,47 @@ export function mapRealtimeSessionErrorForClient(raw: string): string {
   if (/429|rate limit/i.test(t)) {
     return "Hlasová služba je dočasně přetížená. Zkuste to za chvíli.";
   }
+  if (!t) return "Hlasovou asistentku se nepodařilo připojit.";
   return "Hlasovou asistentku se nepodařilo připojit.";
 }
 
+export function voiceErrorPayloadForClient(info: {
+  message: string;
+  code: string;
+  openAiStatus?: number;
+  openAiCode?: string | null;
+}) {
+  return {
+    ok: false as const,
+    error: mapRealtimeSessionErrorForClient(info.message, info.code),
+    code: info.code,
+    openAiStatus: info.openAiStatus ?? null,
+    openAiCode: info.openAiCode ?? null,
+  };
+}
+
+/** Preflight — ověří API key; klient pak volá unified /realtime/calls */
 export async function createOpenAiRealtimeClientSecret(
   ctx: SecretaryContext
 ): Promise<RealtimeClientSecret> {
-  const apiKey = getOpenAiApiKey();
-  if (!apiKey) throw new Error("OpenAI API není nakonfigurováno.");
+  const check = assertOpenAiVoiceConfigured();
+  if (!check.ok) throw new Error(check.reason);
 
-  const model = getOpenAiRealtimeModel();
-  const voice = String(process.env.OPENAI_REALTIME_VOICE ?? "marin").trim() || "marin";
-  const instructions = secretarySystemInstructions(ctx);
-  const tools = secretaryRealtimeToolDefinitions();
-
-  const sessionBody = {
-    expires_after: {
-      anchor: "created_at" as const,
-      seconds: 600,
-    },
-    session: {
-      type: "realtime" as const,
-      model,
-      instructions,
-      tools,
-      tool_choice: "auto" as const,
-      audio: {
-        input: {
-          transcription: {
-            model: "gpt-4o-mini-transcribe",
-            language: "cs",
-          },
-          turn_detection: {
-            type: "server_vad" as const,
-            interrupt_response: true,
-            create_response: true,
-            silence_duration_ms: 500,
-          },
-        },
-        output: {
-          voice,
-        },
-      },
-    },
-  };
-
-  const url = OPENAI_REALTIME_CLIENT_SECRETS_URL();
-  voiceServerLog("session request", { endpoint: "client_secrets", model });
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(sessionBody),
-  });
-
-  const data = (await res.json().catch(() => ({}))) as {
-    value?: string;
-    client_secret?: { value?: string; expires_at?: number };
-    expires_at?: number;
-    error?: { message?: string; type?: string; code?: string };
-  };
-
-  if (!res.ok) {
-    const apiMsg = String(data.error?.message ?? "").trim();
-    voiceServerError("OpenAI client_secrets failed", `HTTP ${res.status} ${apiMsg}`);
-    throw new Error(apiMsg || `Realtime client_secrets HTTP ${res.status}`);
-  }
-
-  const ephemeralKey =
-    String(data.value ?? "").trim() ||
-    String(data.client_secret?.value ?? "").trim();
-
-  if (!ephemeralKey) {
-    voiceServerError("OpenAI client_secrets empty key", JSON.stringify(data).slice(0, 500));
-    throw new Error("Realtime API nevrátilo ephemeral key.");
-  }
-
-  voiceServerLog("OpenAI session created", {
-    model,
-    keyPrefix: ephemeralKey.slice(0, 6),
-  });
+  const model = check.model;
+  console.info(LOG, "session preflight ok", { model, userId: ctx.userId });
 
   return {
-    ephemeralKey,
-    expiresAt: data.expires_at ?? data.client_secret?.expires_at ?? null,
+    ephemeralKey: "",
+    expiresAt: null,
     model,
   };
 }
 
-/** @deprecated alias */
+/** @deprecated alias — unified flow nepotřebuje ephemeral key v browseru */
 export async function createOpenAiRealtimeSession(ctx: SecretaryContext) {
   const s = await createOpenAiRealtimeClientSecret(ctx);
   return {
-    clientSecret: s.ephemeralKey,
+    clientSecret: "",
     expiresAt: s.expiresAt,
     model: s.model,
   };

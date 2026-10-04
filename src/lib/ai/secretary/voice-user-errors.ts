@@ -5,8 +5,8 @@ export function mapVoiceErrorForUser(raw: string | null | undefined): string {
   if (/invalid url.*realtime\/sessions/i.test(t)) {
     return "Hlasovou asistentku se nepodařilo připojit.";
   }
-  if (/openai api není nakonfigurováno/i.test(t)) {
-    return "OpenAI API není nakonfigurováno.";
+  if (/openai api není nakonfigurováno|hlasová ai není na serveru/i.test(t)) {
+    return "Hlasová AI není na serveru nakonfigurována.";
   }
   if (/notallowederror|permission denied|mikrofon/i.test(t)) {
     return "Prohlížeč nemá povolený mikrofon.";
