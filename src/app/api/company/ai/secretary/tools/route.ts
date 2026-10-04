@@ -1,18 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyBearerAndLoadCaller } from "@/lib/api-verify-company-user";
-import { runSecretaryTool, type SecretaryToolName } from "@/lib/ai/secretary/tools/run-tool";
+import { runSecretaryTool } from "@/lib/ai/secretary/tools/run-tool";
 
 export const dynamic = "force-dynamic";
-
-const TOOL_NAMES = new Set<string>([
-  "getCalendarEvents",
-  "proposeCreateCalendarEvent",
-  "confirmPendingAction",
-  "searchCustomers",
-  "searchJobs",
-  "getTodayOverview",
-]);
 
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
@@ -38,16 +29,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
   const toolName = String(body.toolName ?? "").trim();
-  if (!TOOL_NAMES.has(toolName)) {
-    return NextResponse.json({ ok: false, error: "Neznámý nástroj." }, { status: 400 });
+  if (!toolName) {
+    return NextResponse.json({ ok: false, error: "Chybí toolName." }, { status: 400 });
   }
 
-  const result = await runSecretaryTool(
-    db,
-    caller,
-    companyId,
-    toolName as SecretaryToolName,
-    body.arguments ?? {}
-  );
+  const result = await runSecretaryTool(db, caller, companyId, toolName, body.arguments ?? {});
   return NextResponse.json(result);
 }

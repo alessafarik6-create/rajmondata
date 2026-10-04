@@ -4,43 +4,67 @@ import { buildSecretaryContext } from "@/lib/ai/secretary/context";
 import {
   assertSecretaryPermission,
   resolveSecretaryPermissions,
-  type SecretaryPermissions,
 } from "@/lib/ai/secretary/permissions";
 import { logSecretaryAudit } from "@/lib/ai/secretary/audit";
 import {
-  confirmPendingCalendarActionTool,
+  cancelPendingActionTool,
+  confirmCalendarMeetingTool,
+  createCalendarMeetingDraftTool,
   getCalendarEventsTool,
-  proposeCreateCalendarEventTool,
+  updateCalendarMeetingDraftTool,
 } from "@/lib/ai/secretary/tools/calendar";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 
 export type SecretaryToolName =
+  | "get_calendar_events"
   | "getCalendarEvents"
+  | "create_calendar_meeting_draft"
   | "proposeCreateCalendarEvent"
+  | "update_calendar_meeting_draft"
+  | "confirm_calendar_meeting"
   | "confirmPendingAction"
+  | "cancel_pending_action"
+  | "search_customers"
   | "searchCustomers"
+  | "search_jobs"
   | "searchJobs"
   | "getTodayOverview";
+
+function normalizeToolName(name: string): SecretaryToolName | null {
+  const map: Record<string, SecretaryToolName> = {
+    get_calendar_events: "get_calendar_events",
+    getCalendarEvents: "get_calendar_events",
+    create_calendar_meeting_draft: "create_calendar_meeting_draft",
+    proposeCreateCalendarEvent: "create_calendar_meeting_draft",
+    update_calendar_meeting_draft: "update_calendar_meeting_draft",
+    confirm_calendar_meeting: "confirm_calendar_meeting",
+    confirmPendingAction: "confirm_calendar_meeting",
+    cancel_pending_action: "cancel_pending_action",
+    search_customers: "search_customers",
+    searchCustomers: "search_customers",
+    search_jobs: "search_jobs",
+    searchJobs: "search_jobs",
+    getTodayOverview: "getTodayOverview",
+  };
+  return map[name] ?? null;
+}
 
 export async function runSecretaryTool(
   db: Firestore,
   caller: VerifiedCompanyCaller,
   companyId: string,
-  toolName: SecretaryToolName,
+  toolNameRaw: string,
   args: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
+  const toolName = normalizeToolName(toolNameRaw);
+  if (!toolName) return { ok: false, error: "Neznámý nástroj." };
+
   const ctx = await buildSecretaryContext(db, caller, companyId);
   const perms = await resolveSecretaryPermissions(db, caller, companyId);
 
-  const needConfirm = (
-    name: SecretaryToolName
-  ): name is "proposeCreateCalendarEvent" | "confirmPendingAction" => {
-    return name === "proposeCreateCalendarEvent" || name === "confirmPendingAction";
-  };
-
   try {
     switch (toolName) {
-      case "getCalendarEvents": {
+      case "get_calendar_events": {
         const gate = assertSecretaryPermission(perms, "calendar_read");
         if (!gate.ok) return { ok: false, error: gate.message };
         const result = await getCalendarEventsTool(db, ctx, {
@@ -49,36 +73,34 @@ export async function runSecretaryTool(
         });
         return { ok: true, ...result };
       }
-      case "proposeCreateCalendarEvent": {
+      case "create_calendar_meeting_draft": {
         const gate = assertSecretaryPermission(perms, "calendar_write");
         if (!gate.ok) return { ok: false, error: gate.message };
         await logSecretaryAudit(db, {
           companyId,
           userId: caller.uid,
           action: "ai_action_proposed",
-          toolName,
+          toolName: toolNameRaw,
         });
-        const result = await proposeCreateCalendarEventTool(db, ctx, perms, {
-          title: String(args.title ?? ""),
-          scheduledAtIso: String(args.scheduledAtIso ?? ""),
-          place: args.place != null ? String(args.place) : undefined,
-          note: args.note != null ? String(args.note) : undefined,
-          calendarEventType:
-            args.calendarEventType != null ? String(args.calendarEventType) : undefined,
-        });
-        return { ok: true, ...result };
+        const result = await createCalendarMeetingDraftTool(db, ctx, args);
+        return { ok: true, ...result, pendingId: result.pendingActionId };
       }
-      case "confirmPendingAction": {
+      case "update_calendar_meeting_draft": {
+        const gate = assertSecretaryPermission(perms, "calendar_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        return await updateCalendarMeetingDraftTool(db, ctx, args);
+      }
+      case "confirm_calendar_meeting": {
         const gate = assertSecretaryPermission(perms, "calendar_write");
         if (!gate.ok) return { ok: false, error: gate.message };
         await logSecretaryAudit(db, {
           companyId,
           userId: caller.uid,
           action: "ai_action_confirmed",
-          toolName,
+          toolName: toolNameRaw,
         });
-        const result = await confirmPendingCalendarActionTool(db, ctx, {
-          pendingId: String(args.pendingId ?? ""),
+        const result = await confirmCalendarMeetingTool(db, ctx, {
+          pendingActionId: String(args.pendingActionId ?? args.pendingId ?? ""),
           userConfirmationText:
             args.userConfirmationText != null ? String(args.userConfirmationText) : undefined,
         });
@@ -87,7 +109,7 @@ export async function runSecretaryTool(
             companyId,
             userId: caller.uid,
             action: "ai_action_executed",
-            toolName,
+            toolName: toolNameRaw,
             detail: result.eventId,
           });
         } else {
@@ -95,13 +117,18 @@ export async function runSecretaryTool(
             companyId,
             userId: caller.uid,
             action: "ai_action_failed",
-            toolName,
+            toolName: toolNameRaw,
             detail: result.message,
           });
         }
         return { ok: result.ok, message: result.message, eventId: result.eventId ?? null };
       }
-      case "searchCustomers": {
+      case "cancel_pending_action": {
+        return await cancelPendingActionTool(db, ctx, {
+          pendingActionId: String(args.pendingActionId ?? args.pendingId ?? ""),
+        });
+      }
+      case "search_customers": {
         const gate = assertSecretaryPermission(perms, "customers_read");
         if (!gate.ok) return { ok: false, error: gate.message };
         const q = String(args.query ?? "").trim().slice(0, 80);
@@ -119,7 +146,7 @@ export async function runSecretaryTool(
           .slice(0, 8);
         return { ok: true, customers };
       }
-      case "searchJobs": {
+      case "search_jobs": {
         const gate = assertSecretaryPermission(perms, "jobs_read");
         if (!gate.ok) return { ok: false, error: gate.message };
         const q = String(args.query ?? "").trim().slice(0, 80);
@@ -144,13 +171,12 @@ export async function runSecretaryTool(
         tomorrow.setHours(23, 59, 59, 999);
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
-        const cal =
-          perms.canReadCalendar
-            ? await getCalendarEventsTool(db, ctx, {
-                fromIso: todayStart.toISOString(),
-                toIso: tomorrow.toISOString(),
-              })
-            : { events: [] };
+        const cal = perms.canReadCalendar
+          ? await getCalendarEventsTool(db, ctx, {
+              fromIso: todayStart.toISOString(),
+              toIso: tomorrow.toISOString(),
+            })
+          : { events: [] };
         return {
           ok: true,
           todayEvents: cal.events,
@@ -163,15 +189,6 @@ export async function runSecretaryTool(
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Nástroj selhal.";
-    if (needConfirm(toolName)) {
-      await logSecretaryAudit(db, {
-        companyId,
-        userId: caller.uid,
-        action: "ai_action_failed",
-        toolName,
-        detail: msg,
-      });
-    }
     return { ok: false, error: msg };
   }
 }
@@ -180,57 +197,83 @@ export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown
   return [
     {
       type: "function",
-      name: "getCalendarEvents",
-      description: "Načte schůzky a montáže z organizačního kalendáře v intervalu.",
+      name: "get_calendar_events",
+      description: "Načte schůzky z organizačního kalendáře.",
       parameters: {
         type: "object",
-        properties: {
-          fromIso: { type: "string" },
-          toIso: { type: "string" },
-        },
+        properties: { fromIso: { type: "string" }, toIso: { type: "string" } },
       },
     },
     {
       type: "function",
-      name: "proposeCreateCalendarEvent",
-      description:
-        "Připraví návrh nové schůzky v kalendáři. Nevytváří ji — vyžaduje confirmPendingAction.",
+      name: "create_calendar_meeting_draft",
+      description: "Připraví návrh schůzky. Neukládá — vyžaduje confirm_calendar_meeting.",
       parameters: {
         type: "object",
         properties: {
           title: { type: "string" },
-          scheduledAtIso: { type: "string", description: "ISO 8601 v timezone organizace" },
+          date: { type: "string", description: "YYYY-MM-DD v timezone organizace" },
+          startTime: { type: "string", description: "HH:mm" },
+          endTime: { type: "string" },
           place: { type: "string" },
           note: { type: "string" },
+          customerName: { type: "string" },
           calendarEventType: { type: "string", enum: ["meeting", "installation"] },
         },
-        required: ["title", "scheduledAtIso"],
+        required: ["title", "date", "startTime"],
       },
     },
     {
       type: "function",
-      name: "confirmPendingAction",
-      description:
-        "Provede dříve navrženou akci po explicitním slovním potvrzení uživatele.",
+      name: "update_calendar_meeting_draft",
+      description: "Upraví existující návrh schůzky (např. změna času).",
       parameters: {
         type: "object",
         properties: {
-          pendingId: { type: "string" },
+          pendingActionId: { type: "string" },
+          title: { type: "string" },
+          date: { type: "string" },
+          startTime: { type: "string" },
+          endTime: { type: "string" },
+          place: { type: "string" },
+          note: { type: "string" },
+        },
+        required: ["pendingActionId"],
+      },
+    },
+    {
+      type: "function",
+      name: "confirm_calendar_meeting",
+      description: "Po slovním ano zapíše návrh do kalendáře.",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
           userConfirmationText: { type: "string" },
         },
-        required: ["pendingId", "userConfirmationText"],
+        required: ["pendingActionId", "userConfirmationText"],
+      },
+    },
+    {
+      type: "function",
+      name: "cancel_pending_action",
+      description: "Zruší pending návrh.",
+      parameters: {
+        type: "object",
+        properties: { pendingActionId: { type: "string" } },
+        required: ["pendingActionId"],
       },
     },
     {
       type: "function",
       name: "getTodayOverview",
-      description: "Přehled dnešních událostí a kontext uživatele.",
+      description: "Přehled dnešních událostí.",
       parameters: { type: "object", properties: {} },
     },
     {
       type: "function",
-      name: "searchCustomers",
-      description: "Vyhledá zákazníky podle jména.",
+      name: "search_customers",
+      description: "Vyhledá zákazníky.",
       parameters: {
         type: "object",
         properties: { query: { type: "string" } },
@@ -239,8 +282,8 @@ export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown
     },
     {
       type: "function",
-      name: "searchJobs",
-      description: "Vyhledá zakázky podle názvu.",
+      name: "search_jobs",
+      description: "Vyhledá zakázky.",
       parameters: {
         type: "object",
         properties: { query: { type: "string" } },
