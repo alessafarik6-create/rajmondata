@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyBearerAndLoadCaller } from "@/lib/api-verify-company-user";
 import { buildSecretaryContext } from "@/lib/ai/secretary/context";
-import { createOpenAiRealtimeSession } from "@/lib/ai/secretary/realtime-session";
+import {
+  createOpenAiRealtimeSession,
+  mapRealtimeSessionErrorForClient,
+} from "@/lib/ai/secretary/realtime-session";
 import { logSecretaryAudit } from "@/lib/ai/secretary/audit";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +35,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    console.info("[VOICE] session request", { userId: caller.uid, companyId });
     const ctx = await buildSecretaryContext(db, caller, companyId);
     const session = await createOpenAiRealtimeSession(ctx);
     await logSecretaryAudit(db, {
@@ -46,7 +50,11 @@ export async function POST(request: NextRequest) {
       model: session.model,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Realtime session selhala.";
-    return NextResponse.json({ ok: false, error: msg }, { status: 502 });
+    const raw = e instanceof Error ? e.message : "Realtime session selhala.";
+    console.error("[VOICE] error", raw);
+    return NextResponse.json(
+      { ok: false, error: mapRealtimeSessionErrorForClient(raw) },
+      { status: 502 }
+    );
   }
 }

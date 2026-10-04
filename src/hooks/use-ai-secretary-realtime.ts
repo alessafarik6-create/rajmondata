@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import { voiceDebugError, voiceDebugLog } from "@/lib/ai/secretary/voice-debug";
+import { mapVoiceErrorForUser } from "@/lib/ai/secretary/voice-user-errors";
 
 export type VoiceSecretaryPhase =
   | "idle"
@@ -26,8 +27,6 @@ type Options = {
   onTranscript?: (line: TranscriptLine) => void;
   onStatusHint?: (hint: string | null) => void;
 };
-
-const REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 
 export function useAiSecretaryRealtime({
   user,
@@ -109,7 +108,7 @@ export function useAiSecretaryRealtime({
       if (type === "error") {
         const err = msg.error as { message?: string } | undefined;
         voiceDebugError("realtime error event", err?.message);
-        onError?.(err?.message ?? "Realtime chyba.");
+        onError?.(mapVoiceErrorForUser(err?.message));
         return;
       }
 
@@ -165,14 +164,19 @@ export function useAiSecretaryRealtime({
       const runToolFromCall = (name: string, callId: string, argsRaw: string) => {
         void (async () => {
           setPhaseSafe("processing_tool");
-          onStatusHint?.("Provádím…");
+          onStatusHint?.("Přemýšlím…");
+          voiceDebugLog("tool proposed", { name });
           let args: Record<string, unknown> = {};
           try {
             args = JSON.parse(argsRaw) as Record<string, unknown>;
           } catch {
             args = {};
           }
-          const result = await invokeTool(name, args);
+          const result = (await invokeTool(name, args)) as Record<string, unknown>;
+          if (result.pendingId || result.pendingActionId) {
+            setPhaseSafe("waiting_confirmation");
+            onStatusHint?.("Čekám na potvrzení…");
+          }
           if (!dcRef.current || dcRef.current.readyState !== "open") return;
           dc.send(
             JSON.stringify({
@@ -234,7 +238,9 @@ export function useAiSecretaryRealtime({
       });
       const sessionData = await sessionRes.json();
       if (!sessionData.ok) {
-        throw new Error(sessionData.error ?? "Nepodařilo se vytvořit realtime session.");
+        throw new Error(
+          mapVoiceErrorForUser(String(sessionData.error ?? "Nepodařilo se vytvořit realtime session."))
+        );
       }
 
       const ephemeralKey = String(sessionData.clientSecret ?? sessionData.ephemeralKey ?? "");
@@ -269,7 +275,7 @@ export function useAiSecretaryRealtime({
       pc.onconnectionstatechange = () => {
         voiceDebugLog("peer connection state", { state: pc.connectionState });
         if (pc.connectionState === "failed") {
-          onError?.("Spojení s hlasovou AI selhalo.");
+          onError?.(mapVoiceErrorForUser("Spojení s hlasovou AI selhalo."));
           setPhaseSafe("error");
         }
       };
@@ -305,7 +311,7 @@ export function useAiSecretaryRealtime({
       dc.onclose = () => {
         voiceDebugLog("data channel closed");
         if (activeRef.current) {
-          onError?.("Realtime session skončila.");
+          onError?.(mapVoiceErrorForUser("Realtime session skončila."));
           setPhaseSafe("error");
         }
       };
@@ -313,23 +319,29 @@ export function useAiSecretaryRealtime({
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const sdpRes = await fetch(REALTIME_CALLS_URL, {
+      voiceDebugLog("peer connection created", { pc: true });
+
+      const sdpRes = await fetch("/api/company/ai/secretary/realtime/calls", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ephemeralKey}`,
-          "Content-Type": "application/sdp",
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
-        body: offer.sdp,
+        body: JSON.stringify({ sdp: offer.sdp, ephemeralKey }),
       });
 
-      if (!sdpRes.ok) {
-        const errText = await sdpRes.text().catch(() => "");
-        voiceDebugError("SDP exchange failed", `HTTP ${sdpRes.status} ${errText.slice(0, 200)}`);
-        throw new Error(`Nepodařilo se připojit hlasovou AI (HTTP ${sdpRes.status}).`);
+      const sdpData = (await sdpRes.json().catch(() => ({}))) as {
+        ok?: boolean;
+        sdp?: string;
+        error?: string;
+      };
+
+      if (!sdpRes.ok || !sdpData.ok || !sdpData.sdp) {
+        voiceDebugError("SDP exchange failed", sdpData.error ?? `HTTP ${sdpRes.status}`);
+        throw new Error(sdpData.error ?? "Nepodařilo se připojit hlasovou AI.");
       }
 
-      const answerSdp = await sdpRes.text();
-      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      await pc.setRemoteDescription({ type: "answer", sdp: sdpData.sdp });
 
       activeRef.current = true;
       startingRef.current = false;
@@ -338,14 +350,14 @@ export function useAiSecretaryRealtime({
     } catch (e) {
       startingRef.current = false;
       activeRef.current = false;
-      const msg =
-        e instanceof DOMException && e.name === "NotAllowedError"
-          ? "Prohlížeč nemá povolený mikrofon."
+      const raw =
+        e instanceof DOMException
+          ? `${e.name}: ${e.message}`
           : e instanceof Error
             ? e.message
-            : "Nepodařilo se připojit hlasovou AI.";
-      voiceDebugError("start failed", msg);
-      onError?.(msg);
+            : "start failed";
+      voiceDebugError("start failed", raw);
+      onError?.(mapVoiceErrorForUser(raw));
       cleanupMedia();
       setPhaseSafe("error");
       onStatusHint?.(null);

@@ -20,13 +20,13 @@ function phaseLabel(phase: VoiceSecretaryPhase): string {
       return "Žádám o mikrofon…";
     case "connecting":
       return "Připojuji…";
+    case "processing_tool":
+      return "Přemýšlím…";
     case "connected":
     case "listening":
       return "● Poslouchám…";
     case "assistant_speaking":
-      return "● RAJMONDATA AI mluví…";
-    case "processing_tool":
-      return "Provádím…";
+      return "Sekretářka mluví…";
     case "waiting_confirmation":
       return "Čekám na potvrzení…";
     case "error":
