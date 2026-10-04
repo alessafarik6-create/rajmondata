@@ -107,9 +107,8 @@ export function useAiSecretaryRealtime({
       JSON.stringify({
         type: "response.create",
         response: {
-          modalities: ["audio", "text"],
           instructions:
-            "Řekni stručně a přesně česky: Dobrý den, co pro vás můžu udělat?",
+            "Pozdrav uživatele česky přesně větou: Dobrý den, co pro vás můžu udělat?",
         },
       })
     );
@@ -145,9 +144,15 @@ export function useAiSecretaryRealtime({
       const type = String(msg.type ?? "");
 
       if (type === "error") {
-        const err = msg.error as { message?: string } | undefined;
-        voiceDebugError("realtime error event", err?.message);
-        onError?.(mapVoiceErrorForUser(err?.message), { code: "realtime_event_error" });
+        const err = msg.error as
+          | { type?: string; code?: string; message?: string; param?: string }
+          | undefined;
+        console.error("[VOICE] realtime error", {
+          type: err?.type,
+          code: err?.code,
+          message: err?.message,
+          param: err?.param,
+        });
         return;
       }
 
@@ -317,11 +322,18 @@ export function useAiSecretaryRealtime({
       pcRef.current = pc;
 
       pc.ontrack = (event) => {
-        voiceDebugLog("remote audio received");
+        console.log("[VOICE] remote audio track received", {
+          kind: event.track.kind,
+          streams: event.streams.length,
+        });
+        const audioElement = audioElRef.current;
         const remoteStream = event.streams[0];
-        if (audioElRef.current && remoteStream) {
-          audioElRef.current.srcObject = remoteStream;
-          void playRemoteAudio();
+        if (audioElement && remoteStream) {
+          audioElement.srcObject = remoteStream;
+          audioElement.autoplay = true;
+          audioElement.play().catch((error) => {
+            console.error("[VOICE] audio play failed", error);
+          });
         }
       };
 
