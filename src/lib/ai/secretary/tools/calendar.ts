@@ -12,7 +12,9 @@ import {
   userUtteranceConfirmsAction,
 } from "@/lib/ai/secretary/confirmation";
 import {
+  cancelOrganizationCalendarMeeting,
   createOrganizationCalendarMeeting,
+  updateOrganizationCalendarMeeting,
   validateCalendarMeetingDraft,
   type CalendarMeetingDraft,
 } from "@/lib/calendar/create-organization-meeting-server";
@@ -105,6 +107,67 @@ export async function getCalendarEventsTool(
   return { events };
 }
 
+export async function searchCalendarMeetingsTool(
+  db: Firestore,
+  ctx: SecretaryContext,
+  args: { query?: string; fromIso?: string; toIso?: string }
+): Promise<{ meetings: Array<Record<string, unknown>> }> {
+  const { events } = await getCalendarEventsTool(db, ctx, {
+    fromIso: args.fromIso,
+    toIso: args.toIso,
+  });
+  const q = String(args.query ?? "").trim().toLowerCase();
+  const meetings = events.filter((e) => {
+    if (!q) return true;
+    const hay = `${e.title ?? ""} ${e.place ?? ""}`.toLowerCase();
+    return hay.includes(q);
+  });
+  return { meetings };
+}
+
+export async function proposeUpdateCalendarMeetingTool(
+  db: Firestore,
+  ctx: SecretaryContext,
+  args: Record<string, unknown>
+): Promise<{ pendingActionId: string; summary: string; requiresConfirmation: true }> {
+  const eventId = String(args.eventId ?? args.meetingId ?? "").trim();
+  if (!eventId) throw new Error("Chybí eventId schůzky.");
+
+  const draft = draftFromArgs(args, ctx);
+  const v = validateCalendarMeetingDraft(draft, ctx.timezone);
+  if (!v.ok) throw new Error(v.error);
+
+  const summary = `Změna schůzky: ${formatDraftSummary(draft, ctx)}`;
+  const { pendingId } = await proposeSecretaryAction(db, {
+    companyId: ctx.companyId,
+    userId: ctx.userId,
+    type: "update_meeting",
+    payload: { eventId, draft, entityId: eventId },
+    summary,
+  });
+  return { pendingActionId: pendingId, summary, requiresConfirmation: true };
+}
+
+export async function proposeCancelCalendarMeetingTool(
+  db: Firestore,
+  ctx: SecretaryContext,
+  args: Record<string, unknown>
+): Promise<{ pendingActionId: string; summary: string; requiresConfirmation: true }> {
+  const eventId = String(args.eventId ?? args.meetingId ?? "").trim();
+  if (!eventId) throw new Error("Chybí eventId schůzky.");
+
+  const title = String(args.title ?? args.customerName ?? "Schůzka").trim();
+  const summary = `Zrušení schůzky „${title}“.`;
+  const { pendingId } = await proposeSecretaryAction(db, {
+    companyId: ctx.companyId,
+    userId: ctx.userId,
+    type: "cancel_meeting",
+    payload: { eventId, entityId: eventId, title },
+    summary,
+  });
+  return { pendingActionId: pendingId, summary, requiresConfirmation: true };
+}
+
 export async function createCalendarMeetingDraftTool(
   db: Firestore,
   ctx: SecretaryContext,
@@ -136,17 +199,31 @@ export async function updateCalendarMeetingDraftTool(
   const pending = await loadPendingSecretaryAction(db, ctx.companyId, pendingId, ctx.userId);
   if (!pending) return { ok: false, message: "Návrh neexistuje." };
 
-  const merged = { ...pending.payload, ...draftFromArgs(args, ctx) };
-  const draft = draftFromArgs(merged as Record<string, unknown>, ctx);
+  const basePayload =
+    pending.type === "update_meeting"
+      ? { ...(pending.payload as { draft?: Record<string, unknown> }).draft, ...args }
+      : { ...pending.payload, ...args };
+  const draft = draftFromArgs(basePayload as Record<string, unknown>, ctx);
   const v = validateCalendarMeetingDraft(draft, ctx.timezone);
   if (!v.ok) return { ok: false, message: v.error };
 
-  const summary = formatDraftSummary(draft, ctx);
+  const summary =
+    pending.type === "update_meeting"
+      ? `Změna schůzky: ${formatDraftSummary(draft, ctx)}`
+      : formatDraftSummary(draft, ctx);
+  const payloadPatch =
+    pending.type === "update_meeting"
+      ? {
+          eventId: String((pending.payload as { eventId?: string }).eventId ?? ""),
+          entityId: String((pending.payload as { eventId?: string }).eventId ?? ""),
+          draft,
+        }
+      : (draft as unknown as Record<string, unknown>);
   await updatePendingSecretaryAction(db, {
     companyId: ctx.companyId,
     userId: ctx.userId,
     pendingId,
-    payloadPatch: draft as unknown as Record<string, unknown>,
+    payloadPatch,
     summary,
   });
   return { ok: true, pendingActionId: pendingId, summary };
@@ -199,8 +276,44 @@ export async function confirmCalendarMeetingTool(
     };
   }
 
+  if (pending.type === "update_meeting") {
+    const payload = pending.payload as { eventId?: string; draft?: CalendarMeetingDraft };
+    const eventId = String(payload.eventId ?? "").trim();
+    const draft = payload.draft as CalendarMeetingDraft;
+    if (!eventId || !draft) return { ok: false, message: "Neplatný návrh změny." };
+    await updateOrganizationCalendarMeeting(db, {
+      companyId: ctx.companyId,
+      eventId,
+      draft,
+      timeZone: ctx.timezone,
+      updatedByUserId: ctx.userId,
+    });
+    await consumePendingSecretaryAction(db, ctx.companyId, pendingId);
+    const v = validateCalendarMeetingDraft(draft, ctx.timezone);
+    const when = v.ok
+      ? v.scheduledAt.toLocaleString("cs-CZ", { timeZone: ctx.timezone })
+      : `${draft.date} ${draft.startTime}`;
+    return { ok: true, message: `Hotovo, schůzku jsem přesunula na ${when}.`, eventId };
+  }
+
+  if (pending.type === "cancel_meeting") {
+    const payload = pending.payload as { eventId?: string };
+    const eventId = String(payload.eventId ?? "").trim();
+    if (!eventId) return { ok: false, message: "Neplatný návrh zrušení." };
+    await cancelOrganizationCalendarMeeting(db, {
+      companyId: ctx.companyId,
+      eventId,
+      updatedByUserId: ctx.userId,
+    });
+    await consumePendingSecretaryAction(db, ctx.companyId, pendingId);
+    return { ok: true, message: "Hotovo, schůzku jsem zrušila.", eventId };
+  }
+
   return { ok: false, message: "Nepodporovaný typ akce." };
 }
+
+export const confirmCalendarMeetingUpdateTool = confirmCalendarMeetingTool;
+export const confirmCalendarMeetingCancelTool = confirmCalendarMeetingTool;
 
 export async function cancelPendingActionTool(
   db: Firestore,

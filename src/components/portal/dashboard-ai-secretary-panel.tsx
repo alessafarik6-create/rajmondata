@@ -177,14 +177,15 @@ export function DashboardAiSecretaryPanel({ companyId }: { companyId: string }) 
                     type="button"
                     size="sm"
                     className={cn(
-                      "h-9 min-h-[44px] sm:min-h-8 shrink-0",
+                      "min-h-[44px] shrink-0 px-4",
+                      mobileDark ? "h-11 text-sm" : "h-9 sm:min-h-8",
                       mobileDark
                         ? "bg-orange-500 text-white hover:bg-orange-600"
                         : "bg-orange-600 text-white hover:bg-orange-700"
                     )}
                     onClick={() => setVoiceOpen(true)}
                   >
-                    <Mic className="h-3.5 w-3.5 mr-1" /> Zařídit
+                    <Mic className="h-3.5 w-3.5 mr-1" /> Udělej
                   </Button>
                   <Button
                     type="button"

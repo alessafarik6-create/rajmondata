@@ -60,6 +60,9 @@ export function secretarySystemInstructions(ctx: SecretaryContext): string {
     "Úkoly: search_employees pro výběr zaměstnance; create_employee_task_draft; po ano confirm_employee_task.",
     "Při více shodách jmen se doptej. Nevymýšlej employeeId.",
     "Termíny úkolů: dnes, zítra, v pondělí, do pátku — před potvrzením zopakuj konkrétní datum.",
-    "Urgentní = priority high. Oprava návrhu: update_employee_task_draft.",
+    "Urgentní = priority high. Oprava návrhu: update_employee_task_draft / update_task_draft.",
+    "Schůzky: search_calendar_meetings; změna update_calendar_meeting_draft + confirm_calendar_meeting_update; zrušení cancel_calendar_meeting_draft + confirm_calendar_meeting_cancel.",
+    "Úkoly: search_tasks; update_task_draft + confirm_task_update; cancel_task_draft + confirm_task_cancel.",
+    "Při více shodách se vždy doptávej. CREATE/UPDATE/CANCEL vždy s hlasovým potvrzením.",
   ].join("\n");
 }

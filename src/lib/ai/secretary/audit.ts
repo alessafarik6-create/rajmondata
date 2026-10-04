@@ -14,7 +14,11 @@ export async function logSecretaryAudit(
       | "ai_action_confirmed"
       | "ai_action_executed"
       | "ai_action_failed"
-      | "task_created_via_ai_voice";
+      | "task_created_via_ai_voice"
+      | "meeting_updated_via_ai_voice"
+      | "meeting_cancelled_via_ai_voice"
+      | "task_updated_via_ai_voice"
+      | "task_cancelled_via_ai_voice";
     detail?: string;
     toolName?: string;
   }

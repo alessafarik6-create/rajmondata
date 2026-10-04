@@ -11,12 +11,18 @@ import {
   confirmCalendarMeetingTool,
   createCalendarMeetingDraftTool,
   getCalendarEventsTool,
+  proposeCancelCalendarMeetingTool,
+  proposeUpdateCalendarMeetingTool,
+  searchCalendarMeetingsTool,
   updateCalendarMeetingDraftTool,
 } from "@/lib/ai/secretary/tools/calendar";
 import {
   confirmEmployeeTaskTool,
   createEmployeeTaskDraftTool,
+  proposeCancelTaskTool,
+  proposeUpdateTaskTool,
   searchEmployeesTool,
+  searchTasksTool,
   updateEmployeeTaskDraftTool,
 } from "@/lib/ai/secretary/tools/tasks";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
@@ -39,7 +45,16 @@ export type SecretaryToolName =
   | "search_employees"
   | "create_employee_task_draft"
   | "update_employee_task_draft"
-  | "confirm_employee_task";
+  | "confirm_employee_task"
+  | "search_calendar_meetings"
+  | "confirm_calendar_meeting_update"
+  | "confirm_calendar_meeting_cancel"
+  | "cancel_calendar_meeting_draft"
+  | "search_tasks"
+  | "update_task_draft"
+  | "confirm_task_update"
+  | "cancel_task_draft"
+  | "confirm_task_cancel";
 
 function normalizeToolName(name: string): SecretaryToolName | null {
   const map: Record<string, SecretaryToolName> = {
@@ -61,6 +76,15 @@ function normalizeToolName(name: string): SecretaryToolName | null {
     create_employee_task_draft: "create_employee_task_draft",
     update_employee_task_draft: "update_employee_task_draft",
     confirm_employee_task: "confirm_employee_task",
+    search_calendar_meetings: "search_calendar_meetings",
+    confirm_calendar_meeting_update: "confirm_calendar_meeting_update",
+    confirm_calendar_meeting_cancel: "confirm_calendar_meeting_cancel",
+    cancel_calendar_meeting_draft: "cancel_calendar_meeting_draft",
+    search_tasks: "search_tasks",
+    update_task_draft: "update_task_draft",
+    confirm_task_update: "confirm_task_update",
+    cancel_task_draft: "cancel_task_draft",
+    confirm_task_cancel: "confirm_task_cancel",
   };
   return map[name] ?? null;
 }
@@ -142,7 +166,52 @@ export async function runSecretaryTool(
       case "update_calendar_meeting_draft": {
         const gate = assertSecretaryPermission(perms, "calendar_write");
         if (!gate.ok) return { ok: false, error: gate.message };
+        const pendingId = String(args.pendingActionId ?? args.pendingId ?? "").trim();
+        const eventId = String(args.eventId ?? args.meetingId ?? "").trim();
+        if (!pendingId && eventId) {
+          const result = await proposeUpdateCalendarMeetingTool(db, ctx, args);
+          return { ok: true, ...result, pendingId: result.pendingActionId };
+        }
         return await updateCalendarMeetingDraftTool(db, ctx, args);
+      }
+      case "cancel_calendar_meeting_draft": {
+        const gate = assertSecretaryPermission(perms, "calendar_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await proposeCancelCalendarMeetingTool(db, ctx, args);
+        return { ok: true, ...result, pendingId: result.pendingActionId };
+      }
+      case "search_calendar_meetings": {
+        const gate = assertSecretaryPermission(perms, "calendar_read");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await searchCalendarMeetingsTool(db, ctx, {
+          query: String(args.query ?? ""),
+          fromIso: args.fromIso != null ? String(args.fromIso) : undefined,
+          toIso: args.toIso != null ? String(args.toIso) : undefined,
+        });
+        return { ok: true, ...result };
+      }
+      case "confirm_calendar_meeting_update":
+      case "confirm_calendar_meeting_cancel": {
+        const gate = assertSecretaryPermission(perms, "calendar_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await confirmCalendarMeetingTool(db, ctx, {
+          pendingActionId: String(args.pendingActionId ?? args.pendingId ?? ""),
+          userConfirmationText:
+            args.userConfirmationText != null ? String(args.userConfirmationText) : undefined,
+        });
+        if (result.ok && result.eventId) {
+          await logSecretaryAudit(db, {
+            companyId,
+            userId: caller.uid,
+            action:
+              toolName === "confirm_calendar_meeting_cancel"
+                ? "meeting_cancelled_via_ai_voice"
+                : "meeting_updated_via_ai_voice",
+            toolName: toolNameRaw,
+            detail: result.eventId,
+          });
+        }
+        return { ok: result.ok, message: result.message, eventId: result.eventId ?? null };
       }
       case "confirm_calendar_meeting": {
         const gate = assertSecretaryPermission(perms, "calendar_write");
@@ -244,10 +313,55 @@ export async function runSecretaryTool(
         const result = await createEmployeeTaskDraftTool(db, ctx, args);
         return { ok: true, ...result, pendingId: result.pendingActionId };
       }
-      case "update_employee_task_draft": {
+      case "update_employee_task_draft":
+      case "update_task_draft": {
         const gate = assertSecretaryPermission(perms, "tasks_write");
         if (!gate.ok) return { ok: false, error: gate.message };
+        const pendingId = String(args.pendingActionId ?? args.pendingId ?? "").trim();
+        const taskId = String(args.taskId ?? args.entityId ?? "").trim();
+        if (!pendingId && taskId) {
+          const result = await proposeUpdateTaskTool(db, ctx, args);
+          return { ok: true, ...result, pendingId: result.pendingActionId };
+        }
         return await updateEmployeeTaskDraftTool(db, ctx, args);
+      }
+      case "cancel_task_draft": {
+        const gate = assertSecretaryPermission(perms, "tasks_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await proposeCancelTaskTool(db, ctx, args);
+        return { ok: true, ...result, pendingId: result.pendingActionId };
+      }
+      case "search_tasks": {
+        const gate = assertSecretaryPermission(perms, "tasks_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await searchTasksTool(db, companyId, {
+          query: String(args.query ?? ""),
+          employeeId: args.employeeId != null ? String(args.employeeId) : undefined,
+        });
+        return { ok: true, ...result };
+      }
+      case "confirm_task_update":
+      case "confirm_task_cancel": {
+        const gate = assertSecretaryPermission(perms, "tasks_write");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await confirmEmployeeTaskTool(db, ctx, {
+          pendingActionId: String(args.pendingActionId ?? args.pendingId ?? ""),
+          userConfirmationText:
+            args.userConfirmationText != null ? String(args.userConfirmationText) : undefined,
+        });
+        if (result.ok && result.taskId) {
+          await logSecretaryAudit(db, {
+            companyId,
+            userId: caller.uid,
+            action:
+              toolName === "confirm_task_cancel"
+                ? "task_cancelled_via_ai_voice"
+                : "task_updated_via_ai_voice",
+            toolName: toolNameRaw,
+            detail: result.taskId,
+          });
+        }
+        return { ok: result.ok, message: result.message, taskId: result.taskId ?? null };
       }
       case "confirm_employee_task": {
         const gate = assertSecretaryPermission(perms, "tasks_write");
@@ -497,6 +611,127 @@ export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown
       type: "function",
       name: "confirm_employee_task",
       description: "Po slovním ano uloží návrh úkolu do modulu Úkoly.",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          userConfirmationText: { type: "string" },
+        },
+        required: ["pendingActionId", "userConfirmationText"],
+      },
+    },
+    {
+      type: "function",
+      name: "search_calendar_meetings",
+      description: "Vyhledá schůzky v kalendáři podle textu a období.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          fromIso: { type: "string" },
+          toIso: { type: "string" },
+        },
+      },
+    },
+    {
+      type: "function",
+      name: "cancel_calendar_meeting_draft",
+      description: "Připraví návrh zrušení schůzky (vyžaduje confirm_calendar_meeting_cancel).",
+      parameters: {
+        type: "object",
+        properties: {
+          eventId: { type: "string" },
+          title: { type: "string" },
+          customerName: { type: "string" },
+        },
+        required: ["eventId"],
+      },
+    },
+    {
+      type: "function",
+      name: "confirm_calendar_meeting_update",
+      description: "Po ano provede změnu schůzky z pending návrhu.",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          userConfirmationText: { type: "string" },
+        },
+        required: ["pendingActionId", "userConfirmationText"],
+      },
+    },
+    {
+      type: "function",
+      name: "confirm_calendar_meeting_cancel",
+      description: "Po ano zruší schůzku z pending návrhu.",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          userConfirmationText: { type: "string" },
+        },
+        required: ["pendingActionId", "userConfirmationText"],
+      },
+    },
+    {
+      type: "function",
+      name: "search_tasks",
+      description: "Vyhledá otevřené úkoly podle textu nebo zaměstnance.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          employeeId: { type: "string" },
+        },
+      },
+    },
+    {
+      type: "function",
+      name: "update_task_draft",
+      description: "Připraví návrh nového úkolu nebo změny existujícího (s taskId).",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          taskId: { type: "string" },
+          title: { type: "string" },
+          description: { type: "string" },
+          employeeId: { type: "string" },
+          dueDate: { type: "string" },
+          priority: { type: "string", enum: ["low", "normal", "high"] },
+        },
+      },
+    },
+    {
+      type: "function",
+      name: "cancel_task_draft",
+      description: "Připraví návrh smazání úkolu.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string" },
+          title: { type: "string" },
+        },
+        required: ["taskId"],
+      },
+    },
+    {
+      type: "function",
+      name: "confirm_task_update",
+      description: "Po ano provede změnu úkolu.",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          userConfirmationText: { type: "string" },
+        },
+        required: ["pendingActionId", "userConfirmationText"],
+      },
+    },
+    {
+      type: "function",
+      name: "confirm_task_cancel",
+      description: "Po ano smaže úkol.",
       parameters: {
         type: "object",
         properties: {

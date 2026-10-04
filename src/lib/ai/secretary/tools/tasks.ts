@@ -11,6 +11,8 @@ import {
 } from "@/lib/ai/secretary/confirmation";
 import {
   createOrganizationTask,
+  deleteOrganizationTask,
+  updateOrganizationTask,
   validateOrganizationTaskDraft,
   type OrganizationTaskDraft,
 } from "@/lib/tasks/create-organization-task-server";
@@ -78,6 +80,81 @@ export async function searchEmployeesTool(
   return { employees };
 }
 
+export async function searchTasksTool(
+  db: Firestore,
+  companyId: string,
+  args: { query?: string; employeeId?: string }
+): Promise<{ tasks: Array<Record<string, unknown>> }> {
+  const q = String(args.query ?? "").trim().toLowerCase();
+  const employeeId = String(args.employeeId ?? "").trim();
+  const snap = await db
+    .collection(COMPANIES_COLLECTION)
+    .doc(companyId)
+    .collection("tasks")
+    .limit(80)
+    .get();
+
+  const tasks = snap.docs
+    .map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        title: String(data.title ?? ""),
+        description: String(data.description ?? ""),
+        dueDate: data.dueDate ?? null,
+        assignedTo: data.assignedTo ?? null,
+        status: data.status ?? "open",
+        priority: data.priority ?? "medium",
+      };
+    })
+    .filter((t) => (t.status ?? "open") !== "done")
+    .filter((t) => !employeeId || String(t.assignedTo) === employeeId)
+    .filter((t) => !q || `${t.title} ${t.description}`.toLowerCase().includes(q))
+    .slice(0, 12);
+
+  return { tasks };
+}
+
+export async function proposeUpdateTaskTool(
+  db: Firestore,
+  ctx: SecretaryContext,
+  args: Record<string, unknown>
+): Promise<{ pendingActionId: string; summary: string; requiresConfirmation: true }> {
+  const taskId = String(args.taskId ?? args.entityId ?? "").trim();
+  if (!taskId) throw new Error("Chybí taskId.");
+  const draft = draftFromArgs(args);
+  const v = validateOrganizationTaskDraft(draft);
+  if (!v.ok) throw new Error(v.error);
+  const summary = `Změna úkolu: ${formatTaskSummary(draft, ctx)}`;
+  const { pendingId } = await proposeSecretaryAction(db, {
+    companyId: ctx.companyId,
+    userId: ctx.userId,
+    type: "update_task",
+    payload: { taskId, entityId: taskId, draft },
+    summary,
+  });
+  return { pendingActionId: pendingId, summary, requiresConfirmation: true };
+}
+
+export async function proposeCancelTaskTool(
+  db: Firestore,
+  ctx: SecretaryContext,
+  args: Record<string, unknown>
+): Promise<{ pendingActionId: string; summary: string; requiresConfirmation: true }> {
+  const taskId = String(args.taskId ?? args.entityId ?? "").trim();
+  if (!taskId) throw new Error("Chybí taskId.");
+  const title = String(args.title ?? "Úkol").trim();
+  const summary = `Zrušení úkolu „${title}“.`;
+  const { pendingId } = await proposeSecretaryAction(db, {
+    companyId: ctx.companyId,
+    userId: ctx.userId,
+    type: "cancel_task",
+    payload: { taskId, entityId: taskId, title },
+    summary,
+  });
+  return { pendingActionId: pendingId, summary, requiresConfirmation: true };
+}
+
 export async function createEmployeeTaskDraftTool(
   db: Firestore,
   ctx: SecretaryContext,
@@ -108,17 +185,31 @@ export async function updateEmployeeTaskDraftTool(
   const pending = await loadPendingSecretaryAction(db, ctx.companyId, pendingId, ctx.userId);
   if (!pending) return { ok: false, message: "Návrh neexistuje." };
 
-  const merged = { ...pending.payload, ...draftFromArgs(args) };
-  const draft = draftFromArgs(merged as Record<string, unknown>);
+  const basePayload =
+    pending.type === "update_task"
+      ? { ...(pending.payload as { draft?: Record<string, unknown> }).draft, ...args }
+      : { ...pending.payload, ...args };
+  const draft = draftFromArgs(basePayload as Record<string, unknown>);
   const v = validateOrganizationTaskDraft(draft);
   if (!v.ok) return { ok: false, message: v.error };
 
-  const summary = formatTaskSummary(draft, ctx);
+  const summary =
+    pending.type === "update_task"
+      ? `Změna úkolu: ${formatTaskSummary(draft, ctx)}`
+      : formatTaskSummary(draft, ctx);
+  const payloadPatch =
+    pending.type === "update_task"
+      ? {
+          taskId: String((pending.payload as { taskId?: string }).taskId ?? ""),
+          entityId: String((pending.payload as { taskId?: string }).taskId ?? ""),
+          draft,
+        }
+      : (draft as unknown as Record<string, unknown>);
   await updatePendingSecretaryAction(db, {
     companyId: ctx.companyId,
     userId: ctx.userId,
     pendingId,
-    payloadPatch: draft as unknown as Record<string, unknown>,
+    payloadPatch,
     summary,
   });
   return { ok: true, pendingActionId: pendingId, summary };
@@ -167,5 +258,31 @@ export async function confirmEmployeeTaskTool(
     };
   }
 
+  if (pending.type === "update_task") {
+    const payload = pending.payload as { taskId?: string; draft?: OrganizationTaskDraft };
+    const taskId = String(payload.taskId ?? "").trim();
+    const draft = payload.draft as OrganizationTaskDraft;
+    if (!taskId || !draft) return { ok: false, message: "Neplatný návrh změny úkolu." };
+    await updateOrganizationTask(db, { companyId: ctx.companyId, taskId, draft });
+    await consumePendingSecretaryAction(db, ctx.companyId, pendingId);
+    return {
+      ok: true,
+      message: `Hotovo, úkol jsem upravila${draft.dueDate ? ` na termín ${draft.dueDate}` : ""}.`,
+      taskId,
+    };
+  }
+
+  if (pending.type === "cancel_task") {
+    const payload = pending.payload as { taskId?: string };
+    const taskId = String(payload.taskId ?? "").trim();
+    if (!taskId) return { ok: false, message: "Neplatný návrh zrušení úkolu." };
+    await deleteOrganizationTask(db, { companyId: ctx.companyId, taskId });
+    await consumePendingSecretaryAction(db, ctx.companyId, pendingId);
+    return { ok: true, message: "Hotovo, úkol jsem zrušila.", taskId };
+  }
+
   return { ok: false, message: "Nepodporovaný typ akce." };
 }
+
+export const confirmTaskUpdateTool = confirmEmployeeTaskTool;
+export const confirmTaskCancelTool = confirmEmployeeTaskTool;

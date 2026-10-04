@@ -108,3 +108,62 @@ export async function createOrganizationCalendarMeeting(
     .add(payload);
   return { eventId: ref.id };
 }
+
+export async function updateOrganizationCalendarMeeting(
+  db: Firestore,
+  input: {
+    companyId: string;
+    eventId: string;
+    draft: CalendarMeetingDraft;
+    timeZone: string;
+    updatedByUserId: string;
+  }
+): Promise<void> {
+  const v = validateCalendarMeetingDraft(input.draft, input.timeZone);
+  if (!v.ok) throw new Error(v.error);
+
+  const ref = db
+    .collection(COMPANIES_COLLECTION)
+    .doc(input.companyId)
+    .collection(ORGANIZATION_CALENDAR_MEETINGS_COLLECTION)
+    .doc(input.eventId);
+
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("Schůzka neexistuje.");
+
+  const customerName = String(input.draft.customerName ?? input.draft.title).trim() || "—";
+  const patch: Record<string, unknown> = {
+    customerName,
+    place: String(input.draft.place ?? "").trim(),
+    note: String(input.draft.note ?? "").trim(),
+    phone: String(input.draft.phone ?? "").trim(),
+    scheduledAt: Timestamp.fromDate(v.scheduledAt),
+    title: String(input.draft.title).trim(),
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: input.updatedByUserId,
+    ...(v.endsAt ? { endsAt: v.endsAt } : { endsAt: null }),
+  };
+
+  await ref.update(patch);
+}
+
+export async function cancelOrganizationCalendarMeeting(
+  db: Firestore,
+  input: { companyId: string; eventId: string; updatedByUserId: string }
+): Promise<void> {
+  const ref = db
+    .collection(COMPANIES_COLLECTION)
+    .doc(input.companyId)
+    .collection(ORGANIZATION_CALENDAR_MEETINGS_COLLECTION)
+    .doc(input.eventId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("Schůzka neexistuje.");
+
+  await ref.update({
+    status: "cancelled",
+    cancelledAt: FieldValue.serverTimestamp(),
+    completedAt: null,
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: input.updatedByUserId,
+  });
+}

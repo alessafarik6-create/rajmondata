@@ -92,3 +92,54 @@ export async function createOrganizationTask(
 
   return { taskId: ref.id };
 }
+
+export async function updateOrganizationTask(
+  db: Firestore,
+  input: {
+    companyId: string;
+    taskId: string;
+    draft: OrganizationTaskDraft;
+  }
+): Promise<void> {
+  const v = validateOrganizationTaskDraft(input.draft);
+  if (!v.ok) throw new Error(v.error);
+
+  const ref = db
+    .collection(COMPANIES_COLLECTION)
+    .doc(input.companyId)
+    .collection("tasks")
+    .doc(input.taskId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("Úkol neexistuje.");
+
+  const assignedMode = input.draft.assignedMode ?? (input.draft.assignedTo ? "single" : "all");
+  const assignedTo =
+    assignedMode === "all" ? null : String(input.draft.assignedTo ?? "").trim() || null;
+
+  await ref.update({
+    title: String(input.draft.title).trim(),
+    description: String(input.draft.description ?? "").trim() || null,
+    dueDate:
+      input.draft.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(String(input.draft.dueDate))
+        ? String(input.draft.dueDate)
+        : null,
+    priority: normalizePriority(input.draft.priority),
+    assignedMode,
+    assignedTo,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
+export async function deleteOrganizationTask(
+  db: Firestore,
+  input: { companyId: string; taskId: string }
+): Promise<void> {
+  const ref = db
+    .collection(COMPANIES_COLLECTION)
+    .doc(input.companyId)
+    .collection("tasks")
+    .doc(input.taskId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("Úkol neexistuje.");
+  await ref.delete();
+}

@@ -74,6 +74,8 @@ export function useAiSecretaryRealtime({
   const remoteAudioBoundRef = useRef(false);
   const disconnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionObjectsLoggedRef = useRef(false);
+  const greetingSentRef = useRef(false);
+  const handlersBoundRef = useRef(false);
 
   const voiceMetric = useCallback((message: string, detail?: Record<string, string | number | boolean>) => {
     voiceDebugLog(message, detail);
@@ -102,6 +104,8 @@ export function useAiSecretaryRealtime({
       disconnectGraceTimerRef.current = null;
     }
     sessionObjectsLoggedRef.current = false;
+    greetingSentRef.current = false;
+    handlersBoundRef.current = false;
     dcRef.current?.close();
     dcRef.current = null;
     pcRef.current?.close();
@@ -148,14 +152,20 @@ export function useAiSecretaryRealtime({
     [voiceMetric]
   );
 
-  const sendGreeting = useCallback(
+  const maybeSendGreeting = useCallback(
     (dc: RTCDataChannel) => {
+      if (greetingSentRef.current) return;
+      if (dc.readyState !== "open") return;
+      if (pcRef.current?.connectionState !== "connected") return;
+      greetingSentRef.current = true;
       sendResponseCreate(dc, {
         instructions:
           "Pozdrav uživatele česky přesně větou: Dobrý den, co pro vás můžu udělat?",
       });
+      setPhaseSafe("assistant_speaking");
+      onStatusHint?.("Sekretářka mluví…");
     },
-    [sendResponseCreate]
+    [sendResponseCreate, setPhaseSafe, onStatusHint]
   );
 
   const invokeTool = useCallback(
@@ -290,6 +300,14 @@ export function useAiSecretaryRealtime({
             setPhaseSafe("waiting_confirmation");
             onStatusHint?.("Čekám na potvrzení…");
           }
+          if (typeof window !== "undefined") {
+            if (result.taskId) {
+              window.dispatchEvent(new CustomEvent("rajmondata-organization-tasks-changed"));
+            }
+            if (result.eventId) {
+              window.dispatchEvent(new CustomEvent("rajmondata-calendar-changed"));
+            }
+          }
           if (!dcRef.current || dcRef.current.readyState !== "open") return;
           dc.send(
             JSON.stringify({
@@ -334,7 +352,11 @@ export function useAiSecretaryRealtime({
   }, []);
 
   const start = useCallback(async () => {
-    if (!user || !companyId || startingRef.current || activeRef.current) return;
+    if (!user || !companyId) return;
+    if (startingRef.current) return;
+    if (pcRef.current || activeRef.current) {
+      cleanupMedia();
+    }
     startingRef.current = true;
     abortRef.current?.abort();
     abortRef.current = new AbortController();
@@ -368,7 +390,18 @@ export function useAiSecretaryRealtime({
         throw new Error(sessionData.error ?? "Session preflight failed");
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
       if (signal.aborted) {
         stream.getTracks().forEach((t) => t.stop());
         return;
@@ -430,6 +463,9 @@ export function useAiSecretaryRealtime({
           }
           return;
         }
+        if (pc.connectionState === "connected" && dcRef.current) {
+          maybeSendGreeting(dcRef.current);
+        }
         if (pc.connectionState === "failed") {
           onError?.(mapVoiceErrorForUser("Spojení selhalo."), { code: "pc_failed" });
           setPhaseSafe("error");
@@ -456,10 +492,7 @@ export function useAiSecretaryRealtime({
       dc.onopen = () => {
         voiceDebugLog("data channel open");
         setPhaseSafe("connected");
-        sendGreeting(dc);
-        setPhaseSafe("assistant_speaking");
-        onStatusHint?.("Sekretářka mluví…");
-        voiceDebugLog("assistant speaking");
+        maybeSendGreeting(dc);
       };
 
       dc.onclose = () => {
@@ -563,12 +596,12 @@ export function useAiSecretaryRealtime({
   }, [
     user,
     companyId,
-    sendGreeting,
+    maybeSendGreeting,
     handleRealtimeEvent,
+    cleanupMedia,
     onError,
     onStatusHint,
     setPhaseSafe,
-    cleanupMedia,
     voiceMetric,
   ]);
 
