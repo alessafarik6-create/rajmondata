@@ -34,6 +34,9 @@ export function useMeetingAudioRecorder({
   const startedAtRef = useRef<number | null>(null);
   const pausedAccumRef = useRef(0);
   const pauseStartedRef = useRef<number | null>(null);
+  const elapsedSecRef = useRef(0);
+  const recordIdRef = useRef(recordId);
+  recordIdRef.current = recordId;
 
   const stopTimer = () => {
     if (timerRef.current) {
@@ -47,7 +50,9 @@ export function useMeetingAudioRecorder({
     const pauseExtra =
       pauseStartedRef.current != null ? Date.now() - pauseStartedRef.current : 0;
     const ms = Date.now() - startedAtRef.current - pausedAccumRef.current - pauseExtra;
-    setElapsedSec(Math.max(0, Math.floor(ms / 1000)));
+    const sec = Math.max(0, Math.floor(ms / 1000));
+    elapsedSecRef.current = sec;
+    setElapsedSec(sec);
   }, []);
 
   const uploadChunk = useCallback(
@@ -59,7 +64,7 @@ export function useMeetingAudioRecorder({
       const form = new FormData();
       form.append("chunk", blob, `chunk-${idx}.webm`);
       const url =
-        `/api/company/meeting-records/${encodeURIComponent(recordId)}/audio/chunk` +
+        `/api/company/meeting-records/${encodeURIComponent(recordIdRef.current)}/audio/chunk` +
         `?companyId=${encodeURIComponent(companyId)}` +
         `&uploadSessionId=${encodeURIComponent(uploadSessionRef.current)}` +
         `&chunkIndex=${idx}`;
@@ -75,16 +80,18 @@ export function useMeetingAudioRecorder({
         await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
       }
     },
-    [user, companyId, recordId]
+    [user, companyId]
   );
 
-  const start = useCallback(async () => {
-    if (!user || !companyId || !recordId) return;
+  const start = useCallback(async (recordIdOverride?: string) => {
+    const activeRecordId = String(recordIdOverride ?? recordIdRef.current).trim();
+    if (!user || !companyId || !activeRecordId) return;
+    recordIdRef.current = activeRecordId;
     setPhase("uploading");
     try {
       const token = await user.getIdToken();
       const res = await fetch(
-        `/api/company/meeting-records/${encodeURIComponent(recordId)}/audio/start`,
+        `/api/company/meeting-records/${encodeURIComponent(activeRecordId)}/audio/start`,
         {
           method: "POST",
           headers: {
@@ -170,7 +177,7 @@ export function useMeetingAudioRecorder({
     try {
       const token = await user.getIdToken();
       const res = await fetch(
-        `/api/company/meeting-records/${encodeURIComponent(recordId)}/audio/finish`,
+        `/api/company/meeting-records/${encodeURIComponent(recordIdRef.current)}/audio/finish`,
         {
           method: "POST",
           headers: {
@@ -180,7 +187,7 @@ export function useMeetingAudioRecorder({
           body: JSON.stringify({
             companyId,
             uploadSessionId: uploadSessionRef.current,
-            durationSeconds: elapsedSec,
+            durationSeconds: elapsedSecRef.current,
           }),
         }
       );
@@ -192,7 +199,9 @@ export function useMeetingAudioRecorder({
       onError?.(e instanceof Error ? e.message : "Uložení selhalo.");
       setPhase("error");
     }
-  }, [user, companyId, recordId, elapsedSec, onError, onFinished]);
+  }, [user, companyId, onError, onFinished]);
+
+  const isActive = phase === "recording" || phase === "paused" || phase === "uploading";
 
   const formatElapsed = () => {
     const h = Math.floor(elapsedSec / 3600);
@@ -201,5 +210,5 @@ export function useMeetingAudioRecorder({
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   };
 
-  return { phase, elapsedSec, formatElapsed, start, pause, resume, stop };
+  return { phase, elapsedSec, formatElapsed, start, pause, resume, stop, isActive };
 }

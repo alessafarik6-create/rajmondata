@@ -39,7 +39,7 @@ export async function POST(
       companyId,
       userId: auth.caller.uid,
       recordId,
-      action: "meeting_audio_finished",
+      action: "meeting_recording_uploaded",
       detail: storagePath,
     });
     return NextResponse.json({ ok: true, storagePath });

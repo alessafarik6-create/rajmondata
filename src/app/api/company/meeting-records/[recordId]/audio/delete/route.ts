@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { FieldValue } from "firebase-admin/firestore";
+import { getAdminStorageBucket } from "@/lib/firebase-admin";
 import { requireMeetingAudioAccess } from "@/lib/meeting-audio/meeting-audio-api-auth";
-import { startMeetingAudioSession } from "@/lib/meeting-audio/meeting-audio-storage";
+import { meetingRecordsCollection } from "@/lib/meeting-audio/meeting-audio-storage";
 import { logMeetingAudioAudit } from "@/lib/meeting-audio/meeting-audio-audit";
+import type { MeetingAudioMeta } from "@/lib/meeting-records-media-types";
 
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
 
 export async function POST(
   request: NextRequest,
   ctx: { params: Promise<{ recordId: string }> }
 ) {
   const { recordId } = await ctx.params;
-  let body: { companyId?: string; userDisplayName?: string };
+  let body: { companyId?: string };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -26,22 +28,31 @@ export async function POST(
     return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
   }
 
-  const userSnap = await auth.db.collection("users").doc(auth.caller.uid).get();
-  const displayName =
-    String(body.userDisplayName ?? (userSnap.data() as { displayName?: string })?.displayName ?? "")
-      .trim() || "Uživatel";
+  const ref = meetingRecordsCollection(auth.db, companyId).doc(recordId);
+  const snap = await ref.get();
+  const audio = (snap.data()?.audio ?? {}) as MeetingAudioMeta;
+  const bucket = getAdminStorageBucket();
+  if (bucket && audio.storagePath) {
+    await bucket.file(audio.storagePath).delete({ ignoreNotFound: true }).catch(() => undefined);
+  }
+  for (const p of audio.chunkPaths ?? []) {
+    if (bucket && p) await bucket.file(p).delete({ ignoreNotFound: true }).catch(() => undefined);
+  }
 
-  const { uploadSessionId } = await startMeetingAudioSession(auth.db, {
-    companyId,
-    recordId,
-    userId: auth.caller.uid,
-    userName: displayName,
-  });
+  await ref.set(
+    {
+      audio: FieldValue.delete(),
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
   await logMeetingAudioAudit(auth.db, {
     companyId,
     userId: auth.caller.uid,
     recordId,
-    action: "meeting_recording_started",
+    action: "meeting_recording_deleted",
   });
-  return NextResponse.json({ ok: true, uploadSessionId });
+
+  return NextResponse.json({ ok: true });
 }

@@ -11,10 +11,16 @@ export async function logMeetingAudioAudit(
     userId: string;
     recordId: string;
     action:
+      | "meeting_recording_started"
+      | "meeting_recording_finished"
+      | "meeting_recording_uploaded"
       | "meeting_audio_started"
       | "meeting_audio_finished"
       | "meeting_transcribed"
-      | "meeting_ai_summary_created";
+      | "meeting_ai_summary_generated"
+      | "meeting_ai_summary_created"
+      | "meeting_tasks_created"
+      | "meeting_recording_deleted";
     detail?: string;
   }
 ): Promise<void> {

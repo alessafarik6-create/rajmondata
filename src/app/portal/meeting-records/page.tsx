@@ -16,7 +16,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarClock, ExternalLink, FileDown, Mail, Pencil, Plus } from "lucide-react";
+import { CalendarClock, ExternalLink, FileDown, Mail, Mic, Pencil, Plus } from "lucide-react";
+import { MeetingAudioRecordingDialog } from "@/components/meeting-records/meeting-audio-recording-dialog";
+import type { MeetingAiSummaryMeta, MeetingAudioMeta } from "@/lib/meeting-records-media-types";
 import { formatDashboardActivityTime } from "@/components/portal/dashboard-activity-section";
 import { MeetingRecordFormDialog } from "@/components/meeting-records/meeting-record-form-dialog";
 import { MeetingRecordEmailDialog } from "@/components/meeting-records/meeting-record-email-dialog";
@@ -52,6 +54,8 @@ type MeetingRow = {
   sentToEmails?: string[];
   createdByName?: string | null;
   createdBy?: string | null;
+  audio?: MeetingAudioMeta | null;
+  aiSummary?: MeetingAiSummaryMeta | null;
 };
 
 function matchesRegistryFilter(row: MeetingRow, f: RegistryFilter): boolean {
@@ -118,6 +122,7 @@ export default function MeetingRecordsRegistryPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [emailRecordId, setEmailRecordId] = useState<string | null>(null);
   const [pdfBusyId, setPdfBusyId] = useState<string | null>(null);
+  const [audioDialogOpen, setAudioDialogOpen] = useState(false);
 
   const jobsCol = useMemoFirebase(
     () =>
@@ -192,22 +197,32 @@ export default function MeetingRecordsRegistryPage() {
         <div>
           <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">Záznamy ze schůzek</h1>
           <p className="text-sm text-slate-600">
-            Přehled všech záznamů včetně nepřiřazených. Úpravy a přiřazení zakázky jsou vždy u stejného
-            dokumentu — neduplikují se.
+            Přehled záznamů, audio nahrávek a AI zápisů ze schůzek.
           </p>
         </div>
         {canEdit ? (
-          <Button
-            type="button"
-            className="gap-2 self-start"
-            onClick={() => {
-              setEditId(null);
-              setFormOpen(true);
-            }}
-          >
-            <Plus className="h-4 w-4" />
-            Nový záznam
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:self-start">
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2 min-h-[44px]"
+              onClick={() => setAudioDialogOpen(true)}
+            >
+              <Mic className="h-4 w-4" />
+              Audio záznam
+            </Button>
+            <Button
+              type="button"
+              className="gap-2 min-h-[44px]"
+              onClick={() => {
+                setEditId(null);
+                setFormOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              Nový záznam
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -286,6 +301,16 @@ export default function MeetingRecordsRegistryPage() {
                         <p className="text-sm text-slate-700 line-clamp-2">{short}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
+                        {r.audio?.status === "ready" ? (
+                          <Badge variant="outline" className="text-xs">
+                            🎙 Audio
+                          </Badge>
+                        ) : null}
+                        {r.aiSummary?.status === "ready" ? (
+                          <Badge variant="outline" className="text-xs border-violet-300">
+                            ✨ AI
+                          </Badge>
+                        ) : null}
                         {sent ? (
                           <Badge variant="outline" className="border-emerald-300 text-emerald-900">
                             Odesláno zákazníkovi
@@ -384,6 +409,19 @@ export default function MeetingRecordsRegistryPage() {
           jobs={jobs}
           editRecordId={editId}
           onSaved={() => {}}
+        />
+      ) : null}
+
+      {user && companyId ? (
+        <MeetingAudioRecordingDialog
+          open={audioDialogOpen}
+          onOpenChange={setAudioDialogOpen}
+          user={user}
+          companyId={companyId}
+          jobs={jobs}
+          userDisplayName={
+            (userProfile as { displayName?: string })?.displayName ?? user.displayName ?? undefined
+          }
         />
       ) : null}
 

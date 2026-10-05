@@ -25,6 +25,7 @@ import {
   searchTasksTool,
   updateEmployeeTaskDraftTool,
 } from "@/lib/ai/secretary/tools/tasks";
+import { searchMeetingRecordsTool } from "@/lib/ai/secretary/tools/meeting-records";
 import {
   assignEmailEmployeeTool,
   confirmEmailSendTool,
@@ -81,7 +82,8 @@ export type SecretaryToolName =
   | "create_email_compose_draft"
   | "confirm_email_send"
   | "mark_email_resolved"
-  | "assign_email_employee";
+  | "assign_email_employee"
+  | "search_meeting_records";
 
 function normalizeToolName(name: string): SecretaryToolName | null {
   const map: Record<string, SecretaryToolName> = {
@@ -125,6 +127,7 @@ function normalizeToolName(name: string): SecretaryToolName | null {
     confirm_email_send: "confirm_email_send",
     mark_email_resolved: "mark_email_resolved",
     assign_email_employee: "assign_email_employee",
+    search_meeting_records: "search_meeting_records",
   };
   return map[name] ?? null;
 }
@@ -574,6 +577,15 @@ export async function runSecretaryTool(
         const gate = assertSecretaryPermission(perms, "email_write");
         if (!gate.ok) return { ok: false, error: gate.message };
         return await assignEmailEmployeeTool(db, ctx, args);
+      }
+      case "search_meeting_records": {
+        const gate = assertSecretaryPermission(perms, "jobs_read");
+        if (!gate.ok) return { ok: false, error: gate.message };
+        const result = await searchMeetingRecordsTool(db, companyId, {
+          query: args.query != null ? String(args.query) : undefined,
+          limit: args.limit != null ? Number(args.limit) : undefined,
+        });
+        return { ok: true, ...result };
       }
       case "getTodayOverview": {
         const tomorrow = new Date();
@@ -1065,6 +1077,19 @@ export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown
           resolved: { type: "boolean" },
         },
         required: ["emailId"],
+      },
+    },
+    {
+      type: "function",
+      name: "search_meeting_records",
+      description:
+        "READ-ONLY: vyhledá zápisy ze schůzek (AI summary) — např. co bylo domluveno s Novákem.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          limit: { type: "number" },
+        },
       },
     },
     {

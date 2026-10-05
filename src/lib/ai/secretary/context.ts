@@ -73,5 +73,6 @@ export function secretarySystemInstructions(ctx: SecretaryContext): string {
     "Přeposlání: create_email_forward_draft. Nový e-mail: create_email_compose_draft.",
     "Vyřízeno: mark_email_resolved. Přiřazení: assign_email_employee + search_employees.",
     "Z e-mailu úkol/schůzku dělej přes existující task/meeting draft flow s potvrzením.",
+    "Zápisy schůzek: search_meeting_records (jen schválený text zápisu, ne audio).",
   ].join("\n");
 }

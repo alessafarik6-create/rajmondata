@@ -113,9 +113,39 @@ export function buildMeetingRecordPdfHtml(params: {
       ? String((r.transcript as { text?: string }).text).trim()
       : "";
   const includeFullTranscript = r.includeFullTranscriptInPdf === true;
-  const notes =
+  const customerFacing =
+    typeof r.customerFacingNotes === "string" && r.customerFacingNotes.trim()
+      ? r.customerFacingNotes.trim()
+      : "";
+  const structured = (r.aiSummary as { structured?: Record<string, unknown> } | undefined)?.structured as
+    | {
+        shortSummary?: string;
+        mainPoints?: string[];
+        agreed?: string[];
+        tasks?: string[];
+        nextSteps?: string[];
+      }
+    | undefined;
+  let notes =
+    customerFacing ||
     aiSummary ||
     (typeof r.meetingNotes === "string" && r.meetingNotes.trim() ? r.meetingNotes.trim() : "—");
+  if (structured && !customerFacing && !aiSummary) {
+    const parts: string[] = [structured.shortSummary ?? ""];
+    if (structured.mainPoints?.length) {
+      parts.push("\nKlíčové body:\n" + structured.mainPoints.map((x) => `• ${x}`).join("\n"));
+    }
+    if (structured.agreed?.length) {
+      parts.push("\nRozhodnutí:\n" + structured.agreed.map((x) => `• ${x}`).join("\n"));
+    }
+    if (structured.tasks?.length) {
+      parts.push("\nÚkoly:\n" + structured.tasks.map((x) => `• ${x}`).join("\n"));
+    }
+    if (structured.nextSteps?.length) {
+      parts.push("\nDalší kroky:\n" + structured.nextSteps.map((x, i) => `${i + 1}. ${x}`).join("\n"));
+    }
+    notes = parts.filter(Boolean).join("\n");
+  }
   const next =
     typeof r.nextSteps === "string" && r.nextSteps.trim() ? r.nextSteps.trim() : "";
   const author =

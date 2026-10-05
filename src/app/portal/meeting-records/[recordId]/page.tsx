@@ -441,6 +441,12 @@ export default function MeetingRecordDetailPage() {
               audio={(row as { audio?: MeetingAudioMeta }).audio ?? null}
               transcript={(row as { transcript?: MeetingTranscriptMeta }).transcript ?? null}
               aiSummary={(row as { aiSummary?: MeetingAiSummaryMeta }).aiSummary ?? null}
+              customerFacingNotes={
+                typeof (row as { customerFacingNotes?: string }).customerFacingNotes === "string"
+                  ? (row as { customerFacingNotes?: string }).customerFacingNotes
+                  : null
+              }
+              jobId={typeof row.jobId === "string" ? row.jobId : null}
               onReload={() => router.refresh()}
               userDisplayName={
                 (userProfile as { displayName?: string })?.displayName ??

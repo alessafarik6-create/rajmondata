@@ -124,9 +124,11 @@ export async function generateMeetingAiSummaryFromTranscript(
                 type: "input_text",
                 text:
                   "Jsi asistent pro zápisy schůzek ve stavební firmě v Česku. " +
-                  "Pracuj pouze s obsahem přepisu. Nevymýšlej fakta. " +
-                  "Nejisté body dej do uncertainNotes s textem „Nejisté / vyžaduje kontrolu“. " +
-                  "Speaker labels použij jen pokud jsou v přepisu jasné.",
+                  "Vycházej POUZE z přepisu a metadat — nevymýšlej rozhodnutí, částky, termíny ani účastníky. " +
+                  "Rozlišuj návrh od skutečně dohodnutého (dohodnuté do agreed, návrhy do uncertainNotes). " +
+                  "Nejisté body dej do uncertainNotes. " +
+                  "Jména mluvčích nevymýšlej — použij Speaker 1/2 jen pokud jsou v přepisu. " +
+                  "Úkoly v tasks piš stručně; suggestedActions.tasks jen s vysokou jistotou.",
               },
             ],
           },
