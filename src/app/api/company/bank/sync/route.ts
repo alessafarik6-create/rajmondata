@@ -10,16 +10,23 @@ export const runtime = "nodejs";
 function rbErrorResponse(e: RbPremiumApiError) {
   const status =
     e.httpStatus >= 400 && e.httpStatus <= 599 ? e.httpStatus : 502;
+  const diagnostics =
+    process.env.NODE_ENV !== "production" || process.env.RB_SYNC_DIAGNOSTICS === "1";
   return NextResponse.json(
     {
       ok: false,
       success: false,
+      error: "RB_REQUEST_REJECTED",
+      stage: e.stage ?? null,
+      upstreamStatus: e.httpStatus,
+      requestId: e.requestId ?? null,
+      source: e.source,
       httpStatus: e.httpStatus,
-      error: e.rbError ?? e.userMessage,
+      rbError: e.rbError ?? null,
       errorDescription: e.rbErrorDescription ?? null,
       message: e.userMessage,
       display: e.display,
-      requestUrl: e.requestUrl,
+      requestUrl: diagnostics ? e.requestUrl : undefined,
     },
     { status }
   );

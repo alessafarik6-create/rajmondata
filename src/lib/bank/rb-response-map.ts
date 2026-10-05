@@ -21,6 +21,11 @@ export function mapRbAccountRow(a: RbAccountRow): RaiffeisenAccountDto | null {
   const accountNumber = String(a.accountNumber ?? "").replace(/\D/g, "").trim();
   const rbAccountId = a.accountId != null ? String(a.accountId) : "";
   if (!accountNumber && !rbAccountId) return null;
+  if (!accountNumber) {
+    console.warn("[RB ACCOUNT] missing accountNumber for RB path; accountId only", {
+      accountIdSuffix: rbAccountId.slice(-4),
+    });
+  }
 
   const prefix = String(a.accountNumberPrefix ?? "").trim();
   const displayNumber =
@@ -30,7 +35,11 @@ export function mapRbAccountRow(a: RbAccountRow): RaiffeisenAccountDto | null {
     externalAccountId: rbAccountId || accountNumber,
     accountNumber: displayNumber,
     iban: a.iban ?? null,
-    currency: String(a.mainCurrency ?? "CZK").toUpperCase(),
+    currency: String(a.mainCurrency ?? "")
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z]/g, "")
+      .slice(0, 3) || "CZK",
     name: (a.friendlyName ?? a.accountName ?? null)?.trim() || null,
     balance: null,
     availableBalance: null,

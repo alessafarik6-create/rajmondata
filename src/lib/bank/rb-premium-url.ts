@@ -29,5 +29,16 @@ export function rbPremiumApiPath(subpath: string): string {
 export function buildRbPremiumRequestUrl(origin: string, subpath: string): string {
   const path = rbPremiumApiPath(subpath);
   const base = origin.replace(/\/+$/, "");
-  return `${base}${path}`;
+  const url = `${base}${path}`;
+  if (url.includes(`${RB_PREMIUM_API_PREFIX}${RB_PREMIUM_API_PREFIX}`)) {
+    console.error("[RB URL] duplicate premium API prefix detected", { url: url.slice(0, 200) });
+  }
+  return url;
+}
+
+/** Pro diagnostiku — finální URL pro GET accounts (bez certifikátu). */
+export function logRbResolvedAccountsUrl(): void {
+  const origin = resolveRaiffeisenApiOrigin();
+  const url = buildRbPremiumRequestUrl(origin, "/accounts");
+  console.info("[RB URL]", { origin, accountsGetUrl: url });
 }

@@ -51,8 +51,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           ok: false,
+          error: "RB_REQUEST_REJECTED",
+          stage: e.stage ?? "accounts",
+          upstreamStatus: e.httpStatus,
+          requestId: e.requestId ?? null,
+          source: e.source,
           httpStatus: e.httpStatus,
-          error: e.rbError ?? null,
+          rbError: e.rbError ?? null,
           errorDescription: e.rbErrorDescription ?? null,
           message: e.userMessage,
           display: e.display,

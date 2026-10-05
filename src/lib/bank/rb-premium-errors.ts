@@ -101,6 +101,8 @@ export function formatRbPremiumTestDisplay(httpStatus: number, body: RbPremiumEr
   return desc ? `${head}. ${desc}` : head;
 }
 
+export type RbSyncStage = "accounts" | "transactions" | "connection";
+
 export class RbPremiumApiError extends Error {
   readonly httpStatus: number;
   readonly requestUrl: string;
@@ -108,12 +110,20 @@ export class RbPremiumApiError extends Error {
   readonly rbErrorDescription?: string;
   readonly userMessage: string;
   readonly display: string;
+  readonly stage?: RbSyncStage;
+  readonly requestId?: string;
+  readonly responseContentType?: string | null;
+  readonly source: "upstream" | "local";
 
   constructor(input: {
     httpStatus: number;
     requestUrl: string;
     body?: RbPremiumErrorBody;
     userMessage?: string;
+    stage?: RbSyncStage;
+    requestId?: string;
+    responseContentType?: string | null;
+    source?: "upstream" | "local";
   }) {
     const body = input.body ?? {};
     const userMessage =
@@ -127,5 +137,9 @@ export class RbPremiumApiError extends Error {
       body.error_description ?? body.message ?? body.moreInformation;
     this.userMessage = userMessage;
     this.display = formatRbPremiumTestDisplay(input.httpStatus, body);
+    this.stage = input.stage;
+    this.requestId = input.requestId;
+    this.responseContentType = input.responseContentType ?? null;
+    this.source = input.source ?? "upstream";
   }
 }

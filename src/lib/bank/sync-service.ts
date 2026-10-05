@@ -64,7 +64,17 @@ export async function syncBankForOrganization(
     let updated = 0;
 
     try {
-      const accounts = await rbFetchAccounts(loaded.cfg);
+      console.info("[RB SYNC] accounts start");
+      let accounts: Awaited<ReturnType<typeof rbFetchAccounts>>;
+      try {
+        accounts = await rbFetchAccounts(loaded.cfg);
+      } catch (accErr) {
+        console.error("[RB SYNC] accounts failed");
+        throw accErr;
+      }
+      console.info("[RB SYNC] accounts success", { count: accounts.length });
+      console.info("[RB SYNC] accounts count", accounts.length);
+
       const connRef = bankConnectionsCol(db, organizationId).doc(loaded.connectionId);
 
       for (const acc of accounts) {
@@ -88,12 +98,24 @@ export async function syncBankForOrganization(
           { merge: true }
         );
 
+        if (!acc.rbAccountNumber) {
+          console.warn("[RB SYNC] skip transactions — missing rbAccountNumber", {
+            externalAccountIdSuffix: String(acc.externalAccountId ?? "").slice(-4),
+          });
+          continue;
+        }
+
         const dateFrom = isoDaysAgo(DEFAULT_HISTORY_DAYS);
         const dateTo = new Date().toISOString().split("T")[0];
+        console.info("[RB SYNC] transactions start", {
+          externalAccountIdSuffix: String(acc.externalAccountId ?? "").slice(-4),
+        });
         let txns: Awaited<ReturnType<typeof rbFetchTransactions>> = [];
         try {
           txns = await rbFetchTransactions(loaded.cfg, acc, { dateFrom, dateTo });
+          console.info("[RB SYNC] transactions success", { count: txns.length });
         } catch (accErr) {
+          console.error("[RB SYNC] transactions failed");
           if (accErr instanceof RbPremiumApiError) throw accErr;
           console.error("[RB SYNC] transactions failed for account", {
             externalAccountId: acc.externalAccountId,

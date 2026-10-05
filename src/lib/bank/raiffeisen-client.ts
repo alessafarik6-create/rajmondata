@@ -10,8 +10,18 @@ import {
   formatRbPremiumTestDisplay,
   parseRbPremiumErrorBody,
   RbPremiumApiError,
-  rbPremiumTestUserMessage,
+  type RbSyncStage,
 } from "@/lib/bank/rb-premium-errors";
+import {
+  appendQuery,
+  assertDateOnly,
+  logRbAccountSanitized,
+  logRbApiError,
+  logRbRequest,
+  normalizeCurrencyCode,
+  normalizeRbAccountNumber,
+} from "@/lib/bank/rb-premium-http";
+import { logRbResolvedAccountsUrl } from "@/lib/bank/rb-premium-url";
 import {
   mapRbAccountRow,
   mapRbTransactionRow,
@@ -81,35 +91,26 @@ function logRbConfig(clientId: string): void {
   });
 }
 
-function sanitizeErrorBodyForLog(body: string, max = 800): string {
-  return String(body ?? "")
-    .replace(/[\r\n]+/g, " ")
-    .slice(0, max);
-}
-
-function logRbApiError(input: {
-  endpoint: string;
-  status: number;
-  statusText?: string;
-  requestId?: string;
-  responseBody: string;
-}): void {
-  const parsed = parseRbPremiumErrorBody(input.responseBody);
-  console.error("[RB API ERROR]", {
-    endpoint: input.endpoint,
-    status: input.status,
-    statusText: input.statusText ?? null,
-    requestId: input.requestId ?? null,
-    error: parsed.error ?? null,
-    error_description: parsed.error_description ?? parsed.message ?? null,
-    responseBody: sanitizeErrorBodyForLog(input.responseBody),
-  });
-}
-
 type HttpsResponse = {
   status: number;
   body: string;
   requestUrl: string;
+  requestId: string;
+  method: string;
+  responseContentType: string | null;
+};
+
+type RbRequestOpts = {
+  logConfig?: boolean;
+  stage?: RbSyncStage;
+  logContext?: {
+    dateFrom?: string | null;
+    dateTo?: string | null;
+    accountNumber?: string | null;
+    currencyCode?: string | null;
+    page?: number | null;
+    size?: number | null;
+  };
 };
 
 function logRbTest(input: {
@@ -151,11 +152,27 @@ function rbHttpsRequest(
   cfg: RaiffeisenClientConfig,
   subpath: string,
   method: "GET" | "POST" = "GET",
-  opts?: { logConfig?: boolean }
-): Promise<HttpsResponse & { requestId: string }> {
-  if (opts?.logConfig) logRbConfig(cfg.clientId);
+  opts?: RbRequestOpts
+): Promise<HttpsResponse> {
+  if (opts?.logConfig) {
+    logRbConfig(cfg.clientId);
+    logRbResolvedAccountsUrl();
+  }
   const requestUrl = buildRbPremiumRequestUrl(cfg.baseUrl, subpath);
   const requestId = newRequestId();
+  logRbRequest({
+    method,
+    url: requestUrl,
+    requestId,
+    clientId: cfg.clientId,
+    hasCertificate: cfg.p12.length > 0,
+    dateFrom: opts?.logContext?.dateFrom,
+    dateTo: opts?.logContext?.dateTo,
+    accountNumber: opts?.logContext?.accountNumber,
+    currencyCode: opts?.logContext?.currencyCode,
+    page: opts?.logContext?.page,
+    size: opts?.logContext?.size,
+  });
   const agent = new https.Agent({
     pfx: cfg.p12,
     passphrase: cfg.p12Password,
@@ -178,16 +195,21 @@ function rbHttpsRequest(
       },
       (res) => {
         const chunks: Buffer[] = [];
+        const responseContentType = res.headers["content-type"]
+          ? String(res.headers["content-type"])
+          : null;
         res.on("data", (c) => chunks.push(c));
         res.on("end", () => {
           const body = Buffer.concat(chunks).toString("utf8");
           const status = res.statusCode ?? 0;
           if (status >= 400) {
             logRbApiError({
-              endpoint: requestUrl,
+              method,
+              url: requestUrl,
               status,
-              statusText: res.statusMessage,
+              statusText: res.statusMessage ?? "",
               requestId,
+              responseContentType,
               responseBody: body,
             });
           }
@@ -196,6 +218,8 @@ function rbHttpsRequest(
             body,
             requestUrl,
             requestId,
+            method,
+            responseContentType,
           });
         });
       }
@@ -215,7 +239,7 @@ async function httpsJson<T>(
   cfg: RaiffeisenClientConfig,
   subpath: string,
   method: "GET" | "POST" = "GET",
-  opts?: { logConfig?: boolean }
+  opts?: RbRequestOpts
 ): Promise<T> {
   const res = await rbHttpsRequest(cfg, subpath, method, opts);
   if (res.status >= 400) {
@@ -224,6 +248,10 @@ async function httpsJson<T>(
       httpStatus: res.status,
       requestUrl: res.requestUrl,
       body,
+      stage: opts?.stage,
+      requestId: res.requestId,
+      responseContentType: res.responseContentType,
+      source: "upstream",
     });
   }
   try {
@@ -233,6 +261,10 @@ async function httpsJson<T>(
       httpStatus: res.status || 502,
       requestUrl: res.requestUrl,
       body: { error_description: "Neplatná JSON odpověď banky." },
+      stage: opts?.stage,
+      requestId: res.requestId,
+      responseContentType: res.responseContentType,
+      source: "upstream",
     });
   }
 }
@@ -282,25 +314,25 @@ export async function rbFetchAccounts(cfg: RaiffeisenClientConfig): Promise<Raif
   let page = 1;
   let last = false;
   while (!last && page <= 50) {
-    const data = await httpsJson<unknown>(
-      cfg,
-      `/accounts?page=${page}&size=50`,
-      "GET",
-      { logConfig: page === 1 }
-    );
+    const subpath =
+      page === 1 ? "/accounts" : appendQuery("/accounts", { page, size: 50 });
+    const data = await httpsJson<unknown>(cfg, subpath, "GET", {
+      logConfig: page === 1,
+      stage: "accounts",
+      logContext: { page, size: page === 1 ? null : 50 },
+    });
     const parsed = parseRbAccountsPayload(data);
     for (const row of parsed.accounts ?? []) {
       const mapped = mapRbAccountRow(row);
-      if (mapped) out.push(mapped);
+      if (mapped) {
+        logRbAccountSanitized(mapped);
+        out.push(mapped);
+      }
     }
     last = parsed.last === true || (parsed.accounts?.length ?? 0) === 0;
     page += 1;
   }
   return out;
-}
-
-function rbTransactionFromIso(dateOnly: string, endOfDay: boolean): string {
-  return endOfDay ? `${dateOnly}T23:59:59.999Z` : `${dateOnly}T00:00:00.0Z`;
 }
 
 export async function rbFetchTransactions(
@@ -310,35 +342,39 @@ export async function rbFetchTransactions(
 ): Promise<RaiffeisenTransactionDto[]> {
   if (isMockMode()) return mockTransactions(account.externalAccountId);
 
-  const accountNumber = String(account.rbAccountNumber ?? account.externalAccountId ?? "")
-    .replace(/\D/g, "")
-    .slice(0, 10);
-  const currencyCode = String(account.currency ?? "CZK").toUpperCase().slice(0, 3);
+  logRbAccountSanitized(account);
+  const accountNumber = normalizeRbAccountNumber(account.rbAccountNumber);
+  const currencyCode = normalizeCurrencyCode(account.currency);
   if (!accountNumber || !currencyCode) {
     throw new RbPremiumApiError({
       httpStatus: 400,
       requestUrl: buildRbPremiumRequestUrl(cfg.baseUrl, "/accounts/.../transactions"),
-      body: { error_description: "Chybí číslo účtu nebo měna pro RB API." },
+      body: {
+        error: "LOCAL_VALIDATION",
+        error_description: "Chybí platné accountNumber nebo currencyCode (nepoužívat accountId).",
+      },
+      stage: "transactions",
+      source: "local",
     });
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const dateFrom = opts?.dateFrom?.slice(0, 10) ?? today;
-  const dateTo = opts?.dateTo?.slice(0, 10) ?? today;
-  console.info("[RB SYNC]", { dateFrom, dateTo, accountNumber, currencyCode });
+  const dateFrom = assertDateOnly("dateFrom", opts?.dateFrom?.slice(0, 10) ?? today);
+  const dateTo = assertDateOnly("dateTo", opts?.dateTo?.slice(0, 10) ?? today);
 
   const all: RaiffeisenTransactionDto[] = [];
   let page = 1;
   let lastPage = false;
 
   while (!lastPage && page <= 500) {
-    const q = new URLSearchParams({
-      from: rbTransactionFromIso(dateFrom, false),
-      to: rbTransactionFromIso(dateTo, true),
-      page: String(page),
+    const subpath = appendQuery(
+      `/accounts/${encodeURIComponent(accountNumber)}/${encodeURIComponent(currencyCode)}/transactions`,
+      { from: dateFrom, to: dateTo, page: page > 1 ? page : undefined }
+    );
+    const data = await httpsJson<unknown>(cfg, subpath, "GET", {
+      stage: "transactions",
+      logContext: { dateFrom, dateTo, accountNumber, currencyCode, page },
     });
-    const path = `/accounts/${encodeURIComponent(accountNumber)}/${encodeURIComponent(currencyCode)}/transactions?${q}`;
-    const data = await httpsJson<unknown>(cfg, path, "GET");
     const parsed = parseRbTransactionsPayload(data);
     for (const row of parsed.transactions) {
       const mapped = mapRbTransactionRow(row, currencyCode);
@@ -371,7 +407,10 @@ export async function rbTestConnection(cfg: RaiffeisenClientConfig): Promise<RbT
   const requestUrl = buildRbPremiumRequestUrl(cfg.baseUrl, "/accounts");
 
   try {
-    const res = await rbHttpsRequest(cfg, "/accounts?page=1&size=15", "GET", { logConfig: true });
+    const res = await rbHttpsRequest(cfg, "/accounts", "GET", {
+      logConfig: true,
+      stage: "accounts",
+    });
     const body = parseRbPremiumErrorBody(res.body);
 
     if (res.status === 200) {
@@ -391,7 +430,7 @@ export async function rbTestConnection(cfg: RaiffeisenClientConfig): Promise<RbT
       return {
         ok: true,
         httpStatus: 200,
-        message: `Připojeno k Raiffeisenbank. Nalezeno účtů: ${accountsFound}.`,
+        message: `Raiffeisenbank připojena – nalezeno ${accountsFound} účtů.`,
         display: formatRbPremiumTestDisplay(200, body),
         requestUrl: res.requestUrl,
         accountsFound,
@@ -410,6 +449,10 @@ export async function rbTestConnection(cfg: RaiffeisenClientConfig): Promise<RbT
       httpStatus: res.status,
       requestUrl: res.requestUrl,
       body,
+      stage: "accounts",
+      requestId: res.requestId,
+      responseContentType: res.responseContentType,
+      source: "upstream",
     });
   } catch (e) {
     if (e instanceof RbPremiumApiError) throw e;
