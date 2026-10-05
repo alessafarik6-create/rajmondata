@@ -43,6 +43,30 @@ export function safeRbErrorDescription(v: unknown): string | undefined {
   return cleaned;
 }
 
+/** Zpráva pro sync — rozlišuje partial success (accounts OK, transactions ne). */
+export function rbPremiumSyncUserMessage(
+  e: {
+    httpStatus: number;
+    stage?: string;
+    rbError?: string;
+    rbErrorDescription?: string;
+    userMessage: string;
+  },
+  partialSuccess: boolean
+): string {
+  if (partialSuccess && e.stage === "transactions") {
+    const base = "Bankovní účet byl načten, ale nepodařilo se načíst transakce.";
+    if (process.env.NODE_ENV !== "production" && e.rbErrorDescription) {
+      return `${base} (${e.rbErrorDescription})`;
+    }
+    return base;
+  }
+  if (e.rbError === "DT01") {
+    return "Období transakcí je mimo limit Raiffeisenbank (from nesmí být starší než 90 dní).";
+  }
+  return e.userMessage;
+}
+
 export function rbPremiumTestUserMessage(
   httpStatus: number,
   body: RbPremiumErrorBody

@@ -1,4 +1,9 @@
 import type { RaiffeisenAccountDto, RaiffeisenTransactionDto } from "@/lib/bank/raiffeisen-client";
+import { logRbAccountRawFields } from "@/lib/bank/rb-premium-http";
+
+function logRbAccountRowFields(a: RbAccountRow): void {
+  logRbAccountRawFields(a as Record<string, unknown>);
+}
 
 type RbAccountRow = {
   accountId?: number | string;
@@ -18,6 +23,7 @@ type RbAccountsPage = {
 };
 
 export function mapRbAccountRow(a: RbAccountRow): RaiffeisenAccountDto | null {
+  logRbAccountRowFields(a);
   const accountNumber = String(a.accountNumber ?? "").replace(/\D/g, "").trim();
   const rbAccountId = a.accountId != null ? String(a.accountId) : "";
   if (!accountNumber && !rbAccountId) return null;
@@ -138,4 +144,34 @@ export function parseRbTransactionsPayload(data: unknown): {
     transactions,
     lastPage: obj.lastPage === true || transactions.length === 0,
   };
+}
+
+type RbBalanceFolder = {
+  currency?: string;
+  balances?: { balanceType?: string; value?: number; currency?: string }[];
+};
+
+export function mapRbBalanceForCurrency(
+  payload: unknown,
+  currencyCode: string
+): { balance: number | null; availableBalance: number | null } {
+  const obj = payload as { currencyFolders?: RbBalanceFolder[] };
+  const folders = Array.isArray(obj.currencyFolders) ? obj.currencyFolders : [];
+  const cur = currencyCode.toUpperCase();
+  const folder = folders.find((f) => String(f.currency ?? "").toUpperCase() === cur) ?? folders[0];
+  if (!folder?.balances?.length) return { balance: null, availableBalance: null };
+
+  let balance: number | null = null;
+  let availableBalance: number | null = null;
+  for (const b of folder.balances) {
+    const type = String(b.balanceType ?? "").toUpperCase();
+    const val = b.value;
+    if (val == null || !Number.isFinite(Number(val))) continue;
+    if (type === "CLAB" || type === "CLBD") balance = Number(val);
+    if (type === "CLAV" || type === "FWAV") availableBalance = Number(val);
+  }
+  if (balance == null && folder.balances[0]?.value != null) {
+    balance = Number(folder.balances[0].value);
+  }
+  return { balance, availableBalance };
 }

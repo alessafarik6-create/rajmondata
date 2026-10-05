@@ -20,6 +20,7 @@ import {
 import {
   buildRaiffeisenClientConfig,
   rbTestConnection,
+  rbTestTransactions,
 } from "@/lib/bank/raiffeisen-client";
 
 const DEFAULT_CONNECTION_ID = "raiffeisen";
@@ -135,6 +136,15 @@ export async function testBankConnectionForOrg(
     { merge: true }
   );
   return result;
+}
+
+export async function testBankTransactionsForOrg(
+  db: Firestore,
+  organizationId: string
+): Promise<import("@/lib/bank/raiffeisen-client").RbTestTransactionsResult> {
+  const loaded = await getRaiffeisenClientForOrg(db, organizationId);
+  if ("error" in loaded) throw new Error(loaded.error);
+  return rbTestTransactions(loaded.cfg);
 }
 
 export async function setBankConnectionStatus(

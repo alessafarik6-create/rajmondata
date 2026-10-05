@@ -14,16 +14,21 @@ import {
 } from "@/lib/bank/rb-premium-errors";
 import {
   appendQuery,
-  assertDateOnly,
+  clampRbTransactionDateRange,
   logRbAccountSanitized,
   logRbApiError,
   logRbRequest,
+  logRbTransactionsError,
+  logRbTransactionsRequest,
+  logRbTransactionsResponseOk,
   normalizeCurrencyCode,
   normalizeRbAccountNumber,
+  sanitizeTransactionsUrlForLog,
 } from "@/lib/bank/rb-premium-http";
 import { logRbResolvedAccountsUrl } from "@/lib/bank/rb-premium-url";
 import {
   mapRbAccountRow,
+  mapRbBalanceForCurrency,
   mapRbTransactionRow,
   parseRbAccountsPayload,
   parseRbTransactionsPayload,
@@ -242,7 +247,21 @@ async function httpsJson<T>(
   opts?: RbRequestOpts
 ): Promise<T> {
   const res = await rbHttpsRequest(cfg, subpath, method, opts);
+  if (res.status === 204) {
+    return {} as T;
+  }
   if (res.status >= 400) {
+    if (opts?.stage === "transactions") {
+      logRbTransactionsError({
+        method: res.method,
+        url: res.requestUrl,
+        status: res.status,
+        statusText: "",
+        requestId: res.requestId,
+        responseContentType: res.responseContentType,
+        responseBody: res.body,
+      });
+    }
     const body = parseRbPremiumErrorBody(res.body);
     throw new RbPremiumApiError({
       httpStatus: res.status,
@@ -273,6 +292,7 @@ function mockAccounts(): RaiffeisenAccountDto[] {
   return [
     {
       externalAccountId: "mock-main-czk",
+      rbAccountNumber: "123456789",
       accountNumber: "123456789/5500",
       iban: "CZ6508000000192000145399",
       currency: "CZK",
@@ -335,6 +355,24 @@ export async function rbFetchAccounts(cfg: RaiffeisenClientConfig): Promise<Raif
   return out;
 }
 
+/** GET /accounts/{accountNumber}/balance — zůstatek není v seznamu účtů. */
+export async function rbFetchAccountBalance(
+  cfg: RaiffeisenClientConfig,
+  account: Pick<RaiffeisenAccountDto, "rbAccountNumber" | "currency">
+): Promise<{ balance: number | null; availableBalance: number | null }> {
+  if (isMockMode()) return { balance: 250_000, availableBalance: 248_500 };
+  const accountNumber = normalizeRbAccountNumber(account.rbAccountNumber);
+  const currencyCode = normalizeCurrencyCode(account.currency) ?? "CZK";
+  if (!accountNumber) return { balance: null, availableBalance: null };
+
+  const subpath = `/accounts/${encodeURIComponent(accountNumber)}/balance`;
+  const data = await httpsJson<unknown>(cfg, subpath, "GET", {
+    stage: "accounts",
+    logContext: { accountNumber, currencyCode },
+  });
+  return mapRbBalanceForCurrency(data, currencyCode);
+}
+
 export async function rbFetchTransactions(
   cfg: RaiffeisenClientConfig,
   account: Pick<RaiffeisenAccountDto, "rbAccountNumber" | "externalAccountId" | "currency">,
@@ -359,22 +397,39 @@ export async function rbFetchTransactions(
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const dateFrom = assertDateOnly("dateFrom", opts?.dateFrom?.slice(0, 10) ?? today);
-  const dateTo = assertDateOnly("dateTo", opts?.dateTo?.slice(0, 10) ?? today);
+  const { dateFrom, dateTo } = clampRbTransactionDateRange(
+    opts?.dateFrom?.slice(0, 10) ?? today,
+    opts?.dateTo?.slice(0, 10) ?? today
+  );
 
   const all: RaiffeisenTransactionDto[] = [];
   let page = 1;
   let lastPage = false;
 
   while (!lastPage && page <= 500) {
-    const subpath = appendQuery(
-      `/accounts/${encodeURIComponent(accountNumber)}/${encodeURIComponent(currencyCode)}/transactions`,
-      { from: dateFrom, to: dateTo, page: page > 1 ? page : undefined }
-    );
+    const pathBase = `/accounts/${encodeURIComponent(accountNumber)}/${encodeURIComponent(currencyCode)}/transactions`;
+    const subpath = appendQuery(pathBase, {
+      from: dateFrom,
+      to: dateTo,
+      page: page > 1 ? page : undefined,
+    });
+    const fullUrl = buildRbPremiumRequestUrl(cfg.baseUrl, subpath);
+    logRbTransactionsRequest({
+      method: "GET",
+      url: fullUrl,
+      requestId: newRequestId(),
+      accountNumber,
+      currencyCode,
+      dateFrom,
+      dateTo,
+    });
+    console.info("[RB TRANSACTIONS URL]", sanitizeTransactionsUrlForLog(fullUrl));
+
     const data = await httpsJson<unknown>(cfg, subpath, "GET", {
       stage: "transactions",
       logContext: { dateFrom, dateTo, accountNumber, currencyCode, page },
     });
+    logRbTransactionsResponseOk(data, 200);
     const parsed = parseRbTransactionsPayload(data);
     for (const row of parsed.transactions) {
       const mapped = mapRbTransactionRow(row, currencyCode);
@@ -386,6 +441,57 @@ export async function rbFetchTransactions(
   }
 
   return all;
+}
+
+export type RbTestTransactionsResult = {
+  ok: boolean;
+  httpStatus: number;
+  requestUrl: string;
+  requestId?: string;
+  transactionCount: number;
+  contentType?: string | null;
+  message: string;
+};
+
+export async function rbTestTransactions(cfg: RaiffeisenClientConfig): Promise<RbTestTransactionsResult> {
+  const accounts = await rbFetchAccounts(cfg);
+  const first = accounts.find((a) => normalizeRbAccountNumber(a.rbAccountNumber));
+  if (!first) {
+    return {
+      ok: false,
+      httpStatus: 0,
+      requestUrl: "",
+      transactionCount: 0,
+      message: "Žádný účet s platným accountNumber pro test transakcí.",
+    };
+  }
+  const today = new Date().toISOString().split("T")[0];
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 30);
+  const dateFrom = d.toISOString().slice(0, 10);
+  try {
+    const txns = await rbFetchTransactions(cfg, first, { dateFrom, dateTo: today });
+    return {
+      ok: true,
+      httpStatus: 200,
+      requestUrl: buildRbPremiumRequestUrl(cfg.baseUrl, "/accounts/{n}/{ccy}/transactions"),
+      transactionCount: txns.length,
+      message: `Transakce OK — ${txns.length} položek (30 dní).`,
+    };
+  } catch (e) {
+    if (e instanceof RbPremiumApiError) {
+      return {
+        ok: false,
+        httpStatus: e.httpStatus,
+        requestUrl: e.requestUrl,
+        requestId: e.requestId,
+        transactionCount: 0,
+        contentType: e.responseContentType,
+        message: e.userMessage,
+      };
+    }
+    throw e;
+  }
 }
 
 /**

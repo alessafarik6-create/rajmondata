@@ -83,16 +83,115 @@ export function logRbAccountSanitized(acc: {
   rbAccountNumber?: string | null;
   currency?: string | null;
   externalAccountId?: string;
+  name?: string | null;
 }): void {
   const num = String(acc.rbAccountNumber ?? "").replace(/\D/g, "");
   const cur = normalizeCurrencyCode(acc.currency);
   console.info("[RB ACCOUNT]", {
-    hasAccountNumber: num.length > 0,
-    accountNumberSuffix: num ? accountNumberSuffix(num) : null,
+    name: acc.name ?? null,
+    accountNumberMasked: num ? accountNumberSuffix(num) : null,
     currencyCode: cur ?? null,
+    hasAccountNumber: num.length > 0,
     externalAccountIdSuffix: acc.externalAccountId
       ? String(acc.externalAccountId).slice(-4)
       : null,
+  });
+}
+
+export function logRbAccountRawFields(row: Record<string, unknown>): void {
+  console.info("[RB ACCOUNT]", {
+    availableFields: Object.keys(row).sort(),
+    hasAccountNumber: row.accountNumber != null,
+    hasMainCurrency: row.mainCurrency != null,
+    hasAccountId: row.accountId != null,
+  });
+}
+
+export function maskTransactionsUrl(url: string): string {
+  return url.replace(/\/accounts\/(\d{4,10})\//, "/accounts/***$1/".replace("***", "***"));
+}
+
+export function sanitizeTransactionsUrlForLog(fullUrl: string): string {
+  try {
+    const u = new URL(fullUrl);
+    const parts = u.pathname.split("/");
+    const accIdx = parts.findIndex((p) => p === "accounts");
+    if (accIdx >= 0 && parts[accIdx + 1] && /^\d+$/.test(parts[accIdx + 1])) {
+      const digits = parts[accIdx + 1];
+      parts[accIdx + 1] = `***${digits.slice(-4)}`;
+      u.pathname = parts.join("/");
+    }
+    return u.toString();
+  } catch {
+    return fullUrl.slice(0, 120);
+  }
+}
+
+/** RB: `from` nesmí být starší než 90 dní (chyba DT01). */
+export const RB_MAX_TRANSACTION_HISTORY_DAYS = 89;
+
+export function clampRbTransactionDateRange(
+  dateFrom: string,
+  dateTo: string
+): { dateFrom: string; dateTo: string } {
+  const to = assertDateOnly("dateTo", dateTo);
+  let from = assertDateOnly("dateFrom", dateFrom);
+  const anchor = new Date(`${to}T12:00:00Z`);
+  const minFrom = new Date(anchor);
+  minFrom.setUTCDate(minFrom.getUTCDate() - RB_MAX_TRANSACTION_HISTORY_DAYS);
+  const minFromStr = minFrom.toISOString().slice(0, 10);
+  if (from < minFromStr) {
+    console.info("[RB TRANSACTIONS RANGE] clamped dateFrom", { from, minFromStr, dateTo: to });
+    from = minFromStr;
+  }
+  console.info("[RB TRANSACTIONS RANGE]", { dateFrom: from, dateTo: to });
+  return { dateFrom: from, dateTo: to };
+}
+
+export function logRbTransactionsRequest(input: {
+  method: string;
+  url: string;
+  requestId: string;
+  accountNumber: string;
+  currencyCode: string;
+  dateFrom: string;
+  dateTo: string;
+}): void {
+  console.info("[RB TRANSACTIONS REQUEST]", {
+    method: input.method,
+    url: sanitizeTransactionsUrlForLog(input.url),
+    accountNumberMasked: accountNumberSuffix(input.accountNumber),
+    currencyCode: input.currencyCode,
+    dateFrom: input.dateFrom,
+    dateTo: input.dateTo,
+    requestId: input.requestId,
+  });
+}
+
+export function logRbTransactionsError(input: RbHttpRawResponse): void {
+  const { sanitizedBody } = readRbHttpResponse(input);
+  console.error("[RB TRANSACTIONS ERROR]", {
+    status: input.status,
+    statusText: input.statusText || null,
+    requestId: input.requestId,
+    contentType: input.responseContentType,
+    responseBody: sanitizedBody,
+  });
+}
+
+export function logRbTransactionsResponseOk(data: unknown, status: number): void {
+  const keys =
+    data && typeof data === "object" && !Array.isArray(data)
+      ? Object.keys(data as object)
+      : [];
+  const obj = data as { transactions?: unknown[]; lastPage?: boolean };
+  const count = Array.isArray(obj.transactions) ? obj.transactions.length : 0;
+  console.info("[RB TRANSACTIONS RESPONSE]", {
+    status,
+    topLevelKeys: keys,
+    transactionCount: count,
+    hasPagination: keys.includes("lastPage"),
+    lastPage: obj.lastPage ?? null,
   });
 }
 

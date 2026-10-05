@@ -6,8 +6,13 @@ import {
   bankTransactionsCol,
 } from "@/lib/bank/collections";
 import { getRaiffeisenClientForOrg, setBankConnectionStatus } from "@/lib/bank/connection-store";
-import { rbFetchAccounts, rbFetchTransactions } from "@/lib/bank/raiffeisen-client";
+import {
+  rbFetchAccountBalance,
+  rbFetchAccounts,
+  rbFetchTransactions,
+} from "@/lib/bank/raiffeisen-client";
 import { RbPremiumApiError } from "@/lib/bank/rb-premium-errors";
+import { BankSyncPartialError } from "@/lib/bank/bank-sync-errors";
 import { resolveBankTransactionDocId } from "@/lib/bank/transaction-id";
 import type { BankTransactionDirection } from "@/lib/bank/types";
 import { writeBankAuditLog } from "@/lib/bank/audit";
@@ -15,7 +20,8 @@ import { roundMoney2 } from "@/lib/vat-calculations";
 import { pickAutoMatch, suggestBankTransactionMatches } from "@/lib/bank/matching";
 import { applyBankTransactionMatch } from "@/lib/bank/apply-match";
 
-const DEFAULT_HISTORY_DAYS = 90;
+/** RB limit: from max 90 dní — sync používá 30 dní (DT01 při překročení). */
+const DEFAULT_HISTORY_DAYS = 30;
 
 function isoDaysAgo(days: number): string {
   const d = new Date();
@@ -32,6 +38,8 @@ export type BankSyncResult = {
   imported: number;
   updated: number;
   lastSyncAt: string;
+  accountsSuccess?: boolean;
+  transactionsSuccess?: boolean;
 };
 
 let syncLocks = new Map<string, Promise<BankSyncResult>>();
@@ -62,6 +70,8 @@ export async function syncBankForOrganization(
 
     let imported = 0;
     let updated = 0;
+    let accountsSaved = 0;
+    let transactionsSuccess = true;
 
     try {
       console.info("[RB SYNC] accounts start");
@@ -79,6 +89,22 @@ export async function syncBankForOrganization(
 
       for (const acc of accounts) {
         if (!acc.externalAccountId) continue;
+
+        let balance = acc.balance ?? null;
+        let availableBalance = acc.availableBalance ?? null;
+        if (acc.rbAccountNumber) {
+          try {
+            const bal = await rbFetchAccountBalance(loaded.cfg, acc);
+            balance = bal.balance;
+            availableBalance = bal.availableBalance ?? bal.balance;
+          } catch (balErr) {
+            console.warn("[RB SYNC] balance fetch failed", {
+              suffix: String(acc.rbAccountNumber).slice(-4),
+              message: balErr instanceof Error ? balErr.message : String(balErr),
+            });
+          }
+        }
+
         const accRef = bankAccountsCol(db, organizationId).doc(acc.externalAccountId);
         const prev = await accRef.get();
         await accRef.set(
@@ -90,13 +116,14 @@ export async function syncBankForOrganization(
             iban: acc.iban ?? null,
             currency: acc.currency,
             name: acc.name ?? null,
-            balance: acc.balance ?? null,
-            availableBalance: acc.availableBalance ?? null,
+            balance,
+            availableBalance,
             isActive: prev.exists ? (prev.data()?.isActive !== false) : true,
             updatedAt: FieldValue.serverTimestamp(),
           },
           { merge: true }
         );
+        accountsSaved += 1;
 
         if (!acc.rbAccountNumber) {
           console.warn("[RB SYNC] skip transactions — missing rbAccountNumber", {
@@ -116,7 +143,33 @@ export async function syncBankForOrganization(
           console.info("[RB SYNC] transactions success", { count: txns.length });
         } catch (accErr) {
           console.error("[RB SYNC] transactions failed");
-          if (accErr instanceof RbPremiumApiError) throw accErr;
+          transactionsSuccess = false;
+          if (accErr instanceof RbPremiumApiError) {
+            const partial: BankSyncResult = {
+              accounts: accountsSaved,
+              imported,
+              updated,
+              lastSyncAt: new Date().toISOString(),
+              accountsSuccess: accountsSaved > 0,
+              transactionsSuccess: false,
+            };
+            await connRef.set(
+              {
+                status: "connected",
+                lastSyncAt: partial.lastSyncAt,
+                lastSyncError: accErr.display.slice(0, 500),
+                lastSyncStats: {
+                  accounts: accountsSaved,
+                  imported,
+                  updated,
+                  partial: true,
+                },
+                updatedAt: FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+            throw new BankSyncPartialError(partial, accErr);
+          }
           console.error("[RB SYNC] transactions failed for account", {
             externalAccountId: acc.externalAccountId,
             message: accErr instanceof Error ? accErr.message : String(accErr),
@@ -258,7 +311,7 @@ export async function syncBankForOrganization(
           status: "connected",
           lastSyncAt,
           lastSyncError: null,
-          lastSyncStats: { accounts: accounts.length, imported, updated },
+          lastSyncStats: { accounts: accountsSaved, imported, updated },
           updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -268,11 +321,19 @@ export async function syncBankForOrganization(
         organizationId,
         userId,
         action: "BANK_SYNC_FINISHED",
-        metadata: { accounts: accounts.length, imported, updated },
+        metadata: { accounts: accountsSaved, imported, updated },
       });
 
-      return { accounts: accounts.length, imported, updated, lastSyncAt };
+      return {
+        accounts: accountsSaved,
+        imported,
+        updated,
+        lastSyncAt,
+        accountsSuccess: accountsSaved > 0,
+        transactionsSuccess,
+      };
     } catch (e) {
+      if (e instanceof BankSyncPartialError) throw e;
       const msg =
         e instanceof RbPremiumApiError
           ? e.display.slice(0, 500)

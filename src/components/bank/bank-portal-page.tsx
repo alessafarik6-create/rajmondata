@@ -59,7 +59,8 @@ type TxRow = {
   matchedAmountTotal: number;
 };
 
-function formatMoney(n: number, cur: string) {
+function formatMoney(n: number | null | undefined, cur: string) {
+  if (n == null || !Number.isFinite(n)) return "—";
   return `${n.toLocaleString("cs-CZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
 }
 
@@ -143,6 +144,15 @@ export function BankPortalPage() {
           (typeof json.display === "string" && json.display.trim()) ||
           (typeof json.error === "string" && json.error.trim()) ||
           "Synchronizace selhala.";
+        if (json.partialSuccess) {
+          toast({
+            variant: "destructive",
+            title: "Synchronizace — transakce",
+            description: msg,
+          });
+          await reload();
+          return;
+        }
         throw new Error(msg);
       }
       const imported = json.transactionsImported ?? json.imported ?? 0;
@@ -260,6 +270,22 @@ export function BankPortalPage() {
     }
   };
 
+  const testTransactions = async () => {
+    if (!companyId || !user) return;
+    const headers = { ...(await authHeaders()), "Content-Type": "application/json" };
+    const res = await fetch("/api/company/bank/settings/test-transactions", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ companyId }),
+    });
+    const json = await res.json();
+    toast({
+      title: json.ok ? "Test transakcí" : `Transakce HTTP ${json.httpStatus ?? "?"}`,
+      description: json.message ?? json.error ?? "Hotovo.",
+      variant: json.ok ? "default" : "destructive",
+    });
+  };
+
   const testConnection = async () => {
     if (!companyId || !user) return;
     const headers = { ...(await authHeaders()), "Content-Type": "application/json" };
@@ -373,7 +399,7 @@ export function BankPortalPage() {
               {(overview?.accounts ?? []).map((a) => (
                 <div key={a.id} className="flex flex-wrap justify-between gap-2 border-b pb-2 text-sm">
                   <span>{a.name ?? a.accountNumber ?? a.id}</span>
-                  <span className="font-medium">{formatMoney(a.balance ?? 0, a.currency)}</span>
+                  <span className="font-medium">{formatMoney(a.balance, a.currency)}</span>
                 </div>
               ))}
             </CardContent>
@@ -397,8 +423,8 @@ export function BankPortalPage() {
                     <TableRow key={a.id}>
                       <TableCell>{a.name ?? "—"}</TableCell>
                       <TableCell>{a.accountNumber ?? a.id}</TableCell>
-                      <TableCell>{formatMoney(a.balance ?? 0, a.currency)}</TableCell>
-                      <TableCell>{formatMoney(a.availableBalance ?? a.balance ?? 0, a.currency)}</TableCell>
+                      <TableCell>{formatMoney(a.balance, a.currency)}</TableCell>
+                      <TableCell>{formatMoney(a.availableBalance ?? a.balance, a.currency)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -499,6 +525,9 @@ export function BankPortalPage() {
                   </Button>
                   <Button variant="outline" onClick={() => void testConnection()}>
                     Otestovat spojení
+                  </Button>
+                  <Button variant="outline" onClick={() => void testTransactions()}>
+                    Test transakcí
                   </Button>
                 </div>
               </CardContent>
