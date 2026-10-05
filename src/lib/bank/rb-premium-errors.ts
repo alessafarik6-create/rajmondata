@@ -53,28 +53,33 @@ export function rbPremiumTestUserMessage(
   if (httpStatus === 200) {
     return "Připojení k Raiffeisenbank je funkční.";
   }
+  if (httpStatus === 400) {
+    const base = "Raiffeisenbank odmítla parametry požadavku.";
+    if (process.env.NODE_ENV === "development" && desc) return `${base} ${desc}`;
+    return desc && process.env.NODE_ENV !== "production" ? `${base} ${desc}` : base;
+  }
   if (httpStatus === 401) {
-    const base =
-      "Certifikát není bankou akceptován nebo je neplatný.";
-    return desc ? `${base} ${desc}` : base;
+    const base = "Bankovní certifikát není platný nebo nebyl použit.";
+    if (process.env.NODE_ENV === "development" && desc) return `${base} ${desc}`;
+    return base;
   }
   if (httpStatus === 403) {
-    const base =
-      "Certifikát nebo ClientID nemá oprávnění k operaci, nebo Premium API ještě není aktivní.";
-    if (err && desc) return `${base} (${err}: ${desc})`;
-    if (err) return `${base} (${err})`;
-    if (desc) return `${base} ${desc}`;
+    const base = "Certifikát nemá oprávnění k bankovnímu účtu nebo službě.";
+    if (process.env.NODE_ENV === "development" && (err || desc)) {
+      return [base, err, desc].filter(Boolean).join(" ");
+    }
     return base;
   }
   if (httpStatus === 404) {
     return "Chybný endpoint bankovního API (404). Ověřte RAIFFEISENBANK_API_BASE_URL.";
   }
   if (httpStatus === 429) {
-    return "Překročen limit požadavků Raiffeisenbank API (429). Zkuste to později.";
+    return "Byl překročen limit volání Raiffeisenbank.";
   }
   if (httpStatus >= 500 && httpStatus <= 599) {
-    const base = "Chyba služby Raiffeisenbank.";
-    return desc ? `${base} ${desc}` : base;
+    const base = "Bankovní synchronizace se nezdařila.";
+    if (process.env.NODE_ENV === "development" && desc) return `${base} ${desc}`;
+    return base;
   }
   if (httpStatus === 0) {
     return desc ?? "Nepodařilo se navázat spojení s bankou.";

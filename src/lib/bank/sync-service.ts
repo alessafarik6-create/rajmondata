@@ -7,6 +7,7 @@ import {
 } from "@/lib/bank/collections";
 import { getRaiffeisenClientForOrg, setBankConnectionStatus } from "@/lib/bank/connection-store";
 import { rbFetchAccounts, rbFetchTransactions } from "@/lib/bank/raiffeisen-client";
+import { RbPremiumApiError } from "@/lib/bank/rb-premium-errors";
 import { resolveBankTransactionDocId } from "@/lib/bank/transaction-id";
 import type { BankTransactionDirection } from "@/lib/bank/types";
 import { writeBankAuditLog } from "@/lib/bank/audit";
@@ -88,7 +89,18 @@ export async function syncBankForOrganization(
         );
 
         const dateFrom = isoDaysAgo(DEFAULT_HISTORY_DAYS);
-        const txns = await rbFetchTransactions(loaded.cfg, acc.externalAccountId, { dateFrom });
+        const dateTo = new Date().toISOString().split("T")[0];
+        let txns: Awaited<ReturnType<typeof rbFetchTransactions>> = [];
+        try {
+          txns = await rbFetchTransactions(loaded.cfg, acc, { dateFrom, dateTo });
+        } catch (accErr) {
+          if (accErr instanceof RbPremiumApiError) throw accErr;
+          console.error("[RB SYNC] transactions failed for account", {
+            externalAccountId: acc.externalAccountId,
+            message: accErr instanceof Error ? accErr.message : String(accErr),
+          });
+          continue;
+        }
 
         for (const t of txns) {
           const amount = roundMoney2(Number(t.amount));
@@ -239,8 +251,14 @@ export async function syncBankForOrganization(
 
       return { accounts: accounts.length, imported, updated, lastSyncAt };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Synchronizace selhala.";
+      const msg =
+        e instanceof RbPremiumApiError
+          ? e.display.slice(0, 500)
+          : e instanceof Error
+            ? e.message
+            : "Synchronizace selhala.";
       await setBankConnectionStatus(db, organizationId, "error", msg);
+      if (e instanceof RbPremiumApiError) throw e;
       throw e instanceof Error ? e : new Error(msg);
     } finally {
       syncLocks.delete(key);

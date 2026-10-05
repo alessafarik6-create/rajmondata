@@ -1,9 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireBankWrite, bankTenantOk } from "@/lib/bank/api-auth";
 import { syncBankForOrganization } from "@/lib/bank/sync-service";
+import { RbPremiumApiError } from "@/lib/bank/rb-premium-errors";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
+export const runtime = "nodejs";
+
+function rbErrorResponse(e: RbPremiumApiError) {
+  const status =
+    e.httpStatus >= 400 && e.httpStatus <= 599 ? e.httpStatus : 502;
+  return NextResponse.json(
+    {
+      ok: false,
+      success: false,
+      httpStatus: e.httpStatus,
+      error: e.rbError ?? e.userMessage,
+      errorDescription: e.rbErrorDescription ?? null,
+      message: e.userMessage,
+      display: e.display,
+      requestUrl: e.requestUrl,
+    },
+    { status }
+  );
+}
 
 export async function POST(request: NextRequest) {
   const perm = await requireBankWrite(request);
@@ -18,9 +38,25 @@ export async function POST(request: NextRequest) {
 
   try {
     const result = await syncBankForOrganization(perm.db, organizationId, perm.caller.uid);
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({
+      ok: true,
+      success: true,
+      accountsImported: result.accounts,
+      transactionsImported: result.imported,
+      transactionsUpdated: result.updated,
+      lastSyncAt: result.lastSyncAt,
+      accounts: result.accounts,
+      imported: result.imported,
+      updated: result.updated,
+    });
   } catch (e) {
+    if (e instanceof RbPremiumApiError) {
+      return rbErrorResponse(e);
+    }
     const msg = e instanceof Error ? e.message : "Synchronizace selhala.";
-    return NextResponse.json({ ok: false, error: msg }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, success: false, error: msg, message: msg },
+      { status: 500 }
+    );
   }
 }

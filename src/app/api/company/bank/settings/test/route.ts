@@ -7,6 +7,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { bankConnectionsCol } from "@/lib/bank/collections";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   const perm = await requireBankIntegrationAdmin(request);
@@ -33,6 +34,7 @@ export async function POST(request: NextRequest) {
       message: result.message,
       display: result.display,
       requestUrl: result.requestUrl,
+      accountsFound: result.accountsFound,
     });
   } catch (e) {
     if (e instanceof RbPremiumApiError) {
@@ -44,6 +46,8 @@ export async function POST(request: NextRequest) {
         },
         { merge: true }
       );
+      const status =
+        e.httpStatus >= 400 && e.httpStatus <= 599 ? e.httpStatus : 502;
       return NextResponse.json(
         {
           ok: false,
@@ -54,7 +58,7 @@ export async function POST(request: NextRequest) {
           display: e.display,
           requestUrl: e.requestUrl,
         },
-        { status: 400 }
+        { status }
       );
     }
     const msg = e instanceof Error ? e.message : "Test spojení selhal.";

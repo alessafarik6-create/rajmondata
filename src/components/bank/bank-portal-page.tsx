@@ -137,8 +137,20 @@ export function BankPortalPage() {
         body: JSON.stringify({ companyId }),
       });
       const json = await res.json();
-      if (!json.ok) throw new Error(json.error || "Synchronizace selhala.");
-      toast({ title: "Synchronizace dokončena", description: `Importováno: ${json.imported ?? 0}` });
+      if (!json.ok && !json.success) {
+        const msg =
+          (typeof json.message === "string" && json.message.trim()) ||
+          (typeof json.display === "string" && json.display.trim()) ||
+          (typeof json.error === "string" && json.error.trim()) ||
+          "Synchronizace selhala.";
+        throw new Error(msg);
+      }
+      const imported = json.transactionsImported ?? json.imported ?? 0;
+      const accounts = json.accountsImported ?? json.accounts ?? 0;
+      toast({
+        title: "Synchronizace dokončena",
+        description: `Účty: ${accounts}, nové transakce: ${imported}`,
+      });
       await reload();
     } catch (e) {
       toast({
