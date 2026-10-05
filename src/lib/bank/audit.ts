@@ -9,6 +9,7 @@ export type BankAuditAction =
   | "BANK_TRANSACTION_MATCHED"
   | "BANK_TRANSACTION_UNMATCHED"
   | "BANK_TRANSACTION_CATEGORIZED"
+  | "BANK_TRANSACTION_NOTE_UPDATED"
   | "BANK_ACCESS_CHANGED";
 
 export async function writeBankAuditLog(

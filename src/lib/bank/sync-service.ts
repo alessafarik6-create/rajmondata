@@ -17,8 +17,7 @@ import { resolveBankTransactionDocId } from "@/lib/bank/transaction-id";
 import type { BankTransactionDirection } from "@/lib/bank/types";
 import { writeBankAuditLog } from "@/lib/bank/audit";
 import { roundMoney2 } from "@/lib/vat-calculations";
-import { pickAutoMatch, suggestBankTransactionMatches } from "@/lib/bank/matching";
-import { applyBankTransactionMatch } from "@/lib/bank/apply-match";
+import { refreshSuggestedMatchesForOrganization } from "@/lib/bank/suggested-matches-service";
 
 /** RB limit: from max 90 dní — sync používá 30 dní (DT01 při překročení). */
 const DEFAULT_HISTORY_DAYS = 30;
@@ -237,73 +236,7 @@ export async function syncBankForOrganization(
         }
       }
 
-      const todayIso = new Date().toISOString().split("T")[0];
-      const invSnap = await db
-        .collection("companies")
-        .doc(organizationId)
-        .collection("invoices")
-        .limit(200)
-        .get();
-      const issuedInvoices = invSnap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Record<string, unknown>),
-      }));
-      const docSnap = await db
-        .collection("companies")
-        .doc(organizationId)
-        .collection("documents")
-        .limit(200)
-        .get();
-      const receivedDocuments = docSnap.docs
-        .filter((d) => {
-          const t = String(d.data().type ?? "").toLowerCase();
-          const k = String(d.data().documentKind ?? "").toLowerCase();
-          return t === "received" || k === "prijate";
-        })
-        .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
-
-      const recentTxSnap = await bankTransactionsCol(db, organizationId)
-        .where("classification", "==", "unmatched")
-        .orderBy("bookingDate", "desc")
-        .limit(50)
-        .get()
-        .catch(() => null);
-
-      if (recentTxSnap) {
-        for (const tDoc of recentTxSnap.docs) {
-          const t = tDoc.data();
-          if (Number(t.matchedAmountTotal ?? 0) > 0) continue;
-          const suggestions = suggestBankTransactionMatches(
-            {
-              direction: t.direction as "incoming" | "outgoing",
-              amount: Number(t.amount),
-              currency: String(t.currency ?? "CZK"),
-              variableSymbol: t.variableSymbol as string | null,
-              counterpartyName: t.counterpartyName as string | null,
-              counterpartyAccount: t.counterpartyAccount as string | null,
-              bookingDate: String(t.bookingDate),
-            },
-            { todayIso, issuedInvoices, receivedDocuments }
-          );
-          const auto = pickAutoMatch(suggestions);
-          if (!auto) continue;
-          try {
-            const amt = Math.abs(roundMoney2(Number(t.amount)));
-            await applyBankTransactionMatch(db, {
-              organizationId,
-              transactionId: tDoc.id,
-              userId,
-              matchedAmount: amt,
-              matchType: "auto",
-              confidence: auto.confidence,
-              issuedInvoiceId: auto.targetKind === "issued_invoice" ? auto.targetId : null,
-              receivedDocumentId: auto.targetKind === "received_document" ? auto.targetId : null,
-            });
-          } catch {
-            /* nízká confidence / kolize — pouze návrh v UI */
-          }
-        }
-      }
+      await refreshSuggestedMatchesForOrganization(db, organizationId, 80);
 
       const lastSyncAt = new Date().toISOString();
       await connRef.set(

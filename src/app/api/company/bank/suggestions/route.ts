@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireBankRead, bankTenantOk } from "@/lib/bank/api-auth";
 import { bankTransactionsCol } from "@/lib/bank/collections";
 import { suggestBankTransactionMatches } from "@/lib/bank/matching";
+import { aiMatchSummary } from "@/lib/bank/match-display";
 
 export const dynamic = "force-dynamic";
 
@@ -66,5 +67,10 @@ export async function GET(request: NextRequest) {
     { todayIso, issuedInvoices, receivedDocuments }
   );
 
-  return NextResponse.json({ ok: true, suggestions });
+  const direction = txn.direction as "incoming" | "outgoing";
+  return NextResponse.json({
+    ok: true,
+    suggestions,
+    aiSummary: aiMatchSummary(suggestions, direction),
+  });
 }

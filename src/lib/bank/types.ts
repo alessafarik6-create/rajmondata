@@ -53,6 +53,9 @@ export type BankTransactionClassification =
   | "other_income"
   | "ignored";
 
+/** UI stav párování (nezávisle na classification pro ruční „ke kontrole“). */
+export type BankTransactionMatchStatus = "unmatched" | "review" | "matched";
+
 export type BankExpenseCategory =
   | "rent"
   | "energy"
@@ -86,8 +89,26 @@ export type BankTransactionDoc = {
   expenseCategory?: BankExpenseCategory | null;
   linkedDocumentId?: string | null;
   matchedAmountTotal?: number;
+  matchStatus?: BankTransactionMatchStatus | null;
+  note?: string | null;
+  noteUpdatedAt?: string | null;
+  noteUpdatedByUserId?: string | null;
+  /** Návrhy z deterministického scoringu — ne finální párování. */
+  suggestedMatches?: BankSuggestedMatch[] | null;
+  suggestedMatchesAt?: string | null;
   createdAt?: unknown;
   updatedAt?: unknown;
+};
+
+export type BankSuggestedMatch = {
+  targetKind: BankMatchTargetKind;
+  targetId: string;
+  label: string;
+  variableSymbol?: string | null;
+  amount?: number;
+  currency?: string;
+  confidence: number;
+  reasons: string[];
 };
 
 export type BankMatchType = "auto" | "manual" | "confirmed_auto";
@@ -102,6 +123,7 @@ export type BankTransactionMatchDoc = {
   matchedAt: string;
   matchType: BankMatchType;
   confidence?: number | null;
+  invoicePaymentId?: string | null;
   createdAt?: unknown;
 };
 

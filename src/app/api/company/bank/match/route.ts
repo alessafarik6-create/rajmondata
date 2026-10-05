@@ -23,13 +23,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
+  if (body.matchType === "auto") {
+    return NextResponse.json(
+      { ok: false, error: "Automatické párování bez potvrzení není povoleno." },
+      { status: 400 }
+    );
+  }
+
   try {
     const result = await applyBankTransactionMatch(perm.db, {
       organizationId,
       transactionId: String(body.transactionId ?? ""),
       userId: perm.caller.uid,
       matchedAmount: Number(body.matchedAmount),
-      matchType: body.matchType ?? "manual",
+      matchType: body.matchType === "confirmed_auto" ? "confirmed_auto" : "manual",
       confidence: body.confidence ?? null,
       issuedInvoiceId: body.issuedInvoiceId ?? null,
       receivedDocumentId: body.receivedDocumentId ?? null,

@@ -16,11 +16,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, Landmark } from "lucide-react";
+import { Loader2, RefreshCw, Landmark, ChevronRight } from "lucide-react";
 import { downloadCsvFromRows } from "@/lib/csv-download";
 import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 import { useToast } from "@/hooks/use-toast";
+import { BankTransactionsTable, BankAccountRowLink } from "@/components/bank/bank-transactions-table";
+import { BankTransactionDrawer } from "@/components/bank/bank-transaction-drawer";
+import { formatBankMoney, type BankTxListRow } from "@/components/bank/bank-utils";
+import { resolveBankMatchUiState } from "@/lib/bank/match-display";
 
 type OverviewData = {
   connection: {
@@ -45,25 +48,6 @@ type OverviewData = {
   };
 };
 
-type TxRow = {
-  id: string;
-  bookingDate: string;
-  direction: string;
-  counterpartyName: string | null;
-  counterpartyAccount: string | null;
-  variableSymbol: string | null;
-  message: string | null;
-  amount: number;
-  currency: string;
-  classification: string;
-  matchedAmountTotal: number;
-};
-
-function formatMoney(n: number | null | undefined, cur: string) {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return `${n.toLocaleString("cs-CZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
-}
-
 export function BankPortalPage() {
   const { user } = useUser();
   const { companyId } = useCompany();
@@ -71,20 +55,19 @@ export function BankPortalPage() {
   const { toast } = useToast();
   const [tab, setTab] = useState("overview");
   const [overview, setOverview] = useState<OverviewData | null>(null);
-  const [transactions, setTransactions] = useState<TxRow[]>([]);
+  const [transactions, setTransactions] = useState<BankTxListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [filterQ, setFilterQ] = useState("");
   const [filterVs, setFilterVs] = useState("");
   const [datePreset, setDatePreset] = useState("");
+  const [matchState, setMatchState] = useState("");
   const [settingsClientId, setSettingsClientId] = useState("");
   const [settingsPassword, setSettingsPassword] = useState("");
   const [settingsFile, setSettingsFile] = useState<File | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [suggestions, setSuggestions] = useState<
-    { targetKind: string; targetId: string; label: string; confidence: number }[]
-  >([]);
-  const [selectedTxn, setSelectedTxn] = useState<string | null>(null);
+  const [drawerTxn, setDrawerTxn] = useState<string | null>(null);
+  const [drawerMatchMode, setDrawerMatchMode] = useState(false);
 
   const authHeaders = useCallback(async () => {
     const token = await user!.getIdToken();
@@ -109,10 +92,11 @@ export function BankPortalPage() {
     if (filterQ) params.set("q", filterQ);
     if (filterVs) params.set("variableSymbol", filterVs);
     if (datePreset) params.set("datePreset", datePreset);
+    if (matchState) params.set("matchState", matchState);
     const res = await fetch(`/api/company/bank/transactions?${params}`, { headers });
     const json = await res.json();
     if (json.ok) setTransactions(json.transactions ?? []);
-  }, [user, companyId, access.canRead, authHeaders, filterQ, filterVs, datePreset]);
+  }, [user, companyId, access.canRead, authHeaders, filterQ, filterVs, datePreset, matchState]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -126,6 +110,16 @@ export function BankPortalPage() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    if (!loading) void loadTransactions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- filtr stavu párování
+  }, [matchState]);
+
+  const openTransaction = (id: string, matchPanel?: boolean) => {
+    setDrawerTxn(id);
+    setDrawerMatchMode(!!matchPanel);
+  };
 
   const syncNow = async () => {
     if (!access.canWrite || !user || !companyId || syncing) return;
@@ -176,7 +170,7 @@ export function BankPortalPage() {
   const exportCsv = async () => {
     if (!access.canRead || !transactions.length) return;
     const rows: string[][] = [
-      ["Datum", "Typ", "Protistrana", "VS", "Popis", "Částka", "Měna", "Stav"],
+      ["Datum", "Typ", "Protistrana", "VS", "Popis", "Částka", "Měna"],
       ...transactions.map((t) => [
         t.bookingDate,
         t.direction === "incoming" ? "Příchozí" : "Odchozí",
@@ -185,7 +179,6 @@ export function BankPortalPage() {
         t.message ?? "",
         String(t.amount),
         t.currency,
-        t.classification,
       ]),
     ];
     downloadCsvFromRows(rows, "bankovni-transakce.csv");
@@ -197,49 +190,6 @@ export function BankPortalPage() {
         metadata: { rowCount: transactions.length },
       });
     }
-  };
-
-  const loadSuggestions = async (transactionId: string) => {
-    setSelectedTxn(transactionId);
-    const headers = await authHeaders();
-    const res = await fetch(
-      `/api/company/bank/suggestions?companyId=${encodeURIComponent(companyId!)}&transactionId=${encodeURIComponent(transactionId)}`,
-      { headers }
-    );
-    const json = await res.json();
-    if (json.ok) setSuggestions(json.suggestions ?? []);
-  };
-
-  const confirmMatch = async (s: {
-    targetKind: string;
-    targetId: string;
-    confidence: number;
-  }) => {
-    if (!access.canWrite || !selectedTxn || !companyId) return;
-    const txn = transactions.find((t) => t.id === selectedTxn);
-    if (!txn) return;
-    const amount = Math.abs(txn.amount) - (txn.matchedAmountTotal ?? 0);
-    const headers = { ...(await authHeaders()), "Content-Type": "application/json" };
-    const res = await fetch("/api/company/bank/match", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        companyId,
-        transactionId: selectedTxn,
-        matchedAmount: amount,
-        matchType: s.confidence >= 85 ? "confirmed_auto" : "manual",
-        confidence: s.confidence,
-        issuedInvoiceId: s.targetKind === "issued_invoice" ? s.targetId : undefined,
-        receivedDocumentId: s.targetKind === "received_document" ? s.targetId : undefined,
-      }),
-    });
-    const json = await res.json();
-    if (!json.ok) {
-      toast({ variant: "destructive", title: "Párování", description: json.error });
-      return;
-    }
-    toast({ title: "Spárováno", description: "Platba byla propojena s dokladem." });
-    await reload();
   };
 
   const saveSettings = async () => {
@@ -314,8 +264,43 @@ export function BankPortalPage() {
   };
 
   const unmatchedTxns = useMemo(
-    () => transactions.filter((t) => t.classification === "unmatched" && (t.matchedAmountTotal ?? 0) <= 0),
+    () =>
+      transactions.filter(
+        (t) =>
+          resolveBankMatchUiState({
+            classification: t.classification,
+            matchedAmountTotal: t.matchedAmountTotal,
+            amount: t.amount,
+            matchStatus: t.matchStatus as "unmatched" | "review" | "matched" | null,
+            suggestedMatches: t.suggestedMatches as import("@/lib/bank/types").BankSuggestedMatch[] | null,
+          }) === "unmatched"
+      ),
     [transactions]
+  );
+
+  const filterChips = (
+    <div className="flex flex-wrap gap-2">
+      {[
+        { v: "", label: "Vše" },
+        { v: "unmatched", label: "? Nespárované" },
+        { v: "review", label: "! Ke kontrole" },
+        { v: "matched", label: "✓ Spárováno" },
+      ].map((chip) => (
+        <Button
+          key={chip.v || "all"}
+          size="sm"
+          variant={matchState === chip.v ? "default" : "outline"}
+          onClick={() => {
+            setMatchState(chip.v);
+          }}
+        >
+          {chip.label}
+        </Button>
+      ))}
+      <span className="self-center text-sm text-muted-foreground">
+        Nespárované: {overview?.summary.unmatchedCount ?? unmatchedTxns.length}
+      </span>
+    </div>
   );
 
   if (!access.canRead) {
@@ -363,7 +348,7 @@ export function BankPortalPage() {
                 <CardTitle className="text-sm font-medium">Příchozí tento měsíc</CardTitle>
               </CardHeader>
               <CardContent className="text-lg font-semibold text-emerald-700">
-                {formatMoney(overview?.summary.incomingMonth ?? 0, "CZK")}
+                {formatBankMoney(overview?.summary.incomingMonth ?? 0, "CZK")}
               </CardContent>
             </Card>
             <Card>
@@ -371,7 +356,7 @@ export function BankPortalPage() {
                 <CardTitle className="text-sm font-medium">Odchozí tento měsíc</CardTitle>
               </CardHeader>
               <CardContent className="text-lg font-semibold">
-                {formatMoney(overview?.summary.outgoingMonth ?? 0, "CZK")}
+                {formatBankMoney(overview?.summary.outgoingMonth ?? 0, "CZK")}
               </CardContent>
             </Card>
             <Card>
@@ -397,17 +382,37 @@ export function BankPortalPage() {
             </CardHeader>
             <CardContent className="space-y-2">
               {(overview?.accounts ?? []).map((a) => (
-                <div key={a.id} className="flex flex-wrap justify-between gap-2 border-b pb-2 text-sm">
+                <BankAccountRowLink
+                  key={a.id}
+                  accountId={a.id}
+                  className="flex flex-wrap justify-between gap-2 border-b pb-2 text-sm hover:text-primary"
+                >
                   <span>{a.name ?? a.accountNumber ?? a.id}</span>
-                  <span className="font-medium">{formatMoney(a.balance, a.currency)}</span>
-                </div>
+                  <span className="font-medium">{formatBankMoney(a.balance, a.currency)}</span>
+                </BankAccountRowLink>
               ))}
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="accounts">
-          <Card>
+        <TabsContent value="accounts" className="space-y-4">
+          <div className="md:hidden space-y-2">
+            {(overview?.accounts ?? []).map((a) => (
+              <BankAccountRowLink key={a.id} accountId={a.id}>
+                <Card className="hover:border-primary/40">
+                  <CardContent className="p-4 flex justify-between items-center">
+                    <div>
+                      <p className="font-medium">{a.name ?? "Účet"}</p>
+                      <p className="text-sm text-muted-foreground">{a.accountNumber ?? a.id}</p>
+                      <p className="text-lg font-semibold mt-1">{formatBankMoney(a.balance, a.currency)}</p>
+                    </div>
+                    <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                  </CardContent>
+                </Card>
+              </BankAccountRowLink>
+            ))}
+          </div>
+          <Card className="hidden md:block">
             <CardContent className="pt-6">
               <Table>
                 <TableHeader>
@@ -416,15 +421,24 @@ export function BankPortalPage() {
                     <TableHead>Účet</TableHead>
                     <TableHead>Zůstatek</TableHead>
                     <TableHead>Disponibilní</TableHead>
+                    <TableHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {(overview?.accounts ?? []).map((a) => (
-                    <TableRow key={a.id}>
-                      <TableCell>{a.name ?? "—"}</TableCell>
-                      <TableCell>{a.accountNumber ?? a.id}</TableCell>
-                      <TableCell>{formatMoney(a.balance, a.currency)}</TableCell>
-                      <TableCell>{formatMoney(a.availableBalance ?? a.balance, a.currency)}</TableCell>
+                    <TableRow key={a.id} className="cursor-pointer hover:bg-muted/50">
+                      <TableCell colSpan={5} className="p-0">
+                        <BankAccountRowLink
+                          accountId={a.id}
+                          className="grid grid-cols-[1fr_1fr_1fr_1fr_auto] items-center gap-2 px-4 py-3 w-full"
+                        >
+                          <span>{a.name ?? "—"}</span>
+                          <span>{a.accountNumber ?? a.id}</span>
+                          <span>{formatBankMoney(a.balance, a.currency)}</span>
+                          <span>{formatBankMoney(a.availableBalance ?? a.balance, a.currency)}</span>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground justify-self-end" />
+                        </BankAccountRowLink>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -434,6 +448,7 @@ export function BankPortalPage() {
         </TabsContent>
 
         <TabsContent value="transactions" className="space-y-4">
+          {filterChips}
           <div className="flex flex-wrap gap-2">
             <Input placeholder="Fulltext" value={filterQ} onChange={(e) => setFilterQ(e.target.value)} className="max-w-xs" />
             <Input placeholder="VS" value={filterVs} onChange={(e) => setFilterVs(e.target.value)} className="max-w-[140px]" />
@@ -456,35 +471,22 @@ export function BankPortalPage() {
               Export CSV
             </Button>
           </div>
-          <TransactionsTable rows={transactions} onDetail={access.canWrite ? loadSuggestions : undefined} />
+          <BankTransactionsTable
+            rows={transactions}
+            onOpenTransaction={(id) => openTransaction(id)}
+            showMatchAction={access.canWrite}
+          />
         </TabsContent>
 
         <TabsContent value="matching" className="space-y-4">
-          <TransactionsTable
+          <p className="text-sm text-muted-foreground">
+            Nespárované transakce — otevřete detail a potvrďte párování ručně.
+          </p>
+          <BankTransactionsTable
             rows={unmatchedTxns}
-            onDetail={access.canWrite ? loadSuggestions : undefined}
+            onOpenTransaction={(id) => openTransaction(id, true)}
+            showMatchAction={access.canWrite}
           />
-          {selectedTxn && suggestions.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Navržené párování</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {suggestions.map((s) => (
-                  <div key={`${s.targetKind}-${s.targetId}`} className="flex items-center justify-between gap-2 border-b pb-2">
-                    <span>
-                      {s.label} ({s.confidence} %)
-                    </span>
-                    {access.canWrite ? (
-                      <Button size="sm" onClick={() => void confirmMatch(s)}>
-                        Potvrdit
-                      </Button>
-                    ) : null}
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          ) : null}
         </TabsContent>
 
         <TabsContent value="settings">
@@ -537,61 +539,24 @@ export function BankPortalPage() {
           )}
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
 
-function TransactionsTable({
-  rows,
-  onDetail,
-}: {
-  rows: TxRow[];
-  onDetail?: (id: string) => void;
-}) {
-  return (
-    <Card>
-      <CardContent className="pt-4 overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Datum</TableHead>
-              <TableHead>Typ</TableHead>
-              <TableHead>Protistrana</TableHead>
-              <TableHead>VS</TableHead>
-              <TableHead>Popis</TableHead>
-              <TableHead>Částka</TableHead>
-              <TableHead>Stav</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((t) => (
-              <TableRow key={t.id}>
-                <TableCell>{t.bookingDate}</TableCell>
-                <TableCell>
-                  <Badge variant={t.direction === "incoming" ? "default" : "secondary"}>
-                    {t.direction === "incoming" ? "Příchozí" : "Odchozí"}
-                  </Badge>
-                </TableCell>
-                <TableCell>{t.counterpartyName ?? "—"}</TableCell>
-                <TableCell>{t.variableSymbol ?? "—"}</TableCell>
-                <TableCell className="max-w-[200px] truncate">{t.message ?? "—"}</TableCell>
-                <TableCell className={t.amount >= 0 ? "text-emerald-700 font-medium" : ""}>
-                  {formatMoney(t.amount, t.currency)}
-                </TableCell>
-                <TableCell>{t.classification}</TableCell>
-                <TableCell>
-                  {onDetail ? (
-                    <Button size="sm" variant="ghost" onClick={() => onDetail(t.id)}>
-                      Spárovat
-                    </Button>
-                  ) : null}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+      {companyId && user ? (
+        <BankTransactionDrawer
+          open={!!drawerTxn}
+          onOpenChange={(v) => {
+            if (!v) {
+              setDrawerTxn(null);
+              setDrawerMatchMode(false);
+            }
+          }}
+          transactionId={drawerTxn}
+          companyId={companyId}
+          canWrite={access.canWrite}
+          getAuthHeaders={authHeaders}
+          onChanged={() => void reload()}
+          initialPanel={drawerMatchMode ? "match" : "detail"}
+        />
+      ) : null}
+    </div>
   );
 }

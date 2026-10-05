@@ -13,6 +13,10 @@ import { roundMoney2 } from "@/lib/vat-calculations";
 import type { BankMatchType } from "@/lib/bank/types";
 import { writeBankAuditLog } from "@/lib/bank/audit";
 import { recomputeTransactionMatchTotals } from "@/lib/bank/match-totals";
+import {
+  reverseDocumentPaymentForBankMatch,
+  reverseInvoicePaymentForBankMatch,
+} from "@/lib/bank/reverse-match-payment";
 
 export type ApplyBankMatchInput = {
   organizationId: string;
@@ -91,8 +95,9 @@ export async function applyBankTransactionMatch(
   if (!invoiceId && !documentId) throw new Error("Chybí cíl párování.");
   if (invoiceId && documentId) throw new Error("Zadejte pouze fakturu nebo doklad.");
 
+  let invoicePaymentId: string | null = null;
   if (invoiceId) {
-    await recordPortalInvoicePaymentAdmin(db, {
+    const payResult = await recordPortalInvoicePaymentAdmin(db, {
       organizationId,
       invoiceId,
       userId: input.userId,
@@ -101,6 +106,7 @@ export async function applyBankTransactionMatch(
       method: "bank",
       note: `Bankovní transakce ${transactionId}`,
     });
+    invoicePaymentId = payResult.paymentId;
   } else if (documentId) {
     await applyReceivedDocumentPayment(db, organizationId, documentId, amount, bookingDate);
   }
@@ -116,6 +122,7 @@ export async function applyBankTransactionMatch(
     matchedAt: new Date().toISOString(),
     matchType: input.matchType,
     confidence: input.confidence ?? null,
+    invoicePaymentId,
     createdAt: FieldValue.serverTimestamp(),
   });
 
@@ -149,6 +156,18 @@ export async function removeBankTransactionMatch(
   if (!snap.exists) throw new Error("Párování nebylo nalezeno.");
   const data = snap.data() as Record<string, unknown>;
   const transactionId = String(data.transactionId ?? "");
+  const invoiceId = String(data.invoiceId ?? "").trim() || null;
+  const documentId = String(data.documentId ?? "").trim() || null;
+  const matchedAmount = roundMoney2(Number(data.matchedAmount ?? 0));
+  const paymentId = String(data.invoicePaymentId ?? "").trim() || null;
+  const todayIso = new Date().toISOString().split("T")[0];
+
+  if (invoiceId && paymentId) {
+    await reverseInvoicePaymentForBankMatch(db, organizationId, invoiceId, paymentId, todayIso);
+  } else if (documentId && matchedAmount > 0) {
+    await reverseDocumentPaymentForBankMatch(db, organizationId, documentId, matchedAmount);
+  }
+
   await matchRef.delete();
   if (transactionId) {
     await recomputeTransactionMatchTotals(db, organizationId, transactionId);

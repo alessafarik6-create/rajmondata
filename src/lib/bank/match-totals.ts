@@ -33,9 +33,14 @@ export async function recomputeTransactionMatchTotals(
     classification = existingClass as BankTransactionClassification;
   }
 
+  let matchStatus: "unmatched" | "review" | "matched" = "unmatched";
+  if (classification === "matched") matchStatus = "matched";
+  else if (total > 0) matchStatus = "review";
+
   await txnRef.update({
     matchedAmountTotal: total,
     classification,
+    matchStatus,
     updatedAt: FieldValue.serverTimestamp(),
   });
 }

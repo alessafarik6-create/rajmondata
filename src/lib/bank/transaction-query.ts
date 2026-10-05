@@ -5,7 +5,7 @@ export type BankTransactionFilter = {
   dateTo?: string | null;
   accountId?: string | null;
   direction?: "incoming" | "outgoing" | null;
-  matchState?: "matched" | "unmatched" | null;
+  matchState?: "matched" | "unmatched" | "review" | null;
   amountMin?: number | null;
   amountMax?: number | null;
   variableSymbol?: string | null;
@@ -20,13 +20,30 @@ export function bankTransactionMatchesFilter(
   if (f.accountId && row.accountId !== f.accountId) return false;
   if (f.direction && row.direction !== f.direction) return false;
 
-  if (f.matchState === "matched" && row.classification !== "matched") return false;
+  if (f.matchState === "matched") {
+    const txnAbs = Math.abs(Number(row.amount));
+    const matched = Number(row.matchedAmountTotal ?? 0);
+    const fully =
+      row.classification === "matched" ||
+      row.matchStatus === "matched" ||
+      (matched > 0 && matched >= txnAbs - 0.009);
+    if (!fully) return false;
+  }
   if (f.matchState === "unmatched") {
     const partial = Number(row.matchedAmountTotal ?? 0) > 0;
     if (row.classification === "matched" || partial) return false;
+    if (row.matchStatus === "review") return false;
     if (["internal_transfer", "ignored", "expense", "other_income"].includes(row.classification)) {
       return false;
     }
+  }
+
+  if (f.matchState === "review") {
+    const matched = Number(row.matchedAmountTotal ?? 0);
+    const txnAbs = Math.abs(Number(row.amount));
+    const isPartial = matched > 0 && matched < txnAbs - 0.009;
+    const isReviewFlag = row.matchStatus === "review";
+    if (!isPartial && !isReviewFlag) return false;
   }
 
   const bd = String(row.bookingDate ?? "");
@@ -78,7 +95,7 @@ export function parseBankTransactionFilterFromSearchParams(
     dateTo: sp.get("dateTo"),
     accountId: sp.get("accountId"),
     direction: (sp.get("direction") as "incoming" | "outgoing") || null,
-    matchState: (sp.get("matchState") as "matched" | "unmatched") || null,
+    matchState: (sp.get("matchState") as "matched" | "unmatched" | "review") || null,
     amountMin: num("amountMin"),
     amountMax: num("amountMax"),
     variableSymbol: sp.get("variableSymbol"),
