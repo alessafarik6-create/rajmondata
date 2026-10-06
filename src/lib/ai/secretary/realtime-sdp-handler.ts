@@ -5,6 +5,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { getOpenAiApiKey } from "@/lib/ai/config";
 import { verifyBearerAndLoadCaller } from "@/lib/api-verify-company-user";
 import { buildSecretaryContext } from "@/lib/ai/secretary/context";
+import { resolveSecretaryAccess } from "@/lib/ai/secretary/capabilities";
 import {
   assertOpenAiVoiceConfigured,
   buildUnifiedRealtimeSessionJson,
@@ -117,7 +118,8 @@ export async function exchangeSecretaryRealtimeSdp(
 
   try {
     const ctx = await buildSecretaryContext(db, caller, companyId);
-    const sessionJson = buildUnifiedRealtimeSessionJson(ctx);
+    const access = await resolveSecretaryAccess(db, caller, companyId);
+    const sessionJson = buildUnifiedRealtimeSessionJson(ctx, access);
     const safetyId = createHash("sha256")
       .update(`${caller.uid}:${companyId}`)
       .digest("hex")

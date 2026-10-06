@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2, Mic, X } from "lucide-react";
 import { useUser } from "@/firebase";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,10 @@ import {
   SECRETARY_VOICE_EMAIL_CONTEXT_EVENT,
   type SecretaryShowEmailDetail,
 } from "@/lib/ai/secretary/email-voice-ui";
+import {
+  SECRETARY_OPEN_JOB_EVENT,
+  type SecretaryOpenJobDetail,
+} from "@/lib/ai/secretary/job-voice-ui";
 
 type Props = {
   companyId: string;
@@ -34,6 +39,8 @@ function phaseLabel(phase: VoiceSecretaryPhase): string {
       return "Sekretářka mluví…";
     case "waiting_confirmation":
       return "Čekám na potvrzení…";
+    case "reconnecting":
+      return "◌ Obnovuji spojení…";
     case "error":
       return "Chyba připojení";
     case "ended":
@@ -45,6 +52,7 @@ function phaseLabel(phase: VoiceSecretaryPhase): string {
 
 export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName }: Props) {
   const { user } = useUser();
+  const router = useRouter();
   const [lines, setLines] = useState<string[]>([]);
   const [showTranscript, setShowTranscript] = useState(false);
   const [statusHint, setStatusHint] = useState<string | null>(null);
@@ -57,9 +65,17 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
     const onCtx = (ev: Event) => {
       setEmailContext((ev as CustomEvent<SecretaryShowEmailDetail | null>).detail ?? null);
     };
+    const onJob = (ev: Event) => {
+      const detail = (ev as CustomEvent<SecretaryOpenJobDetail>).detail;
+      if (detail?.portalPath) router.push(detail.portalPath);
+    };
     window.addEventListener(SECRETARY_VOICE_EMAIL_CONTEXT_EVENT, onCtx);
-    return () => window.removeEventListener(SECRETARY_VOICE_EMAIL_CONTEXT_EVENT, onCtx);
-  }, []);
+    window.addEventListener(SECRETARY_OPEN_JOB_EVENT, onJob);
+    return () => {
+      window.removeEventListener(SECRETARY_VOICE_EMAIL_CONTEXT_EVENT, onCtx);
+      window.removeEventListener(SECRETARY_OPEN_JOB_EVENT, onJob);
+    };
+  }, [router]);
 
   const voice = useAiSecretaryRealtime({
     user,

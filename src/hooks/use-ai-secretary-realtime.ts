@@ -9,6 +9,8 @@ import {
   dispatchSecretaryShowEmailAttachment,
   dispatchSecretaryVoiceEmailContext,
 } from "@/lib/ai/secretary/email-voice-ui";
+import { dispatchSecretaryOpenJob } from "@/lib/ai/secretary/job-voice-ui";
+import { createVoicePerfTracker } from "@/lib/ai/secretary/voice-perf";
 
 export type VoiceSecretaryPhase =
   | "idle"
@@ -19,8 +21,22 @@ export type VoiceSecretaryPhase =
   | "assistant_speaking"
   | "processing_tool"
   | "waiting_confirmation"
+  | "reconnecting"
   | "error"
   | "ended";
+
+const TOOL_CLIENT_TIMEOUT_MS = 26_000;
+const SPEAKING_WATCHDOG_MS = 45_000;
+const MAX_RECONNECT_ATTEMPTS = 3;
+
+function toolStatusHint(toolName: string): string {
+  if (toolName.includes("job")) return "Hledám zakázku…";
+  if (toolName.includes("email")) return "Čtu e-mail…";
+  if (toolName.includes("calendar") || toolName.includes("meeting")) return "Kalendář…";
+  if (toolName.includes("task")) return "Úkoly…";
+  if (toolName.includes("memory")) return "Paměť…";
+  return "Přemýšlím…";
+}
 
 type TranscriptLine = { role: "user" | "assistant" | "system"; text: string };
 
@@ -81,9 +97,22 @@ export function useAiSecretaryRealtime({
   const sessionObjectsLoggedRef = useRef(false);
   const greetingSentRef = useRef(false);
   const handlersBoundRef = useRef(false);
+  const perfRef = useRef(createVoicePerfTracker());
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speakingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startFnRef = useRef<(() => Promise<void>) | null>(null);
+  const isReconnectRef = useRef(false);
 
   const voiceMetric = useCallback((message: string, detail?: Record<string, string | number | boolean>) => {
     voiceDebugLog(message, detail);
+  }, []);
+
+  const clearSpeakingWatchdog = useCallback(() => {
+    if (speakingWatchdogRef.current) {
+      clearTimeout(speakingWatchdogRef.current);
+      speakingWatchdogRef.current = null;
+    }
   }, []);
 
   const setPhaseSafe = useCallback(
@@ -93,6 +122,17 @@ export function useAiSecretaryRealtime({
     },
     [onPhaseChange]
   );
+
+  const armSpeakingWatchdog = useCallback(() => {
+    clearSpeakingWatchdog();
+    speakingWatchdogRef.current = setTimeout(() => {
+      assistantSpeakingRef.current = false;
+      responseInProgressRef.current = false;
+      setPhaseSafe("listening");
+      onStatusHint?.("Poslouchám…");
+      perfRef.current.log({ event: "speaking_watchdog" });
+    }, SPEAKING_WATCHDOG_MS);
+  }, [clearSpeakingWatchdog, onStatusHint, setPhaseSafe]);
 
   const cleanupMedia = useCallback(() => {
     abortRef.current?.abort();
@@ -108,9 +148,16 @@ export function useAiSecretaryRealtime({
       clearTimeout(disconnectGraceTimerRef.current);
       disconnectGraceTimerRef.current = null;
     }
-    sessionObjectsLoggedRef.current = false;
-    greetingSentRef.current = false;
+    if (!isReconnectRef.current) {
+      sessionObjectsLoggedRef.current = false;
+      greetingSentRef.current = false;
+    }
     handlersBoundRef.current = false;
+    clearSpeakingWatchdog();
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     dcRef.current?.close();
     dcRef.current = null;
     pcRef.current?.close();
@@ -123,9 +170,11 @@ export function useAiSecretaryRealtime({
       audio.srcObject = null;
     }
     voiceDebugLog("session closed");
-  }, []);
+  }, [clearSpeakingWatchdog]);
 
   const stop = useCallback(async () => {
+    isReconnectRef.current = false;
+    reconnectAttemptsRef.current = 0;
     cleanupMedia();
     setPhaseSafe("ended");
     onStatusHint?.(null);
@@ -135,8 +184,10 @@ export function useAiSecretaryRealtime({
   const sendResponseCreate = useCallback(
     (dc: RTCDataChannel, response?: { instructions?: string }) => {
       if (responseInProgressRef.current) return;
+      if (responseInProgressRef.current) return;
       responseInProgressRef.current = true;
       cancelSentRef.current = false;
+      perfRef.current.markResponseStarted();
       const payload: Record<string, unknown> = { type: "response.create" };
       if (response?.instructions) {
         payload.response = { instructions: response.instructions };
@@ -177,13 +228,38 @@ export function useAiSecretaryRealtime({
     async (toolName: string, args: Record<string, unknown>, signal: AbortSignal) => {
       if (!user) return { ok: false, error: "Nepřihlášen" };
       const token = await user.getIdToken();
-      const res = await fetch("/api/company/ai/secretary/tools", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ companyId, toolName, arguments: args }),
-        signal,
-      });
-      return res.json();
+      const timeout = new AbortController();
+      const timer = setTimeout(() => timeout.abort(), TOOL_CLIENT_TIMEOUT_MS);
+      const combined = (() => {
+        const c = new AbortController();
+        const abort = () => c.abort();
+        if (signal.aborted || timeout.signal.aborted) {
+          c.abort();
+          return c.signal;
+        }
+        signal.addEventListener("abort", abort);
+        timeout.signal.addEventListener("abort", abort);
+        return c.signal;
+      })();
+      try {
+        const res = await fetch("/api/company/ai/secretary/tools", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId, toolName, arguments: args }),
+          signal: combined,
+        });
+        return res.json();
+      } catch (e) {
+        if (timeout.signal.aborted) {
+          return {
+            ok: false,
+            error: "Operace trvala příliš dlouho. Zkuste to znovu.",
+          };
+        }
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
     },
     [user, companyId]
   );
@@ -215,6 +291,7 @@ export function useAiSecretaryRealtime({
         responseInProgressRef.current = false;
         assistantSpeakingRef.current = false;
         cancelSentRef.current = false;
+        clearSpeakingWatchdog();
         voiceMetric(type === "response.cancelled" ? "response_cancelled" : "response_finished");
         setPhaseSafe("listening");
         onStatusHint?.("Poslouchám…");
@@ -227,8 +304,10 @@ export function useAiSecretaryRealtime({
         type === "response.output_audio.delta"
       ) {
         assistantSpeakingRef.current = true;
+        perfRef.current.markFirstRemoteAudio();
         setPhaseSafe("assistant_speaking");
         onStatusHint?.("Sekretářka mluví…");
+        armSpeakingWatchdog();
       }
 
       if (
@@ -267,6 +346,7 @@ export function useAiSecretaryRealtime({
 
       if (type === "input_audio_buffer.speech_stopped") {
         voiceMetric("speech_stopped");
+        perfRef.current.markUserSpeechEnd();
       }
 
       if (type === "response.function_call_arguments.delta") {
@@ -288,7 +368,8 @@ export function useAiSecretaryRealtime({
 
         void (async () => {
           setPhaseSafe("processing_tool");
-          onStatusHint?.("Provádím…");
+          onStatusHint?.(toolStatusHint(name));
+          perfRef.current.markToolStart(name);
           voiceMetric("tool_started", { name });
           let args: Record<string, unknown> = {};
           try {
@@ -297,10 +378,19 @@ export function useAiSecretaryRealtime({
             args = {};
           }
           const signal = abortRef.current?.signal ?? undefined;
-          const result = (await invokeTool(name, args, signal ?? new AbortController().signal)) as Record<
-            string,
-            unknown
-          >;
+          let result: Record<string, unknown>;
+          try {
+            result = (await invokeTool(name, args, signal ?? new AbortController().signal)) as Record<
+              string,
+              unknown
+            >;
+          } catch {
+            result = {
+              ok: false,
+              error: "Zakázku se mi teď nepodařilo načíst. Můžeme to zkusit znovu.",
+            };
+          }
+          perfRef.current.markToolEnd(result.ok !== false);
           if (result.pendingId || result.pendingActionId) {
             setPhaseSafe("waiting_confirmation");
             onStatusHint?.("Čekám na potvrzení…");
@@ -314,6 +404,12 @@ export function useAiSecretaryRealtime({
             }
             if (result.messageDocId) {
               window.dispatchEvent(new CustomEvent("rajmondata-email-mailbox-changed"));
+            }
+            if (result.action === "open_job" && result.jobId) {
+              dispatchSecretaryOpenJob({
+                jobId: String(result.jobId),
+                portalPath: String(result.portalPath ?? `/portal/jobs/${result.jobId}`),
+              });
             }
             if (result.showEmail && result.emailId) {
               dispatchSecretaryShowEmail({
@@ -356,7 +452,7 @@ export function useAiSecretaryRealtime({
               },
             })
           );
-          dc.send(JSON.stringify({ type: "response.create" }));
+          sendResponseCreate(dc);
           setPhaseSafe("listening");
           onStatusHint?.("Poslouchám…");
           fnCallRef.current = null;
@@ -381,7 +477,17 @@ export function useAiSecretaryRealtime({
         }
       }
     },
-    [invokeTool, onTranscript, onStatusHint, sendResponseCancelOnce, sendResponseCreate, setPhaseSafe, voiceMetric]
+    [
+      invokeTool,
+      onTranscript,
+      onStatusHint,
+      sendResponseCancelOnce,
+      sendResponseCreate,
+      setPhaseSafe,
+      voiceMetric,
+      armSpeakingWatchdog,
+      clearSpeakingWatchdog,
+    ]
   );
 
   const attachAudioElement = useCallback((el: HTMLAudioElement | null) => {
@@ -391,10 +497,20 @@ export function useAiSecretaryRealtime({
   const start = useCallback(async () => {
     if (!user || !companyId) return;
     if (startingRef.current) return;
-    if (pcRef.current || activeRef.current) {
+    if (!isReconnectRef.current && (pcRef.current || activeRef.current)) {
       cleanupMedia();
     }
+    if (isReconnectRef.current) {
+      dcRef.current?.close();
+      dcRef.current = null;
+      pcRef.current?.close();
+      pcRef.current = null;
+    }
     startingRef.current = true;
+    if (!isReconnectRef.current) {
+      perfRef.current.resetSession();
+      reconnectAttemptsRef.current = 0;
+    }
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
@@ -443,7 +559,11 @@ export function useAiSecretaryRealtime({
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
-      streamRef.current = stream;
+      if (!streamRef.current || streamRef.current.getTracks().every((t) => t.readyState !== "live")) {
+        streamRef.current = stream;
+      } else {
+        stream.getTracks().forEach((t) => t.stop());
+      }
       if (!sessionObjectsLoggedRef.current) {
         sessionObjectsLoggedRef.current = true;
         voiceMetric("stream created");
@@ -485,18 +605,38 @@ export function useAiSecretaryRealtime({
 
       pc.onconnectionstatechange = () => {
         voiceMetric("pc_state", { state: pc.connectionState });
+        perfRef.current.setConnectionState(pc.connectionState);
         if (pc.connectionState === "connected" && disconnectGraceTimerRef.current) {
           clearTimeout(disconnectGraceTimerRef.current);
           disconnectGraceTimerRef.current = null;
+          if (isReconnectRef.current) {
+            isReconnectRef.current = false;
+            onStatusHint?.("Jsem zpět, můžete pokračovat.");
+            onTranscript?.({ role: "system", text: "Spojení obnoveno." });
+          }
         }
-        if (pc.connectionState === "disconnected") {
+        if (pc.connectionState === "disconnected" || pc.iceConnectionState === "disconnected") {
+          setPhaseSafe("reconnecting");
+          onStatusHint?.("Obnovuji spojení…");
           if (!disconnectGraceTimerRef.current) {
             disconnectGraceTimerRef.current = setTimeout(() => {
+              disconnectGraceTimerRef.current = null;
+              if (
+                activeRef.current &&
+                reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS &&
+                startFnRef.current
+              ) {
+                reconnectAttemptsRef.current += 1;
+                perfRef.current.markReconnect();
+                isReconnectRef.current = true;
+                void startFnRef.current();
+                return;
+              }
               if (pcRef.current?.connectionState === "disconnected") {
                 onError?.(mapVoiceErrorForUser("Spojení bylo přerušeno."), { code: "pc_disconnected" });
                 setPhaseSafe("error");
               }
-            }, 5000);
+            }, 2500);
           }
           return;
         }
@@ -504,13 +644,23 @@ export function useAiSecretaryRealtime({
           maybeSendGreeting(dcRef.current);
         }
         if (pc.connectionState === "failed") {
+          if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS && startFnRef.current) {
+            reconnectAttemptsRef.current += 1;
+            perfRef.current.markReconnect();
+            isReconnectRef.current = true;
+            setPhaseSafe("reconnecting");
+            onStatusHint?.("Obnovuji spojení…");
+            void startFnRef.current();
+            return;
+          }
           onError?.(mapVoiceErrorForUser("Spojení selhalo."), { code: "pc_failed" });
           setPhaseSafe("error");
         }
       };
 
-      for (const track of stream.getTracks()) {
-        pc.addTrack(track, stream);
+      const micStream = streamRef.current ?? stream;
+      for (const track of micStream.getTracks()) {
+        pc.addTrack(track, micStream);
       }
 
       const dc = pc.createDataChannel("oai-events");
@@ -642,11 +792,14 @@ export function useAiSecretaryRealtime({
     voiceMetric,
   ]);
 
+  startFnRef.current = start;
+
   return {
     phase,
     start,
     stop,
     attachAudioElement,
     isActive: phase !== "idle" && phase !== "ended" && phase !== "error",
+    perfSnapshot: () => perfRef.current.snapshot(),
   };
 }

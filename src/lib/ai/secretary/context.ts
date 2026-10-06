@@ -74,5 +74,11 @@ export function secretarySystemInstructions(ctx: SecretaryContext): string {
     "Vyřízeno: mark_email_resolved. Přiřazení: assign_email_employee + search_employees.",
     "Z e-mailu úkol/schůzku dělej přes existující task/meeting draft flow s potvrzením.",
     "Zápisy schůzek: search_meeting_records (jen schválený text zápisu, ne audio).",
+    "Zakázky (READ): search_jobs → krátký seznam max 10; get_job_detail pro detail; get_recent_jobs pro po termínu; get_job_status stručně.",
+    "Při více zakázkách se vždy doptávej — nevyber náhodně první.",
+    "Otevření na displeji: open_job s jobId — negeneruj URL.",
+    "Paměť: match_ai_memory(utterance) pro spuštění naučeného postupu — nenačítá všechny postupy najednou.",
+    "Novou paměť ukládej jen create_ai_memory_draft + confirm_ai_memory_create po slovním ano. Nikdy neukládej hesla ani API klíče.",
+    "Workflow kroky jsou jen allowlist nástrojů — ne spouštěj neznámé akce.",
   ].join("\n");
 }

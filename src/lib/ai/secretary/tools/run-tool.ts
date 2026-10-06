@@ -5,6 +5,28 @@ import {
   assertSecretaryPermission,
   resolveSecretaryPermissions,
 } from "@/lib/ai/secretary/permissions";
+import {
+  assertSecretaryToolAccess,
+  resolveSecretaryAccess,
+  toolAllowed,
+} from "@/lib/ai/secretary/capabilities";
+import type { AiSecretarySettingsDoc } from "@/lib/ai/secretary/settings";
+import type { SecretaryPermissions } from "@/lib/ai/secretary/permissions";
+import {
+  secretaryGetJobDetailTool,
+  secretaryGetRecentJobsTool,
+  secretaryOpenJobTool,
+  secretarySearchJobsTool,
+} from "@/lib/ai/secretary/tools/jobs";
+import {
+  confirmAiMemoryCreateTool,
+  confirmAiMemoryDisableTool,
+  createAiMemoryDraftTool,
+  disableAiMemoryDraftTool,
+  getAiMemoryTool,
+  listAiMemoriesTool,
+  matchAiMemoryTool,
+} from "@/lib/ai/secretary/tools/memory-tools";
 import { logSecretaryAudit } from "@/lib/ai/secretary/audit";
 import {
   cancelPendingActionTool,
@@ -83,7 +105,18 @@ export type SecretaryToolName =
   | "confirm_email_send"
   | "mark_email_resolved"
   | "assign_email_employee"
-  | "search_meeting_records";
+  | "search_meeting_records"
+  | "get_job_detail"
+  | "get_recent_jobs"
+  | "get_job_status"
+  | "open_job"
+  | "list_ai_memories"
+  | "get_ai_memory"
+  | "match_ai_memory"
+  | "create_ai_memory_draft"
+  | "confirm_ai_memory_create"
+  | "disable_ai_memory_draft"
+  | "confirm_ai_memory_disable";
 
 function normalizeToolName(name: string): SecretaryToolName | null {
   const map: Record<string, SecretaryToolName> = {
@@ -128,6 +161,17 @@ function normalizeToolName(name: string): SecretaryToolName | null {
     mark_email_resolved: "mark_email_resolved",
     assign_email_employee: "assign_email_employee",
     search_meeting_records: "search_meeting_records",
+    get_job_detail: "get_job_detail",
+    get_recent_jobs: "get_recent_jobs",
+    get_job_status: "get_job_status",
+    open_job: "open_job",
+    list_ai_memories: "list_ai_memories",
+    get_ai_memory: "get_ai_memory",
+    match_ai_memory: "match_ai_memory",
+    create_ai_memory_draft: "create_ai_memory_draft",
+    confirm_ai_memory_create: "confirm_ai_memory_create",
+    disable_ai_memory_draft: "disable_ai_memory_draft",
+    confirm_ai_memory_disable: "confirm_ai_memory_disable",
   };
   return map[name] ?? null;
 }
@@ -142,8 +186,12 @@ export async function runSecretaryTool(
   const toolName = normalizeToolName(toolNameRaw);
   if (!toolName) return { ok: false, error: "Neznámý nástroj." };
 
+  const access = await resolveSecretaryAccess(db, caller, companyId);
+  const { settings, perms } = access;
+  const capGate = assertSecretaryToolAccess(settings, perms, toolName);
+  if (!capGate.ok) return { ok: false, error: capGate.message };
+
   const ctx = await buildSecretaryContext(db, caller, companyId);
-  const perms = await resolveSecretaryPermissions(db, caller, companyId);
 
   try {
     switch (toolName) {
@@ -313,24 +361,89 @@ export async function runSecretaryTool(
         return { ok: true, customers };
       }
       case "search_jobs": {
-        const gate = assertSecretaryPermission(perms, "jobs_read");
-        if (!gate.ok) return { ok: false, error: gate.message };
-        const q = String(args.query ?? "").trim().slice(0, 80);
-        const snap = await db
-          .collection(COMPANIES_COLLECTION)
-          .doc(companyId)
-          .collection("jobs")
-          .limit(30)
-          .get();
-        const jobs = snap.docs
-          .map((d) => ({
-            id: d.id,
-            name: String(d.data().name ?? d.data().title ?? d.id),
-          }))
-          .filter((j) => !q || j.name.toLowerCase().includes(q.toLowerCase()))
-          .slice(0, 8);
-        return { ok: true, jobs };
+        const result = await secretarySearchJobsTool(db, companyId, {
+          query: String(args.query ?? ""),
+          status: args.status != null ? String(args.status) : undefined,
+          customer: args.customer != null ? String(args.customer) : undefined,
+          limit: args.limit != null ? Number(args.limit) : undefined,
+        });
+        return { ok: true, ...result };
       }
+      case "get_job_detail": {
+        return await secretaryGetJobDetailTool(db, companyId, String(args.jobId ?? ""));
+      }
+      case "get_recent_jobs": {
+        const result = await secretaryGetRecentJobsTool(db, companyId, {
+          overdueOnly: args.overdueOnly === true,
+          limit: args.limit != null ? Number(args.limit) : undefined,
+        });
+        return { ok: true, ...result };
+      }
+      case "get_job_status": {
+        const detail = await secretaryGetJobDetailTool(db, companyId, String(args.jobId ?? ""));
+        if (!detail.ok) return detail;
+        const job = detail.job as Record<string, unknown>;
+        return {
+          ok: true,
+          jobId: job.id,
+          label: job.label,
+          status: job.status,
+          deadline: job.deadline,
+          payment: job.payment,
+        };
+      }
+      case "open_job": {
+        await logSecretaryAudit(db, {
+          companyId,
+          userId: caller.uid,
+          action: "ai_action_executed",
+          toolName: "open_job",
+          detail: String(args.jobId ?? ""),
+        });
+        return secretaryOpenJobTool(String(args.jobId ?? ""));
+      }
+      case "list_ai_memories":
+        return await listAiMemoriesTool(db, companyId, caller.uid);
+      case "get_ai_memory":
+        return await getAiMemoryTool(db, companyId, String(args.memoryId ?? ""));
+      case "match_ai_memory":
+        return await matchAiMemoryTool(db, companyId, caller.uid, String(args.utterance ?? ""));
+      case "create_ai_memory_draft":
+        return await createAiMemoryDraftTool(db, {
+          companyId,
+          userId: caller.uid,
+          name: String(args.name ?? ""),
+          type: (args.type as "command_alias" | "workflow" | "preference") ?? "command_alias",
+          triggerPhrases: Array.isArray(args.triggerPhrases)
+            ? (args.triggerPhrases as string[])
+            : [],
+          description: args.description != null ? String(args.description) : undefined,
+          steps: Array.isArray(args.steps) ? (args.steps as { action: string }[]) : [],
+          scope: args.scope === "organization" ? "organization" : "user",
+        });
+      case "confirm_ai_memory_create":
+        return await confirmAiMemoryCreateTool(db, {
+          companyId,
+          userId: caller.uid,
+          pendingActionId: String(args.pendingActionId ?? args.pendingId ?? ""),
+          userConfirmationText:
+            args.userConfirmationText != null ? String(args.userConfirmationText) : undefined,
+        });
+      case "disable_ai_memory_draft":
+        return await disableAiMemoryDraftTool(db, {
+          companyId,
+          userId: caller.uid,
+          memoryId: String(args.memoryId ?? ""),
+          name: args.name != null ? String(args.name) : undefined,
+        });
+      case "confirm_ai_memory_disable":
+        return await confirmAiMemoryDisableTool(db, {
+          companyId,
+          userId: caller.uid,
+          pendingActionId: String(args.pendingActionId ?? args.pendingId ?? ""),
+          userConfirmationText:
+            args.userConfirmationText != null ? String(args.userConfirmationText) : undefined,
+        });
       case "search_employees": {
         const gate = assertSecretaryPermission(perms, "tasks_write");
         if (!gate.ok) return { ok: false, error: gate.message };
@@ -375,8 +488,6 @@ export async function runSecretaryTool(
         return { ok: true, ...result, pendingId: result.pendingActionId };
       }
       case "search_tasks": {
-        const gate = assertSecretaryPermission(perms, "tasks_write");
-        if (!gate.ok) return { ok: false, error: gate.message };
         const result = await searchTasksTool(db, companyId, {
           query: String(args.query ?? ""),
           employeeId: args.employeeId != null ? String(args.employeeId) : undefined,
@@ -615,8 +726,11 @@ export async function runSecretaryTool(
   }
 }
 
-export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown>> {
-  return [
+export function secretaryRealtimeToolDefinitions(options?: {
+  settings?: AiSecretarySettingsDoc;
+  perms?: SecretaryPermissions;
+}): Array<Record<string, unknown>> {
+  const all: Array<Record<string, unknown>> = [
     {
       type: "function",
       name: "get_calendar_events",
@@ -730,11 +844,130 @@ export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown
     {
       type: "function",
       name: "search_jobs",
-      description: "Vyhledá zakázky.",
+      description:
+        "Vyhledá zakázky (max 10). Vrací jen stručný seznam — detail vždy přes get_job_detail. Při více shodách se doptávej.",
       parameters: {
         type: "object",
-        properties: { query: { type: "string" } },
-        required: ["query"],
+        properties: {
+          query: { type: "string" },
+          status: { type: "string" },
+          customer: { type: "string" },
+          limit: { type: "number" },
+        },
+      },
+    },
+    {
+      type: "function",
+      name: "get_job_detail",
+      description: "Načte detail jedné zakázky podle jobId (READ-ONLY).",
+      parameters: {
+        type: "object",
+        properties: { jobId: { type: "string" } },
+        required: ["jobId"],
+      },
+    },
+    {
+      type: "function",
+      name: "get_recent_jobs",
+      description: "Nedávné nebo po termínu zakázky (stručný seznam).",
+      parameters: {
+        type: "object",
+        properties: {
+          overdueOnly: { type: "boolean" },
+          limit: { type: "number" },
+        },
+      },
+    },
+    {
+      type: "function",
+      name: "get_job_status",
+      description: "Stav a platby zakázky bez plného detailu.",
+      parameters: {
+        type: "object",
+        properties: { jobId: { type: "string" } },
+        required: ["jobId"],
+      },
+    },
+    {
+      type: "function",
+      name: "open_job",
+      description:
+        "Otevře detail zakázky na displeji uživatele (frontend route). Nepiš URL — jen jobId.",
+      parameters: {
+        type: "object",
+        properties: { jobId: { type: "string" } },
+        required: ["jobId"],
+      },
+    },
+    {
+      type: "function",
+      name: "match_ai_memory",
+      description:
+        "Vyhledá naučený postup podle fráze (nenačítá všechny paměti do kontextu).",
+      parameters: {
+        type: "object",
+        properties: { utterance: { type: "string" } },
+        required: ["utterance"],
+      },
+    },
+    {
+      type: "function",
+      name: "list_ai_memories",
+      description: "Seznam aktivních naučených postupů (stručně).",
+      parameters: { type: "object", properties: {} },
+    },
+    {
+      type: "function",
+      name: "create_ai_memory_draft",
+      description:
+        "Návrh nového postupu/preference — uloží se až po confirm_ai_memory_create a slovním ano.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          type: { type: "string", enum: ["command_alias", "workflow", "preference"] },
+          triggerPhrases: { type: "array", items: { type: "string" } },
+          description: { type: "string" },
+          steps: { type: "array", items: { type: "object" } },
+          scope: { type: "string", enum: ["organization", "user"] },
+        },
+        required: ["name", "triggerPhrases"],
+      },
+    },
+    {
+      type: "function",
+      name: "confirm_ai_memory_create",
+      description: "Po ano uloží návrh paměti.",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          userConfirmationText: { type: "string" },
+        },
+        required: ["pendingActionId", "userConfirmationText"],
+      },
+    },
+    {
+      type: "function",
+      name: "disable_ai_memory_draft",
+      description: "Návrh na vypnutí postupu (confirm_ai_memory_disable).",
+      parameters: {
+        type: "object",
+        properties: { memoryId: { type: "string" }, name: { type: "string" } },
+        required: ["memoryId"],
+      },
+    },
+    {
+      type: "function",
+      name: "confirm_ai_memory_disable",
+      description: "Po ano vypne postup (status disabled).",
+      parameters: {
+        type: "object",
+        properties: {
+          pendingActionId: { type: "string" },
+          userConfirmationText: { type: "string" },
+        },
+        required: ["pendingActionId", "userConfirmationText"],
       },
     },
     {
@@ -1107,4 +1340,10 @@ export function secretaryRealtimeToolDefinitions(): Array<Record<string, unknown
       },
     },
   ];
+
+  if (!options?.settings || !options?.perms) return all;
+  return all.filter((t) => {
+    const name = String(t.name ?? "");
+    return toolAllowed(options.settings!, options.perms!, name);
+  });
 }

@@ -1,6 +1,8 @@
 import { getOpenAiApiKey, getOpenAiRealtimeModel } from "@/lib/ai/config";
 import { secretarySystemInstructions, type SecretaryContext } from "@/lib/ai/secretary/context";
 import { secretaryRealtimeToolDefinitions } from "@/lib/ai/secretary/tools/run-tool";
+import type { AiSecretarySettingsDoc } from "@/lib/ai/secretary/settings";
+import type { SecretaryPermissions } from "@/lib/ai/secretary/permissions";
 
 export type RealtimeClientSecret = {
   ephemeralKey: string;
@@ -28,10 +30,21 @@ export function assertOpenAiVoiceConfigured(): { ok: true; model: string } | { o
 }
 
 /** Unified interface: JSON pro FormData pole `session` u POST /v1/realtime/calls */
-export function buildUnifiedRealtimeSessionJson(ctx: SecretaryContext): string {
+export function buildUnifiedRealtimeSessionJson(
+  ctx: SecretaryContext,
+  access?: { settings: AiSecretarySettingsDoc; perms: SecretaryPermissions }
+): string {
   const model = getOpenAiRealtimeModel();
   const voice = String(process.env.OPENAI_REALTIME_VOICE ?? "marin").trim() || "marin";
   const instructions = secretarySystemInstructions(ctx);
+
+  const tools = access
+    ? secretaryRealtimeToolDefinitions({ settings: access.settings, perms: access.perms })
+    : secretaryRealtimeToolDefinitions();
+
+  if (process.env.NODE_ENV === "development") {
+    console.info(LOG, "realtime model", { model, toolsCount: tools.length });
+  }
 
   const session: Record<string, unknown> = {
     type: "realtime",
@@ -55,7 +68,7 @@ export function buildUnifiedRealtimeSessionJson(ctx: SecretaryContext): string {
   };
 
   if (realtimeToolsEnabled()) {
-    session.tools = secretaryRealtimeToolDefinitions();
+    session.tools = tools;
     session.tool_choice = "auto";
   }
 

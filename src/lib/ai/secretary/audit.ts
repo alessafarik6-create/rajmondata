@@ -22,7 +22,12 @@ export async function logSecretaryAudit(
       | "email_read_via_ai_voice"
       | "email_shown_via_ai_voice"
       | "email_reply_draft_created_via_ai_voice"
-      | "email_sent_via_ai_voice";
+      | "email_sent_via_ai_voice"
+      | "ai_memory_created"
+      | "ai_memory_updated"
+      | "ai_memory_disabled"
+      | "ai_memory_restored"
+      | "ai_memory_executed";
     detail?: string;
     toolName?: string;
   }

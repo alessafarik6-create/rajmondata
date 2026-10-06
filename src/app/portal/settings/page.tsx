@@ -36,6 +36,7 @@ import { useCameraPermissions } from "@/hooks/use-camera-permissions";
 import { InquiryOfferTemplatesSettingsCard } from "@/components/settings/inquiry-offer-templates-settings-card";
 import { InquiryOfferLibrarySettingsCard } from "@/components/settings/inquiry-offer-library-settings-card";
 import { AiAssistantSettingsCard } from "@/components/settings/ai-assistant-settings-card";
+import { AiSecretarySettingsCard } from "@/components/settings/ai-secretary-settings-card";
 import { EmployeeDocumentTemplatesSettingsCard } from "@/components/settings/EmployeeDocumentTemplatesSettingsCard";
 import { PortalNotificationPreferencesSettings } from "@/components/settings/portal-notification-preferences-settings";
 import { useToast } from '@/hooks/use-toast';
@@ -775,6 +776,7 @@ export default function SettingsPage() {
                       <InquiryOfferTemplatesSettingsCard companyId={companyId} />
                       <InquiryOfferLibrarySettingsCard companyId={companyId} />
                       <AiAssistantSettingsCard companyId={companyId} />
+                      <AiSecretarySettingsCard companyId={companyId} />
                       <DocumentEmailOutboundSettingsCard
                         companyId={companyId}
                         company={company as Record<string, unknown> | null | undefined}

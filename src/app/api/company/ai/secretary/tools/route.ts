@@ -33,6 +33,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Chybí toolName." }, { status: 400 });
   }
 
-  const result = await runSecretaryTool(db, caller, companyId, toolName, body.arguments ?? {});
+  const TOOL_TIMEOUT_MS = 25_000;
+  const result = await Promise.race([
+    runSecretaryTool(db, caller, companyId, toolName, body.arguments ?? {}),
+    new Promise<Record<string, unknown>>((_, reject) =>
+      setTimeout(() => reject(new Error("tool_timeout")), TOOL_TIMEOUT_MS)
+    ),
+  ]).catch((e) => ({
+    ok: false,
+    error:
+      e instanceof Error && e.message === "tool_timeout"
+        ? "Operace trvala příliš dlouho. Zkuste to znovu."
+        : e instanceof Error
+          ? e.message
+          : "Nástroj selhal.",
+  }));
   return NextResponse.json(result);
 }
