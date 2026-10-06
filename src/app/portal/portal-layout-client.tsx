@@ -32,6 +32,7 @@ import {
 import { resolveCameraPermissions } from "@/lib/hikvision/camera-access";
 import { ActivitySessionBridge } from "@/components/portal/activity-session-bridge";
 import { SecretaryEmailVoiceOverlay } from "@/components/portal/secretary-email-voice-overlay";
+import { AssistantActivityBridge } from "@/components/portal/assistant-activity-bridge";
 import { PortalTrialStatusBanner } from "@/components/portal/portal-trial-status-banner";
 import {
   PlatformModuleCatalogProvider,
@@ -748,6 +749,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       {user && companyId ? <ActivitySessionBridge /> : null}
+      {user && companyId ? <AssistantActivityBridge /> : null}
       {user && companyId ? <SecretaryEmailVoiceOverlay /> : null}
       <aside className="hidden print:hidden lg:block shrink-0">
         {renderSidebar()}

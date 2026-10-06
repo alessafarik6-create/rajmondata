@@ -29,6 +29,9 @@ import {
   type LocalReplyFile,
 } from "@/components/portal/email-reply-attachments";
 import type { JobDocumentEmailAttachmentRef } from "@/lib/job-document-email-attachments";
+import { EmailMessageBody } from "@/components/portal/email-message-body";
+import { assistantTargetId } from "@/lib/ai/assistant/assistant-activity-client";
+import { cn } from "@/lib/utils";
 
 export type EmailDetailModel = {
   id: string;
@@ -36,6 +39,7 @@ export type EmailDetailModel = {
   subject: string;
   receivedAt: string | null;
   textBody?: string | null;
+  htmlBody?: string | null;
   emailAccountId: string;
   aiSummary?: string | null;
   aiInsights?: string[] | null;
@@ -120,6 +124,7 @@ type Props = {
   rajmondataRefs: (JobDocumentEmailAttachmentRef & { jobId: string })[];
   onRajmondataRefsChange: (refs: (JobDocumentEmailAttachmentRef & { jobId: string })[]) => void;
   forwardMode?: boolean;
+  mobileFullscreen?: boolean;
 };
 
 function EmailCustomerJobLinkFields(props: Pick<
@@ -278,16 +283,29 @@ export function EmailPortalDetailPanel(props: Props) {
   const pri = String(d.aiPriority ?? "NORMAL");
   const insightTail = (d.aiInsights ?? []).slice(d.needsReply || d.requiresAction ? 1 : 0);
 
+  const targetId = assistantTargetId("email", d.id);
+
   return (
-    <div className="w-full min-w-0 space-y-4 bg-background text-gray-900">
+    <div
+      id={targetId}
+      className={cn(
+        "w-full min-w-0 max-w-full space-y-4 bg-background text-gray-900 overflow-x-hidden",
+        props.mobileFullscreen && "pb-4"
+      )}
+    >
       {props.onBack ? (
-        <Button variant="ghost" size="sm" className="-ml-2" onClick={props.onBack}>
+        <Button variant="ghost" size="sm" className="-ml-2 min-h-[44px]" onClick={props.onBack}>
           ← Zpět
         </Button>
       ) : null}
 
       {props.canWrite ? (
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-3">
+        <div
+          className={cn(
+            "flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-3",
+            props.mobileFullscreen && "sticky top-0 z-10 -mx-3 bg-background px-3 pt-1"
+          )}
+        >
           <Button size="sm" disabled={props.busy} onClick={props.onReply}>
             Odpovědět
           </Button>
@@ -447,8 +465,8 @@ export function EmailPortalDetailPanel(props: Props) {
           ))}
         </div>
       ) : (
-        <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-900 border border-gray-200 rounded-md bg-white p-4 max-w-[min(100%,1000px)]">
-          {d.textBody}
+        <div className="w-full min-w-0 max-w-full border border-gray-200 rounded-md bg-white p-4 overflow-x-hidden">
+          <EmailMessageBody textBody={d.textBody} htmlBody={d.htmlBody} />
         </div>
       )}
 

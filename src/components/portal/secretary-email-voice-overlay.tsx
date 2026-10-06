@@ -16,7 +16,13 @@ import {
   type SecretaryShowEmailDetail,
 } from "@/lib/ai/secretary/email-voice-ui";
 import { EmailPdfViewerDialog } from "@/components/portal/email-pdf-viewer-dialog";
+import { EmailMessageBody } from "@/components/portal/email-message-body";
 import { isPreviewablePdf } from "@/lib/email-mailbox/attachment-meta";
+import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  assistantTargetId,
+  dispatchAssistantActivity,
+} from "@/lib/ai/assistant/assistant-activity-client";
 
 type MsgPreview = {
   id: string;
@@ -28,6 +34,7 @@ type MsgPreview = {
 };
 
 export function SecretaryEmailVoiceOverlay() {
+  const isMobile = useIsMobile();
   const pathname = usePathname();
   const { user } = useUser();
   const { companyId } = useCompany();
@@ -53,6 +60,19 @@ export function SecretaryEmailVoiceOverlay() {
         const data = await parseEmailApiResponse<{ message?: MsgPreview }>(res);
         if (data.ok && data.message) {
           setMessage(data.message);
+          const subj = String(data.message.subject ?? "").trim();
+          const from = String(data.message.from ?? "").trim();
+          dispatchAssistantActivity({
+            state: "reading",
+            label: subj
+              ? `Čtu: ${subj.slice(0, 80)}`
+              : from
+                ? `Čtu e-mail od ${from.slice(0, 40)}`
+                : "Čtu e-mail…",
+            entityType: "email",
+            entityId: data.message.id,
+            targetElementId: assistantTargetId("email", data.message.id),
+          });
           return data.message;
         }
         return null;
@@ -98,38 +118,56 @@ export function SecretaryEmailVoiceOverlay() {
     return () => window.removeEventListener(SECRETARY_SHOW_EMAIL_ATTACHMENT_EVENT, onAttachment);
   }, [user, companyId]);
 
-  const bodyText =
-    message?.aiSummary?.trim() ||
-    (message?.textBody ?? "").trim() ||
-    String(message?.htmlBody ?? "")
-      .replace(/<[^>]+>/g, " ")
-      .slice(0, 8000);
-
   if (onEmailPage) return null;
+
+  const sheetSide = isMobile ? "bottom" : "right";
 
   return (
     <>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="right" className="z-[70] w-full sm:max-w-lg overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle className="text-left pr-8">{message?.subject ?? "E-mail"}</SheetTitle>
+        <SheetContent
+          side={sheetSide}
+          className={
+            isMobile
+              ? "z-[70] flex h-[100dvh] max-h-[100dvh] w-full max-w-[100vw] flex-col gap-0 overflow-hidden border-0 p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] sm:max-w-lg"
+              : "z-[70] flex h-full w-full max-w-lg flex-col gap-0 overflow-hidden p-0 sm:max-w-lg"
+          }
+        >
+          <SheetHeader className="sticky top-0 z-10 shrink-0 border-b bg-background px-4 py-3 text-left">
+            <SheetTitle className="text-left pr-8 text-base leading-snug">
+              {message?.subject ?? "E-mail"}
+            </SheetTitle>
+            {message?.from ? (
+              <p className="text-sm text-muted-foreground truncate">{message.from}</p>
+            ) : null}
           </SheetHeader>
-          {loading ? (
-            <div className="flex items-center gap-2 py-8 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Načítám zprávu…
-            </div>
-          ) : message ? (
-            <div className="space-y-4 pt-2">
-              <p className="text-sm text-muted-foreground">{message.from}</p>
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">{bodyText}</div>
-              <Button asChild variant="outline" className="w-full">
+          <div
+            id={message ? assistantTargetId("email", message.id) : undefined}
+            className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3"
+          >
+            {loading ? (
+              <div className="flex items-center gap-2 py-8 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Načítám zprávu…
+              </div>
+            ) : message ? (
+              <div className="space-y-4 w-full min-w-0 max-w-full">
+                {message.aiSummary?.trim() ? (
+                  <div className="rounded-md border bg-muted/30 p-3 text-sm">{message.aiSummary}</div>
+                ) : null}
+                <EmailMessageBody textBody={message.textBody} htmlBody={message.htmlBody} />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground py-6">Zprávu se nepodařilo načíst.</p>
+            )}
+          </div>
+          {message ? (
+            <div className="sticky bottom-0 shrink-0 border-t bg-background px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              <Button asChild variant="outline" className="w-full min-h-[44px]">
                 <Link href={buildPortalEmailMessageUrl(message.id)}>Otevřít v modulu Pošta</Link>
               </Button>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground py-6">Zprávu se nepodařilo načíst.</p>
-          )}
+          ) : null}
         </SheetContent>
       </Sheet>
       <EmailPdfViewerDialog

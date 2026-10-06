@@ -26,6 +26,7 @@ import {
 } from "@/lib/job-photo-upload";
 import { renderPdfPagesToPngBlobs } from "@/lib/pdf-to-image-client";
 import { withTimeout } from "@/lib/async-with-timeout";
+import { assistantTargetId } from "@/lib/ai/assistant/assistant-activity-client";
 import {
   isAllowedJobMediaFile,
   isAllowedJobImageFile,
@@ -10613,7 +10614,10 @@ export function JobDetailPageContent({
   }
 
   return (
-    <div className={JD.page}>
+    <div
+      className={JD.page}
+      id={jobFirestoreId ? assistantTargetId("job", jobFirestoreId) : undefined}
+    >
       <div className={JD.contentMax}>
       <div className={JD.headerBar}>
         <div className="min-w-0 flex-1 space-y-2 max-md:space-y-1.5">

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  activityFromToolResult,
+  activityFromVoicePhase,
+  dispatchAssistantActivity,
+} from "@/lib/ai/assistant/assistant-activity-client";
+import { VOICE_SESSION_EVENT, type VoiceSessionDetail } from "@/lib/ai/assistant/assistant-activity-types";
 import type { User } from "firebase/auth";
 import { voiceDebugError, voiceDebugLog } from "@/lib/ai/secretary/voice-debug";
 import { mapVoiceErrorForUser } from "@/lib/ai/secretary/voice-user-errors";
@@ -80,6 +86,7 @@ export function useAiSecretaryRealtime({
   onStatusHint,
 }: Options) {
   const [phase, setPhase] = useState<VoiceSecretaryPhase>("idle");
+  const phaseRef = useRef<VoiceSecretaryPhase>("idle");
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -103,6 +110,35 @@ export function useAiSecretaryRealtime({
   const speakingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startFnRef = useRef<(() => Promise<void>) | null>(null);
   const isReconnectRef = useRef(false);
+  const statusHintRef = useRef<string | null>(null);
+
+  const setStatusHint = useCallback(
+    (hint: string | null) => {
+      statusHintRef.current = hint;
+      onStatusHint?.(hint);
+    },
+    [onStatusHint]
+  );
+
+  const publishVoiceSession = useCallback((p: VoiceSecretaryPhase) => {
+    if (typeof window === "undefined") return;
+    const active = p !== "idle" && p !== "ended" && p !== "error";
+    const detail: VoiceSessionDetail = {
+      active,
+      phase: p,
+      statusHint: statusHintRef.current,
+    };
+    window.dispatchEvent(new CustomEvent(VOICE_SESSION_EVENT, { detail }));
+  }, []);
+
+  const publishPhaseActivity = useCallback((p: VoiceSecretaryPhase) => {
+    if (p === "idle" || p === "ended") {
+      dispatchAssistantActivity({ state: "idle", label: "" });
+      return;
+    }
+    const act = activityFromVoicePhase(p, statusHintRef.current);
+    if (act) dispatchAssistantActivity(act);
+  }, []);
 
   const voiceMetric = useCallback((message: string, detail?: Record<string, string | number | boolean>) => {
     voiceDebugLog(message, detail);
@@ -117,11 +153,31 @@ export function useAiSecretaryRealtime({
 
   const setPhaseSafe = useCallback(
     (p: VoiceSecretaryPhase) => {
+      phaseRef.current = p;
       setPhase(p);
       onPhaseChange?.(p);
+      publishVoiceSession(p);
+      publishPhaseActivity(p);
     },
-    [onPhaseChange]
+    [onPhaseChange, publishPhaseActivity, publishVoiceSession]
   );
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== "visible" || !activeRef.current) return;
+      publishVoiceSession(phaseRef.current);
+      const track = streamRef.current?.getAudioTracks()[0];
+      if (track && track.readyState === "ended") {
+        onError?.("Hlasová relace byla přerušena. Klepněte pro pokračování.", {
+          code: "mic_interrupted",
+        });
+        setPhaseSafe("error");
+        setStatusHint(null);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [onError, publishVoiceSession, setPhaseSafe, setStatusHint]);
 
   const armSpeakingWatchdog = useCallback(() => {
     clearSpeakingWatchdog();
@@ -129,7 +185,7 @@ export function useAiSecretaryRealtime({
       assistantSpeakingRef.current = false;
       responseInProgressRef.current = false;
       setPhaseSafe("listening");
-      onStatusHint?.("Poslouchám…");
+      setStatusHint("Poslouchám…");
       perfRef.current.log({ event: "speaking_watchdog" });
     }, SPEAKING_WATCHDOG_MS);
   }, [clearSpeakingWatchdog, onStatusHint, setPhaseSafe]);
@@ -177,7 +233,7 @@ export function useAiSecretaryRealtime({
     reconnectAttemptsRef.current = 0;
     cleanupMedia();
     setPhaseSafe("ended");
-    onStatusHint?.(null);
+    setStatusHint(null);
     setTimeout(() => setPhaseSafe("idle"), 0);
   }, [cleanupMedia, setPhaseSafe, onStatusHint]);
 
@@ -219,7 +275,7 @@ export function useAiSecretaryRealtime({
           "Pozdrav uživatele česky přesně větou: Dobrý den, co pro vás můžu udělat?",
       });
       setPhaseSafe("assistant_speaking");
-      onStatusHint?.("Sekretářka mluví…");
+      setStatusHint("Sekretářka mluví…");
     },
     [sendResponseCreate, setPhaseSafe, onStatusHint]
   );
@@ -294,7 +350,7 @@ export function useAiSecretaryRealtime({
         clearSpeakingWatchdog();
         voiceMetric(type === "response.cancelled" ? "response_cancelled" : "response_finished");
         setPhaseSafe("listening");
-        onStatusHint?.("Poslouchám…");
+        setStatusHint("Poslouchám…");
       }
 
       if (
@@ -306,7 +362,7 @@ export function useAiSecretaryRealtime({
         assistantSpeakingRef.current = true;
         perfRef.current.markFirstRemoteAudio();
         setPhaseSafe("assistant_speaking");
-        onStatusHint?.("Sekretářka mluví…");
+        setStatusHint("Sekretářka mluví…");
         armSpeakingWatchdog();
       }
 
@@ -323,7 +379,7 @@ export function useAiSecretaryRealtime({
         if (text) {
           onTranscript?.({ role: "assistant", text });
           setPhaseSafe("listening");
-          onStatusHint?.("Poslouchám…");
+          setStatusHint("Poslouchám…");
         }
       }
 
@@ -341,7 +397,7 @@ export function useAiSecretaryRealtime({
           sendResponseCancelOnce(dc);
         }
         setPhaseSafe("listening");
-        onStatusHint?.("Poslouchám…");
+        setStatusHint("Poslouchám…");
       }
 
       if (type === "input_audio_buffer.speech_stopped") {
@@ -367,8 +423,8 @@ export function useAiSecretaryRealtime({
         processedFnCallIdsRef.current.add(callId);
 
         void (async () => {
+          setStatusHint(toolStatusHint(name));
           setPhaseSafe("processing_tool");
-          onStatusHint?.(toolStatusHint(name));
           perfRef.current.markToolStart(name);
           voiceMetric("tool_started", { name });
           let args: Record<string, unknown> = {};
@@ -391,9 +447,13 @@ export function useAiSecretaryRealtime({
             };
           }
           perfRef.current.markToolEnd(result.ok !== false);
+          const toolAct = activityFromToolResult(name, result);
+          if (toolAct) {
+            dispatchAssistantActivity({ ...toolAct, startedAt: Date.now() });
+          }
           if (result.pendingId || result.pendingActionId) {
             setPhaseSafe("waiting_confirmation");
-            onStatusHint?.("Čekám na potvrzení…");
+            setStatusHint("Čekám na potvrzení…");
           }
           if (typeof window !== "undefined") {
             if (result.taskId) {
@@ -453,8 +513,8 @@ export function useAiSecretaryRealtime({
             })
           );
           sendResponseCreate(dc);
+          setStatusHint("Poslouchám…");
           setPhaseSafe("listening");
-          onStatusHint?.("Poslouchám…");
           fnCallRef.current = null;
         })();
       };
@@ -516,12 +576,12 @@ export function useAiSecretaryRealtime({
     const signal = abortRef.current.signal;
 
     setPhaseSafe("requesting_microphone");
-    onStatusHint?.("Žádám o mikrofon…");
+    setStatusHint("Žádám o mikrofon…");
 
     try {
       const token = await user.getIdToken();
       setPhaseSafe("connecting");
-      onStatusHint?.("Připojuji…");
+      setStatusHint("Připojuji…");
 
       const sessionRes = await fetch("/api/company/ai/secretary/realtime/session", {
         method: "POST",
@@ -611,13 +671,13 @@ export function useAiSecretaryRealtime({
           disconnectGraceTimerRef.current = null;
           if (isReconnectRef.current) {
             isReconnectRef.current = false;
-            onStatusHint?.("Jsem zpět, můžete pokračovat.");
+            setStatusHint("Jsem zpět, můžete pokračovat.");
             onTranscript?.({ role: "system", text: "Spojení obnoveno." });
           }
         }
         if (pc.connectionState === "disconnected" || pc.iceConnectionState === "disconnected") {
           setPhaseSafe("reconnecting");
-          onStatusHint?.("Obnovuji spojení…");
+          setStatusHint("Obnovuji spojení…");
           if (!disconnectGraceTimerRef.current) {
             disconnectGraceTimerRef.current = setTimeout(() => {
               disconnectGraceTimerRef.current = null;
@@ -649,7 +709,7 @@ export function useAiSecretaryRealtime({
             perfRef.current.markReconnect();
             isReconnectRef.current = true;
             setPhaseSafe("reconnecting");
-            onStatusHint?.("Obnovuji spojení…");
+            setStatusHint("Obnovuji spojení…");
             void startFnRef.current();
             return;
           }
@@ -760,7 +820,7 @@ export function useAiSecretaryRealtime({
       activeRef.current = true;
       startingRef.current = false;
       setPhaseSafe("listening");
-      onStatusHint?.("Poslouchám…");
+      setStatusHint("Poslouchám…");
       voiceDebugLog("listening");
     } catch (e) {
       if (signal.aborted) return;
@@ -778,7 +838,7 @@ export function useAiSecretaryRealtime({
       }
       cleanupMedia();
       setPhaseSafe("error");
-      onStatusHint?.(null);
+      setStatusHint(null);
     }
   }, [
     user,

@@ -41,6 +41,7 @@ import type { JobDocumentEmailAttachmentRef } from "@/lib/job-document-email-att
 import { EMAIL_ACCOUNT_ALL_MAILBOXES } from "@/lib/email-mailbox/account-default";
 import { EmailAssignMessageJobDialog } from "@/components/portal/email-assign-message-job-dialog";
 import { SECRETARY_SHOW_EMAIL_EVENT } from "@/lib/ai/secretary/email-voice-ui";
+import { useIsBelowLg } from "@/hooks/use-mobile";
 
 type AccountRow = {
   id: string;
@@ -138,6 +139,7 @@ export function EmailPortalPage() {
   const [composeFromAccountId, setComposeFromAccountId] = useState<string>("");
   const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
   const [mobilePane, setMobilePane] = useState<MobilePane>("list");
+  const belowLg = useIsBelowLg();
   const [employees, setEmployees] = useState<AssignableEmployee[]>([]);
   const [thread, setThread] = useState<ThreadMessage[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -422,6 +424,15 @@ export function EmailPortalPage() {
     },
     [user, companyId, getToken, access.canWrite]
   );
+
+  useEffect(() => {
+    if (!belowLg || mobilePane !== "detail") return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [belowLg, mobilePane]);
 
   useEffect(() => {
     const onVoiceShow = (ev: Event) => {
@@ -1065,10 +1076,18 @@ export function EmailPortalPage() {
 
         <div
           className={cn(
-            "min-w-0 w-full flex-1 p-3 sm:p-4 lg:p-5 bg-background overflow-x-hidden",
-            mobilePane !== "detail" && "max-lg:hidden"
+            "min-w-0 w-full flex-1 bg-background overflow-x-hidden",
+            mobilePane !== "detail" && "max-lg:hidden",
+            mobilePane === "detail" &&
+              "max-lg:fixed max-lg:inset-0 max-lg:z-[55] max-lg:flex max-lg:flex-col max-lg:overflow-hidden max-lg:p-0 max-lg:pt-[env(safe-area-inset-top)] max-lg:pb-[env(safe-area-inset-bottom)]",
+            mobilePane !== "detail" || !belowLg ? "p-3 sm:p-4 lg:p-5" : ""
           )}
         >
+          <div
+            className={cn(
+              mobilePane === "detail" && belowLg && "min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3"
+            )}
+          >
           {composeOpen ? (
             <div className="space-y-3 max-w-xl">
               <h2 className="font-semibold">Nový e-mail</h2>
@@ -1189,8 +1208,10 @@ export function EmailPortalPage() {
               rajmondataRefs={rajmondataRefs}
               onRajmondataRefsChange={setRajmondataRefs}
               forwardMode={composeForwardMode}
+              mobileFullscreen={mobilePane === "detail" && belowLg}
             />
           )}
+          </div>
         </div>
       </div>
       </div>

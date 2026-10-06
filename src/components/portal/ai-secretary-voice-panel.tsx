@@ -251,6 +251,9 @@ export function AiSecretaryVoicePanel({ companyId, open, onClose, assistantName 
           {sessionLive ? (
             <p className="text-sm text-center text-muted-foreground">
               Mluvte přirozeně — mikrofon zůstane zapnutý.
+              <span className="block text-[11px] mt-1">
+                Displej zůstane během hovoru zapnutý (pokud to prohlížeč podporuje).
+              </span>
             </p>
           ) : null}
 
