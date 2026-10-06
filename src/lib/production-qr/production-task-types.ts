@@ -17,6 +17,14 @@ export type ProductionTaskRow = {
 
 export type ProductionTimeEntrySource = "qr" | "manual";
 
+export type ProductionTimeEndReason =
+  | "manual_stop"
+  | "switched_task"
+  | "attendance_clock_out"
+  | "attendance_lunch"
+  | "attendance_break"
+  | "admin_edit";
+
 export type ProductionTimeEntryRow = {
   id: string;
   companyId: string;
@@ -26,6 +34,7 @@ export type ProductionTimeEntryRow = {
   startedAt: string;
   endedAt?: string | null;
   durationSeconds?: number | null;
+  endedReason?: ProductionTimeEndReason | null;
   source: ProductionTimeEntrySource;
   createdAt?: string | null;
   updatedAt?: string | null;

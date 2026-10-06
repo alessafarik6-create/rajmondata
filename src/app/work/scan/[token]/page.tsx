@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -10,32 +10,17 @@ import { cn } from "@/lib/utils";
 type Employee = { id: string; firstName: string; lastName: string };
 type TaskInfo = { id: string; name: string; description?: string | null; status: string };
 
-type ActiveState = {
-  taskId: string;
+type FlashState = {
+  employeeName: string;
   taskName: string;
-  jobName: string;
-  startedAt: string;
-  entryId: string;
+  previousTaskStopped: boolean;
+  alreadySame: boolean;
 };
+
+type UiPhase = "login" | "flash" | "ready";
 
 function fullName(e: Employee) {
   return `${e.firstName} ${e.lastName}`.trim() || "Zaměstnanec";
-}
-
-function formatClock(iso: string) {
-  try {
-    return new Date(iso).toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return iso;
-  }
-}
-
-function formatRunning(startedAt: string) {
-  const sec = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 export default function WorkScanPage() {
@@ -51,9 +36,16 @@ export default function WorkScanPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
-  const [active, setActive] = useState<ActiveState | null>(null);
-  const [alreadySame, setAlreadySame] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [phase, setPhase] = useState<UiPhase>("login");
+  const [flash, setFlash] = useState<FlashState | null>(null);
+
+  const resetForNextWorker = useCallback(() => {
+    setSelectedId(null);
+    setPin("");
+    setError(null);
+    setFlash(null);
+    setPhase("login");
+  }, []);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -87,10 +79,12 @@ export default function WorkScanPage() {
   }, [load]);
 
   useEffect(() => {
-    if (!active) return;
-    const t = window.setInterval(() => setTick((x) => x + 1), 1000);
-    return () => window.clearInterval(t);
-  }, [active]);
+    if (phase !== "flash" || !flash) return;
+    const t = window.setTimeout(() => {
+      setPhase("ready");
+    }, 1600);
+    return () => window.clearTimeout(t);
+  }, [phase, flash]);
 
   const selected = useMemo(
     () => employees.find((e) => e.id === selectedId) ?? null,
@@ -113,16 +107,26 @@ export default function WorkScanPage() {
         body: JSON.stringify({ employeeId: selectedId, pin }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(String(data.error ?? "Start se nezdařil."));
+      if (!res.ok) {
+        const msg = String(data.error ?? "Start se nezdařil.");
+        setPin("");
+        setSelectedId(null);
+        setError(msg);
+        setPhase("ready");
+        return;
+      }
+
+      const employeeName = String(data.employee?.name ?? fullName(selected!));
+      const taskName = String(data.activeTask?.taskName ?? task?.name ?? "Úkol");
       setPin("");
-      setAlreadySame(Boolean(data.alreadyActiveOnSameTask));
-      setActive({
-        taskId: data.activeTask.taskId,
-        taskName: data.activeTask.taskName,
-        jobName: data.activeTask.jobName,
-        startedAt: data.activeTask.startedAt,
-        entryId: data.activeTask.entryId,
+      setSelectedId(null);
+      setFlash({
+        employeeName,
+        taskName,
+        previousTaskStopped: Boolean(data.previousTaskStopped),
+        alreadySame: Boolean(data.alreadyActiveOnSameTask),
       });
+      setPhase("flash");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Chyba.");
     } finally {
@@ -130,41 +134,18 @@ export default function WorkScanPage() {
     }
   };
 
-  const stopWork = async () => {
-    if (!selectedId || !pin.trim()) {
-      setError("Pro ukončení zadejte PIN.");
-      return;
-    }
-    if (!navigator.onLine) {
-      setError("Není připojení k serveru. Zkuste to znovu.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/public/work-task/${encodeURIComponent(token)}/stop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ employeeId: selectedId, pin }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(String(data.error ?? "Ukončení se nezdařilo."));
-      setActive(null);
-      setAlreadySame(false);
-      setPin("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Chyba.");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const showLogin = phase === "login";
+  const showFlash = phase === "flash" && flash;
+  const showReady = phase === "ready";
 
   return (
     <div className="min-h-[100dvh] bg-slate-950 text-slate-50 px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
       <div className="mx-auto w-full max-w-md space-y-5">
         <header className="text-center space-y-1">
-          <p className="text-xs font-semibold tracking-widest text-orange-400">RAJMONDATA</p>
-          <h1 className="text-xl font-bold">Výrobní úkol</h1>
+          <p className="text-xs font-semibold tracking-widest text-orange-400">RAJMONDATA VÝROBA</p>
+          <h1 className="text-xl font-bold">
+            {showReady ? "Připraveno pro dalšího pracovníka" : "Výrobní úkol"}
+          </h1>
         </header>
 
         {loading ? (
@@ -175,12 +156,14 @@ export default function WorkScanPage() {
           <p className="text-center text-red-300">{error}</p>
         ) : task ? (
           <>
-            <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-4 space-y-2">
-              <p className="text-sm text-slate-400">Zakázka</p>
-              <p className="font-semibold text-lg leading-snug">{jobName}</p>
-              <p className="text-sm text-slate-400 pt-2">Úkol</p>
-              <p className="font-medium">{task.name}</p>
-            </div>
+            {!showReady ? (
+              <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-4 space-y-2">
+                <p className="text-sm text-slate-400">Zakázka</p>
+                <p className="font-semibold text-lg leading-snug">{jobName}</p>
+                <p className="text-sm text-slate-400 pt-2">Úkol</p>
+                <p className="font-medium">{task.name}</p>
+              </div>
+            ) : null}
 
             {offline ? (
               <p className="text-sm text-amber-300 text-center">
@@ -188,50 +171,39 @@ export default function WorkScanPage() {
               </p>
             ) : null}
 
-            {active ? (
-              <div className="rounded-xl border border-emerald-700/60 bg-emerald-950/40 p-4 space-y-3">
-                <p className="text-sm font-semibold text-emerald-300">
-                  {alreadySame ? "Tento úkol už máte spuštěný" : "Práce zahájena"}
+            {showFlash && flash ? (
+              <div className="rounded-xl border border-emerald-600/50 bg-emerald-950/50 p-6 text-center space-y-3">
+                <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" aria-hidden />
+                <p className="text-lg font-semibold text-emerald-200">{flash.employeeName}</p>
+                {flash.previousTaskStopped ? (
+                  <p className="text-sm text-slate-300">Předchozí úkol ukončen</p>
+                ) : null}
+                <p className="text-sm text-emerald-300">
+                  {flash.alreadySame ? "Úkol už běží" : "Práce spuštěna"}
                 </p>
-                <p className="font-medium">{active.taskName}</p>
-                <p className="text-sm text-slate-300">{active.jobName}</p>
-                <p className="text-sm text-slate-400">
-                  Čas od: {formatClock(active.startedAt)}
-                </p>
-                <p className="text-2xl font-mono tabular-nums" aria-live="polite">
-                  {formatRunning(active.startedAt)}
-                  <span className="sr-only">{tick}</span>
-                </p>
-                <div className="flex flex-col gap-2 pt-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="min-h-[48px] w-full"
-                    onClick={() => setActive(active)}
-                  >
-                    Pokračovat
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    className="min-h-[48px] w-full"
-                    disabled={busy}
-                    onClick={() => void stopWork()}
-                  >
-                    Ukončit práci
-                  </Button>
-                </div>
-                <Input
-                  type="password"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  placeholder="PIN pro ukončení"
-                  className="min-h-[48px] text-center text-lg tracking-widest"
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value)}
-                />
+                <p className="font-medium text-lg">{flash.taskName}</p>
               </div>
-            ) : (
+            ) : null}
+
+            {showReady ? (
+              <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-6 text-center space-y-4">
+                <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-400" aria-hidden />
+                <p className="font-medium text-emerald-300">Úkol spuštěn</p>
+                <p className="text-sm text-slate-400">
+                  Naskenujte další QR kód nebo vyberte dalšího pracovníka na tomto úkolu.
+                </p>
+                {error ? <p className="text-sm text-red-300">{error}</p> : null}
+                <Button
+                  type="button"
+                  className="min-h-[52px] w-full bg-orange-600 hover:bg-orange-700 text-base font-semibold"
+                  onClick={resetForNextWorker}
+                >
+                  Další pracovník
+                </Button>
+              </div>
+            ) : null}
+
+            {showLogin ? (
               <>
                 <div className="space-y-2">
                   <p className="text-sm font-medium text-slate-300">Vyber pracovníka</p>
@@ -259,6 +231,7 @@ export default function WorkScanPage() {
                     type="password"
                     inputMode="numeric"
                     autoComplete="off"
+                    name="production-pin"
                     placeholder="••••"
                     className="min-h-[52px] text-center text-xl tracking-[0.3em]"
                     value={pin}
@@ -274,12 +247,15 @@ export default function WorkScanPage() {
                   {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : "Začít práci"}
                 </Button>
               </>
-            )}
+            ) : null}
 
-            {error ? <p className="text-sm text-red-300 text-center">{error}</p> : null}
-            {selected && !active ? (
+            {error && showLogin ? (
+              <p className="text-sm text-red-300 text-center">{error}</p>
+            ) : null}
+            {selected && showLogin ? (
               <p className="text-xs text-center text-slate-500">
-                Přihlášení stejným PINem jako docházkový terminál.
+                Přihlášení stejným PINem jako docházkový terminál. Po startu se obrazovka resetuje
+                pro dalšího pracovníka.
               </p>
             ) : null}
           </>

@@ -52,6 +52,7 @@ export async function PATCH(
     startedAt,
     endedAt,
     durationSeconds,
+    endedReason: "admin_edit" as const,
     updatedAt: FieldValue.serverTimestamp(),
   };
 

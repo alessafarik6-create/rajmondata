@@ -4,6 +4,7 @@ import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
 import { resolveProductionTaskByPublicToken } from "@/lib/production-qr/resolve-public-token";
 import { verifyProductionQrPin } from "@/lib/production-qr/production-pin-guard";
 import { getRequestIp } from "@/lib/production-qr/request-ip";
+import { resolveEmployeeProductionAttendanceEligibility } from "@/lib/production-qr/attendance-eligibility";
 import { startProductionTimeViaQr } from "@/lib/production-qr/production-time-server";
 
 type Body = { employeeId?: string; pin?: string; deviceInfo?: string };
@@ -58,6 +59,35 @@ export async function POST(
   const emp = empSnap.data() as Record<string, unknown>;
   const employeeName =
     `${String(emp.firstName ?? "")} ${String(emp.lastName ?? "")}`.trim() || "Zaměstnanec";
+
+  const todayIso = new Date().toISOString().split("T")[0]!;
+  const eligibility = await resolveEmployeeProductionAttendanceEligibility(
+    db,
+    resolved.companyId,
+    employeeId,
+    todayIso
+  );
+  if (!eligibility.canStartProduction) {
+    let errorMsg: string;
+    switch (eligibility.status) {
+      case "ON_BREAK":
+        errorMsg = `${employeeName} má právě přestávku. QR výrobní úkol spustíte až po návratu do práce na hlavním terminálu.`;
+        break;
+      case "NON_WORKING_TARIFF":
+        errorMsg = `${employeeName} není v pracovním režimu (oběd / tarif). Nejprve se vraťte k práci na hlavním docházkovém terminálu.`;
+        break;
+      default:
+        errorMsg = `${employeeName} není aktuálně přihlášen/a v práci. Nejprve se přihlaste na hlavním docházkovém terminálu.`;
+    }
+    return NextResponse.json(
+      {
+        error: errorMsg,
+        code: eligibility.status,
+        employee: { id: employeeId, name: employeeName },
+      },
+      { status: 403 }
+    );
+  }
 
   try {
     const result = await startProductionTimeViaQr(db, {

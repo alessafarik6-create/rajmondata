@@ -7,7 +7,10 @@ import {
   productionTasksCol,
   productionTimeEntriesCol,
 } from "@/lib/production-qr/production-task-paths";
-import type { ProductionTaskStatus } from "@/lib/production-qr/production-task-types";
+import type {
+  ProductionTaskStatus,
+  ProductionTimeEndReason,
+} from "@/lib/production-qr/production-task-types";
 
 function tsToIso(v: unknown): string | null {
   if (!v) return null;
@@ -23,6 +26,19 @@ function durationSecondsFromRange(start: Timestamp, end: Timestamp): number {
   return Math.max(0, Math.round(ms / 1000));
 }
 
+function closeEntryUpdates(
+  startedAt: Timestamp,
+  endedAt: Timestamp,
+  endedReason: ProductionTimeEndReason
+) {
+  return {
+    endedAt,
+    durationSeconds: durationSecondsFromRange(startedAt, endedAt),
+    endedReason,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+}
+
 export type StartProductionQrResult = {
   alreadyActiveOnSameTask: boolean;
   previousTaskStopped: boolean;
@@ -30,6 +46,39 @@ export type StartProductionQrResult = {
   startedAt: string;
   endedPreviousEntryId?: string | null;
 };
+
+export async function closeAllActiveProductionEntriesForEmployee(
+  db: Firestore,
+  input: {
+    companyId: string;
+    employeeId: string;
+    endedReason: ProductionTimeEndReason;
+    endedAt?: Timestamp;
+  }
+): Promise<{ closedCount: number; closedEntryIds: string[] }> {
+  const { companyId, employeeId, endedReason } = input;
+  const endedAt = input.endedAt ?? Timestamp.now();
+  const entriesCol = productionTimeEntriesCol(db, companyId);
+
+  return db.runTransaction(async (tx) => {
+    const activeQ = entriesCol
+      .where("employeeId", "==", employeeId)
+      .where("endedAt", "==", null)
+      .limit(20);
+    const activeSnap = await tx.get(activeQ);
+    const closedEntryIds: string[] = [];
+
+    for (const doc of activeSnap.docs) {
+      const d = doc.data() as Record<string, unknown>;
+      const startedAt =
+        d.startedAt instanceof Timestamp ? d.startedAt : endedAt;
+      tx.update(doc.ref, closeEntryUpdates(startedAt, endedAt, endedReason));
+      closedEntryIds.push(doc.id);
+    }
+
+    return { closedCount: closedEntryIds.length, closedEntryIds };
+  });
+}
 
 export async function startProductionTimeViaQr(
   db: Firestore,
@@ -79,11 +128,10 @@ export async function startProductionTimeViaQr(
       }
       const startedAt =
         d.startedAt instanceof Timestamp ? d.startedAt : now;
-      tx.update(doc.ref, {
-        endedAt: now,
-        durationSeconds: durationSecondsFromRange(startedAt, now),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      tx.update(
+        doc.ref,
+        closeEntryUpdates(startedAt, now, "switched_task")
+      );
       previousTaskStopped = true;
       endedPreviousEntryId = doc.id;
     }
@@ -107,6 +155,7 @@ export async function startProductionTimeViaQr(
       startedAt: now,
       endedAt: null,
       durationSeconds: null,
+      endedReason: null,
       source: "qr",
       deviceInfo: input.deviceInfo?.slice(0, 200) ?? null,
       createdAt: FieldValue.serverTimestamp(),
@@ -138,9 +187,11 @@ export async function stopProductionTimeViaQr(
     employeeId: string;
     productionTaskId?: string;
     jobId?: string;
+    endedReason?: ProductionTimeEndReason;
   }
 ): Promise<{ stopped: boolean; entryId?: string; endedAt?: string; durationSeconds?: number }> {
   const entriesCol = productionTimeEntriesCol(db, input.companyId);
+  const endedReason = input.endedReason ?? "manual_stop";
 
   return db.runTransaction(async (tx) => {
     const activeQ = entriesCol
@@ -174,11 +225,10 @@ export async function stopProductionTimeViaQr(
     const startedAt =
       d.startedAt instanceof Timestamp ? d.startedAt : now;
     const durationSeconds = durationSecondsFromRange(startedAt, now);
-    tx.update(stoppedDoc.ref, {
-      endedAt: now,
-      durationSeconds,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    tx.update(
+      stoppedDoc.ref,
+      closeEntryUpdates(startedAt, now, endedReason)
+    );
 
     return {
       stopped: true,

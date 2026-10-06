@@ -10,6 +10,9 @@ import {
   loadEmployeeAndRatesForSegment,
   type WorkSegmentSource,
 } from "@/lib/work-segment-server";
+import { productionEndReasonForTariffMeta } from "@/lib/production-qr/attendance-eligibility";
+import { closeAllActiveProductionEntriesForEmployee } from "@/lib/production-qr/production-time-server";
+import { Timestamp } from "firebase-admin/firestore";
 
 type Body = {
   companyId?: string;
@@ -100,10 +103,37 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await closeAllOpenWorkSegmentsForEmployee(db, companyId, employeeId, todayIso, nowMs);
+    const segmentSwitchTs = Timestamp.now();
+    await closeAllOpenWorkSegmentsForEmployee(
+      db,
+      companyId,
+      employeeId,
+      todayIso,
+      segmentSwitchTs.toMillis()
+    );
 
     const jobId = sourceType === "job" ? String(body.jobId || "").trim() : null;
     const tariffId = sourceType === "tariff" ? String(body.tariffId || "").trim() : null;
+
+    if (sourceType === "tariff" && tariffId) {
+      const tSnap = await db
+        .collection("companies")
+        .doc(companyId)
+        .collection("work_tariffs")
+        .doc(tariffId)
+        .get();
+      const td = tSnap.data() as { name?: string; category?: string } | undefined;
+      const endedReason = productionEndReasonForTariffMeta({
+        name: td?.name,
+        category: td?.category,
+      });
+      await closeAllActiveProductionEntriesForEmployee(db, {
+        companyId,
+        employeeId,
+        endedReason,
+        endedAt: segmentSwitchTs,
+      });
+    }
 
     const meta = await loadEmployeeAndRatesForSegment(
       db,

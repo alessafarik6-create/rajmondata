@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { formatDurationCs } from "@/lib/production-qr/format-duration-cs";
+import { formatDateCs, formatTimeCs } from "@/lib/production-qr/format-datetime-cs";
 
 type TaskRow = {
   id: string;
@@ -27,11 +28,34 @@ type TaskRow = {
   sortOrder: number;
 };
 
+type ReportSession = {
+  entryId: string;
+  startedAt: string;
+  endedAt: string | null;
+  durationSeconds: number;
+  isRunning: boolean;
+  endedReason?: string | null;
+};
+
+const END_REASON_LABEL: Record<string, string> = {
+  manual_stop: "Ruční ukončení",
+  switched_task: "Přepnutí úkolu",
+  attendance_clock_out: "Odchod z práce",
+  attendance_lunch: "Oběd",
+  attendance_break: "Přestávka / tarif",
+  admin_edit: "Úprava vedením",
+};
+
 type ReportTask = {
   taskId: string;
   taskName: string;
   totalSeconds: number;
-  byEmployee: { employeeId: string; employeeName: string; seconds: number }[];
+  byEmployee: {
+    employeeId: string;
+    employeeName: string;
+    seconds: number;
+    sessions: ReportSession[];
+  }[];
 };
 
 type Props = {
@@ -243,14 +267,38 @@ export function ProductionJobTasksSection({ jobId, jobDisplayName, canManage, ge
                 Celkem: {formatDurationCs(report.totalSeconds)}
               </p>
               {report.byTask.map((row) => (
-                <div key={row.taskId} className="rounded-md bg-slate-50 p-3 text-sm space-y-1">
+                <div key={row.taskId} className="rounded-md bg-slate-50 p-3 text-sm space-y-2">
                   <p className="font-medium">
-                    {row.taskName} — {formatDurationCs(row.totalSeconds)}
+                    {row.taskName}
+                    <span className="text-muted-foreground font-normal">
+                      {" "}
+                      · Celkem {formatDurationCs(row.totalSeconds)}
+                    </span>
                   </p>
                   {row.byEmployee.map((e) => (
-                    <p key={e.employeeId} className="text-muted-foreground pl-2">
-                      {e.employeeName}: {formatDurationCs(e.seconds)}
-                    </p>
+                    <div key={e.employeeId} className="pl-2 space-y-1 border-l-2 border-slate-200">
+                      <p className="font-medium text-slate-800">
+                        {e.employeeName} · {formatDurationCs(e.seconds)}
+                      </p>
+                      {(e.sessions ?? []).map((s) => (
+                        <div key={s.entryId} className="text-muted-foreground text-xs pl-2 space-y-0.5">
+                          <p>{formatDateCs(s.startedAt)}</p>
+                          <p>
+                            Od: {formatTimeCs(s.startedAt)}
+                            {" · "}
+                            Do: {s.isRunning ? "právě běží" : s.endedAt ? formatTimeCs(s.endedAt) : "—"}
+                            {" · "}
+                            {formatDurationCs(s.durationSeconds)}
+                            {!s.isRunning && s.endedReason ? (
+                              <>
+                                {" "}
+                                · Ukončeno: {END_REASON_LABEL[s.endedReason] ?? s.endedReason}
+                              </>
+                            ) : null}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   ))}
                 </div>
               ))}

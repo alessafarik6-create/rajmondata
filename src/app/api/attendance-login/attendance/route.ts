@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Firestore } from "firebase-admin/firestore";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyAttendancePinForEmployee } from "@/lib/attendance-pin-server";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
@@ -14,6 +14,7 @@ import {
   loadEmployeeAndRatesForSegment,
   type WorkSegmentSource,
 } from "@/lib/work-segment-server";
+import { closeAllActiveProductionEntriesForEmployee } from "@/lib/production-qr/production-time-server";
 
 type Action = "check-in" | "check-out";
 
@@ -182,15 +183,22 @@ export async function POST(request: NextRequest) {
     }
 
     if (actionRaw === "check-out") {
+      const checkoutTs = Timestamp.now();
       const open = await findOpenWorkSegment(db, companyId, employeeId, todayIso);
       if (open) {
         const rate =
           typeof (open.data() as { hourlyRateCzk?: number }).hourlyRateCzk === "number"
             ? (open.data() as { hourlyRateCzk: number }).hourlyRateCzk
             : null;
-        await closeWorkSegment(open.ref, nowMs, rate);
+        await closeWorkSegment(open.ref, checkoutTs.toMillis(), rate);
         await maybeAutoApproveJobSegmentAfterTerminalClose(db, companyId, open.ref, employeeId);
       }
+      await closeAllActiveProductionEntriesForEmployee(db, {
+        companyId,
+        employeeId,
+        endedReason: "attendance_clock_out",
+        endedAt: checkoutTs,
+      });
     }
 
     const type = mapAction(actionRaw);
