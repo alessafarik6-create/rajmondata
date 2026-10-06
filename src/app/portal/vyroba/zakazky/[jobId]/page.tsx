@@ -111,6 +111,7 @@ import {
   ProductionWorkbenchSplit,
   type ProductionWorkbenchHeights,
 } from "@/components/production/production-workbench-split";
+import { ProductionJobTasksSection } from "@/components/production/production-job-tasks-section";
 import { useStockPiecesSummaries } from "@/hooks/use-stock-pieces-summaries";
 import type { StockPiecesSummary } from "@/hooks/use-stock-pieces-summaries";
 import { formatMmCs } from "@/lib/stock-pieces-display";
@@ -2532,6 +2533,15 @@ export default function VyrobaZakazkaDetailPage() {
                 </div>
               </CardContent>
             </Card>
+          ) : null}
+
+          {productionRunning && user && companyId ? (
+            <ProductionJobTasksSection
+              jobId={String(jobId)}
+              jobDisplayName={String(jobView.displayLabel || jobView.name || jobId)}
+              canManage={isPrivilegedViewer}
+              getToken={() => user.getIdToken()}
+            />
           ) : null}
 
           <Card className={CARD}>

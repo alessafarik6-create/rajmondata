@@ -37,5 +37,8 @@ export const PLATFORM_SECURITY_DAILY_COLLECTION = "platform_security_daily";
 export const PLATFORM_SECURITY_ALERT_STATE_COLLECTION = "platform_security_alert_state";
 /** Audit citlivých akcí superadmina. */
 export const PLATFORM_SECURITY_AUDIT_COLLECTION = "platform_security_audit";
+/** Globální mapování veřejného QR tokenu → company/job/task (Admin SDK). */
+export const PRODUCTION_QR_TOKEN_INDEX_COLLECTION = "production_qr_token_index";
+
 /** Distribuovaný rate limit (Firestore). */
 export const PLATFORM_RATE_LIMITS_COLLECTION = "platform_rate_limits";

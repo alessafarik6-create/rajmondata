@@ -459,6 +459,27 @@
         { "fieldPath": "tripId", "order": "ASCENDING" },
         { "fieldPath": "recordedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "productionTimeEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "employeeId", "order": "ASCENDING" },
+        { "fieldPath": "endedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "productionTimeEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "jobId", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "productionTasks",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "sortOrder", "order": "ASCENDING" }]
     }
   ],
   "fieldOverrides": []

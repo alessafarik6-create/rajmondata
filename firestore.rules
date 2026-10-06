@@ -1321,6 +1321,15 @@ service cloud.firestore {
           allow write: if false;
         }
 
+        /** Výrobní úkoly (QR čas) — zápis jen Admin SDK / API. */
+        match /productionTasks/{taskId} {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          );
+          allow write: if false;
+        }
+
         /**
          * Návrh materiálu z CSV (draft) — zápis přes API; čtení výroba / vedení.
          * companies/{companyId}/jobs/{jobId}/csvMaterialDrafts/{draftId}
@@ -2589,6 +2598,22 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      /** QR čas ve výrobě — zápis jen Admin SDK. */
+      match /productionTimeEntries/{entryId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow write: if false;
+      }
+
+      match /productionTimeEntryAudits/{auditId} {
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow write: if false;
+      }
+
+      match /productionQrTokens/{tokenId} {
+        allow read, write: if false;
+      }
+
       /**
        * Štítky / stavy poptávek (import) — companies/{companyId}/lead_tags/{tagId}
        */
@@ -3164,6 +3189,11 @@ service cloud.firestore {
     }
 
     match /superadmins/{id} {
+      allow read, write: if false;
+    }
+
+    /** Globální index QR tokenů výroby — pouze Admin SDK. */
+    match /production_qr_token_index/{tokenId} {
       allow read, write: if false;
     }
 

@@ -18,6 +18,7 @@ import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access
 import { isCompanyPrivileged } from "@/lib/company-privilege";
 import { cn } from "@/lib/utils";
 import { VYROBA_MOBILE_NESTED_LIGHT_FIX, VYROBA_MOBILE_PAGE_ROOT } from "@/lib/production-mobile-ui";
+import { ProductionActiveWorkersCard } from "@/components/production/production-active-workers-card";
 
 const CARD = cn(
   "border-slate-200 bg-white text-slate-900",
@@ -166,6 +167,8 @@ export default function VyrobaZakazkyListPage() {
             : "Zakázky přiřazené vám pro realizaci — bez obchodních cen a dokladů."}
         </p>
       </div>
+
+      <ProductionActiveWorkersCard getToken={() => user.getIdToken()} />
 
       <Card className={CARD}>
         <CardHeader className="border-b border-slate-100">
