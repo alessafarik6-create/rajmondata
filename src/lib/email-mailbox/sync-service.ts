@@ -269,6 +269,8 @@ export async function syncEmailAccount(
   let lastInboxUid = account.lastInboxUid ?? null;
   let inboxUidValidity = account.inboxUidValidity ?? null;
   let sentFolderPath = account.sentFolderPath ?? null;
+  let lastSentUid = account.lastSentUid ?? null;
+  let sentUidValidity = account.sentUidValidity ?? null;
   let inboxBackfillFloorUid = account.inboxBackfillFloorUid ?? null;
   let inboxBackfillCeilingUid = account.inboxBackfillCeilingUid ?? null;
   let inboxBackfillCursorUid = account.inboxBackfillCursorUid ?? null;
@@ -319,9 +321,14 @@ export async function syncEmailAccount(
     const aiQueue: { messageId: string; payload: Parameters<typeof analyzeEmailMessageWithAi>[2] }[] =
       [];
 
+    const activeSentFolderPath = sentFolderPath ?? account.sentFolderPath ?? null;
+
     for (const msg of result.messages) {
       processed++;
       try {
+        const isSyncedSent = Boolean(
+          activeSentFolderPath && msg.folder === activeSentFolderPath
+        );
         const attachmentsMeta = await uploadEmailAttachments({
           bucket,
           companyId,
@@ -349,10 +356,10 @@ export async function syncEmailAccount(
           htmlBody: htmlPrep.html,
           receivedAt: Timestamp.fromDate(msg.receivedAt),
           sentAt: msg.sentAt ? Timestamp.fromDate(msg.sentAt) : null,
-          direction: "inbound" as const,
+          direction: isSyncedSent ? ("outbound" as const) : ("inbound" as const),
           folder: msg.folder,
           attachments: attachmentsMeta,
-          resolved: false,
+          resolved: isSyncedSent,
           needsReply: false,
           requiresAction: false,
           workflowState: "new" as const,
@@ -417,7 +424,7 @@ export async function syncEmailAccount(
             label: "Přijat e-mail",
             userId: ownerUserId || null,
           });
-          if (!opts?.skipAi) {
+          if (!opts?.skipAi && !isSyncedSent) {
             aiQueue.push({
               messageId: savedId,
               payload: {
@@ -432,13 +439,17 @@ export async function syncEmailAccount(
         }
 
         if (msg.imapUid != null) {
-          lastInboxUid = Math.max(lastInboxUid ?? 0, msg.imapUid);
-          await accountRef
-            .update({
-              lastInboxUid,
-              updatedAt: FieldValue.serverTimestamp(),
-            })
-            .catch(() => undefined);
+          if (isSyncedSent) {
+            lastSentUid = Math.max(lastSentUid ?? 0, msg.imapUid);
+          } else {
+            lastInboxUid = Math.max(lastInboxUid ?? 0, msg.imapUid);
+            await accountRef
+              .update({
+                lastInboxUid,
+                updatedAt: FieldValue.serverTimestamp(),
+              })
+              .catch(() => undefined);
+          }
         }
       } catch (saveErr) {
         const s = saveErr instanceof Error ? saveErr.message : String(saveErr);
@@ -449,6 +460,91 @@ export async function syncEmailAccount(
 
     inboxUidValidity = result.inboxUidValidity ?? inboxUidValidity;
     sentFolderPath = result.sentFolderPath ?? sentFolderPath;
+
+    const sentPathForSync = sentFolderPath ?? account.sentFolderPath ?? null;
+    if (sentPathForSync && typeof adapter.syncSentFolder === "function") {
+      const sentResult = await withEmailSyncTimeout(
+        adapter.syncSentFolder(account, credentials, {
+          folderPath: sentPathForSync,
+          sinceUid: account.lastSentUid ?? 0,
+          batchSize,
+          storedUidValidity: account.sentUidValidity ?? null,
+        })
+      );
+      sentUidValidity = sentResult.sentUidValidity ?? sentUidValidity;
+      if (sentResult.hasMore) {
+        hasMore = true;
+        remaining += sentResult.remainingEstimate;
+      }
+      for (const msg of sentResult.messages) {
+        processed++;
+        try {
+          const attachmentsMeta = await uploadEmailAttachments({
+            bucket,
+            companyId,
+            accountId,
+            attachments: msg.attachments,
+          });
+          const textPrep = prepareTextBodyForFirestore(msg.textBody);
+          const htmlPrep = prepareHtmlBodyForFirestore(msg.htmlBody);
+          const base = {
+            organizationId: companyId,
+            emailAccountId: accountId,
+            ownerUserId: ownerUserId || null,
+            providerMessageId: msg.messageId ?? null,
+            imapUid: msg.imapUid,
+            messageId: msg.messageId ?? null,
+            inReplyTo: msg.inReplyTo ?? null,
+            references: msg.references ?? [],
+            from: msg.from,
+            to: msg.to,
+            cc: msg.cc ?? [],
+            subject: (msg.subject ?? "(bez předmětu)").slice(0, 2000),
+            textBody: textPrep.text,
+            htmlBody: htmlPrep.html,
+            receivedAt: Timestamp.fromDate(msg.receivedAt),
+            sentAt: msg.sentAt ? Timestamp.fromDate(msg.sentAt) : Timestamp.fromDate(msg.receivedAt),
+            direction: "outbound" as const,
+            folder: msg.folder,
+            attachments: attachmentsMeta,
+            resolved: true,
+            needsReply: false,
+            requiresAction: false,
+            workflowState: "new" as const,
+            threadId: computeEmailThreadId(accountId, {
+              messageId: msg.messageId ?? null,
+              inReplyTo: msg.inReplyTo ?? null,
+              references: msg.references ?? [],
+              subject: (msg.subject ?? "").slice(0, 2000),
+            }),
+            aiReviewPending: false,
+            isRead: Boolean(msg.isRead),
+          };
+          const docId = inboundMessageDocId(
+            accountId,
+            msg.messageId,
+            msg.imapUid,
+            msg.folder
+          );
+          const { created } = await saveInboundMessage(db, companyId, base, docId);
+          if (created) {
+            imported++;
+            logEmailPhase("EMAIL_SYNC_MESSAGE_SAVED", {
+              messageId: docId,
+              uid: msg.imapUid,
+              folder: "sent",
+            });
+          } else {
+            skipped++;
+          }
+          if (msg.imapUid != null) {
+            lastSentUid = Math.max(lastSentUid ?? 0, msg.imapUid);
+          }
+        } catch (saveErr) {
+          skipped++;
+        }
+      }
+    }
 
     if (result.bootstrapWindow) {
       inboxBackfillFloorUid = result.bootstrapWindow.floorUid;
@@ -524,6 +620,8 @@ export async function syncEmailAccount(
         patch.lastInboxUid = lastInboxUid;
         patch.inboxUidValidity = inboxUidValidity;
         patch.sentFolderPath = sentFolderPath;
+        patch.lastSentUid = lastSentUid;
+        patch.sentUidValidity = sentUidValidity;
         patch.inboxBackfillFloorUid = inboxBackfillFloorUid;
         patch.inboxBackfillCeilingUid = inboxBackfillCeilingUid;
         patch.inboxBackfillCursorUid = inboxBackfillCursorUid;

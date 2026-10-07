@@ -62,6 +62,9 @@ export type EmailAccountDoc = {
   /** IMAP UIDVALIDITY pro INBOX — při změně reset inkrementálního syncu. */
   inboxUidValidity?: number | null;
   sentFolderPath?: string | null;
+  /** Poslední synchronizované IMAP UID ve složce Odeslané. */
+  lastSentUid?: number | null;
+  sentUidValidity?: number | null;
   lastSyncAt?: Timestamp | null;
   lastSyncStatus?: EmailLastSyncStatus | null;
   lastError?: string | null;

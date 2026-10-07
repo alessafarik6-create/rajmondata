@@ -39,6 +39,7 @@ import { AiAssistantSettingsCard } from "@/components/settings/ai-assistant-sett
 import { AiSecretarySettingsCard } from "@/components/settings/ai-secretary-settings-card";
 import { EmployeeDocumentTemplatesSettingsCard } from "@/components/settings/EmployeeDocumentTemplatesSettingsCard";
 import { PortalNotificationPreferencesSettings } from "@/components/settings/portal-notification-preferences-settings";
+import { PortalChangePasswordCard } from "@/components/settings/portal-change-password-card";
 import { useToast } from '@/hooks/use-toast';
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
 import { getFirebaseStorage } from '@/firebase/storage';
@@ -615,6 +616,7 @@ export default function SettingsPage() {
               <Button className="w-fit">Uložit změny</Button>
             </CardContent>
           </Card>
+          <PortalChangePasswordCard />
           {companyId ? (
             <div className="mt-6">
               <EmailMyMailboxSettingsCard companyId={companyId} />

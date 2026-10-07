@@ -81,7 +81,18 @@ export async function GET(request: NextRequest) {
         allMailboxes || !accountIdParam ? true : m.emailAccountId === accountIdParam
       )
       .filter(filterFn)
-      .sort((a, b) => (b.receivedAt?.toMillis?.() ?? 0) - (a.receivedAt?.toMillis?.() ?? 0))
+      .sort((a, b) => {
+        const sortMs = (m: EmailMessageDoc & { id: string }) => {
+          if (view === "sent") {
+            return m.sentAt?.toMillis?.() ?? m.receivedAt?.toMillis?.() ?? 0;
+          }
+          if (view === "drafts") {
+            return m.updatedAt?.toMillis?.() ?? m.receivedAt?.toMillis?.() ?? 0;
+          }
+          return m.receivedAt?.toMillis?.() ?? 0;
+        };
+        return sortMs(b) - sortMs(a);
+      })
       .slice(0, 120)
       .map((m) => ({
         id: m.id,
@@ -90,6 +101,8 @@ export async function GET(request: NextRequest) {
         from: m.from,
         subject: m.subject,
         receivedAt: m.receivedAt?.toDate?.()?.toISOString?.() ?? null,
+        sentAt: m.sentAt?.toDate?.()?.toISOString?.() ?? null,
+        isDraft: Boolean(m.isDraft),
         needsReply: m.needsReply,
         staleNeedsReply: messageIsStaleNeedsReply(m),
         aiSummary: m.aiSummary ?? null,

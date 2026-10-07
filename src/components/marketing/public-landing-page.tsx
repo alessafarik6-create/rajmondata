@@ -22,7 +22,7 @@ export function PublicLandingPage() {
 
       <section className="mx-auto min-h-0 max-w-6xl px-3 pb-8 pt-6 sm:px-4 sm:pb-12 sm:pt-8 md:px-6 md:pb-16 md:pt-10 lg:pt-12">
         <div className="grid min-h-0 items-center gap-6 lg:grid-cols-2 lg:gap-10 lg:pt-2">
-          <div className="min-w-0 max-w-full">
+          <div className="order-1 min-w-0 max-w-full">
             <p className="text-xs font-medium uppercase tracking-widest text-primary/90 sm:text-sm">
               {PLATFORM_NAME} — firemní portál
             </p>
@@ -56,7 +56,7 @@ export function PublicLandingPage() {
             <PublicLandingHeroCtas />
           </div>
 
-          <div className="min-w-0 lg:pl-2">
+          <div className="order-2 min-w-0 w-full max-w-full lg:order-2 lg:pl-2">
             <PublicLandingHeroMedia />
           </div>
         </div>

@@ -79,6 +79,7 @@ type RajmondataAttachRef = JobDocumentEmailAttachmentRef & { jobId: string };
 
 type MsgDetail = EmailDetailModel & {
   to?: string[];
+  isDraft?: boolean;
   inquiryDraft?: Record<string, unknown> | null;
 };
 
@@ -150,6 +151,8 @@ export function EmailPortalPage() {
   const [forwardAttachmentIds, setForwardAttachmentIds] = useState<string[]>([]);
   const [rajmondataRefs, setRajmondataRefs] = useState<RajmondataAttachRef[]>([]);
   const [composeForwardMode, setComposeForwardMode] = useState(false);
+  const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
+  const [draftSaveLabel, setDraftSaveLabel] = useState<string | null>(null);
   const [visibleListCount, setVisibleListCount] = useState(EMAIL_LIST_PAGE_SIZE);
   const listScrollRef = useRef<HTMLDivElement>(null);
   const listScrollTopRef = useRef(0);
@@ -382,11 +385,75 @@ export function EmailPortalPage() {
 
   const messageIdFromUrl = searchParams.get("messageId");
 
+  const openDraftInCompose = useCallback((msg: MsgDetail) => {
+    setComposeDraftId(msg.id);
+    setComposeTo(Array.isArray(msg.to) ? msg.to.join(", ") : "");
+    setComposeSubject(msg.subject ?? "");
+    setComposeBody(String(msg.textBody ?? ""));
+    setComposeFromAccountId(msg.emailAccountId || defaultAccountId);
+    setComposeForwardMode(false);
+    setComposeOpen(true);
+    setDetail(null);
+    setSelectedId(msg.id);
+    setMobilePane(belowLg ? "detail" : "list");
+  }, [defaultAccountId, belowLg]);
+
+  const saveComposeDraft = useCallback(async () => {
+    if (!companyId || !access.canWrite || !composeOpen) return;
+    const accountId = composeAccountId;
+    if (!accountId) return;
+    const hasContent =
+      composeTo.trim().length > 0 ||
+      composeSubject.trim().length > 0 ||
+      composeBody.trim().length > 0;
+    if (!hasContent) return;
+    try {
+      const token = await getToken();
+      const to = composeTo.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+      const res = await fetch("/api/company/email-mailbox/messages/draft", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          accountId,
+          to,
+          subject: composeSubject,
+          textBody: composeBody,
+          draftId: composeDraftId ?? undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok && typeof data.draftId === "string") {
+        setComposeDraftId(data.draftId);
+        setDraftSaveLabel("Koncept uložen");
+      }
+    } catch {
+      /* autosave best-effort */
+    }
+  }, [
+    companyId,
+    access.canWrite,
+    composeOpen,
+    composeAccountId,
+    composeTo,
+    composeSubject,
+    composeBody,
+    composeDraftId,
+    getToken,
+  ]);
+
+  useEffect(() => {
+    if (!composeOpen) return;
+    const t = window.setTimeout(() => {
+      void saveComposeDraft();
+    }, 2000);
+    return () => window.clearTimeout(t);
+  }, [composeOpen, composeTo, composeSubject, composeBody, saveComposeDraft]);
+
   const loadDetail = useCallback(
     async (id: string) => {
       if (!user || !companyId) return;
       setSelectedId(id);
-      setMobilePane("detail");
       const token = await getToken();
       const res = await fetch(
         `/api/company/email-mailbox/messages/${id}?companyId=${encodeURIComponent(companyId)}`,
@@ -394,6 +461,11 @@ export function EmailPortalPage() {
       );
       const data = await parseEmailApiResponse<{ message?: MsgDetail }>(res);
       if (data.ok && data.message) {
+        if (data.message.isDraft) {
+          openDraftInCompose(data.message);
+          return;
+        }
+        setMobilePane("detail");
         setDetail(data.message);
         setReplyText(String(data.message?.aiDraftReply ?? ""));
         setAssignJobId(String(data.message?.jobId ?? data.message?.suggestedJobId ?? ""));
@@ -422,7 +494,7 @@ export function EmailPortalPage() {
         setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isRead: true } : m)));
       }
     },
-    [user, companyId, getToken, access.canWrite]
+    [user, companyId, getToken, access.canWrite, openDraftInCompose]
   );
 
   useEffect(() => {
@@ -583,6 +655,7 @@ export function EmailPortalPage() {
         form.set("to", JSON.stringify(to));
         form.set("subject", subject);
         form.set("textBody", text);
+        if (composeDraftId) form.set("draftId", composeDraftId);
         if (opts.reply && detail?.id) form.set("replyToMessageId", detail.id);
         if (opts.forward && detail?.id) {
           form.set("forwardFromMessageId", detail.id);
@@ -620,6 +693,7 @@ export function EmailPortalPage() {
             subject,
             textBody: text,
             replyToMessageId: opts.reply && !opts.forward ? detail?.id : undefined,
+            draftId: composeDraftId ?? undefined,
           }),
         });
       }
@@ -631,6 +705,8 @@ export function EmailPortalPage() {
       toast({ title: "E-mail odeslán" });
       setComposeOpen(false);
       setComposeForwardMode(false);
+      setComposeDraftId(null);
+      setDraftSaveLabel(null);
       setReplyLocalFiles([]);
       setRajmondataRefs([]);
       await loadMessages();
@@ -878,7 +954,7 @@ export function EmailPortalPage() {
   }
 
   return (
-    <div className="w-full min-w-0 bg-background">
+    <div className="flex w-full min-w-0 flex-col bg-background max-lg:min-h-[100dvh] max-lg:max-h-[100dvh] max-lg:overflow-hidden">
       {connectedAccounts.length === 0 && accounts.length > 0 ? (
         <div className="mx-3 mt-3 shrink-0 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
           Všechny účty jsou odpojené. Historii zpráv stále vidíte níže. Nový e-mail připojte v{" "}
@@ -888,12 +964,13 @@ export function EmailPortalPage() {
           .
         </div>
       ) : null}
-      <div className="flex flex-col lg:grid lg:grid-cols-[minmax(190px,220px)_minmax(300px,340px)_minmax(0,1fr)] lg:items-start">
+      <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(190px,220px)_minmax(300px,340px)_minmax(0,1fr)] lg:items-start">
       <aside
         className={cn(
           EMAIL_STICKY_LIST_PANEL,
           "w-full shrink-0 border-b p-3 lg:w-auto lg:border-b-0 lg:border-r",
-          mobilePane !== "folders" && "hidden lg:flex"
+          mobilePane !== "folders" && "hidden lg:flex",
+          mobilePane === "folders" && "max-lg:flex max-lg:flex-1 max-lg:min-h-0"
         )}
       >
         <p className="mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -948,7 +1025,13 @@ export function EmailPortalPage() {
           disabled={!access.canWrite || connectedAccounts.length === 0}
           onClick={() => {
             setComposeFromAccountId(defaultAccountId);
+            setComposeDraftId(null);
+            setDraftSaveLabel(null);
+            setComposeTo("");
+            setComposeSubject("");
+            setComposeBody("");
             setComposeOpen(true);
+            if (belowLg) setMobilePane("detail");
           }}
         >
           <Plus className="h-4 w-4" /> Nový e-mail
@@ -1021,7 +1104,8 @@ export function EmailPortalPage() {
             EMAIL_STICKY_LIST_PANEL,
             "min-w-0 flex flex-col border-b lg:w-auto lg:max-w-[340px] lg:shrink-0 lg:border-b-0 lg:border-r max-lg:min-h-[40vh]",
             mobilePane === "detail" && "hidden lg:flex",
-            mobilePane === "folders" && "hidden lg:flex"
+            mobilePane === "folders" && "hidden lg:flex",
+            mobilePane === "list" && "max-lg:flex max-lg:flex-1 max-lg:min-h-0"
           )}
         >
           <div className="sticky top-0 z-10 shrink-0 border-b bg-background p-2">
@@ -1077,20 +1161,25 @@ export function EmailPortalPage() {
         <div
           className={cn(
             "min-w-0 w-full flex-1 bg-background overflow-x-hidden",
-            mobilePane !== "detail" && "max-lg:hidden",
-            mobilePane === "detail" &&
+            mobilePane !== "detail" && !(composeOpen && belowLg) && "max-lg:hidden",
+            (mobilePane === "detail" || (composeOpen && belowLg)) &&
               "max-lg:fixed max-lg:inset-0 max-lg:z-[55] max-lg:flex max-lg:flex-col max-lg:overflow-hidden max-lg:p-0 max-lg:pt-[env(safe-area-inset-top)] max-lg:pb-[env(safe-area-inset-bottom)]",
             mobilePane !== "detail" || !belowLg ? "p-3 sm:p-4 lg:p-5" : ""
           )}
         >
           <div
             className={cn(
-              mobilePane === "detail" && belowLg && "min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3"
+              (mobilePane === "detail" || (composeOpen && belowLg)) &&
+                belowLg &&
+                "min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-3 touch-pan-y"
             )}
           >
           {composeOpen ? (
-            <div className="space-y-3 max-w-xl">
+            <div className="mx-auto w-full min-w-0 max-w-xl space-y-3">
               <h2 className="font-semibold">Nový e-mail</h2>
+              {draftSaveLabel ? (
+                <p className="text-xs text-muted-foreground">{draftSaveLabel}</p>
+              ) : null}
               {connectedAccounts.length > 1 ? (
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">Od:</p>
@@ -1128,18 +1217,27 @@ export function EmailPortalPage() {
                   onRajmondataRefsChange={setRajmondataRefs}
                 />
               ) : null}
-              <div className="flex flex-wrap gap-2">
+              <div
+                className={cn(
+                  "flex flex-wrap gap-2",
+                  belowLg && "sticky bottom-0 border-t bg-background py-3"
+                )}
+              >
                 <Button
                   disabled={busy}
+                  className="min-h-[44px] flex-1 sm:flex-none"
                   onClick={() => void sendMail(composeForwardMode ? { forward: true } : {})}
                 >
                   Odeslat
                 </Button>
                 <Button
                   variant="ghost"
+                  className="min-h-[44px]"
                   onClick={() => {
                     setComposeOpen(false);
                     setComposeForwardMode(false);
+                    setComposeDraftId(null);
+                    setDraftSaveLabel(null);
                   }}
                 >
                   Zrušit

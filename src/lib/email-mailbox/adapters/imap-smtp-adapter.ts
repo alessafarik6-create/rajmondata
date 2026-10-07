@@ -16,6 +16,7 @@ import {
   EMAIL_SYNC_BATCH_SIZE,
 } from "@/lib/email-mailbox/message-content-limits";
 import { isLikelySignatureInlineAttachment } from "@/lib/email-mailbox/attachment-meta";
+import { findSentFolderPath } from "@/lib/email-mailbox/imap-folder-resolver";
 
 function mapConnectionError(err: unknown, phase: "imap" | "smtp"): ConnectionTestResult {
   const msg = err instanceof Error ? err.message : String(err);
@@ -124,19 +125,74 @@ function throwMappedImapSyncError(err: unknown): never {
   throw err instanceof Error ? err : new Error(msg);
 }
 
-async function findSentFolder(client: ImapFlow): Promise<string | null> {
-  const list = await client.list();
-  for (const box of list) {
-    const special = box.specialUse ?? "";
-    if (special.includes("\\Sent")) return box.path;
+async function parseImapSourceToPayload(
+  folderPath: string,
+  uid: number,
+  source: Buffer,
+  seen: boolean
+): Promise<InboundEmailPayload | null> {
+  const parsed = await simpleParser(source);
+  const refsRaw = parsed.references;
+  const references = Array.isArray(refsRaw)
+    ? refsRaw.map(String)
+    : refsRaw
+      ? [String(refsRaw)]
+      : [];
+  const attachments: InboundEmailPayload["attachments"] = [];
+  for (const att of parsed.attachments ?? []) {
+    if (!att.content) continue;
+    const filename =
+      String(att.filename ?? "").trim() ||
+      (att.contentId ? `inline-${String(att.contentId).replace(/[<>]/g, "")}` : "") ||
+      "priloha.bin";
+    const size = att.size ?? att.content.length ?? 0;
+    if (size <= 0) continue;
+    const disposition =
+      att.contentDisposition === "inline"
+        ? "inline"
+        : att.contentDisposition === "attachment"
+          ? "attachment"
+          : null;
+    const contentId = att.contentId ? String(att.contentId) : null;
+    const related = Boolean((att as { related?: boolean }).related);
+    const userVisible = !isLikelySignatureInlineAttachment({
+      filename,
+      contentType: att.contentType || "application/octet-stream",
+      size,
+      disposition,
+      contentId,
+      related,
+    });
+    if (!userVisible) continue;
+    if (size > EMAIL_ATTACHMENT_MAX_BYTES) continue;
+    attachments.push({
+      filename,
+      contentType: att.contentType || "application/octet-stream",
+      content: att.content,
+      disposition,
+      contentId,
+      related,
+      userVisible: true,
+    });
   }
-  for (const box of list) {
-    const p = box.path.toLowerCase();
-    if (p.includes("sent") || p.includes("odeslan") || p.includes("odeslané")) {
-      return box.path;
-    }
-  }
-  return null;
+  const when = parsed.date ?? new Date();
+  return {
+    imapUid: uid,
+    folder: folderPath,
+    messageId: parsed.messageId ?? null,
+    inReplyTo: parsed.inReplyTo ?? null,
+    references,
+    from: parsed.from?.text ?? "",
+    to: addressesFromField(parsed.to),
+    cc: addressesFromField(parsed.cc),
+    subject: parsed.subject ?? "(bez předmětu)",
+    textBody: parsed.text ?? null,
+    htmlBody: typeof parsed.html === "string" ? parsed.html : null,
+    receivedAt: when,
+    sentAt: when,
+    isRead: seen,
+    attachments,
+  };
 }
 
 export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
@@ -242,7 +298,7 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
       await client.connect();
       logEmailPhase("EMAIL_IMAP_CONNECTED", { email: account.email });
       if (!sentFolderPath) {
-        sentFolderPath = await findSentFolder(client);
+        sentFolderPath = await findSentFolderPath(client);
       }
       const lock = await client.getMailboxLock("INBOX");
       try {
@@ -347,67 +403,9 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
           }
           if (!source) continue;
           const row = { uid, source, seen };
-          const parsed = await simpleParser(row.source);
-          const refsRaw = parsed.references;
-          const references = Array.isArray(refsRaw)
-            ? refsRaw.map(String)
-            : refsRaw
-              ? [String(refsRaw)]
-              : [];
-          const attachments: InboundEmailPayload["attachments"] = [];
-          for (const att of parsed.attachments ?? []) {
-            if (!att.content) continue;
-            const filename =
-              String(att.filename ?? "").trim() ||
-              (att.contentId ? `inline-${String(att.contentId).replace(/[<>]/g, "")}` : "") ||
-              "priloha.bin";
-            const size = att.size ?? att.content.length ?? 0;
-            if (size <= 0) continue;
-            const disposition =
-              att.contentDisposition === "inline"
-                ? "inline"
-                : att.contentDisposition === "attachment"
-                  ? "attachment"
-                  : null;
-            const contentId = att.contentId ? String(att.contentId) : null;
-            const related = Boolean((att as { related?: boolean }).related);
-            const userVisible = !isLikelySignatureInlineAttachment({
-              filename,
-              contentType: att.contentType || "application/octet-stream",
-              size,
-              disposition,
-              contentId,
-              related,
-            });
-            if (!userVisible) continue;
-            if (size > EMAIL_ATTACHMENT_MAX_BYTES) continue;
-            attachments.push({
-              filename,
-              contentType: att.contentType || "application/octet-stream",
-              content: att.content,
-              disposition,
-              contentId,
-              related,
-              userVisible: true,
-            });
-          }
-          out.push({
-            imapUid: row.uid,
-            folder: "INBOX",
-            messageId: parsed.messageId ?? null,
-            inReplyTo: parsed.inReplyTo ?? null,
-            references,
-            from: parsed.from?.text ?? "",
-            to: addressesFromField(parsed.to),
-            cc: addressesFromField(parsed.cc),
-            subject: parsed.subject ?? "(bez předmětu)",
-            textBody: parsed.text ?? null,
-            htmlBody: typeof parsed.html === "string" ? parsed.html : null,
-            receivedAt: parsed.date ?? new Date(),
-            sentAt: parsed.date ?? null,
-            isRead: row.seen,
-            attachments,
-          });
+          const payload = await parseImapSourceToPayload("INBOX", row.uid, row.source, row.seen);
+          if (!payload) continue;
+          out.push(payload);
           lastUid = Math.max(lastUid ?? 0, row.uid);
         }
         logEmailPhase("EMAIL_MESSAGES_FETCHED", { count: out.length });
@@ -445,6 +443,114 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
       remainingEstimate: 0,
       bootstrapWindow: null,
       nextBackfillCursorUid: null,
+    };
+  }
+
+  async syncSentFolder(
+    account: EmailAccountDoc,
+    credentials: EmailCredentialsPlain,
+    opts: {
+      folderPath: string;
+      sinceUid?: number | null;
+      batchSize?: number;
+      storedUidValidity?: number | null;
+    }
+  ): Promise<{
+    messages: InboundEmailPayload[];
+    lastUid: number | null;
+    sentUidValidity: number | null;
+    hasMore: boolean;
+    remainingEstimate: number;
+  }> {
+    const batchSize = opts.batchSize ?? EMAIL_SYNC_BATCH_SIZE;
+    const folderPath = opts.folderPath;
+    const client = buildImapClient(account, credentials);
+    const out: InboundEmailPayload[] = [];
+    let lastUid: number | null = opts.sinceUid ?? null;
+    let sentUidValidity: number | null = null;
+
+    try {
+      await client.connect();
+      const lock = await client.getMailboxLock(folderPath);
+      try {
+        const mailbox = client.mailbox;
+        if (mailbox && typeof mailbox === "object") {
+          const uv = mailbox.uidValidity;
+          sentUidValidity = uv != null ? Number(uv) : null;
+        }
+        let sinceUid = Math.max(0, Number(opts.sinceUid ?? 0));
+        const storedValidity = opts.storedUidValidity ?? account.sentUidValidity ?? null;
+        if (
+          storedValidity != null &&
+          sentUidValidity != null &&
+          storedValidity !== sentUidValidity
+        ) {
+          sinceUid = 0;
+          lastUid = null;
+        }
+
+        let uidBatch: number[] = [];
+        let hasMore = false;
+        let remainingEstimate = 0;
+
+        if (sinceUid > 0) {
+          const searchResult = await client.search({ uid: `${sinceUid + 1}:*` }, { uid: true });
+          const pending = uidsFromSearchResult(searchResult)
+            .filter((u) => u > sinceUid)
+            .sort((a, b) => a - b);
+          uidBatch = pending.slice(0, batchSize);
+          remainingEstimate = Math.max(0, pending.length - uidBatch.length);
+          hasMore = remainingEstimate > 0;
+        } else {
+          const searchResult = await client.search({ all: true }, { uid: true });
+          const all = uidsFromSearchResult(searchResult);
+          const window = all.length > EMAIL_BOOTSTRAP_WINDOW ? all.slice(-EMAIL_BOOTSTRAP_WINDOW) : all;
+          uidBatch = window.slice(-batchSize);
+          remainingEstimate = Math.max(0, window.length - uidBatch.length);
+          hasMore = remainingEstimate > 0;
+        }
+
+        for (const uid of uidBatch) {
+          let source: Buffer | null = null;
+          let seen = false;
+          for await (const msg of client.fetch(
+            `${uid}`,
+            { uid: true, source: true, flags: true },
+            { uid: true }
+          )) {
+            if (msg.source instanceof Buffer) source = msg.source;
+            else if (typeof msg.source === "string") source = Buffer.from(msg.source);
+            seen = imapFlagsIncludeSeen(msg.flags);
+          }
+          if (!source) continue;
+          const payload = await parseImapSourceToPayload(folderPath, uid, source, seen);
+          if (!payload) continue;
+          out.push(payload);
+          lastUid = Math.max(lastUid ?? 0, uid);
+        }
+
+        return {
+          messages: out,
+          lastUid,
+          sentUidValidity,
+          hasMore,
+          remainingEstimate,
+        };
+      } finally {
+        lock.release();
+      }
+    } catch (err) {
+      throwMappedImapSyncError(err);
+    } finally {
+      await client.logout().catch(() => undefined);
+    }
+
+    return {
+      messages: out,
+      lastUid,
+      sentUidValidity,
+      hasMore: false,
+      remainingEstimate: 0,
     };
   }
 
@@ -486,19 +592,23 @@ export class ImapSmtpEmailAdapter implements EmailProviderAdapter {
 
     const messageId = typeof info.messageId === "string" ? info.messageId : null;
 
-    if (account.sentFolderPath) {
+    let sentPath = account.sentFolderPath ?? null;
+    try {
+      const raw = buildRawMimeForAppend(account, message, messageId);
+      const client = buildImapClient(account, credentials);
+      await client.connect();
       try {
-        const raw = buildRawMimeForAppend(account, message, messageId);
-        const client = buildImapClient(account, credentials);
-        await client.connect();
-        try {
-          await client.append(account.sentFolderPath, raw, ["\\Seen"]);
-        } finally {
-          await client.logout();
+        if (!sentPath) {
+          sentPath = await findSentFolderPath(client);
         }
-      } catch {
-        /* append to Sent is best-effort */
+        if (sentPath) {
+          await client.append(sentPath, raw, ["\\Seen"]);
+        }
+      } finally {
+        await client.logout();
       }
+    } catch {
+      /* append to Sent is best-effort — provider may already store sent mail */
     }
 
     return { messageId };

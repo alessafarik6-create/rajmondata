@@ -38,7 +38,7 @@ export function PublicLandingHeroMedia() {
   return (
     <div className="space-y-2">
       <p className="text-xs font-medium text-slate-400 sm:text-sm">Ukázka portálu</p>
-      <div className="relative max-h-[42dvh] w-full overflow-hidden rounded-2xl border border-white/10 bg-slate-900/50 shadow-xl sm:max-h-[min(52dvh,520px)] lg:aspect-[4/3] lg:max-h-[min(78vh,640px)]">
+      <div className="relative aspect-[4/3] w-full min-h-[220px] max-h-[min(52dvh,520px)] overflow-hidden rounded-2xl border border-white/10 bg-slate-900/50 shadow-xl sm:min-h-[260px] lg:max-h-[min(78vh,640px)]">
         {heroImages.map((h, i) => (
           <div
             key={`${h.storagePath}-${i}`}

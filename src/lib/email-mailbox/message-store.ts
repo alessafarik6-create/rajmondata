@@ -96,13 +96,28 @@ export async function saveOutboundMessage(
   companyId: string,
   data: Omit<EmailMessageDoc, "createdAt" | "updatedAt">
 ): Promise<string> {
-  const ref = emailMessagesCol(db, companyId).doc();
-  await ref.set({
+  const id = inboundMessageDocId(
+    data.emailAccountId,
+    data.messageId,
+    data.imapUid ?? null,
+    data.folder
+  );
+  const ref = emailMessagesCol(db, companyId).doc(id);
+  const existing = await ref.get();
+  const payload = {
     ...data,
-    direction: "outbound",
-    sentAt: Timestamp.fromDate(new Date()),
-    createdAt: FieldValue.serverTimestamp(),
+    direction: "outbound" as const,
+    isDraft: false,
+    sentAt: data.sentAt ?? Timestamp.fromDate(new Date()),
     updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (existing.exists) {
+    await ref.set(payload, { merge: true });
+    return ref.id;
+  }
+  await ref.set({
+    ...payload,
+    createdAt: FieldValue.serverTimestamp(),
   });
   return ref.id;
 }

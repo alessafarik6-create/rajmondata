@@ -33,7 +33,7 @@ export function EmailMessageBody({ textBody, htmlBody, className }: Props) {
           title="Obsah e-mailu"
           sandbox="allow-same-origin"
           className="w-full min-w-0 border-0 bg-white rounded-md"
-          style={{ minHeight: 120, maxHeight: "min(70dvh, 720px)" }}
+          style={{ minHeight: 120, maxHeight: "min(85dvh, 720px)" }}
           srcDoc={srcDoc}
         />
       </div>

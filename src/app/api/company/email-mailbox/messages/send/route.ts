@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireEmailMailboxWrite } from "@/lib/email-mailbox/api-auth";
 import { assertEmailAccountAccess, assertMessageAccess } from "@/lib/email-mailbox/account-access";
 import { sendEmailFromAccount } from "@/lib/email-mailbox/send-service";
+import { emailMessagesCol } from "@/lib/email-mailbox/message-store";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
 import { emailMailboxTenantOk } from "@/lib/email-mailbox/api-auth";
@@ -28,6 +29,7 @@ type SendPayload = {
   forwardAttachmentIds?: string[];
   rajmondataJobId?: string;
   rajmondataAttachmentRefs?: unknown;
+  draftId?: string;
 };
 
 async function parseSendPayload(request: NextRequest): Promise<{
@@ -64,6 +66,7 @@ async function parseSendPayload(request: NextRequest): Promise<{
       textBody: String(form.get("textBody") ?? ""),
       htmlBody: String(form.get("htmlBody") ?? "") || undefined,
       replyToMessageId: String(form.get("replyToMessageId") ?? "") || undefined,
+      draftId: String(form.get("draftId") ?? "") || undefined,
       forwardFromMessageId: String(form.get("forwardFromMessageId") ?? "") || undefined,
       forwardAttachmentIds,
       rajmondataJobId: String(form.get("rajmondataJobId") ?? "") || undefined,
@@ -165,6 +168,15 @@ export async function POST(request: NextRequest) {
       replyToMessage,
       attachments: attachments.length ? attachments : undefined,
     });
+    const draftId = String(body.draftId ?? "").trim();
+    if (draftId) {
+      const draftRef = emailMessagesCol(db, companyId).doc(draftId);
+      const draftSnap = await draftRef.get();
+      if (draftSnap.exists) {
+        await draftRef.delete();
+      }
+    }
+
     await logEmailMailboxAudit(db, companyId, {
       actionType: "email_sent",
       actionLabel: "Odeslán e-mail",

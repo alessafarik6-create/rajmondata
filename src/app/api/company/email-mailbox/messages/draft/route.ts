@@ -48,12 +48,13 @@ export async function POST(request: NextRequest) {
   }
   const account = await loadEmailAccount(perm.db, companyId, accountId);
   const ownerUserId = account ? resolveAccountOwnerUserId(account) : perm.caller.uid;
+  const fromAddress = account?.email ?? "";
 
   const payload = {
     organizationId: companyId,
     emailAccountId: accountId,
     ownerUserId: ownerUserId || perm.caller.uid,
-    from: "",
+    from: fromAddress,
     to: body.to ?? [],
     subject: String(body.subject ?? ""),
     textBody: String(body.textBody ?? ""),

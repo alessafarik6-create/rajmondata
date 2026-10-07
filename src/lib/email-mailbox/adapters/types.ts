@@ -102,6 +102,23 @@ export interface EmailProviderAdapter {
     message: OutboundEmailPayload
   ): Promise<{ messageId: string | null; appendToSent?: InboundEmailPayload | null }>;
 
+  syncSentFolder?(
+    account: EmailAccountDoc,
+    credentials: EmailCredentialsPlain,
+    opts: {
+      folderPath: string;
+      sinceUid?: number | null;
+      batchSize?: number;
+      storedUidValidity?: number | null;
+    }
+  ): Promise<{
+    messages: InboundEmailPayload[];
+    lastUid: number | null;
+    sentUidValidity: number | null;
+    hasMore: boolean;
+    remainingEstimate: number;
+  }>;
+
   listFolders?(
     account: EmailAccountDoc,
     credentials: EmailCredentialsPlain
