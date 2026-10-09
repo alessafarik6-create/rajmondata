@@ -4,6 +4,7 @@ import {
   endOfWeek,
   startOfMonth,
   startOfWeek,
+  startOfYear,
   subDays,
   subMonths,
   subWeeks,
@@ -25,6 +26,7 @@ export type LeadDatePresetId =
   | "last_month"
   | "last_7_days"
   | "last_30_days"
+  | "this_year"
   | "custom";
 
 export const LEAD_DATE_PRESET_LABELS: Record<LeadDatePresetId, string> = {
@@ -36,6 +38,7 @@ export const LEAD_DATE_PRESET_LABELS: Record<LeadDatePresetId, string> = {
   last_month: "Minulý měsíc",
   last_7_days: "Posledních 7 dní",
   last_30_days: "Posledních 30 dní",
+  this_year: "Tento rok",
   custom: "Vlastní období",
 };
 
@@ -115,6 +118,10 @@ export function computeLeadDatePresetRange(
     }
     case "last_30_days": {
       const start = subDays(now, 29);
+      return { dateFrom: ymdInLeadsTimezone(start), dateTo: today };
+    }
+    case "this_year": {
+      const start = startOfYear(now);
       return { dateFrom: ymdInLeadsTimezone(start), dateTo: today };
     }
     case "custom":

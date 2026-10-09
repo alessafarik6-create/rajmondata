@@ -72,7 +72,27 @@ import {
   normalizeLeadTagColor,
 } from "@/lib/lead-tag-colors";
 import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
-import { resolveInquiryTypeRaw } from "@/lib/inquiry-type-badge";
+import {
+  mergeTypOptionsFromRows,
+  resolveEffectiveInquiryType,
+} from "@/lib/leads/lead-inquiry-type";
+import {
+  leadSearchBlob,
+  parseEstimatedValueInput,
+  resolveLeadSummaryValue,
+  type LeadInquiryTimelineEntry,
+} from "@/lib/leads/lead-summary";
+import {
+  LeadsSummaryPanel,
+  type LeadsSummaryPanelData,
+} from "@/components/leads/leads-summary-panel";
+import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
+import { formatMoneyKc } from "@/lib/job-payment-summary";
+import { pickLatestOfferForLead } from "@/lib/lead-portfolio-value";
+import {
+  AI_INQUIRY_TYPE_RULES_COLLECTION,
+  defaultBuiltInInquiryTypeRules,
+} from "@/lib/ai/ai-settings-types";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import {
   INQUIRY_WORKFLOW_STATUSES,
@@ -184,6 +204,10 @@ type LeadOverlayRow = {
   lastCustomerContactAt?: unknown;
   lastCustomerContactType?: string | null;
   customerContacted?: boolean | null;
+  inquiryTypeManual?: boolean;
+  estimatedValue?: number | null;
+  orientacniCenaKc?: number | null;
+  inquiryTimeline?: LeadInquiryTimelineEntry[];
 };
 
 function formatReceivedDay(d: Date): string {
@@ -205,21 +229,13 @@ type ApiImportBody = {
   };
 };
 
-function leadSearchBlob(r: LeadImportRow): string {
-  return [
-    r.jmeno,
-    r.telefon,
-    r.email,
-    r.adresa,
-    r.zprava,
-    r.typ,
-    r.stav,
-    r.id,
-    r.receivedAtIso,
-    r.orientacniCenaKc != null ? String(r.orientacniCenaKc) : "",
-  ]
-    .map((x) => String(x ?? "").toLowerCase())
-    .join(" ");
+function appendInquiryTimeline(
+  prev: LeadInquiryTimelineEntry[] | undefined,
+  entry: LeadInquiryTimelineEntry
+): LeadInquiryTimelineEntry[] {
+  const list = Array.isArray(prev) ? [...prev] : [];
+  list.unshift(entry);
+  return list.slice(0, 40);
 }
 
 export default function PortalLeadsPage() {
@@ -275,11 +291,17 @@ export default function PortalLeadsPage() {
     );
   }, [firestore, companyId]);
 
+  const inquiryTypeRulesQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, "companies", companyId, AI_INQUIRY_TYPE_RULES_COLLECTION);
+  }, [firestore, companyId]);
+
   const { data: tagsRaw, isLoading: tagsLoading } = useCollection(tagsQuery);
   const { data: overlaysRaw } = useCollection(overlaysQuery);
   const { data: meetingsRaw } = useCollection(meetingsQuery);
   const { data: offerTemplatesRaw } = useCollection(offerTemplatesQuery);
   const { data: inquiryOffersRaw } = useCollection(inquiryOffersQuery);
+  const { data: inquiryTypeRulesRaw } = useCollection(inquiryTypeRulesQuery);
 
   const tags = useMemo(() => {
     const list = Array.isArray(tagsRaw) ? (tagsRaw as LeadTagRow[]) : [];
@@ -371,6 +393,10 @@ export default function PortalLeadsPage() {
   const [aiApplyInitial, setAiApplyInitial] = useState<AiQuoteApplyInitial | null>(null);
   const [aiGenerationId, setAiGenerationId] = useState<string | null>(null);
   const [optimisticOffers, setOptimisticOffers] = useState<InquiryOfferRecord[]>([]);
+  const [summaryData, setSummaryData] = useState<LeadsSummaryPanelData | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [estimatedDraft, setEstimatedDraft] = useState<Record<string, string>>({});
+  const [savingEstimatedKey, setSavingEstimatedKey] = useState<string | null>(null);
 
   const offerTemplates = useMemo(() => {
     const list = Array.isArray(offerTemplatesRaw) ? offerTemplatesRaw : [];
@@ -510,6 +536,65 @@ export default function PortalLeadsPage() {
     return () => window.clearInterval(t);
   }, [companyId, user, loadLeads]);
 
+  const loadLeadSummary = useCallback(async () => {
+    const cid = (companyId ?? "").trim();
+    if (!cid || !user) return;
+    setSummaryLoading(true);
+    try {
+      const token = await user.getIdToken();
+      const params = buildLeadsFilterSearchParams({
+        search,
+        filterTyp,
+        filterTag,
+        filterContact,
+        sortOrder,
+        dateFrom,
+        dateTo,
+        datePreset,
+      });
+      params.set("companyId", cid);
+      const res = await fetch(`/api/company/leads/summary?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = (await res.json()) as LeadsSummaryPanelData & { ok?: boolean; error?: string };
+      if (!res.ok || data.ok === false) return;
+      setSummaryData({
+        count: data.count,
+        estimatedValue: data.estimatedValue,
+        averageValue: data.averageValue,
+        withoutValue: data.withoutValue,
+        byType: data.byType ?? [],
+        byStatus: data.byStatus ?? [],
+      });
+    } catch {
+      /* souhrn je doplňkový — tiché selhání */
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, [
+    companyId,
+    user,
+    search,
+    filterTyp,
+    filterTag,
+    filterContact,
+    sortOrder,
+    dateFrom,
+    dateTo,
+    datePreset,
+  ]);
+
+  useEffect(() => {
+    if (!companyId || !user) return;
+    const t = window.setTimeout(() => void loadLeadSummary(), 280);
+    return () => window.clearTimeout(t);
+  }, [companyId, user, loadLeadSummary, rows.length]);
+
   const leadsFilterState: LeadsFilterState = useMemo(
     () => ({
       search,
@@ -586,14 +671,45 @@ export default function PortalLeadsPage() {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }, [leadsFilterState, pathname, router, searchParams]);
 
-  const typOptions = useMemo(() => {
-    const s = new Set<string>();
-    for (const r of rows) {
-      const t = String(r.typ ?? "").trim();
-      if (t) s.add(t);
+  const inquiryTypeRuleNames = useMemo(() => {
+    const list = Array.isArray(inquiryTypeRulesRaw) ? inquiryTypeRulesRaw : [];
+    const names: string[] = [];
+    for (const raw of list) {
+      const name = String((raw as { name?: string }).name ?? "").trim();
+      const active = (raw as { active?: boolean }).active !== false;
+      if (name && active) names.push(name);
     }
-    return [...s].sort((a, b) => a.localeCompare(b, "cs"));
-  }, [rows]);
+    if (names.length === 0 && companyId) {
+      return defaultBuiltInInquiryTypeRules(companyId)
+        .filter((r) => r.active)
+        .map((r) => r.name);
+    }
+    return names;
+  }, [inquiryTypeRulesRaw, companyId]);
+
+  const overlayMapForTypes = useMemo(() => {
+    const m = new Map<string, LeadOverlayRow>();
+    overlayByDocId.forEach((v, k) => m.set(k, v));
+    return m;
+  }, [overlayByDocId]);
+
+  const typOptions = useMemo(
+    () =>
+      mergeTypOptionsFromRows(rows, stableImportLeadDocumentId, overlayMapForTypes, inquiryTypeRuleNames),
+    [rows, overlayMapForTypes, inquiryTypeRuleNames]
+  );
+
+  const inquiryOffersForValue = useMemo(() => {
+    return allInquiryOffers.map((o) => ({
+      importLeadId: String(o.leadKey ?? o.importLeadId ?? "").trim() || null,
+      leadKey: String(o.leadKey ?? "").trim() || null,
+      priceGross: o.priceGross,
+      priceNet: o.priceNet,
+      createdAt: o.createdAt,
+      sentAt: o.sentAt,
+      status: o.status,
+    }));
+  }, [allInquiryOffers]);
 
   const filteredRows = useMemo(() => {
     let list = rows;
@@ -602,7 +718,11 @@ export default function PortalLeadsPage() {
       list = list.filter((r) => leadSearchBlob(r).includes(q));
     }
     if (filterTyp) {
-      list = list.filter((r) => String(r.typ ?? "").trim() === filterTyp);
+      list = list.filter((r) => {
+        const key = stableImportLeadDocumentId(r);
+        const ov = overlayByDocId.get(key);
+        return resolveEffectiveInquiryType(r, ov) === filterTyp;
+      });
     }
     if (filterTag === "__none__") {
       list = list.filter((r) => {
@@ -729,6 +849,117 @@ export default function PortalLeadsPage() {
         title: "Uložení se nezdařilo",
         description: "Stav kontaktu se nepodařilo uložit.",
       });
+    }
+  };
+
+  const actorProfile = profile as ActivityActorProfile | undefined;
+
+  const handleInquiryTypeChange = async (lead: LeadImportRow, nextType: string) => {
+    if (!firestore || !companyId || !user || !canWriteLeads) return;
+    const key = stableImportLeadDocumentId(lead);
+    const ov = overlayByDocId.get(key);
+    const prevType = resolveEffectiveInquiryType(lead, ov);
+    const trimmed = nextType.trim();
+    if (!trimmed || trimmed === prevType) return;
+    const ref = doc(firestore, "companies", companyId, "import_lead_overlays", key);
+    const actorName =
+      profile?.displayName?.trim() || user.displayName?.trim() || user.email?.split("@")[0] || "Uživatel";
+    const timelineLine = `Typ poptávky změněn: ${prevType} → ${trimmed}`;
+    const timelineEntry: LeadInquiryTimelineEntry = {
+      at: new Date().toISOString(),
+      text: timelineLine,
+      byUid: user.uid,
+      byName: actorName,
+    };
+    try {
+      await setDoc(
+        ref,
+        {
+          companyId,
+          importLeadId: lead.id,
+          typ_poptavky: trimmed,
+          inquiryTypeManual: true,
+          inquiryTimeline: appendInquiryTimeline(ov?.inquiryTimeline, timelineEntry),
+          updatedAt: serverTimestamp(),
+          updatedByUid: user.uid,
+        },
+        { merge: true }
+      );
+      logActivitySafe(firestore, companyId, user, actorProfile ?? null, {
+        actionType: "lead_inquiry_type_changed",
+        actionLabel: timelineLine,
+        entityType: "inquiry",
+        entityId: key,
+        entityName: String(lead.jmeno ?? lead.id ?? "").trim() || null,
+        details: timelineLine,
+        sourceModule: "leads",
+        route: "/portal/leads",
+      });
+      toast({ title: "Typ poptávky uložen" });
+      void loadLeadSummary();
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Typ poptávky",
+        description: "Změnu se nepodařilo uložit.",
+      });
+    }
+  };
+
+  const getEstimatedDraft = (key: string, ov: LeadOverlayRow | undefined, lead: LeadImportRow) => {
+    if (key in estimatedDraft) return estimatedDraft[key]!;
+    const manual =
+      ov?.estimatedValue ?? ov?.orientacniCenaKc ?? lead.orientacniCenaKc ?? null;
+    if (manual == null || !Number.isFinite(Number(manual))) return "";
+    return String(manual);
+  };
+
+  const handleSaveEstimatedValue = async (lead: LeadImportRow) => {
+    if (!firestore || !companyId || !user || !canWriteLeads) return;
+    const key = stableImportLeadDocumentId(lead);
+    const ov = overlayByDocId.get(key);
+    const raw = getEstimatedDraft(key, ov, lead);
+    const parsed = raw.trim() === "" ? null : parseEstimatedValueInput(raw);
+    if (raw.trim() !== "" && parsed == null) {
+      toast({
+        variant: "destructive",
+        title: "Odhadovaná hodnota",
+        description: "Zadejte platné číslo v Kč.",
+      });
+      return;
+    }
+    setSavingEstimatedKey(key);
+    const ref = doc(firestore, "companies", companyId, "import_lead_overlays", key);
+    try {
+      await setDoc(
+        ref,
+        {
+          companyId,
+          importLeadId: lead.id,
+          estimatedValue: parsed,
+          orientacniCenaKc: parsed,
+          updatedAt: serverTimestamp(),
+          updatedByUid: user.uid,
+        },
+        { merge: true }
+      );
+      setEstimatedDraft((prev) => {
+        const n = { ...prev };
+        delete n[key];
+        return n;
+      });
+      toast({ title: "Odhadovaná hodnota uložena" });
+      void loadLeadSummary();
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Odhadovaná hodnota",
+        description: "Uložení se nezdařilo.",
+      });
+    } finally {
+      setSavingEstimatedKey(null);
     }
   };
 
@@ -1058,6 +1289,24 @@ export default function PortalLeadsPage() {
             <code className="text-[11px]">receivedAtIso</code>) nebo overlay{" "}
             <code className="text-[11px]">receivedAt</code> (kalendářní den v Europe/Prague).
           </p>
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Souhrn podle filtrů</CardTitle>
+          <CardDescription>
+            Počty a hodnoty odpovídají aktivním filtrům včetně období. Hodnota z cenové nabídky má
+            přednost před ručním odhadem.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LeadsSummaryPanel
+            data={summaryData}
+            loading={summaryLoading}
+            activeTypeFilter={filterTyp}
+            onSelectType={(t) => patchLeadsFilters({ filterTyp: filterTyp === t ? "" : t })}
+          />
         </CardContent>
       </Card>
 
@@ -1417,7 +1666,12 @@ export default function PortalLeadsPage() {
                     const ov = overlayByDocId.get(key);
                     const currentTag = ov?.tagId ?? "";
                     const nextMt = nextMeetingByLeadKey.get(key);
-                    const inquiryTypeSource = resolveInquiryTypeRaw(r, ov);
+                    const inquiryTypeSource = resolveEffectiveInquiryType(r, ov);
+                    const rowTypOptions = typOptions.includes(inquiryTypeSource)
+                      ? typOptions
+                      : [inquiryTypeSource, ...typOptions];
+                    const latestOffer = pickLatestOfferForLead(inquiryOffersForValue, key);
+                    const valueInfo = resolveLeadSummaryValue(r, ov, latestOffer);
                     const received = leadReceivedDate(r, ov);
                     const expanded = !!expandedLeadKeys[key];
                     const dateStr = received ? formatReceivedDay(received) : "—";
@@ -1477,6 +1731,18 @@ export default function PortalLeadsPage() {
                                   {r.jmeno || "—"}
                                 </span>
                                 <InquiryTypeBadge type={inquiryTypeSource} variant="preview" />
+                                {valueInfo.displayKc != null ? (
+                                  <span
+                                    className="shrink-0 text-xs tabular-nums font-medium text-slate-800"
+                                    title={
+                                      valueInfo.source === "offer"
+                                        ? "Hodnota z cenové nabídky"
+                                        : "Ruční odhad"
+                                    }
+                                  >
+                                    {formatMoneyKc(valueInfo.displayKc)}
+                                  </span>
+                                ) : null}
                                 {!isCustomer && contact.contacted ? (
                                   <LeadContactRowIndicator contact={contact} />
                                 ) : null}
@@ -1517,6 +1783,20 @@ export default function PortalLeadsPage() {
                             onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => e.stopPropagation()}
                           >
+                            {canWriteLeads ? (
+                              <select
+                                className={cn(NATIVE_SELECT_CLASS, "h-8 max-w-[9rem] text-xs sm:max-w-[11rem]")}
+                                aria-label="Změnit typ poptávky"
+                                value={inquiryTypeSource}
+                                onChange={(e) => void handleInquiryTypeChange(r, e.target.value)}
+                              >
+                                {rowTypOptions.map((t) => (
+                                  <option key={t} value={t}>
+                                    {t}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : null}
                             {canMeasure ? (
                               <Button
                                 asChild
@@ -1564,11 +1844,75 @@ export default function PortalLeadsPage() {
                             onClick={(e) => e.stopPropagation()}
                           >
                             <div className="mx-auto max-w-4xl space-y-4">
-                              <div className="space-y-1">
+                              <div className="space-y-2">
                                 <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
                                   Typ poptávky
                                 </p>
                                 <InquiryTypeBadge type={inquiryTypeSource} variant="detail" />
+                                {canWriteLeads ? (
+                                  <div className="space-y-1.5 max-w-md">
+                                    <Label className="text-xs text-slate-800">Změnit typ poptávky</Label>
+                                    <select
+                                      className={NATIVE_SELECT_CLASS}
+                                      value={inquiryTypeSource}
+                                      onChange={(e) => void handleInquiryTypeChange(r, e.target.value)}
+                                    >
+                                      {rowTypOptions.map((t) => (
+                                        <option key={t} value={t}>
+                                          {t}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className="space-y-2 border-t border-slate-200/80 pt-3">
+                                <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
+                                  Hodnota poptávky
+                                </p>
+                                {valueInfo.displayKc != null ? (
+                                  <p className="text-sm font-semibold tabular-nums text-slate-900">
+                                    {formatMoneyKc(valueInfo.displayKc)}
+                                  </p>
+                                ) : (
+                                  <p className="text-sm text-slate-600">Zatím nevyplněno</p>
+                                )}
+                                <p className="text-xs text-slate-600">
+                                  Zdroj:{" "}
+                                  {valueInfo.source === "offer"
+                                    ? "Cenová nabídka"
+                                    : valueInfo.source === "manual"
+                                      ? "Ruční odhad"
+                                      : "—"}
+                                </p>
+                                {canWriteLeads ? (
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end max-w-md">
+                                    <div className="flex-1 space-y-1">
+                                      <Label className="text-xs text-slate-800">Odhadovaná hodnota (Kč)</Label>
+                                      <Input
+                                        inputMode="decimal"
+                                        placeholder="např. 350000"
+                                        value={getEstimatedDraft(key, ov, r)}
+                                        onChange={(e) =>
+                                          setEstimatedDraft((p) => ({ ...p, [key]: e.target.value }))
+                                        }
+                                      />
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      className="min-h-11 sm:min-h-9"
+                                      disabled={savingEstimatedKey === key}
+                                      onClick={() => void handleSaveEstimatedValue(r)}
+                                    >
+                                      {savingEstimatedKey === key ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        "Uložit odhad"
+                                      )}
+                                    </Button>
+                                  </div>
+                                ) : null}
                               </div>
                               {r.adresa?.trim() ? (
                                 <div className="space-y-1">
@@ -1586,14 +1930,21 @@ export default function PortalLeadsPage() {
                                   <p className="whitespace-pre-wrap text-sm text-slate-700">{r.zprava}</p>
                                 </div>
                               ) : null}
-                              {r.orientacniCenaKc != null && Number.isFinite(r.orientacniCenaKc) ? (
-                                <div className="space-y-1">
+                              {ov?.inquiryTimeline && ov.inquiryTimeline.length > 0 ? (
+                                <div className="space-y-1 border-t border-slate-200/80 pt-3">
                                   <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
-                                    Orientační cena
+                                    Aktivita
                                   </p>
-                                  <p className="text-sm text-slate-800">
-                                    {new Intl.NumberFormat("cs-CZ").format(r.orientacniCenaKc)} Kč
-                                  </p>
+                                  <ul className="space-y-1 text-xs text-slate-700">
+                                    {ov.inquiryTimeline.slice(0, 8).map((ev, i) => (
+                                      <li key={`${ev.at ?? i}-${i}`}>
+                                        {ev.text}
+                                        {ev.byName ? (
+                                          <span className="text-slate-500"> · {ev.byName}</span>
+                                        ) : null}
+                                      </li>
+                                    ))}
+                                  </ul>
                                 </div>
                               ) : null}
                               {nextMt ? (

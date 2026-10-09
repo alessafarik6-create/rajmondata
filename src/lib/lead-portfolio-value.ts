@@ -41,6 +41,7 @@ export type LeadOverlayValueFields = {
   typ?: string | null;
   typ_poptavky?: string | null;
   orientacniCenaKc?: number | null;
+  estimatedValue?: number | null;
   estimatedValueNet?: number | null;
   estimatedValueGross?: number | null;
   estimatedValueSource?: string | null;
@@ -49,6 +50,7 @@ export type LeadOverlayValueFields = {
 
 export type OfferPriceRow = {
   importLeadId?: string | null;
+  leadKey?: string | null;
   priceGross?: number | null;
   priceNet?: number | null;
   createdAt?: unknown;
@@ -109,9 +111,11 @@ export function pickLatestOfferForLead(
   offers: OfferPriceRow[],
   leadKey: string
 ): OfferPriceRow | null {
-  const matches = offers.filter(
-    (o) => String(o.importLeadId ?? "").trim() === leadKey
-  );
+  const matches = offers.filter((o) => {
+    const id = String(o.importLeadId ?? "").trim();
+    const lk = String(o.leadKey ?? "").trim();
+    return id === leadKey || lk === leadKey;
+  });
   if (!matches.length) return null;
   matches.sort(
     (a, b) =>
@@ -231,7 +235,9 @@ export function resolveLeadValue(input: ResolveLeadValueInput): ResolvedLeadValu
   const overlay = input.overlay ?? null;
 
   const explicitFromRow = parseLeadPriceKc(input.lead.orientacniCenaKc);
-  const explicitFromOverlay = parseLeadPriceKc(overlay?.orientacniCenaKc);
+  const explicitFromOverlay = parseLeadPriceKc(
+    overlay?.estimatedValue ?? overlay?.orientacniCenaKc
+  );
   const explicit = explicitFromRow ?? explicitFromOverlay;
   if (explicit != null && explicit > 0) {
     return {

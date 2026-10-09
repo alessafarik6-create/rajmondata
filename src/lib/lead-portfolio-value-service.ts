@@ -36,6 +36,10 @@ function overlayFromDoc(data: Record<string, unknown>): LeadOverlayValueFields {
       data.orientacniCenaKc != null && Number.isFinite(Number(data.orientacniCenaKc))
         ? Number(data.orientacniCenaKc)
         : null,
+    estimatedValue:
+      data.estimatedValue != null && Number.isFinite(Number(data.estimatedValue))
+        ? Number(data.estimatedValue)
+        : null,
     estimatedValueNet:
       data.estimatedValueNet != null && Number.isFinite(Number(data.estimatedValueNet))
         ? Number(data.estimatedValueNet)

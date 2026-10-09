@@ -42,6 +42,7 @@ const PRESET_ORDER: LeadDatePresetId[] = [
   "last_month",
   "last_7_days",
   "last_30_days",
+  "this_year",
   "custom",
 ];
 
@@ -77,7 +78,7 @@ export function LeadsFiltersPanel(props: Props) {
         </div>
 
         <div className="w-full sm:w-[200px] space-y-1.5 shrink-0">
-          <Label className="text-xs text-slate-800">Typ poptávky (ze zdroje)</Label>
+          <Label className="text-xs text-slate-800">Typ poptávky</Label>
           <select
             className={NATIVE_SELECT_CLASS}
             value={s.filterTyp}
