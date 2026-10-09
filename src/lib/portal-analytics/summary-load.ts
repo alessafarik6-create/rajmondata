@@ -1,4 +1,4 @@
-import type { Firestore } from "firebase-admin/firestore";
+import type { Firestore, QuerySnapshot } from "firebase-admin/firestore";
 import {
   PLATFORM_PORTAL_ANALYTICS_GLOBAL_DAILY_COLLECTION,
   PLATFORM_PORTAL_ANALYTICS_ORG_DAILY_COLLECTION,
@@ -136,7 +136,7 @@ export async function countActiveOrganizationsOnDay(
       const all = await db.collection(PLATFORM_PORTAL_ANALYTICS_ORG_DAILY_COLLECTION).limit(500).get();
       return {
         docs: all.docs.filter((d) => d.id.startsWith(prefix)),
-      } as FirebaseFirestore.QuerySnapshot;
+      } as QuerySnapshot;
     });
   return snap.docs.length;
 }

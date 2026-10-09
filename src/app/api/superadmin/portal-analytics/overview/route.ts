@@ -6,10 +6,10 @@ import { loadOrganizationEntityCounts } from "@/lib/portal-analytics/org-stats-s
 import {
   loadOrgPortalAnalyticsRange,
   parseDateRangeQuery,
-  metricsFromOrgDailyRows,
 } from "@/lib/portal-analytics/summary-load";
 import {
   computeOrganizationActivityScore,
+  metricsFromOrgDailyRows,
 } from "@/lib/portal-analytics/activity-score";
 import {
   activityLabelCs,

@@ -54,7 +54,8 @@ export function normalizePortalAnalyticsCollectBody(body: unknown): RecordPortal
   const deviceClass = String(o.deviceClass ?? "").trim().slice(0, 24);
   return {
     organizationId,
-    userId,
+    /** Doplní server z ověřeného volajícího — klient nemusí posílat UID. */
+    userId: "",
     event,
     moduleId,
     actionKey: actionKey || undefined,

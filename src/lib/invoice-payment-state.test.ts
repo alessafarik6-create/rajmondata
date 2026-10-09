@@ -93,7 +93,7 @@ test("received document partial payment", () => {
     type: "received",
     requiresPayment: true,
     castkaCZK: 100_000,
-    paymentStatus: "partial",
+    paymentStatus: "partial" as const,
     paidAmount: 40_000,
     dueDate: pastDue,
   };
@@ -120,7 +120,7 @@ test("mirror document paid syncs invoice remaining in summary", () => {
     source: "portalInvoice",
     requiresPayment: true,
     castkaCZK: 50_000,
-    paymentStatus: "paid",
+    paymentStatus: "paid" as const,
     paidAmount: 50_000,
     paid: true,
     dueDate: pastDue,

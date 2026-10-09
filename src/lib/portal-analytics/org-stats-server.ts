@@ -1,4 +1,4 @@
-import type { CollectionReference, Firestore } from "firebase-admin/firestore";
+import type { CollectionReference, Firestore, Query } from "firebase-admin/firestore";
 import {
   COMPANIES_COLLECTION,
   ORGANIZATIONS_COLLECTION,
@@ -17,15 +17,15 @@ export type OrganizationEntityCounts = {
   jobsCompleted: number;
 };
 
-async function collectionCount(db: Firestore, path: CollectionReference): Promise<number> {
+async function collectionCount(ref: CollectionReference | Query): Promise<number> {
   try {
-    const snap = await path.count().get();
+    const snap = await ref.count().get();
     return snap.data().count ?? 0;
   } catch {
-    const snap = await path.limit(5000).get();
+    const snap = await ref.limit(5000).get();
     return snap.size;
   }
-}
+};
 
 export async function loadOrganizationEntityCounts(
   db: Firestore,
@@ -44,16 +44,13 @@ export async function loadOrganizationEntityCounts(
     documents,
     jobsCompletedSnap,
   ] = await Promise.all([
-    collectionCount(
-      db,
-      db.collection(USERS_COLLECTION).where("companyId", "==", cid)
-    ),
+    collectionCount(db.collection(USERS_COLLECTION).where("companyId", "==", cid)),
     countBillableCompanyEmployees(db, cid),
-    collectionCount(db, companyRef.collection("jobs")),
-    collectionCount(db, companyRef.collection("import_lead_overlays")),
-    collectionCount(db, companyRef.collection("inquiry_offers")),
-    collectionCount(db, companyRef.collection("invoices")),
-    collectionCount(db, companyRef.collection("documents")),
+    collectionCount(companyRef.collection("jobs")),
+    collectionCount(companyRef.collection("import_lead_overlays")),
+    collectionCount(companyRef.collection("inquiry_offers")),
+    collectionCount(companyRef.collection("invoices")),
+    collectionCount(companyRef.collection("documents")),
     companyRef.collection("jobs").where("status", "==", "dokončená").count().get().catch(() => null),
   ]);
 

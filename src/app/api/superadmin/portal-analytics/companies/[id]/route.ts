@@ -14,10 +14,10 @@ import {
   mergeDailyMaps,
   parseDateRangeQuery,
   sumEvent,
-  metricsFromOrgDailyRows,
 } from "@/lib/portal-analytics/summary-load";
 import {
   computeOrganizationActivityScore,
+  metricsFromOrgDailyRows,
 } from "@/lib/portal-analytics/activity-score";
 import {
   activityLabelCs,
