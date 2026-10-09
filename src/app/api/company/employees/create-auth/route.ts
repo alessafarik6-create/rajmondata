@@ -12,7 +12,7 @@ type Body = {
   password?: string;
   jobTitle?: string;
   hourlyRate?: number | null;
-  /** Role v organizaci: employee | accountant | orgAdmin */
+  /** Role v organizaci: employee | accountant | manager | orgAdmin */
   role?: string;
   visibleInAttendanceTerminal?: boolean;
 };
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
   const orgRole: EmployeeOrgRole = parseEmployeePortalRole(rawOrgRole);
   if (rawOrgRole !== orgRole) {
     return NextResponse.json(
-      { error: "role musí být employee, accountant nebo orgAdmin." },
+      { error: "role musí být employee, accountant, manager nebo orgAdmin." },
       { status: 400 }
     );
   }

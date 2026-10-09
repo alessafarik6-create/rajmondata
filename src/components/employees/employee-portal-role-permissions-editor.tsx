@@ -16,8 +16,10 @@ import {
   type EmployeePortalRoleId,
 } from "@/lib/employee-portal-role";
 import {
+  applyManagerPermissionCaps,
   applyPermissionPreset,
   buildAccountantPermissionPreset,
+  buildManagerPermissionPreset,
   buildOrgAdminPermissionPreset,
   PORTAL_PERMISSION_MODULES,
   type PortalAccessLevel,
@@ -49,6 +51,11 @@ export function EmployeePortalRolePermissionsEditor(props: {
   onDashboardAiAssistantEnabledChange?: (enabled: boolean) => void;
   disabled?: boolean;
   roleSelectClassName?: string;
+  /** Před změnou role (např. potvrzení přepsání individuální matice). */
+  confirmRoleChange?: (args: {
+    nextRole: EmployeePortalRoleId;
+    currentRole: EmployeePortalRoleId;
+  }) => boolean;
 }) {
   const {
     portalRole,
@@ -61,18 +68,32 @@ export function EmployeePortalRolePermissionsEditor(props: {
     onDashboardAiAssistantEnabledChange,
     disabled,
     roleSelectClassName,
+    confirmRoleChange,
   } = props;
 
   const isOrgAdmin = portalRole === "orgAdmin";
+  const isManager = portalRole === "manager";
 
-  const handleRoleChange = (raw: string) => {
-    const role = raw as EmployeePortalRoleId;
-    onPortalRoleChange(role);
+  const applyLevelsForRole = (role: EmployeePortalRoleId) => {
     if (role === "accountant") {
       onLevelsChange(buildAccountantPermissionPreset());
     } else if (role === "orgAdmin") {
       onLevelsChange(buildOrgAdminPermissionPreset());
+    } else if (role === "manager") {
+      const next = buildManagerPermissionPreset();
+      onLevelsChange(next);
+      syncCalendarFromLevels(next);
     }
+  };
+
+  const handleRoleChange = (raw: string) => {
+    const role = raw as EmployeePortalRoleId;
+    if (role === portalRole) return;
+    if (confirmRoleChange && !confirmRoleChange({ nextRole: role, currentRole: portalRole })) {
+      return;
+    }
+    onPortalRoleChange(role);
+    applyLevelsForRole(role);
   };
 
   const syncCalendarFromLevels = (next: Record<PortalModuleId, PortalAccessLevel>) => {
@@ -81,8 +102,13 @@ export function EmployeePortalRolePermissionsEditor(props: {
     );
   };
 
-  const applyPreset = (preset: "accountant" | "employee" | "read_all" | "none_all") => {
-    const next = applyPermissionPreset(preset);
+  const applyPreset = (
+    preset: "accountant" | "employee" | "manager" | "read_all" | "none_all"
+  ) => {
+    let next = applyPermissionPreset(preset);
+    if (isManager || preset === "manager") {
+      next = applyManagerPermissionCaps(next);
+    }
     onLevelsChange(next);
     syncCalendarFromLevels(next);
   };
@@ -92,7 +118,8 @@ export function EmployeePortalRolePermissionsEditor(props: {
     for (const mod of PORTAL_PERMISSION_MODULES) {
       next[mod.id] = level;
     }
-    onLevelsChange(next);
+    const capped = isManager ? applyManagerPermissionCaps(next) : next;
+    onLevelsChange(capped);
     onCalendarLevelsChange({
       meetings: level,
       installations: level,
@@ -139,6 +166,15 @@ export function EmployeePortalRolePermissionsEditor(props: {
                 onClick={() => applyPreset("accountant")}
               >
                 Účetní
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                onClick={() => applyPreset("manager")}
+              >
+                Manažer
               </Button>
               <Button
                 type="button"
@@ -214,12 +250,13 @@ export function EmployeePortalRolePermissionsEditor(props: {
                   <Select
                     disabled={disabled}
                     value={levels[mod.id as PortalModuleId]}
-                    onValueChange={(v) =>
-                      onLevelsChange({
+                    onValueChange={(v) => {
+                      const next = {
                         ...levels,
                         [mod.id]: v as PortalAccessLevel,
-                      })
-                    }
+                      };
+                      onLevelsChange(isManager ? applyManagerPermissionCaps(next) : next);
+                    }}
                   >
                     <SelectTrigger className="w-full border-slate-300 sm:w-[168px]">
                       <SelectValue />

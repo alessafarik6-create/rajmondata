@@ -18,7 +18,7 @@ export function parseEmployeeOrgRole(
 /** Odpovídající role v users/{uid} pro přístup do portálu firmy. */
 export function userPortalRoleForEmployeeDocRole(
   org: EmployeeOrgRole
-): "admin" | "employee" | "accountant" {
+): "admin" | "employee" | "accountant" | "manager" {
   return userRoleForEmployeePortalRole(org);
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -54,11 +54,16 @@ import {
 } from "@/lib/employee-portal-role";
 import {
   ALL_PORTAL_MODULE_IDS,
+  canAccessPortalModule,
+  canManagePortalPermissions,
+  employeeHasExplicitPortalModuleMatrix,
   initialPortalPermissionLevelsForEmployee,
   type PortalAccessLevel,
   type PortalModuleId,
   parseDashboardAiAssistantEnabled,
 } from "@/lib/portal-permissions";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
+import { normalizeCompanyRole } from "@/lib/company-privilege";
 import {
   aggregateScheduleModuleLevel,
   initialCalendarPermissionsForEmployee,
@@ -162,10 +167,26 @@ export default function EmployeeDetailPage() {
 
   const terminal = useMemo(() => employeeTerminalStatus(employeeDoc), [employeeDoc]);
 
+  const portalPermsCtx = usePortalPermissionsOptional();
+
   const canManage = useMemo(() => {
-    const role = String(profile?.role ?? "").trim();
-    return ["owner", "admin", "manager", "accountant", "super_admin"].includes(role);
-  }, [profile?.role]);
+    const role = normalizeCompanyRole(String(profile?.role ?? ""));
+    if (role === "owner" || role === "admin") return true;
+    const globalRoles = profile?.globalRoles as string[] | undefined;
+    if (Array.isArray(globalRoles) && globalRoles.includes("super_admin")) return true;
+    const perms = portalPermsCtx?.permissions;
+    if (perms) {
+      return canAccessPortalModule(perms, "employees", "write");
+    }
+    return false;
+  }, [profile?.role, profile?.globalRoles, portalPermsCtx?.permissions]);
+
+  const canManageOrgRoles = useMemo(() => {
+    return canManagePortalPermissions(
+      String(profile?.role ?? ""),
+      profile?.globalRoles as string[] | undefined
+    );
+  }, [profile?.role, profile?.globalRoles]);
 
   const display = useMemo(() => employeeDisplayName(employeeDoc), [employeeDoc]);
 
@@ -518,8 +539,30 @@ export default function EmployeeDetailPage() {
     setDashboardAiAssistantEnabled(parseDashboardAiAssistantEnabled(row));
   }, [employeeDoc]);
 
+  const confirmPortalRoleChange = useCallback(
+    ({
+      nextRole,
+      currentRole,
+    }: {
+      nextRole: EmployeePortalRoleId;
+      currentRole: EmployeePortalRoleId;
+    }) => {
+      if (nextRole === currentRole) return true;
+      if (!employeeDoc) return true;
+      if (
+        employeeHasExplicitPortalModuleMatrix(employeeDoc as Record<string, unknown>)
+      ) {
+        return window.confirm(
+          "Změna role přepíše individuálně nastavená oprávnění modulů na výchozí hodnoty pro novou roli. Pokračovat?"
+        );
+      }
+      return true;
+    },
+    [employeeDoc]
+  );
+
   const saveOrg = async () => {
-    if (!canManage || !user || orgSaving) return;
+    if (!canManageOrgRoles || !user || orgSaving) return;
     setOrgSaving(true);
     try {
       const idToken = await user.getIdToken();
@@ -1396,24 +1439,44 @@ export default function EmployeeDetailPage() {
                   <p className="text-sm font-medium text-black">Viditelný v docházkovém terminálu</p>
                   <p className="text-xs text-slate-600">Zaměstnanec se zobrazí pro přihlášení na terminálu.</p>
                 </div>
-                <Switch checked={visibleInTerminal} disabled={!canManage} onCheckedChange={(v) => setVisibleInTerminal(v)} />
+                <Switch
+                  checked={visibleInTerminal}
+                  disabled={!canManageOrgRoles}
+                  onCheckedChange={(v) => setVisibleInTerminal(v)}
+                />
               </div>
 
-              <EmployeePortalRolePermissionsEditor
-                disabled={!canManage}
-                portalRole={portalRole}
-                onPortalRoleChange={setPortalRole}
-                levels={moduleLevels}
-                onLevelsChange={setModuleLevels}
-                calendarLevels={calendarLevels}
-                onCalendarLevelsChange={setCalendarLevels}
-                dashboardAiAssistantEnabled={dashboardAiAssistantEnabled}
-                onDashboardAiAssistantEnabledChange={setDashboardAiAssistantEnabled}
-                roleSelectClassName={selectCls}
-              />
+              {!canManageOrgRoles ? (
+                <Alert>
+                  <AlertTitle>Správa rolí a oprávnění</AlertTitle>
+                  <AlertDescription>
+                    Role, matice modulů a viditelnost v terminálu může měnit pouze vlastník nebo
+                    administrátor organizace.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <EmployeePortalRolePermissionsEditor
+                  disabled={!canManageOrgRoles}
+                  portalRole={portalRole}
+                  onPortalRoleChange={setPortalRole}
+                  confirmRoleChange={confirmPortalRoleChange}
+                  levels={moduleLevels}
+                  onLevelsChange={setModuleLevels}
+                  calendarLevels={calendarLevels}
+                  onCalendarLevelsChange={setCalendarLevels}
+                  dashboardAiAssistantEnabled={dashboardAiAssistantEnabled}
+                  onDashboardAiAssistantEnabledChange={setDashboardAiAssistantEnabled}
+                  roleSelectClassName={selectCls}
+                />
+              )}
 
               <div className={cn("flex justify-end", belowLg && "w-full")}>
-                <Button type="button" className={saveBtnCls} disabled={!canManage || orgSaving} onClick={() => void saveOrg()}>
+                <Button
+                  type="button"
+                  className={saveBtnCls}
+                  disabled={!canManageOrgRoles || orgSaving}
+                  onClick={() => void saveOrg()}
+                >
                   {orgSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   Uložit role a oprávnění
                 </Button>

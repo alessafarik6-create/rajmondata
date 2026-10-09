@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import { parseEmployeeOrgRole } from "@/lib/employee-organization";
 import {
   legacyAccessFlagsFromPortalPermissions,
   mergePortalModulePermissionsForFirestore,
   portalModuleLevelsFromFirestoreRecord,
+  portalModulePermissionsRecordFromLevelMap,
   portalPermissionsToLegacyEmployeeModules,
+  sanitizePortalPermissionsForOrgRole,
 } from "@/lib/portal-permissions";
 import { normalizeCameraPermissionsForFirestore } from "@/lib/hikvision/camera-access";
 import {
@@ -93,10 +96,15 @@ export async function PATCH(request: NextRequest) {
     merged.schedule = aggregateScheduleModuleLevel(body.calendarPermissions ?? {});
   }
 
-  const levelMap = portalModuleLevelsFromFirestoreRecord(merged);
+  const orgRole = parseEmployeeOrgRole(empData as { role?: unknown });
+  const levelMap = sanitizePortalPermissionsForOrgRole(
+    portalModuleLevelsFromFirestoreRecord(merged),
+    orgRole
+  );
+  const sanitizedMerged = portalModulePermissionsRecordFromLevelMap(levelMap);
 
   const patch: Record<string, unknown> = {
-    portalModulePermissions: merged,
+    portalModulePermissions: sanitizedMerged,
     employeePortalModules: portalPermissionsToLegacyEmployeeModules(levelMap),
     ...legacyAccessFlagsFromPortalPermissions(levelMap),
     updatedAt: FieldValue.serverTimestamp(),
@@ -127,7 +135,7 @@ export async function PATCH(request: NextRequest) {
       entityId: employeeId,
       details: JSON.stringify({
         oldPermissions: before,
-        newPermissions: merged,
+        newPermissions: sanitizedMerged,
         oldDashboardAiAssistant: beforeAi,
         newDashboardAiAssistant: patch.dashboardAiAssistantEnabled ?? beforeAi,
       }),
@@ -138,5 +146,5 @@ export async function PATCH(request: NextRequest) {
     /* audit volitelný */
   }
 
-  return NextResponse.json({ ok: true, portalModulePermissions: merged });
+  return NextResponse.json({ ok: true, portalModulePermissions: sanitizedMerged });
 }

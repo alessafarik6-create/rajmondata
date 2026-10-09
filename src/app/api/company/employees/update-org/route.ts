@@ -9,7 +9,10 @@ import { parseEmployeePortalRole } from "@/lib/employee-portal-role";
 import {
   legacyAccessFlagsFromPortalPermissions,
   parsePortalModulePermissionsFromEmployee,
+  portalModuleLevelsFromFirestoreRecord,
   portalPermissionsToLegacyEmployeeModules,
+  sanitizePortalPermissionsForOrgRole,
+  portalModulePermissionsRecordFromLevelMap,
   type PortalAccessLevel,
   type PortalModuleId,
   ALL_PORTAL_MODULE_IDS,
@@ -161,7 +164,7 @@ export async function PATCH(request: NextRequest) {
     const parsed = parseEmployeePortalRole(raw);
     if (raw !== parsed) {
       return NextResponse.json(
-        { error: "role musí být employee, accountant nebo orgAdmin." },
+        { error: "role musí být employee, accountant, manager nebo orgAdmin." },
         { status: 400 }
       );
     }
@@ -211,14 +214,11 @@ export async function PATCH(request: NextRequest) {
         merged[id] = v;
       }
     }
-    patch.portalModulePermissions = merged;
+    const levelMapRaw = portalModuleLevelsFromFirestoreRecord(merged);
+    const effectiveOrgRole = hasOrgRole ? orgRole : parseEmployeeOrgRole(emp as { role?: unknown });
+    const levelMap = sanitizePortalPermissionsForOrgRole(levelMapRaw, effectiveOrgRole);
+    patch.portalModulePermissions = portalModulePermissionsRecordFromLevelMap(levelMap);
 
-    const levelMap = {} as Record<PortalModuleId, PortalAccessLevel>;
-    for (const id of ALL_PORTAL_MODULE_IDS) {
-      const v = String(merged[id] ?? "none").trim().toLowerCase();
-      levelMap[id] =
-        v === "read" || v === "write" || v === "none" ? v : "none";
-    }
     patch.employeePortalModules = portalPermissionsToLegacyEmployeeModules(levelMap);
     const flags = legacyAccessFlagsFromPortalPermissions(levelMap);
     patch.canAccessWarehouse = flags.canAccessWarehouse;
