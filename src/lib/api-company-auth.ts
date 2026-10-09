@@ -3,6 +3,14 @@ import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 
 export { isCompanyPrivileged } from "@/lib/company-privilege";
 
+export type PortalPreviewCallerMeta = {
+  active: true;
+  subjectEmployeeId: string;
+  subjectDisplayName: string;
+  realRole: string;
+  realEmployeeId: string | null;
+};
+
 export type VerifiedCompanyCaller = {
   uid: string;
   /** ID organizace (`users.companyId` nebo `users.organizationId`). */
@@ -10,10 +18,15 @@ export type VerifiedCompanyCaller = {
   role: string;
   employeeId: string | null;
   globalRoles: string[];
+  portalPreview?: PortalPreviewCallerMeta;
+  /** Původní role před režimem náhledu. */
+  realRole?: string;
+  realEmployeeId?: string | null;
 };
 
 export async function verifyCompanyBearer(
-  authHeader: string | null
+  authHeader: string | null,
+  opts?: VerifyCompanyBearerWithPortalOptions
 ): Promise<
   | { ok: true; caller: VerifiedCompanyCaller; db: NonNullable<ReturnType<typeof getAdminFirestore>> }
   | { ok: false; status: number; error: string }
@@ -36,27 +49,75 @@ export async function verifyCompanyBearer(
     return { ok: false, status: 401, error: "Neplatný token." };
   }
   const callerSnap = await db.collection("users").doc(uid).get();
-  const caller = callerSnap.data() as Record<string, unknown> | undefined;
-  if (!caller) {
+  const callerData = callerSnap.data() as Record<string, unknown> | undefined;
+  if (!callerData) {
     return { ok: false, status: 403, error: "Profil uživatele neexistuje." };
   }
-  const companyId = String(caller.companyId || caller.organizationId || "").trim();
-  const role = String(caller.role || "employee");
+  const companyId = String(callerData.companyId || callerData.organizationId || "").trim();
+  const role = String(callerData.role || "employee");
   const employeeId =
-    caller.employeeId != null && String(caller.employeeId).trim() !== ""
-      ? String(caller.employeeId).trim()
+    callerData.employeeId != null && String(callerData.employeeId).trim() !== ""
+      ? String(callerData.employeeId).trim()
       : null;
-  const globalRoles = Array.isArray(caller.globalRoles)
-    ? caller.globalRoles.map((x) => String(x))
+  const globalRoles = Array.isArray(callerData.globalRoles)
+    ? callerData.globalRoles.map((x) => String(x))
     : [];
   if (!companyId) {
     return { ok: false, status: 403, error: "Chybí organizace." };
   }
+  const baseCaller: VerifiedCompanyCaller = {
+    uid,
+    companyId,
+    role,
+    employeeId,
+    globalRoles,
+  };
+  const { applyPortalPreviewToCaller, portalPreviewBlocksMutation } = await import(
+    "@/lib/portal-preview-server"
+  );
+  const caller = await applyPortalPreviewToCaller(db, baseCaller);
+
+  const method = opts?.method;
+  if (method) {
+    const { httpMethodRequiresWrite } = await import("@/lib/portal-permissions-server");
+    const pathname = opts.pathname ?? "";
+    if (
+      portalPreviewBlocksMutation(caller, { allowPreviewEnd: true, pathname }) &&
+      httpMethodRequiresWrite(method)
+    ) {
+      return {
+        ok: false,
+        status: 403,
+        error:
+          "Režim náhledu je pouze pro čtení. Ukončete náhled pro provedení změn.",
+      };
+    }
+  }
+
   return {
     ok: true,
     db,
-    caller: { uid, companyId, role, employeeId, globalRoles },
+    caller,
   };
+}
+
+/** Bearer ověření z HTTP požadavku včetně blokace zápisu v režimu náhledu portálu. */
+export async function verifyCompanyBearerFromRequest(
+  request: Request
+): Promise<
+  | { ok: true; caller: VerifiedCompanyCaller; db: NonNullable<ReturnType<typeof getAdminFirestore>> }
+  | { ok: false; status: number; error: string }
+> {
+  let pathname = "";
+  try {
+    pathname = new URL(request.url).pathname;
+  } catch {
+    pathname = "";
+  }
+  return verifyCompanyBearer(request.headers.get("authorization"), {
+    method: request.method,
+    pathname,
+  });
 }
 
 export function jobSnapData(snap: DocumentSnapshot): Record<string, unknown> | null {
@@ -82,8 +143,12 @@ export async function verifyCompanyBearerWithPortalAccess(
     }
   | { ok: false; status: number; error: string }
 > {
-  const base = await verifyCompanyBearer(authHeader);
+  const base = await verifyCompanyBearer(authHeader, {
+    method: opts?.method,
+    pathname: opts?.pathname,
+  });
   if (!base.ok) return base;
+
   if (!opts?.moduleId && !opts?.pathname) {
     return base;
   }

@@ -1,7 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -21,6 +22,8 @@ import {
   buildAccountantPermissionPreset,
   buildManagerPermissionPreset,
   buildOrgAdminPermissionPreset,
+  legacyAccessFlagsFromPortalPermissions,
+  portalPermissionsToLegacyEmployeeModules,
   PORTAL_PERMISSION_MODULES,
   type PortalAccessLevel,
   type PortalModuleId,
@@ -127,12 +130,26 @@ export function EmployeePortalRolePermissionsEditor(props: {
   };
 
   const moduleRows = PORTAL_PERMISSION_MODULES.filter((m) => m.id !== "schedule");
+  const [moduleSearch, setModuleSearch] = useState("");
+  const filteredModuleRows = useMemo(() => {
+    const q = moduleSearch.trim().toLowerCase();
+    if (!q) return moduleRows;
+    return moduleRows.filter((m) => m.label.toLowerCase().includes(q));
+  }, [moduleRows, moduleSearch]);
+
+  const derivedAccess = useMemo(
+    () => ({
+      flags: legacyAccessFlagsFromPortalPermissions(levels),
+      legacyMenu: portalPermissionsToLegacyEmployeeModules(levels),
+    }),
+    [levels]
+  );
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
         <Label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-          Role v portálu
+          1. Role v organizaci
         </Label>
         <select
           className={cn(
@@ -155,7 +172,7 @@ export function EmployeePortalRolePermissionsEditor(props: {
         <>
           <div className="space-y-2">
             <Label className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-              Předvolby
+              2. Předvolby oprávnění
             </Label>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -197,9 +214,26 @@ export function EmployeePortalRolePermissionsEditor(props: {
             </div>
           </div>
 
+          <div className="rounded-md border border-slate-200 p-4 space-y-3">
+            <p className="text-sm font-semibold text-black">4. Speciální oprávnění (odvozeno z modulů)</p>
+            <p className="text-xs text-slate-600">
+              Sklad, výroba, záznamy ze schůzek a položky menu portálu se ukládají společně s maticí
+              modulů — bez duplicitních přepínačů.
+            </p>
+            <ul className="grid gap-1 text-xs text-slate-800 sm:grid-cols-2">
+              <li>Sklad: {derivedAccess.flags.canAccessWarehouse ? "ano" : "ne"}</li>
+              <li>Výroba: {derivedAccess.flags.canAccessProduction ? "ano" : "ne"}</li>
+              <li>Schůzky u zakázek: {derivedAccess.flags.canAccessMeetingNotes ? "ano" : "ne"}</li>
+              <li>Menu Zakázky: {derivedAccess.legacyMenu.zakazky ? "ano" : "ne"}</li>
+              <li>Menu Peníze: {derivedAccess.legacyMenu.penize ? "ano" : "ne"}</li>
+              <li>Menu Zprávy: {derivedAccess.legacyMenu.zpravy ? "ano" : "ne"}</li>
+              <li>Menu Docházka / mzdy: {derivedAccess.legacyMenu.dochazka ? "ano" : "ne"}</li>
+            </ul>
+          </div>
+
           <div className="rounded-md border border-slate-200 p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-black">Oprávnění modulů</p>
+              <p className="text-sm font-semibold text-black">3. Přístup k modulům</p>
               <div className="flex flex-wrap gap-2 text-xs text-slate-600">
                 <span>Nastavit vše:</span>
                 {(["none", "read", "write"] as const).map((l) => (
@@ -215,6 +249,13 @@ export function EmployeePortalRolePermissionsEditor(props: {
                 ))}
               </div>
             </div>
+            <Input
+              className="border-slate-300"
+              placeholder="Hledat modul podle názvu…"
+              value={moduleSearch}
+              disabled={disabled}
+              onChange={(e) => setModuleSearch(e.target.value)}
+            />
             <div className="hidden grid-cols-[1fr_auto] gap-2 border-b border-slate-100 pb-2 text-xs font-medium text-slate-500 sm:grid">
               <span>Sekce</span>
               <span className="w-[168px] text-right">Přístup</span>
@@ -231,7 +272,7 @@ export function EmployeePortalRolePermissionsEditor(props: {
                 }}
                 disabled={disabled}
               />
-              {moduleRows.map((mod) => (
+              {filteredModuleRows.map((mod) => (
                 <li
                   key={mod.id}
                   className="flex flex-col gap-1.5 border-b border-slate-50 pb-2 last:border-0 sm:flex-row sm:items-center sm:justify-between"

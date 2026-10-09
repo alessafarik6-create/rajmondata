@@ -11,6 +11,7 @@ import {
   sanitizePortalPermissionsForOrgRole,
 } from "@/lib/portal-permissions";
 import { normalizeCameraPermissionsForFirestore } from "@/lib/hikvision/camera-access";
+import { portalPreviewSessionFromFirestore } from "@/lib/portal-preview";
 import {
   aggregateScheduleModuleLevel,
   normalizeCalendarPermissionsForFirestore,
@@ -58,6 +59,12 @@ export async function PATCH(request: NextRequest) {
 
   const companyId = String(caller.companyId || "").trim();
   const callerRole = String(caller.role || "");
+  if (portalPreviewSessionFromFirestore(caller.portalPreviewSession)) {
+    return NextResponse.json(
+      { error: "V režimu náhledu nelze měnit oprávnění." },
+      { status: 403 }
+    );
+  }
   if (!companyId || !["owner", "admin"].includes(callerRole)) {
     return NextResponse.json(
       { error: "Pouze vlastník nebo administrátor může měnit oprávnění." },

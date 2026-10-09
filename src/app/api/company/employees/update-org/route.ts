@@ -22,6 +22,8 @@ import {
   normalizeCalendarPermissionsForFirestore,
   type CalendarPermissionsDoc,
 } from "@/lib/calendar/calendar-access";
+import { normalizeCameraPermissionsForFirestore } from "@/lib/hikvision/camera-access";
+import { portalPreviewSessionFromFirestore } from "@/lib/portal-preview";
 
 type Body = {
   employeeId?: string;
@@ -45,6 +47,13 @@ type Body = {
   portalModulePermissions?: Record<string, string>;
   /** Schůzky / montáže v kalendáři — `employees.calendarPermissions`. */
   calendarPermissions?: CalendarPermissionsDoc | null;
+  cameraPermissions?: {
+    view?: boolean;
+    live?: boolean;
+    playback?: boolean;
+    control?: boolean;
+    admin?: boolean;
+  } | null;
   /** Widget RAJMONDATA AI na /portal/dashboard (user-scoped). */
   dashboardAiAssistantEnabled?: boolean;
 };
@@ -93,6 +102,12 @@ export async function PATCH(request: NextRequest) {
 
   const companyId = String(caller.companyId || "").trim();
   const callerRole = String(caller.role || "");
+  if (portalPreviewSessionFromFirestore(caller.portalPreviewSession)) {
+    return NextResponse.json(
+      { error: "V režimu náhledu nelze měnit oprávnění." },
+      { status: 403 }
+    );
+  }
   if (!companyId || !["owner", "admin"].includes(callerRole)) {
     return NextResponse.json(
       { error: "Pouze vlastník nebo administrátor organizace může měnit tyto údaje." },
@@ -138,6 +153,7 @@ export async function PATCH(request: NextRequest) {
     body.portalModulePermissions != null &&
     typeof body.portalModulePermissions === "object";
   const hasAiToggle = typeof body.dashboardAiAssistantEnabled === "boolean";
+  const hasCamera = body.cameraPermissions !== undefined;
 
   if (
     !hasOrgRole &&
@@ -147,7 +163,9 @@ export async function PATCH(request: NextRequest) {
     !hasMn &&
     !hasPortalMods &&
     !hasPortalMatrix &&
-    !hasAiToggle
+    !hasAiToggle &&
+    !hasCamera &&
+    body.calendarPermissions === undefined
   ) {
     return NextResponse.json(
       {
@@ -239,6 +257,12 @@ export async function PATCH(request: NextRequest) {
 
   if (typeof body.dashboardAiAssistantEnabled === "boolean") {
     patch.dashboardAiAssistantEnabled = body.dashboardAiAssistantEnabled;
+  }
+
+  if (body.cameraPermissions !== undefined) {
+    const normalized = normalizeCameraPermissionsForFirestore(body.cameraPermissions ?? {});
+    if (normalized) patch.cameraPermissions = normalized;
+    else patch.cameraPermissions = FieldValue.delete();
   }
 
   const beforePermissions = (emp.portalModulePermissions ?? {}) as Record<string, string>;

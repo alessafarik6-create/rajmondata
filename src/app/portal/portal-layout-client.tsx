@@ -54,6 +54,12 @@ import { cn } from "@/lib/utils";
 import { PortalPermissionsProvider } from "@/contexts/portal-permissions-context";
 import { PortalModuleAccessGate } from "@/components/portal/portal-module-access-gate";
 import { resolveEffectivePortalPermissions } from "@/lib/portal-permissions";
+import { portalPreviewSessionFromFirestore } from "@/lib/portal-preview";
+import { PortalPreviewBanner } from "@/components/portal/portal-preview-banner";
+import {
+  parseEmployeeOrgRole,
+  userPortalRoleForEmployeeDocRole,
+} from "@/lib/employee-organization";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -128,17 +134,61 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   }, [areServicesAvailable, firestore, companyId, profile?.employeeId]);
   const { data: profileEmployeeRow } = useDoc<Record<string, unknown>>(profileEmployeeRef);
 
+  const previewSession = useMemo(
+    () => portalPreviewSessionFromFirestore(profile?.portalPreviewSession),
+    [profile?.portalPreviewSession]
+  );
+
+  const previewEmployeeRef = useMemoFirebase(() => {
+    if (
+      !previewSession ||
+      !isBindableFirestoreInstance(areServicesAvailable, firestore) ||
+      !companyId
+    ) {
+      return null;
+    }
+    return doc(
+      firestore,
+      "companies",
+      companyId,
+      "employees",
+      previewSession.employeeId
+    );
+  }, [previewSession, areServicesAvailable, firestore, companyId]);
+
+  const { data: previewEmployeeRow, isLoading: previewEmployeeLoading } =
+    useDoc<Record<string, unknown>>(previewEmployeeRef);
+
+  const portalContextEmployeeRow = previewSession
+    ? previewEmployeeRow ?? null
+    : profileEmployeeRow ?? null;
+
+  const portalContextRole = useMemo(() => {
+    if (previewSession && previewEmployeeRow) {
+      return userPortalRoleForEmployeeDocRole(
+        parseEmployeeOrgRole(previewEmployeeRow as { role?: unknown })
+      );
+    }
+    return String(profile?.role ?? "employee");
+  }, [previewSession, previewEmployeeRow, profile?.role]);
+
   const portalPermissionsResolved = useMemo(() => {
     if (!profile?.role) return null;
     return resolveEffectivePortalPermissions({
-      role: String(profile.role),
-      globalRoles: profile.globalRoles as string[] | undefined,
-      employeeDoc: profileEmployeeRow ?? null,
+      role: portalContextRole,
+      globalRoles: previewSession ? [] : (profile.globalRoles as string[] | undefined),
+      employeeDoc: portalContextEmployeeRow,
     });
-  }, [profile?.role, profile?.globalRoles, profileEmployeeRow]);
+  }, [
+    profile?.role,
+    profile?.globalRoles,
+    portalContextRole,
+    portalContextEmployeeRow,
+    previewSession,
+  ]);
 
   const isPortalEmployeeOnly =
-    profile?.role === "employee" &&
+    portalContextRole === "employee" &&
     !(Array.isArray(profile?.globalRoles) &&
       profile.globalRoles.includes("super_admin"));
 
@@ -168,19 +218,27 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     if (isEmployeeAllowedBranchPath) return true;
     if (!portalPermissionsResolved) return false;
     return employeeHasReadAccessToPath(pathname, portalPermissionsResolved, {
-      role: String(profile?.role || "employee"),
-      globalRoles: profile?.globalRoles as string[] | undefined,
-      employeeDoc: profileEmployeeRow ?? null,
+      role: portalContextRole,
+      globalRoles: previewSession ? [] : (profile?.globalRoles as string[] | undefined),
+      employeeDoc: portalContextEmployeeRow,
     });
   }, [
     isPortalEmployeeOnly,
     isEmployeeAllowedBranchPath,
     pathname,
     portalPermissionsResolved,
-    profile?.role,
+    portalContextRole,
     profile?.globalRoles,
-    profileEmployeeRow,
+    portalContextEmployeeRow,
+    previewSession,
   ]);
+
+  useEffect(() => {
+    if (!previewSession || previewEmployeeLoading) return;
+    if (pathname.startsWith("/portal/employees") && pathname === "/portal/employees") {
+      router.replace("/portal/dashboard");
+    }
+  }, [previewSession, previewEmployeeLoading, pathname, router]);
 
   /** Načítání profilu z Firestore — bez automatického doplňování dokumentu (žádný nový auth účet). */
   const waitingForProfileResolution = isProfileLoading;
@@ -243,7 +301,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     const vyrobaPath = pathname.startsWith("/portal/vyroba");
     if (!skladPath && !vyrobaPath) return;
     const deniedHome =
-      profile.role === "employee" ? "/portal/employee" : "/portal/dashboard";
+      portalContextRole === "employee" ? "/portal/employee" : "/portal/dashboard";
 
     if (skladPath) {
       if (!canAccessCompanyModule(company, "sklad", platformCatalog)) {
@@ -252,9 +310,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       }
       if (
         !userCanAccessWarehousePortal({
-          role: String(profile.role || "employee"),
-          globalRoles: profile.globalRoles as string[] | undefined,
-          employeeRow: profileEmployeeRow as { canAccessWarehouse?: boolean } | null,
+          role: portalContextRole,
+          globalRoles: previewSession ? [] : (profile.globalRoles as string[] | undefined),
+          employeeRow: portalContextEmployeeRow as { canAccessWarehouse?: boolean } | null,
         })
       ) {
         router.replace(deniedHome);
@@ -268,9 +326,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       }
       if (
         !userCanAccessProductionPortal({
-          role: String(profile.role || "employee"),
-          globalRoles: profile.globalRoles as string[] | undefined,
-          employeeRow: profileEmployeeRow as { canAccessProduction?: boolean } | null,
+          role: portalContextRole,
+          globalRoles: previewSession ? [] : (profile.globalRoles as string[] | undefined),
+          employeeRow: portalContextEmployeeRow as { canAccessProduction?: boolean } | null,
         })
       ) {
         router.replace(deniedHome);
@@ -283,9 +341,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         return;
       }
       const cam = resolveCameraPermissions({
-        role: String(profile.role || "employee"),
-        globalRoles: profile.globalRoles as string[] | undefined,
-        employeeDoc: profileEmployeeRow ?? null,
+        role: portalContextRole,
+        globalRoles: previewSession ? [] : (profile.globalRoles as string[] | undefined),
+        employeeDoc: portalContextEmployeeRow,
         portalModuleCamerasLevel: portalPermissionsResolved?.cameras ?? "none",
       });
       if (!cam.view) {
@@ -298,7 +356,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     company,
     pathname,
     router,
-    profileEmployeeRow,
+    portalContextEmployeeRow,
+    portalContextRole,
+    previewSession,
     platformCatalog,
     portalPermissionsResolved,
   ]);
@@ -788,6 +848,12 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         data-portal-content
       >
         <PwaInstallBanner />
+        {previewSession ? (
+          <PortalPreviewBanner
+            displayName={previewSession.displayName}
+            subjectEmployeeId={previewSession.employeeId}
+          />
+        ) : null}
         {!hideMobileTopChrome ? (
           <TopHeader onOpenMobileMenu={openMobileMenu} />
         ) : null}
@@ -807,15 +873,19 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
           {licenseNotice}
           {profile?.role ? (
             <PortalPermissionsProvider
-              role={String(profile.role)}
-              globalRoles={profile.globalRoles as string[] | undefined}
-              employeeDoc={profileEmployeeRow ?? null}
+              role={portalContextRole}
+              globalRoles={
+                previewSession ? [] : (profile.globalRoles as string[] | undefined)
+              }
+              employeeDoc={portalContextEmployeeRow}
             >
               <PortalModuleAccessGate
                 pathname={pathname}
-                role={String(profile.role)}
-                globalRoles={profile.globalRoles as string[] | undefined}
-                employeeDoc={profileEmployeeRow ?? null}
+                role={portalContextRole}
+                globalRoles={
+                  previewSession ? [] : (profile.globalRoles as string[] | undefined)
+                }
+                employeeDoc={portalContextEmployeeRow}
               >
                 {children}
               </PortalModuleAccessGate>

@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   useCompany,
   useCollection,
@@ -48,6 +48,20 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmployeePortalRolePermissionsEditor } from "@/components/employees/employee-portal-role-permissions-editor";
+import {
+  EmployeeCameraPermissionsBlock,
+  parseEmployeeCameraFlagsFromDoc,
+} from "@/components/employees/employee-camera-permissions-block";
+import { canStartPortalPreviewAsAdmin } from "@/lib/portal-preview";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   parseEmployeePortalRole,
   type EmployeePortalRoleId,
@@ -108,6 +122,7 @@ import {
   Clock,
   DollarSign,
   Wallet,
+  Eye,
 } from "lucide-react";
 
 function employeeDisplayName(e: Record<string, unknown> | null | undefined): string {
@@ -116,6 +131,32 @@ function employeeDisplayName(e: Record<string, unknown> | null | undefined): str
   const last = String(e.lastName ?? "").trim();
   const full = [first, last].filter(Boolean).join(" ").trim();
   return full || String(e.email ?? "").trim() || "Zaměstnanec";
+}
+
+type EmployeeCameraFlags = ReturnType<typeof parseEmployeeCameraFlagsFromDoc>;
+
+function orgPermissionsPayloadJson(params: {
+  portalRole: EmployeePortalRoleId;
+  moduleLevels: Record<PortalModuleId, PortalAccessLevel>;
+  calendarLevels: Record<CalendarSubPermissionKey, PortalAccessLevel>;
+  visibleInTerminal: boolean;
+  dashboardAiAssistantEnabled: boolean;
+  cameraFlags: EmployeeCameraFlags;
+}): string {
+  const schedule = aggregateScheduleModuleLevel(params.calendarLevels);
+  const portalModulePermissions: Record<string, string> = {};
+  for (const id of ALL_PORTAL_MODULE_IDS) {
+    portalModulePermissions[id] =
+      id === "schedule" ? schedule : params.moduleLevels[id] ?? "none";
+  }
+  return JSON.stringify({
+    role: params.portalRole,
+    visibleInAttendanceTerminal: params.visibleInTerminal,
+    portalModulePermissions,
+    calendarPermissions: normalizeCalendarPermissionsForFirestore(params.calendarLevels),
+    cameraPermissions: params.cameraFlags,
+    dashboardAiAssistantEnabled: params.dashboardAiAssistantEnabled,
+  });
 }
 
 function employeeTerminalStatus(e: Record<string, unknown> | null | undefined): {
@@ -135,6 +176,7 @@ function employeeTerminalStatus(e: Record<string, unknown> | null | undefined): 
 
 export default function EmployeeDetailPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const params = useParams<{ employeeId: string }>();
   const employeeId = String(params?.employeeId ?? "").trim();
 
@@ -231,6 +273,24 @@ export default function EmployeeDetailPage() {
     | "photos"
     | "signatures"
   >("overview");
+
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (
+      t === "overview" ||
+      t === "personal" ||
+      t === "work" ||
+      t === "terminal" ||
+      t === "roles" ||
+      t === "jobs" ||
+      t === "documents" ||
+      t === "contracts" ||
+      t === "photos" ||
+      t === "signatures"
+    ) {
+      setTab(t);
+    }
+  }, [searchParams]);
 
   const [personalForm, setPersonalForm] = useState({
     firstName: "",
@@ -524,6 +584,18 @@ export default function EmployeeDetailPage() {
   >(() => initialCalendarPermissionsForEmployee(null, "none"));
   const [visibleInTerminal, setVisibleInTerminal] = useState(true);
   const [dashboardAiAssistantEnabled, setDashboardAiAssistantEnabled] = useState(true);
+  const [cameraFlags, setCameraFlags] = useState(parseEmployeeCameraFlagsFromDoc(null));
+  const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+  const [previewStarting, setPreviewStarting] = useState(false);
+
+  const canStartPreview = useMemo(
+    () =>
+      canStartPortalPreviewAsAdmin(
+        String(profile?.role ?? ""),
+        profile?.globalRoles as string[] | undefined
+      ),
+    [profile?.role, profile?.globalRoles]
+  );
 
   useEffect(() => {
     if (!employeeDoc) return;
@@ -537,7 +609,94 @@ export default function EmployeeDetailPage() {
     );
     setVisibleInTerminal(row.visibleInAttendanceTerminal !== false);
     setDashboardAiAssistantEnabled(parseDashboardAiAssistantEnabled(row));
+    setCameraFlags(parseEmployeeCameraFlagsFromDoc(row));
   }, [employeeDoc]);
+
+  const orgPermissionsDirty = useMemo(() => {
+    if (!employeeDoc) return false;
+    const row = employeeDoc as Record<string, unknown>;
+    const savedRole = parseEmployeePortalRole(row.role);
+    const savedLevels = initialPortalPermissionLevelsForEmployee(row, savedRole);
+    const saved = orgPermissionsPayloadJson({
+      portalRole: savedRole,
+      moduleLevels: savedLevels,
+      calendarLevels: initialCalendarPermissionsForEmployee(row, savedLevels.schedule ?? "none"),
+      visibleInTerminal: row.visibleInAttendanceTerminal !== false,
+      dashboardAiAssistantEnabled: parseDashboardAiAssistantEnabled(row),
+      cameraFlags: parseEmployeeCameraFlagsFromDoc(row),
+    });
+    const current = orgPermissionsPayloadJson({
+      portalRole,
+      moduleLevels,
+      calendarLevels,
+      visibleInTerminal,
+      dashboardAiAssistantEnabled,
+      cameraFlags,
+    });
+    return saved !== current;
+  }, [
+    employeeDoc,
+    portalRole,
+    moduleLevels,
+    calendarLevels,
+    visibleInTerminal,
+    dashboardAiAssistantEnabled,
+    cameraFlags,
+  ]);
+
+  useEffect(() => {
+    if (!orgPermissionsDirty || tab !== "roles") return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [orgPermissionsDirty, tab]);
+
+  const handleTabChange = useCallback(
+    (next: typeof tab) => {
+      if (tab === "roles" && next !== "roles" && orgPermissionsDirty) {
+        const ok = window.confirm(
+          "Máte neuložené změny oprávnění. Opravdu chcete opustit záložku bez uložení?"
+        );
+        if (!ok) return;
+      }
+      setTab(next);
+    },
+    [tab, orgPermissionsDirty]
+  );
+
+  const startPortalPreview = async () => {
+    if (!user || !companyId || previewStarting) return;
+    setPreviewStarting(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/employees/portal-preview/start", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ employeeId, companyId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Náhled nelze spustit.");
+      }
+      setPreviewDialogOpen(false);
+      router.push("/portal/dashboard");
+      router.refresh();
+    } catch (e: unknown) {
+      toast({
+        variant: "destructive",
+        title: "Náhled se nepodařil",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setPreviewStarting(false);
+    }
+  };
 
   const confirmPortalRoleChange = useCallback(
     ({
@@ -586,6 +745,7 @@ export default function EmployeeDetailPage() {
             return full;
           })(),
           calendarPermissions: normalizeCalendarPermissionsForFirestore(calendarLevels),
+          cameraPermissions: cameraFlags,
           dashboardAiAssistantEnabled,
         }),
       });
@@ -965,6 +1125,17 @@ export default function EmployeeDetailPage() {
             <Badge variant={isActive ? "default" : "secondary"} className="capitalize">
               {isActive ? "Aktivní" : "Neaktivní"}
             </Badge>
+            {canStartPreview ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10"
+                onClick={() => setPreviewDialogOpen(true)}
+              >
+                <Eye className="mr-2 h-4 w-4" />
+                Zobrazit jako zaměstnanec
+              </Button>
+            ) : null}
             {canManage ? (
               <Button
                 type="button"
@@ -996,7 +1167,7 @@ export default function EmployeeDetailPage() {
         </Alert>
       ) : null}
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="w-full">
+      <Tabs value={tab} onValueChange={(v) => handleTabChange(v as typeof tab)} className="w-full">
         <TabsList
           className={cn(
             "flex h-auto w-full gap-1.5 bg-transparent p-0",
@@ -1434,16 +1605,23 @@ export default function EmployeeDetailPage() {
               <CardTitle className={cardTitleCls}>Role a oprávnění</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 p-3">
-                <div>
-                  <p className="text-sm font-medium text-black">Viditelný v docházkovém terminálu</p>
-                  <p className="text-xs text-slate-600">Zaměstnanec se zobrazí pro přihlášení na terminálu.</p>
+              <div className="rounded-md border border-slate-200 p-3 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  5. Docházkový terminál
+                </p>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-black">Viditelný v docházkovém terminálu</p>
+                    <p className="text-xs text-slate-600">
+                      PIN a reset PINu spravujte v záložce Terminál a PIN.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={visibleInTerminal}
+                    disabled={!canManageOrgRoles}
+                    onCheckedChange={(v) => setVisibleInTerminal(v)}
+                  />
                 </div>
-                <Switch
-                  checked={visibleInTerminal}
-                  disabled={!canManageOrgRoles}
-                  onCheckedChange={(v) => setVisibleInTerminal(v)}
-                />
               </div>
 
               {!canManageOrgRoles ? (
@@ -1470,6 +1648,37 @@ export default function EmployeeDetailPage() {
                 />
               )}
 
+              {canManageOrgRoles ? (
+                <EmployeeCameraPermissionsBlock
+                  flags={cameraFlags}
+                  onChange={setCameraFlags}
+                  disabled={!canManageOrgRoles}
+                />
+              ) : null}
+
+              {orgPermissionsDirty ? (
+                <Alert variant="default" className="border-amber-300 bg-amber-50">
+                  <AlertTitle>Neuložené změny</AlertTitle>
+                  <AlertDescription>
+                    Role nebo oprávnění byly upraveny. Uložte je tlačítkem „Uložit oprávnění“, jinak se
+                    po obnovení stránky vrátí původní hodnoty.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              {canStartPreview ? (
+                <div className="rounded-md border border-orange-200 bg-orange-50/80 p-4 space-y-2">
+                  <p className="text-sm font-semibold text-black">6. Náhled zaměstnaneckého portálu</p>
+                  <p className="text-xs text-slate-700">
+                    Otevře portál s oprávněními tohoto zaměstnance v režimu pouze pro čtení.
+                  </p>
+                  <Button type="button" variant="outline" className="h-10" onClick={() => setPreviewDialogOpen(true)}>
+                    <Eye className="mr-2 h-4 w-4" />
+                    Zobrazit jako zaměstnanec
+                  </Button>
+                </div>
+              ) : null}
+
               <div className={cn("flex justify-end", belowLg && "w-full")}>
                 <Button
                   type="button"
@@ -1478,7 +1687,7 @@ export default function EmployeeDetailPage() {
                   onClick={() => void saveOrg()}
                 >
                   {orgSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  Uložit role a oprávnění
+                  Uložit oprávnění
                 </Button>
               </div>
             </CardContent>
@@ -1586,6 +1795,24 @@ export default function EmployeeDetailPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <AlertDialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
+        <AlertDialogContent data-portal-dialog>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Náhled portálu zaměstnance</AlertDialogTitle>
+            <AlertDialogDescription>
+              Chcete zobrazit portál tak, jak jej vidí {display}? Režim je pouze pro čtení — změny dat
+              nejsou povoleny.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={previewStarting}>Zrušit</AlertDialogCancel>
+            <Button type="button" disabled={previewStarting} onClick={() => void startPortalPreview()}>
+              {previewStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Spustit náhled"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

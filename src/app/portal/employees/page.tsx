@@ -119,7 +119,6 @@ import {
   type AttendanceEventLite,
 } from "@/lib/attendance-shift-state";
 import { parseEmployeePortalModules } from "@/lib/employee-portal-modules";
-import { EmployeePortalPermissionsDialog } from "@/components/employees/employee-portal-permissions-dialog";
 import {
   EMPTY_EMPLOYEE_BANK_ACCOUNT,
   maskBankAccountForListDisplay,
@@ -369,22 +368,6 @@ export default function EmployeesPage() {
     hourlyRate: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const [orgSettingsEmp, setOrgSettingsEmp] = useState<any | null>(null);
-  const [orgSettingsRole, setOrgSettingsRole] = useState<EmployeePortalRoleId>('employee');
-  const [orgSettingsTerminalVisible, setOrgSettingsTerminalVisible] = useState(true);
-  const [orgSettingsCanWarehouse, setOrgSettingsCanWarehouse] = useState(false);
-  const [orgSettingsCanProduction, setOrgSettingsCanProduction] = useState(false);
-  const [orgSettingsCanMeetingNotes, setOrgSettingsCanMeetingNotes] = useState(false);
-  const [orgSettingsSaving, setOrgSettingsSaving] = useState(false);
-  const [permissionsEmp, setPermissionsEmp] = useState<
-    (Record<string, unknown> & { id: string }) | null
-  >(null);
-  const [permissionsSaving, setPermissionsSaving] = useState(false);
-  const [portalModZakazky, setPortalModZakazky] = useState(true);
-  const [portalModPenize, setPortalModPenize] = useState(true);
-  const [portalModZpravy, setPortalModZpravy] = useState(true);
-  const [portalModDochazka, setPortalModDochazka] = useState(true);
 
   const [qrEmployee, setQrEmployee] = useState<any | null>(null);
 
@@ -1054,71 +1037,6 @@ export default function EmployeesPage() {
     }
   };
 
-  const openOrgSettingsForEmployee = (emp: Record<string, unknown> & { id?: string }) => {
-    setOrgSettingsEmp(emp);
-    setOrgSettingsRole(parseEmployeeOrgRole(emp as { role?: unknown }));
-    setOrgSettingsTerminalVisible(
-      isVisibleInAttendanceTerminal(emp as { visibleInAttendanceTerminal?: boolean })
-    );
-    setOrgSettingsCanWarehouse(
-      (emp as { canAccessWarehouse?: boolean }).canAccessWarehouse === true
-    );
-    setOrgSettingsCanProduction(
-      (emp as { canAccessProduction?: boolean }).canAccessProduction === true
-    );
-    const pm = parseEmployeePortalModules(emp);
-    setPortalModZakazky(pm.zakazky);
-    setPortalModPenize(pm.penize);
-    setPortalModZpravy(pm.zpravy);
-    setPortalModDochazka(pm.dochazka);
-  };
-
-  const closeOrgSettingsDialog = () => {
-    dismissWithModalLockRelease(() => setOrgSettingsEmp(null));
-  };
-
-  const savePortalPermissions = async (payload: {
-    permissions: Record<string, string>;
-    cameraPermissions?: {
-      view?: boolean;
-      live?: boolean;
-      playback?: boolean;
-      admin?: boolean;
-    } | null;
-    calendarPermissions?: Record<string, string> | null;
-  }) => {
-    if (!canManage || !user || !permissionsEmp?.id) return;
-    setPermissionsSaving(true);
-    try {
-      const token = await user.getIdToken();
-      const res = await fetch("/api/company/employees/portal-permissions", {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          employeeId: permissionsEmp.id,
-          permissions: payload.permissions,
-          cameraPermissions: payload.cameraPermissions,
-          calendarPermissions: payload.calendarPermissions,
-        }),
-      });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(data.error || "Uložení se nezdařilo.");
-      toast({ title: "Oprávnění uložena" });
-      setPermissionsEmp(null);
-    } catch (e) {
-      toast({
-        variant: "destructive",
-        title: "Nelze uložit oprávnění",
-        description: e instanceof Error ? e.message : "Zkuste to znovu.",
-      });
-    } finally {
-      setPermissionsSaving(false);
-    }
-  };
-
   const closeHourlyRateDialog = () => {
     dismissWithModalLockRelease(() => {
       setHourlyRateEmp(null);
@@ -1214,55 +1132,6 @@ export default function EmployeesPage() {
       toast({ variant: "destructive", title: "Chyba", description: msg });
     } finally {
       setPwdResetLoading(false);
-    }
-  };
-
-  const saveOrgSettings = async () => {
-    if (!canManage || !user || !orgSettingsEmp?.id || orgSettingsSaving) return;
-    setOrgSettingsSaving(true);
-    try {
-      const idToken = await user.getIdToken();
-      const employeePortalModules = {
-        zakazky: portalModZakazky === true,
-        penize: portalModPenize === true,
-        zpravy: portalModZpravy === true,
-        dochazka: portalModDochazka === true,
-      };
-      const payload = {
-        employeeId: orgSettingsEmp.id,
-        role: orgSettingsRole,
-        visibleInAttendanceTerminal: orgSettingsTerminalVisible,
-        canAccessWarehouse: orgSettingsCanWarehouse,
-        canAccessProduction: orgSettingsCanProduction,
-        canAccessMeetingNotes: orgSettingsCanMeetingNotes,
-        employeePortalModules,
-      };
-      const res = await fetch("/api/company/employees/update-org", {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          typeof data.error === "string" ? data.error : "Uložení se nezdařilo."
-        );
-      }
-      toast({
-        title: "Uloženo",
-        description:
-          "Role, terminál, sklad, výroba, záznamy ze schůzek a moduly portálu byly aktualizovány.",
-      });
-      closeOrgSettingsDialog();
-    } catch (error: unknown) {
-      const msg =
-        error instanceof Error ? error.message : "Uložení se nezdařilo.";
-      toast({ variant: "destructive", title: "Chyba", description: msg });
-    } finally {
-      setOrgSettingsSaving(false);
     }
   };
 
@@ -1533,196 +1402,6 @@ export default function EmployeesPage() {
         </div>
       </div>
 
-      <Dialog
-        open={!!orgSettingsEmp}
-        onOpenChange={(open) => {
-          if (!open) closeOrgSettingsDialog();
-        }}
-      >
-        <DialogContent
-          className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg"
-        >
-          <DialogHeader>
-            <DialogTitle className="text-lg font-semibold text-black">
-              Role, terminál a moduly sklad / výroba
-            </DialogTitle>
-            <DialogDescription className="text-sm text-gray-700">
-              {orgSettingsEmp
-                ? `${orgSettingsEmp.firstName} ${orgSettingsEmp.lastName}`
-                : ""}{" "}
-              — oprávnění v organizaci, terminál docházky a přístup ke skladu a výrobě (u běžného
-              zaměstnance jen pokud je modul ve firmě zapnutý a zde povolený).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="org-settings-role" className={INVITE_LABEL_CLASS}>
-                Role v organizaci
-              </Label>
-              <select
-                id="org-settings-role"
-                className={INVITE_SELECT_TRIGGER_CLASS}
-                value={orgSettingsRole}
-                onChange={(e) =>
-                  setOrgSettingsRole(parseEmployeePortalRole(e.target.value))
-                }
-              >
-                {EMPLOYEE_PORTAL_ROLE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
-              <div className="min-w-0 space-y-0.5">
-                <Label htmlFor="org-settings-terminal" className={INVITE_LABEL_CLASS}>
-                  Zobrazit v terminálu docházky
-                </Label>
-                <p className="text-[10px] text-gray-600">
-                  Vypnuto = zaměstnanec se nezobrazí v seznamu a nelze se přihlásit PINem.
-                </p>
-              </div>
-              <Switch
-                id="org-settings-terminal"
-                checked={orgSettingsTerminalVisible}
-                onCheckedChange={setOrgSettingsTerminalVisible}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
-              <div className="min-w-0 space-y-0.5">
-                <Label htmlFor="org-settings-warehouse" className={INVITE_LABEL_CLASS}>
-                  Přístup ke skladu
-                </Label>
-                <p className="text-[10px] text-gray-600">
-                  Běžný zaměstnanec uvidí modul Sklad jen s tímto příznakem (a zapnutým modulem u
-                  licence).
-                </p>
-              </div>
-              <Switch
-                id="org-settings-warehouse"
-                checked={orgSettingsCanWarehouse}
-                onCheckedChange={setOrgSettingsCanWarehouse}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
-              <div className="min-w-0 space-y-0.5">
-                <Label htmlFor="org-settings-production" className={INVITE_LABEL_CLASS}>
-                  Přístup k výrobě
-                </Label>
-                <p className="text-[10px] text-gray-600">
-                  Stejně jako sklad — jen vybraní zaměstnanci.
-                </p>
-              </div>
-              <Switch
-                id="org-settings-production"
-                checked={orgSettingsCanProduction}
-                onCheckedChange={setOrgSettingsCanProduction}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
-              <div className="min-w-0 space-y-0.5">
-                <Label htmlFor="org-settings-meeting-notes" className={INVITE_LABEL_CLASS}>
-                  Záznamy ze schůzek u zakázek
-                </Label>
-                <p className="text-[10px] text-gray-600">
-                  Běžný zaměstnanec uvidí sekci u zakázky a může záznamy upravovat; interní poznámky
-                  zůstávají odděleně a zákazník je nevidí.
-                </p>
-              </div>
-              <Switch
-                id="org-settings-meeting-notes"
-                checked={orgSettingsCanMeetingNotes}
-                onCheckedChange={setOrgSettingsCanMeetingNotes}
-              />
-            </div>
-            <div className="space-y-2 border-t border-gray-200 pt-3">
-              <p className="text-xs font-semibold text-gray-800">
-                Moduly zaměstnaneckého portálu
-              </p>
-              <p className="text-[10px] text-gray-600">
-                Viditelnost v menu závisí i na licenci firmy — vypnuto zde skryje položku, i když je
-                modul ve firmě aktivní.
-              </p>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
-                <Label htmlFor="portal-mod-zakazky" className={INVITE_LABEL_CLASS}>
-                  Povolit Zakázky
-                </Label>
-                <Switch
-                  id="portal-mod-zakazky"
-                  checked={portalModZakazky}
-                  onCheckedChange={setPortalModZakazky}
-                />
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
-                <Label htmlFor="portal-mod-penize" className={INVITE_LABEL_CLASS}>
-                  Povolit Peníze
-                </Label>
-                <Switch
-                  id="portal-mod-penize"
-                  checked={portalModPenize}
-                  onCheckedChange={setPortalModPenize}
-                />
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
-                <Label htmlFor="portal-mod-zpravy" className={INVITE_LABEL_CLASS}>
-                  Povolit Zprávy
-                </Label>
-                <Switch
-                  id="portal-mod-zpravy"
-                  checked={portalModZpravy}
-                  onCheckedChange={setPortalModZpravy}
-                />
-              </div>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
-                <Label htmlFor="portal-mod-dochazka" className={INVITE_LABEL_CLASS}>
-                  Povolit Docházku (výkazy, práce a mzdy)
-                </Label>
-                <Switch
-                  id="portal-mod-dochazka"
-                  checked={portalModDochazka}
-                  onCheckedChange={setPortalModDochazka}
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              type="button"
-              variant="outline"
-              className="border-gray-200 bg-white text-black"
-              onClick={() => closeOrgSettingsDialog()}
-              disabled={orgSettingsSaving}
-            >
-              Zrušit
-            </Button>
-            <Button
-              type="button"
-              onClick={() => void saveOrgSettings()}
-              disabled={orgSettingsSaving || !canManage}
-            >
-              {orgSettingsSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <EmployeePortalPermissionsDialog
-        open={!!permissionsEmp}
-        onOpenChange={(open) => {
-          if (!open) setPermissionsEmp(null);
-        }}
-        employeeName={
-          permissionsEmp
-            ? `${String(permissionsEmp.firstName ?? "").trim()} ${String(permissionsEmp.lastName ?? "").trim()}`.trim() ||
-              String(permissionsEmp.email ?? "Zaměstnanec")
-            : ""
-        }
-        employeeDoc={permissionsEmp}
-        busy={permissionsSaving}
-        onSave={savePortalPermissions}
-      />
-
       <div className="md:hidden">
         <div className="flex items-center gap-3 px-4 pb-3 pt-2">
           <Button
@@ -1909,17 +1588,16 @@ export default function EmployeesPage() {
                       </Button>
                       {canManage ? (
                         <Button
-                          type="button"
+                          asChild
                           variant="outline"
                           className={cn(
                             MOBILE_EMP_ACTION_BTN,
                             "border-orange-500/60 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20"
                           )}
-                          onClick={() =>
-                            openOrgSettingsForEmployee(emp as Record<string, unknown> & { id?: string })
-                          }
                         >
-                          Upravit
+                          <Link href={`/portal/employees/${encodeURIComponent(emp.id)}?tab=roles`}>
+                            Role a oprávnění
+                          </Link>
                         </Button>
                       ) : null}
                       {canManage || canEditEmployeeBank || canResetEmployeeAuthPassword ? (
@@ -2313,27 +1991,13 @@ export default function EmployeesPage() {
                             {canManage ? (
                               <>
                                 <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  onSelect={() => {
-                                    runAfterDropdownMenuCloses(() =>
-                                      openOrgSettingsForEmployee(
-                                        emp as Record<string, unknown> & { id?: string }
-                                      )
-                                    );
-                                  }}
-                                >
-                                  <Edit2 className="w-4 h-4 mr-2" /> Role, terminál a portál
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  onSelect={() => {
-                                    runAfterDropdownMenuCloses(() =>
-                                      setPermissionsEmp(
-                                        emp as Record<string, unknown> & { id: string }
-                                      )
-                                    );
-                                  }}
-                                >
-                                  <Shield className="w-4 h-4 mr-2" /> Oprávnění
+                                <DropdownMenuItem asChild>
+                                  <Link
+                                    href={`/portal/employees/${emp.id}?tab=roles`}
+                                    className="flex cursor-pointer items-center"
+                                  >
+                                    <Shield className="w-4 h-4 mr-2" /> Nastavit roli a oprávnění
+                                  </Link>
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
