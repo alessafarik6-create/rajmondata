@@ -50,7 +50,7 @@ type PortalNavLink = { label: string; href: string; icon: LucideIcon; navId?: st
 
 const adminLinksStatic: PortalNavLink[] = [
   { label: 'Přehled', href: '/admin/dashboard', icon: LayoutDashboard },
-  { label: 'Analytika', href: '/admin/analytics', icon: BarChart3 },
+  { label: 'Analytika', href: '/admin/analytics', icon: BarChart3, navId: 'admin-analytics' },
   { label: 'Bezpečnost', href: '/admin/security', icon: ShieldAlert },
   { label: 'Organizace', href: '/admin/companies', icon: Building2 },
   { label: 'Moduly', href: '/admin/modules', icon: Briefcase },

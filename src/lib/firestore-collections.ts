@@ -42,3 +42,21 @@ export const PRODUCTION_QR_TOKEN_INDEX_COLLECTION = "production_qr_token_index";
 
 /** Distribuovaný rate limit (Firestore). */
 export const PLATFORM_RATE_LIMITS_COLLECTION = "platform_rate_limits";
+
+/** Agregovaná denní analytika firemního portálu (globální souhrn, bez PII). */
+export const PLATFORM_PORTAL_ANALYTICS_GLOBAL_DAILY_COLLECTION =
+  "platform_portal_analytics_global_daily";
+/** Agregace portálu per organizace / den — doc id `{yyyy-mm-dd}_{organizationId}`. */
+export const PLATFORM_PORTAL_ANALYTICS_ORG_DAILY_COLLECTION =
+  "platform_portal_analytics_org_daily";
+/** Dedup klíče událostí (krátká retence, aby se nepočítaly duplicity). */
+export const PLATFORM_PORTAL_ANALYTICS_DEDUP_COLLECTION = "platform_portal_analytics_dedup";
+/** Prahové hodnoty skóre, retence, alerty — doc `default`. */
+export const PLATFORM_PORTAL_ANALYTICS_SETTINGS_COLLECTION =
+  "platform_portal_analytics_settings";
+/** Vygenerovaná upozornění pro superadmina (cron, ne při každém načtení UI). */
+export const PLATFORM_PORTAL_ANALYTICS_ALERTS_COLLECTION =
+  "platform_portal_analytics_alerts";
+/** Audit přístupu superadmina k detailní analytice organizace. */
+export const PLATFORM_PORTAL_ANALYTICS_AUDIT_COLLECTION =
+  "platform_portal_analytics_audit";
