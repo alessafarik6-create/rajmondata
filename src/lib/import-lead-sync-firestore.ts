@@ -7,12 +7,15 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
+import { hasPersistedTypeOverride } from "@/lib/leads/lead-type-fields";
 
 export type ImportLeadSyncStats = {
   created: number;
   updated: number;
   skipped: number;
   total: number;
+  /** Stabilní klíče nově vytvořených overlay (pro následné ocenění / analýzu). */
+  createdLeadKeys: string[];
 };
 
 function dedupeLeadRows(rows: LeadImportRow[]): LeadImportRow[] {
@@ -29,6 +32,11 @@ function buildOverlayPayload(
   importUrl: string,
   existing: DocumentSnapshot
 ): Record<string, unknown> {
+  const existingData = existing.exists
+    ? (existing.data() as Record<string, unknown> | undefined)
+    : undefined;
+  const typeLocked = hasPersistedTypeOverride(existingData);
+
   const payload: Record<string, unknown> = {
     companyId,
     organizationId: companyId,
@@ -42,8 +50,7 @@ function buildOverlayPayload(
     email: row.email,
     adresa: row.adresa,
     zprava: row.zprava,
-    typ: row.typ,
-    typ_poptavky: row.typ,
+    source_type: row.typ,
     stav: row.stav ?? "",
     datum_vytvoreni: row.receivedAtIso ?? null,
     receivedAtIso: row.receivedAtIso ?? null,
@@ -51,7 +58,15 @@ function buildOverlayPayload(
     updatedAt: FieldValue.serverTimestamp(),
   };
 
-  if (row.orientacniCenaKc != null && Number.isFinite(row.orientacniCenaKc)) {
+  if (!typeLocked) {
+    payload.typ = row.typ;
+  }
+
+  if (
+    row.orientacniCenaKc != null &&
+    Number.isFinite(row.orientacniCenaKc) &&
+    existingData?.manualValueConfirmed !== true
+  ) {
     payload.orientacniCenaKc = row.orientacniCenaKc;
   }
 
@@ -102,6 +117,7 @@ export async function syncImportLeadsToFirestoreAdmin(
 
   let created = 0;
   let updated = 0;
+  const createdLeadKeys: string[] = [];
 
   for (let offset = 0; offset < unique.length; offset += BATCH_MAX) {
     const slice = unique.slice(offset, offset + BATCH_MAX);
@@ -125,8 +141,12 @@ export async function syncImportLeadsToFirestoreAdmin(
     for (let k = 0; k < slice.length; k++) {
       const row = slice[k];
       const snap = snaps[k];
+      const leadKey = stableImportLeadDocumentId(row);
       if (snap.exists) updated++;
-      else created++;
+      else {
+        created++;
+        createdLeadKeys.push(leadKey);
+      }
 
       const payload = buildOverlayPayload(row, companyId, importUrl, snap);
       batch.set(refs[k], payload, { merge: true });
@@ -139,5 +159,6 @@ export async function syncImportLeadsToFirestoreAdmin(
     updated,
     skipped: skippedDuplicates,
     total: unique.length,
+    createdLeadKeys,
   };
 }

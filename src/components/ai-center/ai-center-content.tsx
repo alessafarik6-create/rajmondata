@@ -68,6 +68,7 @@ import {
   formatKnowledgeFileSize,
 } from "@/lib/ai/knowledge-upload-config";
 import { AiCenterExamplesTab } from "@/components/ai-center/ai-center-examples-tab";
+import { AiLeadValuationTab } from "@/components/ai-center/ai-lead-valuation-tab";
 import { KnowledgeSearchAnswerCard } from "@/components/search/knowledge-search-answer-card";
 import type { KnowledgeSearchAnswer } from "@/lib/search/types";
 
@@ -109,6 +110,7 @@ export function AiCenterContent({ companyId }: Props) {
         <TabsList className="flex flex-wrap h-auto gap-1">
           <TabsTrigger value="overview">Přehled</TabsTrigger>
           <TabsTrigger value="price-rules">Cenová pravidla</TabsTrigger>
+          <TabsTrigger value="lead-valuation">Oceňování poptávek</TabsTrigger>
           <TabsTrigger value="inquiry-types">Typy poptávek</TabsTrigger>
           <TabsTrigger value="knowledge">Znalostní báze</TabsTrigger>
           <TabsTrigger value="examples">Příklady nabídek</TabsTrigger>
@@ -122,6 +124,9 @@ export function AiCenterContent({ companyId }: Props) {
         </TabsContent>
         <TabsContent value="price-rules">
           <PriceRulesTab companyId={companyId} firestore={firestore} user={user} toast={toast} />
+        </TabsContent>
+        <TabsContent value="lead-valuation">
+          <AiLeadValuationTab companyId={companyId} firestore={firestore} user={user} toast={toast} />
         </TabsContent>
         <TabsContent value="inquiry-types">
           <InquiryTypesTab companyId={companyId} firestore={firestore} user={user} toast={toast} />

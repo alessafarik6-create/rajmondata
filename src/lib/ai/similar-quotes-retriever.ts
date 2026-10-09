@@ -10,6 +10,7 @@ import {
   normalizeInquiryTypeLabel,
   inquiryTypeMatchesRule,
 } from "@/lib/ai/inquiry-type-rules";
+import { readTypeOverride, readSourceType } from "@/lib/leads/lead-type-fields";
 import type { AiInquiryTypeRuleDoc, AiKnowledgeSourceSettings } from "@/lib/ai/ai-settings-types";
 
 export type SimilarQuoteExample = {
@@ -113,7 +114,11 @@ async function loadOverlayTypes(
     );
     for (let j = 0; j < batch.length; j += 1) {
       const data = snaps[j].data() as Record<string, unknown> | undefined;
-      const typ = String(data?.typ ?? data?.typ_poptavky ?? "").trim();
+      const override = readTypeOverride(data);
+      const typ =
+        override ||
+        readSourceType({ typ: "" }, data as Record<string, unknown>) ||
+        String(data?.typ ?? "").trim();
       map.set(batch[j], typ);
     }
   }

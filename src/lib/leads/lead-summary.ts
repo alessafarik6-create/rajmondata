@@ -19,6 +19,7 @@ import {
   type InquiryWorkflowStatus,
 } from "@/lib/inquiry-offer-email";
 import { resolveEffectiveInquiryType, type LeadInquiryTypeOverlay } from "@/lib/leads/lead-inquiry-type";
+import type { LeadValuationResult } from "@/lib/leads/lead-valuation";
 
 export type LeadSummaryOverlayFields = LeadInquiryTypeOverlay &
   LeadOverlayContactFields &
@@ -26,6 +27,10 @@ export type LeadSummaryOverlayFields = LeadInquiryTypeOverlay &
     tagId?: string | null;
     estimatedValue?: number | null;
     orientacniCenaKc?: number | null;
+    manualValueConfirmed?: boolean;
+    valuationGrossKc?: number | null;
+    valuationNetKc?: number | null;
+    valuationSource?: string | null;
     inquiryTimeline?: LeadInquiryTimelineEntry[] | null;
   };
 
@@ -169,9 +174,15 @@ export type LeadSummaryByStatusRow = {
 
 export type LeadSummaryStats = {
   count: number;
+  /** Celkový orientační potenciál (každá poptávka max jednou). */
   estimatedValue: number;
+  totalPotential: number;
   averageValue: number | null;
+  averageKnownValue: number | null;
   withoutValue: number;
+  valueFromOffers: number;
+  valueManualConfirmed: number;
+  valueAiEstimated: number;
   byType: LeadSummaryByTypeRow[];
   byStatus: LeadSummaryByStatusRow[];
 };
@@ -188,6 +199,11 @@ export function computeLeadSummaryStats(
     overlayByKey: Map<string, LeadSummaryOverlayFields>;
     offers: (OfferPriceRow & SentOfferStub)[];
     filters: LeadSummaryFilterInput;
+    resolveValuation?: (
+      lead: LeadImportRow,
+      overlay: LeadSummaryOverlayFields | undefined,
+      offer: OfferPriceRow | null
+    ) => LeadValuationResult;
   }
 ): LeadSummaryStats {
   const byTypeMap = new Map<string, { count: number; value: number }>();
@@ -197,6 +213,9 @@ export function computeLeadSummaryStats(
   let sumValue = 0;
   let valuedCount = 0;
   let withoutValue = 0;
+  let valueFromOffers = 0;
+  let valueManualConfirmed = 0;
+  let valueAiEstimated = 0;
 
   for (const lead of rows) {
     const leadKey = stableImportLeadDocumentId(lead);
@@ -218,14 +237,37 @@ export function computeLeadSummaryStats(
 
     const effectiveType = resolveEffectiveInquiryType(lead, overlay);
     const offer = pickLatestOfferForLead(ctx.offers, leadKey);
-    const resolved = resolveLeadSummaryValue(lead, overlay, offer);
+    const valuation = ctx.resolveValuation
+      ? ctx.resolveValuation(lead, overlay, offer)
+      : (() => {
+          const legacy = resolveLeadSummaryValue(lead, overlay, offer);
+          return {
+            grossKc: legacy.displayKc,
+            netKc: legacy.displayKc,
+            source: legacy.source === "offer" ? "offer" : legacy.source === "manual" ? "manual_confirmed" : "none",
+            method: legacy.source ?? "none",
+            confidence: null,
+            note: null,
+            bucket:
+              legacy.source === "offer"
+                ? "offer"
+                : legacy.source === "manual"
+                  ? "manual"
+                  : "unvalued",
+          } as LeadValuationResult;
+        })();
+
+    const displayKc = valuation.grossKc;
 
     const typeBucket = byTypeMap.get(effectiveType) ?? { count: 0, value: 0 };
     typeBucket.count++;
-    if (resolved.displayKc != null && resolved.displayKc > 0) {
-      typeBucket.value += resolved.displayKc;
-      sumValue += resolved.displayKc;
+    if (displayKc != null && displayKc > 0) {
+      typeBucket.value += displayKc;
+      sumValue += displayKc;
       valuedCount++;
+      if (valuation.bucket === "offer") valueFromOffers += displayKc;
+      else if (valuation.bucket === "manual") valueManualConfirmed += displayKc;
+      else if (valuation.bucket === "ai_estimate") valueAiEstimated += displayKc;
     } else {
       withoutValue++;
     }
@@ -253,11 +295,18 @@ export function computeLeadSummaryStats(
   const averageValue =
     valuedCount > 0 ? Math.round((sumValue / valuedCount) * 100) / 100 : null;
 
+  const totalPotential = Math.round(sumValue * 100) / 100;
+
   return {
     count,
-    estimatedValue: Math.round(sumValue * 100) / 100,
+    estimatedValue: totalPotential,
+    totalPotential,
     averageValue,
+    averageKnownValue: averageValue,
     withoutValue,
+    valueFromOffers: Math.round(valueFromOffers * 100) / 100,
+    valueManualConfirmed: Math.round(valueManualConfirmed * 100) / 100,
+    valueAiEstimated: Math.round(valueAiEstimated * 100) / 100,
     byType,
     byStatus,
   };

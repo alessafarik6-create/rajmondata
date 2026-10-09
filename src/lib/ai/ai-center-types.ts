@@ -3,6 +3,7 @@
  */
 
 export const AI_PRICE_RULES_COLLECTION = "ai_price_rules";
+export const AI_PRODUCT_CATALOG_ITEMS_COLLECTION = "ai_product_catalog_items";
 export const AI_KNOWLEDGE_DOCUMENTS_COLLECTION = "ai_knowledge_documents";
 export const AI_KNOWLEDGE_CHUNKS_COLLECTION = "chunks";
 export const AI_QUOTE_EXAMPLES_COLLECTION = "ai_quote_examples";
@@ -27,6 +28,54 @@ export const AI_PRICE_CALCULATION_LABELS: Record<AiPriceCalculationType, string>
   min_price: "Minimální cena",
   max_discount: "Maximální sleva %",
 };
+
+/** Položka schváleného ceníku (import z URL / PDF / ruční správa v AI centru). */
+export type AiProductCatalogItemDoc = {
+  id?: string;
+  companyId: string;
+  category: string;
+  modelName: string;
+  priceGross: number;
+  priceNet?: number | null;
+  currency: string;
+  vatRate?: number | null;
+  unit?: string | null;
+  areaM2?: number | null;
+  areaMinM2?: number | null;
+  areaMaxM2?: number | null;
+  isDefaultForCategory?: boolean;
+  validFrom?: string | null;
+  validTo?: string | null;
+  sourceUrl?: string | null;
+  notes?: string | null;
+  active: boolean;
+  sortOrder?: number;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+  updatedByUid?: string | null;
+};
+
+export type AiLeadValuationSettings = {
+  useHistoricalOffers: boolean;
+  useCatalog: boolean;
+  usePriceRules: boolean;
+  autoValuateOnImport: boolean;
+  /** Maximální stáří historické nabídky (dny). */
+  maxHistoricalAgeDays: number;
+  /** Povolit přepočet existujících AI odhadů hromadně. */
+  allowRecomputeAiEstimates: boolean;
+};
+
+export function defaultAiLeadValuationSettings(): AiLeadValuationSettings {
+  return {
+    useHistoricalOffers: true,
+    useCatalog: true,
+    usePriceRules: true,
+    autoValuateOnImport: true,
+    maxHistoricalAgeDays: 730,
+    allowRecomputeAiEstimates: true,
+  };
+}
 
 export type AiPriceRuleDoc = {
   id?: string;

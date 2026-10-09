@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-collections";
 import { parseLeadImportPayload, type LeadImportRow } from "@/lib/lead-import-parse";
-import { syncImportLeadsToFirestoreAdmin } from "@/lib/import-lead-sync-firestore";
+import {
+  syncImportLeadsToFirestoreAdmin,
+  type ImportLeadSyncStats,
+} from "@/lib/import-lead-sync-firestore";
+import { valuateNewLeadsAfterImport } from "@/lib/leads/lead-valuation-service";
 import { sendModuleNotification } from "@/lib/email-notifications/module-notify";
 import { createNotification } from "@/lib/notification-service/notification-service";
 
@@ -239,14 +243,7 @@ export async function GET(request: NextRequest) {
 
     const rows = parseLeadImportPayload(json);
 
-    let sync:
-      | {
-          created: number;
-          updated: number;
-          skipped: number;
-          total: number;
-        }
-      | undefined;
+    let sync: ImportLeadSyncStats | undefined;
     let syncWarning: string | undefined;
     try {
       sync = await syncImportLeadsToFirestoreAdmin(
@@ -255,6 +252,11 @@ export async function GET(request: NextRequest) {
         rows,
         importUrl
       );
+      if (sync.createdLeadKeys.length > 0) {
+        void valuateNewLeadsAfterImport(db, companyId, sync.createdLeadKeys).catch((e) =>
+          console.warn("[import-leads] post-import valuation skipped", e)
+        );
+      }
     } catch (e) {
       console.error("[import-leads] Firestore sync failed", e);
       syncWarning =

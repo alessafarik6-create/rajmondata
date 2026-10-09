@@ -8,6 +8,10 @@ import {
   type LeadSummaryStats,
 } from "@/lib/leads/lead-summary";
 import type { OfferPriceRow } from "@/lib/lead-portfolio-value";
+import { buildValuationContext } from "@/lib/leads/lead-valuation-service";
+import { resolveLeadValuation, type LeadValuationOverlayFields } from "@/lib/leads/lead-valuation";
+import { resolveInquiryTypeRule } from "@/lib/ai/inquiry-type-rules";
+import { resolveEffectiveInquiryType } from "@/lib/leads/lead-inquiry-type";
 
 type OfferRow = OfferPriceRow & { status?: string };
 
@@ -20,7 +24,13 @@ function overlayFromDoc(data: Record<string, unknown>): LeadSummaryOverlayFields
     workflowStatus: String(data.workflowStatus ?? "").trim() || null,
     typ: String(data.typ ?? "").trim() || undefined,
     typ_poptavky: String(data.typ_poptavky ?? "").trim() || undefined,
+    type_override: String(data.type_override ?? "").trim() || undefined,
+    source_type: String(data.source_type ?? "").trim() || undefined,
     inquiryTypeManual: data.inquiryTypeManual === true,
+    manualValueConfirmed: data.manualValueConfirmed === true,
+    valuationGrossKc: num("valuationGrossKc"),
+    valuationNetKc: num("valuationNetKc"),
+    valuationSource: typeof data.valuationSource === "string" ? data.valuationSource : null,
     tagId: typeof data.tagId === "string" ? data.tagId : null,
     orientacniCenaKc: num("orientacniCenaKc"),
     estimatedValue: num("estimatedValue"),
@@ -96,10 +106,31 @@ export async function loadLeadSummaryForCompany(
     loadOffers(db, companyId),
   ]);
 
+  const overlayValMap = overlayByKey as Map<string, LeadValuationOverlayFields>;
+  const valCtx = await buildValuationContext(db, companyId, rows, overlayValMap);
+
   const stats = computeLeadSummaryStats(rows, {
     overlayByKey,
     offers,
     filters,
+    resolveValuation: (lead, overlay, offer) => {
+      const effectiveType = resolveEffectiveInquiryType(lead, overlay);
+      const typeRule = resolveInquiryTypeRule(effectiveType, valCtx.typeRules);
+      const defaultItem = valCtx.catalogItems.find(
+        (i) => i.isDefaultForCategory && i.active
+      );
+      return resolveLeadValuation({
+        lead,
+        overlay,
+        offer,
+        priceRules: valCtx.priceRules,
+        catalogItems: valCtx.catalogItems,
+        typeRuleName: typeRule.name,
+        historicalMedians: valCtx.historicalMedians,
+        categoryDefaultGross: defaultItem?.priceGross ?? null,
+        useCachedValuation: true,
+      });
+    },
   });
 
   return { stats, importWarning };

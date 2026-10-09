@@ -13,6 +13,7 @@ import {
   Calendar,
   ChevronDown,
   Mail,
+  Sparkles,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cs } from "date-fns/locale";
@@ -79,9 +80,9 @@ import {
 import {
   leadSearchBlob,
   parseEstimatedValueInput,
-  resolveLeadSummaryValue,
   type LeadInquiryTimelineEntry,
 } from "@/lib/leads/lead-summary";
+import { resolveLeadValuation } from "@/lib/leads/lead-valuation";
 import {
   LeadsSummaryPanel,
   type LeadsSummaryPanelData,
@@ -397,6 +398,11 @@ export default function PortalLeadsPage() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [estimatedDraft, setEstimatedDraft] = useState<Record<string, string>>({});
   const [savingEstimatedKey, setSavingEstimatedKey] = useState<string | null>(null);
+  const [valuateDialogOpen, setValuateDialogOpen] = useState(false);
+  const [valuateMode, setValuateMode] = useState<"filtered" | "missing_value" | "recompute_ai">(
+    "missing_value"
+  );
+  const [valuating, setValuating] = useState(false);
 
   const offerTemplates = useMemo(() => {
     const list = Array.isArray(offerTemplatesRaw) ? offerTemplatesRaw : [];
@@ -565,9 +571,14 @@ export default function PortalLeadsPage() {
       if (!res.ok || data.ok === false) return;
       setSummaryData({
         count: data.count,
-        estimatedValue: data.estimatedValue,
+        estimatedValue: data.estimatedValue ?? data.totalPotential ?? 0,
+        totalPotential: data.totalPotential ?? data.estimatedValue ?? 0,
         averageValue: data.averageValue,
+        averageKnownValue: data.averageKnownValue ?? data.averageValue,
         withoutValue: data.withoutValue,
+        valueFromOffers: data.valueFromOffers ?? 0,
+        valueManualConfirmed: data.valueManualConfirmed ?? 0,
+        valueAiEstimated: data.valueAiEstimated ?? 0,
         byType: data.byType ?? [],
         byStatus: data.byStatus ?? [],
       });
@@ -877,6 +888,7 @@ export default function PortalLeadsPage() {
         {
           companyId,
           importLeadId: lead.id,
+          type_override: trimmed,
           typ_poptavky: trimmed,
           inquiryTypeManual: true,
           inquiryTimeline: appendInquiryTimeline(ov?.inquiryTimeline, timelineEntry),
@@ -915,6 +927,52 @@ export default function PortalLeadsPage() {
     return String(manual);
   };
 
+  const runBulkValuation = async () => {
+    if (!companyId || !user) return;
+    setValuating(true);
+    try {
+      const token = await user.getIdToken();
+      const params = buildLeadsFilterSearchParams(leadsFilterState);
+      params.set("companyId", companyId);
+      const res = await fetch(
+        `/api/company/leads/valuate-batch?${params.toString()}`,
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ mode: valuateMode }),
+        }
+      );
+      const data = (await res.json()) as {
+        ok?: boolean;
+        processed?: number;
+        valued?: number;
+        skipped?: number;
+        error?: string;
+      };
+      if (!res.ok || data.ok === false) {
+        throw new Error(data.error ?? "Ocenění selhalo");
+      }
+      toast({
+        title: "AI ocenění dokončeno",
+        description: `Zpracováno ${data.processed ?? 0}, oceněno ${data.valued ?? 0}, přeskočeno ${data.skipped ?? 0}.`,
+      });
+      setValuateDialogOpen(false);
+      void loadLeadSummary();
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Hromadné ocenění",
+        description: e instanceof Error ? e.message : "Selhalo",
+      });
+    } finally {
+      setValuating(false);
+    }
+  };
+
   const handleSaveEstimatedValue = async (lead: LeadImportRow) => {
     if (!firestore || !companyId || !user || !canWriteLeads) return;
     const key = stableImportLeadDocumentId(lead);
@@ -939,6 +997,7 @@ export default function PortalLeadsPage() {
           importLeadId: lead.id,
           estimatedValue: parsed,
           orientacniCenaKc: parsed,
+          manualValueConfirmed: parsed != null,
           updatedAt: serverTimestamp(),
           updatedByUid: user.uid,
         },
@@ -1294,11 +1353,26 @@ export default function PortalLeadsPage() {
 
       <Card className="border-slate-200 shadow-sm">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Souhrn podle filtrů</CardTitle>
-          <CardDescription>
-            Počty a hodnoty odpovídají aktivním filtrům včetně období. Hodnota z cenové nabídky má
-            přednost před ručním odhadem.
-          </CardDescription>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="text-base">Souhrn podle filtrů</CardTitle>
+              <CardDescription>
+                Agregace z databáze podle aktivních filtrů. Nabídka → ruční cena → pravidla / ceník /
+                historie.
+              </CardDescription>
+            </div>
+            {canWriteLeads ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 gap-2 shrink-0"
+                onClick={() => setValuateDialogOpen(true)}
+              >
+                <Sparkles className="h-4 w-4" />
+                AI ocenit poptávky
+              </Button>
+            ) : null}
+          </div>
         </CardHeader>
         <CardContent>
           <LeadsSummaryPanel
@@ -1309,6 +1383,44 @@ export default function PortalLeadsPage() {
           />
         </CardContent>
       </Card>
+
+      <Dialog open={valuateDialogOpen} onOpenChange={setValuateDialogOpen}>
+        <DialogContent className="sm:max-w-md bg-white">
+          <DialogHeader>
+            <DialogTitle>AI ocenit poptávky</DialogTitle>
+            <DialogDescription>
+              Backend spočítá orientační hodnotu podle pravidel (max. 40 záznamů na dávku). Nepřepíše
+              ručně potvrzené ceny ani platné nabídky.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <p className="text-xs text-slate-600">
+              Aktuální filtr: {summaryData?.count ?? "—"} poptávek, neoceněných:{" "}
+              {summaryData?.withoutValue ?? "—"}.
+            </p>
+            <Label className="text-xs">Režim</Label>
+            <select
+              className={NATIVE_SELECT_CLASS}
+              value={valuateMode}
+              onChange={(e) =>
+                setValuateMode(e.target.value as "filtered" | "missing_value" | "recompute_ai")
+              }
+            >
+              <option value="filtered">Pouze vyfiltrované poptávky</option>
+              <option value="missing_value">Pouze bez hodnoty</option>
+              <option value="recompute_ai">Přepočítat AI odhady</option>
+            </select>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setValuateDialogOpen(false)}>
+              Zrušit
+            </Button>
+            <Button type="button" disabled={valuating} onClick={() => void runBulkValuation()}>
+              {valuating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Spustit ocenění"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
         <SheetContent side="bottom" className="max-h-[90dvh] overflow-y-auto rounded-t-xl">
@@ -1671,7 +1783,12 @@ export default function PortalLeadsPage() {
                       ? typOptions
                       : [inquiryTypeSource, ...typOptions];
                     const latestOffer = pickLatestOfferForLead(inquiryOffersForValue, key);
-                    const valueInfo = resolveLeadSummaryValue(r, ov, latestOffer);
+                    const valueInfo = resolveLeadValuation({
+                      lead: r,
+                      overlay: ov,
+                      offer: latestOffer,
+                      useCachedValuation: true,
+                    });
                     const received = leadReceivedDate(r, ov);
                     const expanded = !!expandedLeadKeys[key];
                     const dateStr = received ? formatReceivedDay(received) : "—";
@@ -1731,16 +1848,12 @@ export default function PortalLeadsPage() {
                                   {r.jmeno || "—"}
                                 </span>
                                 <InquiryTypeBadge type={inquiryTypeSource} variant="preview" />
-                                {valueInfo.displayKc != null ? (
+                                {valueInfo.grossKc != null ? (
                                   <span
                                     className="shrink-0 text-xs tabular-nums font-medium text-slate-800"
-                                    title={
-                                      valueInfo.source === "offer"
-                                        ? "Hodnota z cenové nabídky"
-                                        : "Ruční odhad"
-                                    }
+                                    title={valueInfo.note ?? valueInfo.source}
                                   >
-                                    {formatMoneyKc(valueInfo.displayKc)}
+                                    {formatMoneyKc(valueInfo.grossKc)}
                                   </span>
                                 ) : null}
                                 {!isCustomer && contact.contacted ? (
@@ -1870,9 +1983,9 @@ export default function PortalLeadsPage() {
                                 <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
                                   Hodnota poptávky
                                 </p>
-                                {valueInfo.displayKc != null ? (
+                                {valueInfo.grossKc != null ? (
                                   <p className="text-sm font-semibold tabular-nums text-slate-900">
-                                    {formatMoneyKc(valueInfo.displayKc)}
+                                    {formatMoneyKc(valueInfo.grossKc)}
                                   </p>
                                 ) : (
                                   <p className="text-sm text-slate-600">Zatím nevyplněno</p>
@@ -1881,9 +1994,17 @@ export default function PortalLeadsPage() {
                                   Zdroj:{" "}
                                   {valueInfo.source === "offer"
                                     ? "Cenová nabídka"
-                                    : valueInfo.source === "manual"
+                                    : valueInfo.source === "manual_confirmed"
                                       ? "Ruční odhad"
-                                      : "—"}
+                                      : valueInfo.source === "catalog"
+                                        ? "Schválený ceník"
+                                        : valueInfo.source === "price_rules"
+                                          ? "Cenová pravidla"
+                                          : valueInfo.source === "historical_median"
+                                            ? "Historické nabídky"
+                                            : valueInfo.source && valueInfo.source !== "none"
+                                              ? "AI / odhad"
+                                              : "—"}
                                 </p>
                                 {canWriteLeads ? (
                                   <div className="flex flex-col gap-2 sm:flex-row sm:items-end max-w-md">

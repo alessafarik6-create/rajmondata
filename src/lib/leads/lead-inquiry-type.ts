@@ -1,21 +1,23 @@
 import type { InquiryTypeOverlayFields } from "@/lib/inquiry-type-badge";
-import { resolveInquiryTypeRaw } from "@/lib/inquiry-type-badge";
+import {
+  readSourceType,
+  readTypeOverride,
+  type LeadTypeOverlayFields,
+} from "@/lib/leads/lead-type-fields";
 
-export type LeadInquiryTypeOverlay = InquiryTypeOverlayFields & {
-  inquiryTypeManual?: boolean;
-};
+export type LeadInquiryTypeOverlay = InquiryTypeOverlayFields &
+  LeadTypeOverlayFields;
 
-/** Zobrazený / filtrovatelný typ — ruční klasifikace má přednost před typem z importu. */
+/** Zobrazený / filtrovatelný typ — type_override má přednost před importem. */
 export function resolveEffectiveInquiryType(
   row: { typ?: string },
   overlay?: LeadInquiryTypeOverlay | null
 ): string {
-  if (overlay?.inquiryTypeManual) {
-    const manual = String(overlay.typ_poptavky ?? overlay.typ ?? "").trim();
-    if (manual) return manual;
-  }
-  const raw = resolveInquiryTypeRaw(row, overlay);
-  return raw?.trim() || "Obecné";
+  const override = readTypeOverride(overlay);
+  if (override) return override;
+  const source = readSourceType(row, overlay);
+  if (source) return source;
+  return "Obecné";
 }
 
 /** Sestaví seznam typů poptávek (import, overlay, pravidla AI). */
