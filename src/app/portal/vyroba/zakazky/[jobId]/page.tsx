@@ -158,17 +158,15 @@ import { ProductionJobTopExtras } from "@/components/production/production-job-t
 import { isValidEmailAddress } from "@/lib/document-email-outbound";
 import { uploadProductionSheetPdfBlob } from "@/lib/production-sheet-storage-upload";
 import {
-  VYROBA_MOBILE_NESTED_LIGHT_FIX,
-  VYROBA_MOBILE_PAGE_ROOT,
+  VYROBA_CARD,
   VYROBA_MOBILE_PRIMARY,
   VYROBA_MOBILE_SECONDARY,
+  vyrobaMobileRootProps,
+  vyrobaMobileShellClassName,
 } from "@/lib/production-mobile-ui";
 import { ProductionDrawingFullscreenDialog } from "@/components/production/production-drawing-fullscreen-dialog";
 
-const CARD = cn(
-  "border-slate-200 bg-white text-slate-900",
-  "max-lg:border-slate-700 max-lg:bg-slate-900/95 max-lg:text-slate-100 max-lg:shadow-lg"
-);
+const CARD = cn(VYROBA_CARD, "max-lg:shadow-lg");
 const DEFAULT_PRODUCTION_WORKBENCH_TOP_PX = 600;
 const PRODUCTION_TOP_PANEL_VIEWPORT_RESERVE = 160;
 const PRODUCTION_TOP_PANEL_MIN_PX = 420;
@@ -2344,10 +2342,9 @@ export default function VyrobaZakazkaDetailPage() {
 
   return (
     <div
-      className={cn(
-        "mx-auto w-full max-w-[min(100%,1600px)] space-y-6",
-        VYROBA_MOBILE_PAGE_ROOT,
-        VYROBA_MOBILE_NESTED_LIGHT_FIX
+      {...vyrobaMobileRootProps}
+      className={vyrobaMobileShellClassName(
+        "mx-auto w-full max-w-[min(100%,1600px)] space-y-6"
       )}
     >
       {loading || !jobView ? (

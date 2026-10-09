@@ -46,12 +46,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { VYROBA_MOBILE_NESTED_LIGHT_FIX, VYROBA_MOBILE_PAGE_ROOT } from "@/lib/production-mobile-ui";
+import {
+  VYROBA_CARD,
+  vyrobaMobileRootProps,
+  vyrobaMobileShellClassName,
+} from "@/lib/production-mobile-ui";
 
-const CARD = cn(
-  "border-slate-200 bg-white text-slate-900",
-  "max-lg:border-slate-700 max-lg:bg-slate-900/95 max-lg:text-slate-100"
-);
+const CARD = VYROBA_CARD;
 
 export default function VyrobaListPage() {
   const { user } = useUser();
@@ -194,11 +195,8 @@ export default function VyrobaListPage() {
 
   return (
     <div
-      className={cn(
-        "mx-auto w-full max-w-5xl space-y-6",
-        VYROBA_MOBILE_PAGE_ROOT,
-        VYROBA_MOBILE_NESTED_LIGHT_FIX
-      )}
+      {...vyrobaMobileRootProps}
+      className={vyrobaMobileShellClassName("mx-auto w-full max-w-5xl space-y-6")}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -265,7 +263,7 @@ export default function VyrobaListPage() {
                 className="block rounded-lg border border-slate-200 bg-slate-50/80 p-4 transition-colors hover:border-primary/40 max-lg:border-slate-600 max-lg:bg-slate-800/80 max-lg:text-slate-100"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium text-slate-900">{p.title}</span>
+                  <span className="font-medium text-slate-900 max-lg:text-slate-50">{p.title}</span>
                   <Badge variant="outline">
                     {PRODUCTION_STATUS_LABELS[p.status] || p.status}
                   </Badge>

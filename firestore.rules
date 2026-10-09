@@ -91,6 +91,44 @@ service cloud.firestore {
       return portalModuleWriteOk(companyId, moduleId);
     }
 
+    /** Účetní — WRITE na modul Práce a mzdy z matice oprávnění. */
+    function accountantLaborWriteOk(companyId) {
+      if (userRole() != 'accountant' || ownEmployeeId() == null) {
+        return false;
+      }
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+      if (!exists(empRef)) {
+        return false;
+      }
+      let data = get(empRef).data;
+      return 'portalModulePermissions' in data &&
+        data.portalModulePermissions is map &&
+        'labor' in data.portalModulePermissions &&
+        data.portalModulePermissions['labor'] == 'write';
+    }
+
+    /** Čtení mzdového záznamu — admin/účetní (modul labor) nebo vlastní zaměstnanec. Manažer nevidí cizí. */
+    function payrollRecordReadOk(companyId, empId) {
+      if (userRole() in ['owner', 'admin']) {
+        return true;
+      }
+      if (userRole() == 'accountant' && portalModuleReadOk(companyId, 'labor')) {
+        return true;
+      }
+      return empId == ownEmployeeId();
+    }
+
+    /** Správa mezd (zálohy, dluhy, schvalování výplat) — ne zaměstnanec ani manažer. */
+    function canManageOrgPayrollFirestore(companyId) {
+      if (userRole() in ['owner', 'admin']) {
+        return companyModuleWriteOk(companyId, 'labor');
+      }
+      if (userRole() == 'accountant') {
+        return accountantLaborWriteOk(companyId);
+      }
+      return false;
+    }
+
     /** Kalendář — schůzky / montáže (employees.calendarPermissions, fallback schedule). */
     function calendarSubLevel(companyId, subKey) {
       if (isPrivileged()) {
@@ -1204,7 +1242,7 @@ service cloud.firestore {
        */
       match /daily_work_reports/{reportId} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+          payrollRecordReadOk(companyId, resource.data.employeeId);
         allow write: if false;
       }
 
@@ -1214,9 +1252,9 @@ service cloud.firestore {
        */
       match /employee_day_payouts/{payoutId} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+          payrollRecordReadOk(companyId, resource.data.employeeId);
         allow create, update: if signedIn() && sameCompany(companyId) &&
-          companyModuleWriteOk(companyId, 'labor') &&
+          canManageOrgPayrollFirestore(companyId) &&
           request.resource.data.companyId == companyId &&
           request.resource.data.employeeId is string &&
           request.resource.data.employeeId.size() > 0 &&
@@ -1270,7 +1308,8 @@ service cloud.firestore {
             request.resource.data.manualAttendance is map) &&
           (!('manualAttendanceAudit' in request.resource.data) ||
             request.resource.data.manualAttendanceAudit is list);
-        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId);
       }
 
       /**
@@ -2317,13 +2356,15 @@ service cloud.firestore {
        */
       match /advances/{advanceId} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
-        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          payrollRecordReadOk(companyId, resource.data.employeeId);
+        allow create: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId) &&
           request.resource.data.companyId == companyId &&
           request.resource.data.employeeId is string &&
           request.resource.data.amount is number &&
           request.resource.data.status in ['paid', 'unpaid'];
-        allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow update, delete: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId);
       }
 
       /**
@@ -2332,8 +2373,9 @@ service cloud.firestore {
        */
       match /payroll_period_payments/{ppId} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
-        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          payrollRecordReadOk(companyId, resource.data.employeeId);
+        allow create: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId) &&
           request.resource.data.companyId == companyId &&
           request.resource.data.employeeId is string &&
           request.resource.data.payrollPeriod is string &&
@@ -2342,7 +2384,8 @@ service cloud.firestore {
           request.resource.data.paidAmount is number &&
           request.resource.data.paymentDate is string &&
           request.resource.data.paymentStatus in ['unpaid', 'partial', 'paid'];
-        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+        allow update: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId) &&
           resource.data.companyId == companyId &&
           request.resource.data.companyId == companyId &&
           resource.data.employeeId == request.resource.data.employeeId &&
@@ -2351,14 +2394,16 @@ service cloud.firestore {
           request.resource.data.paidAmount is number &&
           request.resource.data.paymentDate is string &&
           request.resource.data.paymentStatus in ['unpaid', 'partial', 'paid'];
-        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId);
       }
 
       /** Dluhy zaměstnanců: admin správa, zaměstnanec pouze čtení svého. */
       match /employee_debts/{debtId} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
-        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          payrollRecordReadOk(companyId, resource.data.employeeId);
+        allow create: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId) &&
           request.resource.data.companyId == companyId &&
           request.resource.data.employeeId is string &&
           request.resource.data.amount is number &&
@@ -2366,7 +2411,8 @@ service cloud.firestore {
           request.resource.data.remainingAmount is number &&
           request.resource.data.remainingAmount >= 0 &&
           request.resource.data.status in ['active', 'paid', 'overpaid'];
-        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+        allow update: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId) &&
           resource.data.companyId == companyId &&
           resource.data.employeeId == request.resource.data.employeeId &&
           request.resource.data.companyId == companyId &&
@@ -2376,15 +2422,17 @@ service cloud.firestore {
           request.resource.data.remainingAmount is number &&
           request.resource.data.status in ['active', 'paid', 'overpaid'];
         /** Doplacený dluh nesmí zmizet — mazání jen u aktivního záznamu. */
-        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId) &&
           resource.data.status == 'active';
       }
 
       /** Splátky dluhů: admin zapisuje/upravuje/mazání, zaměstnanec čte své. */
       match /employee_debt_payments/{paymentId} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
-        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          payrollRecordReadOk(companyId, resource.data.employeeId);
+        allow create: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId) &&
           request.resource.data.companyId == companyId &&
           request.resource.data.employeeId is string &&
           request.resource.data.debtId is string &&
@@ -2396,7 +2444,8 @@ service cloud.firestore {
           (!('paidBy' in request.resource.data) ||
             (request.resource.data.paidBy is string &&
               request.resource.data.paidBy.size() <= 200));
-        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+        allow update: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId) &&
           resource.data.companyId == companyId &&
           resource.data.employeeId == request.resource.data.employeeId &&
           resource.data.debtId == request.resource.data.debtId &&
@@ -2411,7 +2460,8 @@ service cloud.firestore {
           (!('paidBy' in request.resource.data) ||
             (request.resource.data.paidBy is string &&
               request.resource.data.paidBy.size() <= 200));
-        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId);
       }
 
       /**
@@ -2420,8 +2470,9 @@ service cloud.firestore {
        */
       match /employee_debt_history/{historyId} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
-        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          payrollRecordReadOk(companyId, resource.data.employeeId);
+        allow create: if signedIn() && sameCompany(companyId) &&
+          canManageOrgPayrollFirestore(companyId) &&
           request.resource.data.companyId == companyId &&
           request.resource.data.employeeId is string &&
           request.resource.data.debtId is string &&

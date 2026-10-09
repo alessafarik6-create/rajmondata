@@ -246,6 +246,12 @@ export function EmployeePortalRolePermissionsEditor(props: {
                         />
                       ) : null}
                     </Label>
+                    {mod.id === "labor" && portalRole === "employee" ? (
+                      <p className="mt-0.5 text-xs text-slate-600">
+                        Zaměstnanec má přístup pouze ke svým mzdovým údajům. Jejich
+                        úprava není povolena.
+                      </p>
+                    ) : null}
                   </div>
                   <Select
                     disabled={disabled}

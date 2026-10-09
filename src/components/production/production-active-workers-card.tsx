@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDurationCs } from "@/lib/production-qr/format-duration-cs";
+import { VYROBA_CARD } from "@/lib/production-mobile-ui";
 
 type Worker = {
   employeeName: string;
@@ -44,7 +45,7 @@ export function ProductionActiveWorkersCard({ getToken }: Props) {
 
   if (loading) {
     return (
-      <Card>
+      <Card className={VYROBA_CARD}>
         <CardContent className="py-6 flex justify-center">
           <Loader2 className="h-5 w-5 animate-spin" />
         </CardContent>
@@ -54,17 +55,24 @@ export function ProductionActiveWorkersCard({ getToken }: Props) {
   if (workers.length === 0) return null;
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">Právě ve výrobě</CardTitle>
+    <Card className={VYROBA_CARD}>
+      <CardHeader className="pb-2 max-lg:border-slate-700">
+        <CardTitle className="text-base text-slate-900 max-lg:text-slate-50">
+          Právě ve výrobě
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {workers.map((w, i) => (
-          <div key={i} className="text-sm border-b border-border/60 pb-2 last:border-0">
-            <p className="font-medium">{w.employeeName}</p>
-            <p className="text-muted-foreground">{w.taskName}</p>
-            <p className="text-muted-foreground">{w.jobName}</p>
-            <p className="tabular-nums text-orange-700">běží {formatDurationCs(w.runningSeconds)}</p>
+          <div
+            key={i}
+            className="text-sm border-b border-border/60 pb-2 last:border-0 max-lg:border-slate-700"
+          >
+            <p className="font-medium text-slate-900 max-lg:text-slate-50">{w.employeeName}</p>
+            <p className="text-muted-foreground max-lg:text-slate-400">{w.taskName}</p>
+            <p className="text-muted-foreground max-lg:text-slate-400">{w.jobName}</p>
+            <p className="tabular-nums text-orange-700 max-lg:text-orange-300">
+              běží {formatDurationCs(w.runningSeconds)}
+            </p>
           </div>
         ))}
       </CardContent>

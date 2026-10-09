@@ -1,5 +1,12 @@
 import { cn } from "@/lib/utils";
 
+/** Atribut kořene modulu Výroba — spouští scoped CSS v globals.css (mobilní kontrast). */
+export const VYROBA_MOBILE_DATA_ATTR = "data-vyroba-mobile";
+
+export const vyrobaMobileRootProps = {
+  [VYROBA_MOBILE_DATA_ATTR]: true,
+} as const;
+
 /** Kořen stránek modulu Výroba — tmavý režim pod `lg` (shodně s mobilním dashboardem). */
 export const VYROBA_MOBILE_PAGE_ROOT = cn(
   "max-lg:bg-slate-950 max-lg:text-slate-100",
@@ -38,8 +45,28 @@ export const VYROBA_MOBILE_NESTED_LIGHT_FIX = cn(
   "max-lg:[&_.text-slate-700]:!text-slate-300",
   "max-lg:[&_.text-slate-600]:!text-slate-400",
   "max-lg:[&_.text-slate-500]:!text-slate-400",
+  "max-lg:[&_.text-muted-foreground]:!text-slate-400",
   "max-lg:[&_.border-slate-200]:!border-slate-600",
   "max-lg:[&_.border-slate-100]:!border-slate-700",
   "max-lg:[&_.bg-white]:!bg-slate-800/95",
-  "max-lg:[&_.bg-slate-50]:!bg-slate-800/70"
+  "max-lg:[&_.bg-slate-50]:!bg-slate-800/70",
+  "max-lg:[&_.bg-slate-50\\/80]:!bg-slate-800/80",
+  "max-lg:[&_.bg-amber-50\\/90]:!bg-amber-950/45",
+  "max-lg:[&_.bg-amber-50\\/90_.text-slate-900]:!text-amber-50",
+  "max-lg:[&_.bg-amber-50\\/90_.text-slate-700]:!text-amber-100/90",
+  "max-lg:[&_.bg-blue-50\\/70]:!bg-sky-950/40",
+  "max-lg:[&_.bg-blue-50\\/70_.text-slate-800]:!text-sky-50",
+  "max-lg:[&_.bg-blue-50\\/70_.text-slate-600]:!text-sky-200/90",
+  "max-lg:[&_.text-orange-700]:!text-orange-300"
 );
+
+/** Karta / panel ve výrobě (desktop světlý, mobil tmavý). */
+export const VYROBA_CARD = cn(
+  "border-slate-200 bg-white text-slate-900",
+  "max-lg:border-slate-700 max-lg:bg-slate-900/95 max-lg:text-slate-100"
+);
+
+/** Třídy pro kořen stránky Výroba. */
+export function vyrobaMobileShellClassName(extra?: string) {
+  return cn(VYROBA_MOBILE_PAGE_ROOT, VYROBA_MOBILE_NESTED_LIGHT_FIX, extra);
+}

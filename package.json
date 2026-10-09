@@ -17,6 +17,7 @@
     "test:lead-summary": "npx --yes tsx src/lib/leads/lead-summary.test.ts",
     "test:import-lead-sync": "npx --yes tsx src/lib/import-lead-sync.test.ts",
     "test:portal-permissions-manager": "npx --yes tsx src/lib/portal-permissions-manager.test.ts",
+    "test:labor-payroll-access": "npx --yes tsx src/lib/labor/labor-payroll-access.test.ts",
     "test:portal-analytics": "npx --yes tsx src/lib/portal-analytics/portal-analytics.test.ts",
     "postinstall": "node scripts/copy-pdf-fonts.mjs && node scripts/copy-pdf-worker.mjs && node scripts/copy-hikvision-jssdk.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",

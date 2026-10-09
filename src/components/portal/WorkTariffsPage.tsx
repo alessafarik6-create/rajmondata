@@ -18,6 +18,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
+import { resolveEffectivePortalPermissions } from "@/lib/portal-permissions";
+import { canManageOrganizationPayroll } from "@/lib/labor/labor-payroll-access";
 type WorkTariffDoc = {
   id: string;
   name: string;
@@ -40,10 +43,18 @@ export default function WorkTariffsSettingsPage() {
   );
   const { data: profile } = useDoc(userRef);
 
+  const role = String(profile?.role ?? "employee");
+  const ownEmployeeId = String(profile?.employeeId ?? "").trim() || null;
+  const portalPerms = usePortalPermissionsOptional();
+  const canManagePayroll = canManageOrganizationPayroll({
+    role,
+    employeeId: ownEmployeeId,
+    permissions:
+      portalPerms?.permissions ??
+      resolveEffectivePortalPermissions({ role }),
+  });
   const privileged =
-    profile?.role === "owner" ||
-    profile?.role === "admin" ||
-    profile?.globalRoles?.includes("super_admin");
+    canManagePayroll || profile?.globalRoles?.includes("super_admin");
 
   const tariffsCol = useMemoFirebase(
     () =>

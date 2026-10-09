@@ -77,6 +77,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Nedostatečná oprávnění." }, { status: 403 });
     }
 
+    const {
+      assertPayrollMutationAllowed,
+      assertPayrollTargetEmployee,
+      loadPayrollAccessContext,
+    } = await import("@/lib/labor/labor-payroll-access");
+    const payrollCtx = await loadPayrollAccessContext(db, portalAuth.caller);
+    const mut = assertPayrollMutationAllowed(payrollCtx);
+    if (!mut.ok) {
+      return NextResponse.json({ error: mut.error }, { status: mut.status });
+    }
+    const scope = assertPayrollTargetEmployee({ ctx: payrollCtx, targetEmployeeId: employeeId });
+    if (!scope.ok) {
+      return NextResponse.json({ error: scope.error }, { status: scope.status });
+    }
+
     const reviewerName =
       String(caller.displayName || "").trim() ||
       String(caller.email || "").trim() ||

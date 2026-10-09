@@ -68,6 +68,13 @@ import {
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
+import { resolveEffectivePortalPermissions } from "@/lib/portal-permissions";
+import {
+  canManageOrganizationPayroll,
+  canViewOthersPayrollData,
+  isSelfPayrollOnlyUser,
+} from "@/lib/labor/labor-payroll-access";
 import {
   filterActiveEmployees,
   filterEmployeesForAssignment,
@@ -158,8 +165,6 @@ import {
   deleteDebtAndAllPayments,
   recalculateDebtAfterPaymentsChange,
 } from "@/lib/employee-debt-recalc";
-
-const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
 
 function dayRowHasPayrollActivity(row: EmployeeDailyDetailRow): boolean {
   return (
@@ -373,25 +378,59 @@ function PayrollAdminPageInner() {
 
   const companyId = profile?.companyId as string | undefined;
   const role = profile?.role || "employee";
-  const { canRead: canReadLabor, canWrite: canWriteLabor } = usePortalModuleAccess("labor");
-  const canAccess = canReadLabor || PRIV_ROLES.includes(role);
-  const payrollMutationsDisabled = !canWriteLabor;
+  const ownEmployeeId = String(profile?.employeeId ?? "").trim();
+  const portalPermsCtx = usePortalPermissionsOptional();
+  const payrollAccessCtx = useMemo(
+    () => ({
+      role,
+      employeeId: ownEmployeeId || null,
+      permissions:
+        portalPermsCtx?.permissions ??
+        resolveEffectivePortalPermissions({ role }),
+    }),
+    [role, ownEmployeeId, portalPermsCtx?.permissions]
+  );
+  const selfPayrollOnly = isSelfPayrollOnlyUser(payrollAccessCtx);
+  const canViewOthersPayroll = canViewOthersPayrollData(payrollAccessCtx);
+  const canManagePayroll = canManageOrganizationPayroll(payrollAccessCtx);
+  const { canRead: canReadLabor } = usePortalModuleAccess("labor");
+  const canAccess =
+    canReadLabor &&
+    (canViewOthersPayroll ||
+      canManagePayroll ||
+      (selfPayrollOnly && !!ownEmployeeId));
+  const payrollMutationsDisabled = !canManagePayroll;
 
   const employeesQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
+    if (!firestore || !companyId || selfPayrollOnly) return null;
     return collection(firestore, "companies", companyId, "employees");
-  }, [firestore, companyId]);
+  }, [firestore, companyId, selfPayrollOnly]);
+
+  const ownEmployeeRef = useMemoFirebase(() => {
+    if (!firestore || !companyId || !selfPayrollOnly || !ownEmployeeId) return null;
+    return doc(firestore, "companies", companyId, "employees", ownEmployeeId);
+  }, [firestore, companyId, selfPayrollOnly, ownEmployeeId]);
 
   const { data: employeesRaw, isLoading: employeesLoading } =
     useCollection(employeesQuery);
+  const { data: ownEmployeeDoc, isLoading: ownEmployeeLoading } =
+    useDoc<any>(ownEmployeeRef);
 
   const employees = useMemo(() => {
+    if (selfPayrollOnly && ownEmployeeId) {
+      if (!ownEmployeeDoc) return [];
+      return [{ ...ownEmployeeDoc, id: ownEmployeeId }];
+    }
     const raw = Array.isArray(employeesRaw) ? employeesRaw : [];
     return raw.map((e: any) => ({
       ...e,
       id: String(e?.id ?? ""),
     }));
-  }, [employeesRaw]);
+  }, [selfPayrollOnly, ownEmployeeId, ownEmployeeDoc, employeesRaw]);
+
+  const employeesListLoading = selfPayrollOnly
+    ? ownEmployeeLoading
+    : employeesLoading;
 
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
 
@@ -442,6 +481,10 @@ function PayrollAdminPageInner() {
   }, [periodPreset, payrollYear, payrollMonth, customFromStr, customToStr]);
 
   useEffect(() => {
+    if (selfPayrollOnly) {
+      if (ownEmployeeId) setSelectedEmployeeId(ownEmployeeId);
+      return;
+    }
     const active = filterActiveEmployees(employees);
     if (active.length === 0) return;
     if (employeeFromUrl === "all") {
@@ -458,19 +501,43 @@ function PayrollAdminPageInner() {
     if (!selectedEmployeeId) {
       setSelectedEmployeeId(active[0].id);
     }
-  }, [employees, selectedEmployeeId, employeeFromUrl]);
+  }, [
+    employees,
+    selectedEmployeeId,
+    employeeFromUrl,
+    selfPayrollOnly,
+    ownEmployeeId,
+  ]);
 
   const blocksQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     const { startStr, endStr } = periodBounds;
+    const col = collection(firestore, "companies", companyId, "work_time_blocks");
+    if (selfPayrollOnly && ownEmployeeId) {
+      return query(
+        col,
+        where("employeeId", "==", ownEmployeeId),
+        where("date", ">=", startStr),
+        where("date", "<=", endStr),
+        orderBy("date", "desc"),
+        limit(6000)
+      );
+    }
     return query(
-      collection(firestore, "companies", companyId, "work_time_blocks"),
+      col,
       where("date", ">=", startStr),
       where("date", "<=", endStr),
       orderBy("date", "desc"),
       limit(6000)
     );
-  }, [firestore, companyId, periodBounds.startStr, periodBounds.endStr]);
+  }, [
+    firestore,
+    companyId,
+    periodBounds.startStr,
+    periodBounds.endStr,
+    selfPayrollOnly,
+    ownEmployeeId,
+  ]);
 
   const { data: blocksRaw, isLoading: blocksLoading } =
     useCollection(blocksQuery);
@@ -525,25 +592,63 @@ function PayrollAdminPageInner() {
   const dailyReportsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     const { startStr, endStr } = periodBounds;
+    const col = collection(firestore, "companies", companyId, "daily_work_reports");
+    if (selfPayrollOnly && ownEmployeeId) {
+      return query(
+        col,
+        where("employeeId", "==", ownEmployeeId),
+        where("date", ">=", startStr),
+        where("date", "<=", endStr),
+        orderBy("date", "desc"),
+        limit(6000)
+      );
+    }
     return query(
-      collection(firestore, "companies", companyId, "daily_work_reports"),
+      col,
       where("date", ">=", startStr),
       where("date", "<=", endStr),
       orderBy("date", "desc"),
       limit(6000)
     );
-  }, [firestore, companyId, periodBounds.startStr, periodBounds.endStr]);
+  }, [
+    firestore,
+    companyId,
+    periodBounds.startStr,
+    periodBounds.endStr,
+    selfPayrollOnly,
+    ownEmployeeId,
+  ]);
 
   const { data: dailyReportsRaw = [] } = useCollection(dailyReportsQuery);
 
   const payrollPaymentsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
+    const col = collection(
+      firestore,
+      "companies",
+      companyId,
+      "payroll_period_payments"
+    );
+    if (selfPayrollOnly && ownEmployeeId) {
+      return query(
+        col,
+        where("employeeId", "==", ownEmployeeId),
+        where("payrollPeriod", "==", periodBounds.payrollPeriod),
+        limit(50)
+      );
+    }
     return query(
-      collection(firestore, "companies", companyId, "payroll_period_payments"),
+      col,
       where("payrollPeriod", "==", periodBounds.payrollPeriod),
       limit(500)
     );
-  }, [firestore, companyId, periodBounds.payrollPeriod]);
+  }, [
+    firestore,
+    companyId,
+    periodBounds.payrollPeriod,
+    selfPayrollOnly,
+    ownEmployeeId,
+  ]);
 
   const { data: payrollPaymentsRaw = [] } =
     useCollection(payrollPaymentsQuery);
@@ -583,7 +688,8 @@ function PayrollAdminPageInner() {
   const { data: workSegmentsPayrollRaw = [] } =
     useCollection(workSegmentsPayrollQuery);
 
-  const payrollOverviewAllMode = selectedEmployeeId === "all";
+  const payrollOverviewAllMode =
+    canViewOthersPayroll && selectedEmployeeId === "all";
 
   const attendanceBulkQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !payrollOverviewAllMode) return null;
@@ -2348,13 +2454,19 @@ function PayrollAdminPageInner() {
     );
   }
 
-  if (!canAccess || !companyId) {
+  if (!companyId) {
+    return null;
+  }
+
+  if (!canAccess) {
     return (
       <Alert variant="destructive" className="max-w-lg">
         <AlertCircle className="h-4 w-4" />
         <AlertTitle>Přístup zamítnut</AlertTitle>
         <AlertDescription>
-          Tuto sekci mohou používat jen oprávněné role ve firmě.
+          {canReadLabor && selfPayrollOnly && !ownEmployeeId
+            ? "Účet není propojen se zaměstnancem — kontaktujte administrátora firmy."
+            : "Nemáte oprávnění k modulu Práce a mzdy."}
         </AlertDescription>
       </Alert>
     );
@@ -2367,10 +2479,12 @@ function PayrollAdminPageInner() {
           <Banknote className="mt-1 h-8 w-8 shrink-0 text-primary" />
           <div>
             <h1 className="text-2xl font-bold text-black sm:text-3xl">
-              Výplaty a výkazy
+              {selfPayrollOnly ? "Moje výplaty a výkazy" : "Výplaty a výkazy"}
             </h1>
             <p className="text-base text-slate-800">
-              Schvalování výkazu práce a správa záloh zaměstnance.
+              {selfPayrollOnly
+                ? "Přehled vašich schválených částek, výkazů, záloh a dluhů (pouze ke čtení)."
+                : "Schvalování výkazu práce a správa záloh zaměstnance."}
             </p>
           </div>
         </div>
@@ -2381,11 +2495,13 @@ function PayrollAdminPageInner() {
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div className="min-w-0">
               <CardTitle className="text-lg text-black">
-                Zaměstnanec a období
+                {selfPayrollOnly ? "Období" : "Zaměstnanec a období"}
               </CardTitle>
-              <p className="mt-1 text-xs text-slate-600">
-                Hromadné schválení a výplata za aktuální filtr (zaměstnanec + období).
-              </p>
+              {!selfPayrollOnly ? (
+                <p className="mt-1 text-xs text-slate-600">
+                  Hromadné schválení a výplata za aktuální filtr (zaměstnanec + období).
+                </p>
+              ) : null}
             </div>
             {!payrollMutationsDisabled ? (
             <div
@@ -2440,44 +2556,55 @@ function PayrollAdminPageInner() {
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="space-y-2">
-              <Label className="text-black">Hledat podle jména nebo e-mailu</Label>
-              <Input
-                className="h-12 border-slate-300 text-black"
-                placeholder="Začněte psát…"
-                value={employeeSearchQuery}
-                onChange={(e) => setEmployeeSearchQuery(e.target.value)}
-                disabled={employeesLoading || employees.length === 0}
-              />
+          {canViewOthersPayroll ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-2">
+                <Label className="text-black">Hledat podle jména nebo e-mailu</Label>
+                <Input
+                  className="h-12 border-slate-300 text-black"
+                  placeholder="Začněte psát…"
+                  value={employeeSearchQuery}
+                  onChange={(e) => setEmployeeSearchQuery(e.target.value)}
+                  disabled={employeesListLoading || employees.length === 0}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-black">Vyberte zaměstnance</Label>
+                <select
+                  className={cn(
+                    "h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black",
+                    "focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40"
+                  )}
+                  value={selectedEmployeeId}
+                  onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                  disabled={employeesListLoading || employees.length === 0}
+                >
+                  {employees.length === 0 ? (
+                    <option value="">— žádní zaměstnanci —</option>
+                  ) : (
+                    <>
+                      <option value="all">Všichni zaměstnanci (výkazy)</option>
+                      {employeesForSelect.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {formatEmployeeLabelWithInactiveState(e, e.id)}
+                          {e.jobTitle ? ` — ${e.jobTitle}` : ""}
+                        </option>
+                      ))}
+                    </>
+                  )}
+                </select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label className="text-black">Vyberte zaměstnance</Label>
-              <select
-                className={cn(
-                  "h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black",
-                  "focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40"
-                )}
-                value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                disabled={employeesLoading || employees.length === 0}
-              >
-                {employees.length === 0 ? (
-                  <option value="">— žádní zaměstnanci —</option>
-                ) : (
-                  <>
-                    <option value="all">Všichni zaměstnanci (výkazy)</option>
-                    {employeesForSelect.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {formatEmployeeLabelWithInactiveState(e, e.id)}
-                        {e.jobTitle ? ` — ${e.jobTitle}` : ""}
-                      </option>
-                    ))}
-                  </>
-                )}
-              </select>
+          ) : selfPayrollOnly ? (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-primary">
+                Moje výplaty
+              </p>
+              <p className="mt-1 text-sm font-semibold text-black">
+                Období: {periodBounds.label}
+              </p>
             </div>
-          </div>
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-2 sm:col-span-2 lg:col-span-1">

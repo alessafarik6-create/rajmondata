@@ -17,13 +17,14 @@ import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catal
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import { isCompanyPrivileged } from "@/lib/company-privilege";
 import { cn } from "@/lib/utils";
-import { VYROBA_MOBILE_NESTED_LIGHT_FIX, VYROBA_MOBILE_PAGE_ROOT } from "@/lib/production-mobile-ui";
+import {
+  VYROBA_CARD,
+  vyrobaMobileRootProps,
+  vyrobaMobileShellClassName,
+} from "@/lib/production-mobile-ui";
 import { ProductionActiveWorkersCard } from "@/components/production/production-active-workers-card";
 
-const CARD = cn(
-  "border-slate-200 bg-white text-slate-900",
-  "max-lg:border-slate-700 max-lg:bg-slate-900/95 max-lg:text-slate-100"
-);
+const CARD = VYROBA_CARD;
 
 type SafeJob = {
   jobId: string;
@@ -156,7 +157,10 @@ export default function VyrobaZakazkyListPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6">
+    <div
+      {...vyrobaMobileRootProps}
+      className={vyrobaMobileShellClassName("mx-auto w-full max-w-3xl space-y-6")}
+    >
       <div>
         <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl text-slate-900">
           Zakázky ve výrobě
@@ -190,7 +194,7 @@ export default function VyrobaZakazkyListPage() {
                 className="block rounded-lg border border-slate-200 bg-slate-50/80 p-4 transition-colors hover:border-primary/40 max-lg:border-slate-600 max-lg:bg-slate-800/80 max-lg:text-slate-100"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium text-slate-900">
+                  <span className="font-medium text-slate-900 max-lg:text-slate-50">
                     {j.displayLabel || j.name || j.jobId}
                   </span>
                   <div className="flex flex-wrap gap-2">

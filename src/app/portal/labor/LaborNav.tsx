@@ -6,6 +6,12 @@ import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
+import { resolveEffectivePortalPermissions } from "@/lib/portal-permissions";
+import {
+  canManageOrganizationPayroll,
+  canViewOthersPayrollData,
+} from "@/lib/labor/labor-payroll-access";
 
 const NAV = [
   {
@@ -13,11 +19,36 @@ const NAV = [
     label: "Přehled docházky",
     segment: "dochazka-prehled" as const,
     privilegedOnly: true as const,
+    payrollAdminOnly: false as const,
   },
-  { href: "/portal/labor/dochazka", label: "Docházka", segment: "dochazka" as const, privilegedOnly: false as const },
-  { href: "/portal/labor/vykazy", label: "Výkazy práce", segment: "vykazy" as const, privilegedOnly: false as const },
-  { href: "/portal/labor/vyplaty", label: "Výplaty", segment: "vyplaty" as const, privilegedOnly: false as const },
-  { href: "/portal/labor/tarify", label: "Tarify", segment: "tarify" as const, privilegedOnly: false as const },
+  {
+    href: "/portal/labor/dochazka",
+    label: "Docházka",
+    segment: "dochazka" as const,
+    privilegedOnly: false as const,
+    payrollAdminOnly: false as const,
+  },
+  {
+    href: "/portal/labor/vykazy",
+    label: "Výkazy práce",
+    segment: "vykazy" as const,
+    privilegedOnly: false as const,
+    payrollAdminOnly: false as const,
+  },
+  {
+    href: "/portal/labor/vyplaty",
+    label: "Výplaty",
+    segment: "vyplaty" as const,
+    privilegedOnly: false as const,
+    payrollAdminOnly: false as const,
+  },
+  {
+    href: "/portal/labor/tarify",
+    label: "Tarify",
+    segment: "tarify" as const,
+    privilegedOnly: false as const,
+    payrollAdminOnly: true as const,
+  },
 ];
 
 export function LaborNav() {
@@ -34,6 +65,22 @@ export function LaborNav() {
   );
   const { data: profile } = useDoc(userRef);
   const role = profile?.role ?? "employee";
+  const ownEmployeeId = String(profile?.employeeId ?? "").trim() || null;
+
+  const portalPerms = usePortalPermissionsOptional();
+  const payrollCtx = useMemo(
+    () => ({
+      role,
+      employeeId: ownEmployeeId,
+      permissions:
+        portalPerms?.permissions ??
+        resolveEffectivePortalPermissions({ role }),
+    }),
+    [role, ownEmployeeId, portalPerms?.permissions]
+  );
+
+  const canManagePayroll = canManageOrganizationPayroll(payrollCtx);
+  const canViewOthersPayroll = canViewOthersPayrollData(payrollCtx);
 
   const isLaborPrivileged =
     role === "owner" ||
@@ -42,9 +89,12 @@ export function LaborNav() {
     role === "accountant";
 
   const items = useMemo(() => {
-    if (isLaborPrivileged) return NAV;
-    return NAV.filter((n) => !n.privilegedOnly);
-  }, [isLaborPrivileged]);
+    return NAV.filter((item) => {
+      if (item.payrollAdminOnly) return canManagePayroll;
+      if (item.privilegedOnly) return isLaborPrivileged || canViewOthersPayroll;
+      return true;
+    });
+  }, [canManagePayroll, canViewOthersPayroll, isLaborPrivileged]);
 
   return (
     <nav

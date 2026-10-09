@@ -17,6 +17,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { formatDurationCs } from "@/lib/production-qr/format-duration-cs";
 import { formatDateCs, formatTimeCs } from "@/lib/production-qr/format-datetime-cs";
+import { VYROBA_CARD } from "@/lib/production-mobile-ui";
 
 type TaskRow = {
   id: string;
@@ -193,9 +194,11 @@ export function ProductionJobTasksSection({ jobId, jobDisplayName, canManage, ge
 
   return (
     <>
-      <Card className="border-slate-200 bg-white">
-        <CardHeader className="border-b border-slate-100 flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-base">Výrobní úkoly (QR čas)</CardTitle>
+      <Card className={VYROBA_CARD}>
+        <CardHeader className="flex flex-row items-center justify-between gap-2 border-b border-slate-100 max-lg:border-slate-700">
+          <CardTitle className="text-base text-slate-900 max-lg:text-slate-50">
+            Výrobní úkoly (QR čas)
+          </CardTitle>
           {canManage ? (
             <Button type="button" size="sm" className="gap-1" onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" /> Úkol
@@ -216,7 +219,7 @@ export function ProductionJobTasksSection({ jobId, jobDisplayName, canManage, ge
               {tasks.map((t) => (
                 <div
                   key={t.id}
-                  className="rounded-lg border border-slate-200 p-3 flex flex-col gap-2"
+                  className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 max-lg:border-slate-600 max-lg:bg-slate-800/90 max-lg:text-slate-100"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -230,7 +233,9 @@ export function ProductionJobTasksSection({ jobId, jobDisplayName, canManage, ge
                     ) : null}
                   </div>
                   {t.description ? (
-                    <p className="text-sm text-slate-600 line-clamp-2">{t.description}</p>
+                    <p className="line-clamp-2 text-sm text-slate-600 max-lg:text-slate-300">
+                      {t.description}
+                    </p>
                   ) : null}
                   <div className="flex flex-wrap gap-2 mt-auto">
                     <Button type="button" size="sm" variant="outline" onClick={() => setQrTask(t)}>
@@ -267,17 +272,23 @@ export function ProductionJobTasksSection({ jobId, jobDisplayName, canManage, ge
                 Celkem: {formatDurationCs(report.totalSeconds)}
               </p>
               {report.byTask.map((row) => (
-                <div key={row.taskId} className="rounded-md bg-slate-50 p-3 text-sm space-y-2">
-                  <p className="font-medium">
+                <div
+                  key={row.taskId}
+                  className="space-y-2 rounded-md bg-slate-50 p-3 text-sm max-lg:bg-slate-800/80 max-lg:text-slate-100"
+                >
+                  <p className="font-medium max-lg:text-slate-50">
                     {row.taskName}
-                    <span className="text-muted-foreground font-normal">
+                    <span className="font-normal text-muted-foreground max-lg:text-slate-400">
                       {" "}
                       · Celkem {formatDurationCs(row.totalSeconds)}
                     </span>
                   </p>
                   {row.byEmployee.map((e) => (
-                    <div key={e.employeeId} className="pl-2 space-y-1 border-l-2 border-slate-200">
-                      <p className="font-medium text-slate-800">
+                    <div
+                      key={e.employeeId}
+                      className="space-y-1 border-l-2 border-slate-200 pl-2 max-lg:border-slate-600"
+                    >
+                      <p className="font-medium text-slate-800 max-lg:text-slate-200">
                         {e.employeeName} · {formatDurationCs(e.seconds)}
                       </p>
                       {(e.sessions ?? []).map((s) => (

@@ -49,8 +49,16 @@ import {
 import { buildProductionAttachmentStorageObjectPath } from "@/lib/job-photo-upload";
 import { getJobMediaFileTypeFromFile } from "@/lib/job-media-types";
 import { InventoryItemThumbnail } from "@/components/warehouse/inventory-item-thumbnail";
+import {
+  VYROBA_CARD,
+  VYROBA_MOBILE_PRIMARY,
+  VYROBA_MOBILE_SECONDARY,
+  vyrobaMobileRootProps,
+  vyrobaMobileShellClassName,
+} from "@/lib/production-mobile-ui";
+import { cn } from "@/lib/utils";
 
-const CARD = "border-slate-200 bg-white text-slate-900";
+const CARD = VYROBA_CARD;
 
 const STATUSES: ProductionStatus[] = ["new", "ready", "in_progress", "done"];
 
@@ -277,9 +285,18 @@ export default function VyrobaDetailPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6">
+    <div
+      {...vyrobaMobileRootProps}
+      className={vyrobaMobileShellClassName("mx-auto w-full max-w-4xl space-y-6")}
+    >
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" variant="outline" size="sm" className="gap-2" asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={cn("gap-2", VYROBA_MOBILE_SECONDARY)}
+          asChild
+        >
           <Link href="/portal/vyroba">
             <ArrowLeft className="h-4 w-4" /> Seznam výrob
           </Link>
@@ -287,7 +304,7 @@ export default function VyrobaDetailPage() {
       </div>
 
       {prod.jobId ? (
-        <Card className="border-amber-300 bg-amber-50/90 text-slate-900">
+        <Card className="border-amber-300 bg-amber-50/90 text-slate-900 max-lg:border-amber-600/50">
           <CardContent className="py-4 text-sm space-y-2">
             <p className="font-medium">Skutečná výroba u zakázky (materiál, řezy, zbytky, podklady)</p>
             <p className="text-slate-700">
@@ -334,10 +351,10 @@ export default function VyrobaDetailPage() {
             onValueChange={(v) => void setStatus(v as ProductionStatus)}
             disabled={saving}
           >
-            <SelectTrigger className="bg-white border-slate-200 max-w-xs">
+            <SelectTrigger className="max-w-xs border-slate-200 bg-white max-lg:border-slate-600 max-lg:bg-slate-800 max-lg:text-slate-100">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-white border-slate-200">
+            <SelectContent className="border-slate-200 bg-white">
               {STATUSES.map((s) => (
                 <SelectItem key={s} value={s}>
                   {PRODUCTION_STATUS_LABELS[s]}

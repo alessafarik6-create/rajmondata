@@ -574,7 +574,7 @@ export function ProductionJobTopExtras(props: {
               <Label className="text-xs">Poznámka</Label>
               <Textarea value={quickNote} onChange={(e) => setQuickNote(e.target.value)} className="min-h-[56px] text-sm" />
             </div>
-            <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-700">
+            <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-700 max-lg:text-slate-300">
               <Checkbox checked={includeJobCtx} onCheckedChange={(c) => setIncludeJobCtx(c === true)} />
               <span>Přidat do PDF kontext zakázky / zákazníka ({props.jobLabel})</span>
             </label>
