@@ -25,7 +25,6 @@ import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import {
   Loader2,
   AlertCircle,
-  Bell,
   CalendarDays,
   ClipboardList,
   Clock,
@@ -45,9 +44,6 @@ import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
 import { EmployeeAttendanceOverview } from "./employee-attendance-overview";
 import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
-import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
-import { Badge } from "@/components/ui/badge";
-import { useEmployeeNotificationUnreadCount } from "@/hooks/use-employee-notification-unread-count";
 import { usePortalPermissions } from "@/contexts/portal-permissions-context";
 
 const DEBUG_EMPLOYEE_HOME = process.env.NODE_ENV === "development";
@@ -71,10 +67,6 @@ export default function EmployeeHomePage() {
 
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
-  const { unreadCount: homeNotifUnread } = useEmployeeNotificationUnreadCount({
-    companyId,
-    employeeId,
-  });
   const { calendar, canRead } = usePortalPermissions();
   const showCalendarBlock = calendar.anyView;
   const calendarBlockTitle =
@@ -314,9 +306,6 @@ export default function EmployeeHomePage() {
           ? "Zatím žádný výkaz"
           : `${dailyReportsSorted.length} záznamů · schváleno ${formatKc(dailyReportStats.approvedAmount)}`;
 
-  const defaultOpenSections =
-    homeNotifUnread > 0 ? ["notifications"] : undefined;
-
   const dailyReportsPreview = (
     <div className="space-y-3 text-sm text-slate-800">
       <p className="text-xs text-slate-600">
@@ -435,13 +424,6 @@ export default function EmployeeHomePage() {
       <EmployeeCompactHeader
         title={`${t("goodDay")}, ${greetingName}!`}
         subtitle={headerSubtitle}
-        badge={
-          homeNotifUnread > 0 ? (
-            <Badge variant="destructive" className="text-[10px] font-semibold tabular-nums sm:text-xs">
-              {homeNotifUnread > 99 ? "99+" : homeNotifUnread} nepřečtených
-            </Badge>
-          ) : null
-        }
       />
 
       <EmployeeStatGrid>
@@ -474,14 +456,9 @@ export default function EmployeeHomePage() {
               : "Žádné čekající"
           }
         />
-        <EmployeeStatTile
-          label="Upozornění"
-          value={homeNotifUnread}
-          hint={homeNotifUnread > 0 ? "Nepřečtená upozornění" : "Vše přečteno"}
-        />
       </EmployeeStatGrid>
 
-      <EmployeePortalSections defaultValue={defaultOpenSections}>
+      <EmployeePortalSections>
         {showCalendarBlock ? (
           <EmployeePortalSection
             value="calendar"
@@ -515,19 +492,6 @@ export default function EmployeeHomePage() {
             />
           </EmployeePortalSection>
         ) : null}
-
-        <EmployeePortalSection
-          value="notifications"
-          icon={Bell}
-          title="Upozornění"
-          summary={
-            homeNotifUnread > 0
-              ? `${homeNotifUnread} nepřečtených`
-              : "Kalendář a systémová upozornění"
-          }
-        >
-          <EmployeeNotificationsPanel companyId={companyId} employeeId={employeeId} compact />
-        </EmployeePortalSection>
 
         {user && showAttendance ? (
           <EmployeePortalSection

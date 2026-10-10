@@ -31,6 +31,12 @@ import { openPortalNotification } from "@/lib/portal-notification-open";
 import { useDoc, useMemoFirebase, useUser, useFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { resolveNotificationTarget } from "@/lib/notification-target";
+import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
+import {
+  EmployeeCompactHeader,
+  EmployeePortalPageShell,
+} from "@/components/employee-portal/employee-portal-ui";
+import { ArrowLeft } from "lucide-react";
 
 type FilterKey =
   | "all"
@@ -100,6 +106,8 @@ export default function PortalNotificationsPage() {
   );
   const { data: profile } = useDoc(userRef);
   const role = String((profile as { role?: string } | undefined)?.role ?? "").trim();
+  const companyId = (profile as { companyId?: string } | undefined)?.companyId;
+  const employeeId = (profile as { employeeId?: string } | undefined)?.employeeId;
 
   const [pushBusy, setPushBusy] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
@@ -405,6 +413,34 @@ export default function PortalNotificationsPage() {
       </li>
     );
   };
+
+  if (role === "employee" && companyId && employeeId) {
+    return (
+      <EmployeePortalPageShell className="max-w-2xl">
+        {belowLg ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mb-1 -ml-1 h-9 gap-1 px-2 text-slate-700"
+            onClick={() => router.back()}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Zpět
+          </Button>
+        ) : null}
+        <EmployeeCompactHeader
+          title="Upozornění"
+          subtitle="Kalendář, školení a systémová oznámení pro vás"
+        />
+        <EmployeeNotificationsPanel
+          fullPage
+          companyId={companyId}
+          employeeId={employeeId}
+        />
+      </EmployeePortalPageShell>
+    );
+  }
 
   return (
     <>

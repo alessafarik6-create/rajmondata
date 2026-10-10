@@ -22,6 +22,7 @@ import Link from 'next/link';
 import { signOut } from 'firebase/auth';
 import { doc } from 'firebase/firestore';
 import { useUnreadEmployeeChatCount } from '@/hooks/use-unread-employee-chat';
+import { useEmployeeNotificationUnreadCount } from '@/hooks/use-employee-notification-unread-count';
 import { usePortalNotificationsSafe } from '@/components/portal/portal-notifications-context';
 import { cn } from "@/lib/utils";
 import { AdminNotificationsBell } from "@/components/admin/admin-notifications-bell";
@@ -47,6 +48,13 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   const { count: unreadChatCount, showBadge: showChatBadge } =
     useUnreadEmployeeChatCount();
   const { unreadCount: portalNotifyCount } = usePortalNotificationsSafe();
+  const isEmployeeRole = String(profile?.role ?? "") === "employee";
+  const employeeCompanyId = profile?.companyId as string | undefined;
+  const employeeIdForNotif = profile?.employeeId as string | undefined;
+  const { unreadCount: employeeInboxUnread } = useEmployeeNotificationUnreadCount({
+    companyId: employeeCompanyId,
+    employeeId: employeeIdForNotif,
+  });
 
   const isAdminArea = pathname?.startsWith('/admin');
   const isEmployeePortal = pathname?.startsWith('/portal/employee');
@@ -72,6 +80,11 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
     : isEmployeePortal
       ? "/portal/employee/messages"
       : "/portal/chat";
+
+  const headerBellCount =
+    isEmployeePortal && isEmployeeRole
+      ? employeeInboxUnread
+      : portalNotifyCount;
   useEffect(() => {
     if (!isAdminArea) return;
     fetch('/api/superadmin/session')
@@ -221,9 +234,9 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
           <Button asChild variant="ghost" size="icon" className={iconBtnClass}>
             <Link href="/portal/notifications" aria-label="Oznámení portálu">
               <Bell className="w-5 h-5" />
-              {portalNotifyCount > 0 ? (
+              {headerBellCount > 0 ? (
                 <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-bold leading-none text-slate-950 shadow-sm">
-                  {portalNotifyCount > 99 ? "99+" : portalNotifyCount}
+                  {headerBellCount > 99 ? "99+" : headerBellCount}
                 </span>
               ) : null}
             </Link>

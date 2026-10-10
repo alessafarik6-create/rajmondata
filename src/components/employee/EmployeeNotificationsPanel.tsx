@@ -45,10 +45,13 @@ export function EmployeeNotificationsPanel(props: {
   companyId: string | undefined;
   employeeId: string | undefined;
   compact?: boolean;
+  /** Celostránkový režim (zvoneček) — bez vnořené karty. */
+  fullPage?: boolean;
 }) {
-  const { companyId, employeeId, compact } = props;
+  const { companyId, employeeId, compact, fullPage } = props;
   const firestore = useFirestore();
   const [filter, setFilter] = useState<"all" | "unread" | "important">("all");
+  const [markAllBusy, setMarkAllBusy] = useState(false);
 
   const { sortedDocs, unreadCount, isLoading, error, isIndexPending } =
     useEmployeeNotificationsInbox({ companyId, employeeId });
@@ -102,26 +105,53 @@ export function EmployeeNotificationsPanel(props: {
     );
   };
 
-  return (
-    <Card className={cn(compact && "border-slate-200")}>
-      <CardHeader className={cn(compact ? "py-3" : "pb-2")}>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+  const markAllRead = async () => {
+    if (!firestore || !companyId || unreadCount === 0) return;
+    setMarkAllBusy(true);
+    try {
+      const unread = items.filter((i) => !i.isRead);
+      await Promise.all(unread.map((i) => markRead(i.id)));
+    } finally {
+      setMarkAllBusy(false);
+    }
+  };
+
+  const headerBlock = (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        {!fullPage ? (
           <CardTitle className={cn("text-base", !compact && "text-lg")}>
             Upozornění
           </CardTitle>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
           <p className="text-xs text-muted-foreground">
             Nepřečtené: <strong>{unreadCount}</strong>
           </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 text-xs"
+            disabled={markAllBusy || unreadCount === 0}
+            onClick={() => void markAllRead()}
+          >
+            {markAllBusy ? "Ukládám…" : "Označit vše jako přečtené"}
+          </Button>
         </div>
-        <Tabs value={filter} onValueChange={(v) => setFilter(v as any)}>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="all">Vše</TabsTrigger>
-            <TabsTrigger value="unread">Nepřečtené</TabsTrigger>
-            <TabsTrigger value="important">Důležité</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </CardHeader>
-      <CardContent className={cn(compact ? "pt-0" : "")}>
+      </div>
+      <Tabs value={filter} onValueChange={(v) => setFilter(v as any)}>
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="all">Vše</TabsTrigger>
+          <TabsTrigger value="unread">Nepřečtené</TabsTrigger>
+          <TabsTrigger value="important">Důležité</TabsTrigger>
+        </TabsList>
+      </Tabs>
+    </div>
+  );
+
+  const listBlock = (
+    <>
         {isIndexPending || (error != null && isFirestoreIndexError(error)) ? (
           <Alert className="border-amber-300 bg-amber-50 text-amber-950">
             <AlertCircle className="h-4 w-4" />
@@ -206,7 +236,22 @@ export function EmployeeNotificationsPanel(props: {
             ))}
           </ul>
         ) : null}
-      </CardContent>
+    </>
+  );
+
+  if (fullPage) {
+    return (
+      <div className="space-y-3">
+        {headerBlock}
+        {listBlock}
+      </div>
+    );
+  }
+
+  return (
+    <Card className={cn(compact && "border-slate-200")}>
+      <CardHeader className={cn(compact ? "py-3" : "pb-2")}>{headerBlock}</CardHeader>
+      <CardContent className={cn(compact ? "pt-0" : "")}>{listBlock}</CardContent>
     </Card>
   );
 }

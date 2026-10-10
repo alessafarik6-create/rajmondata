@@ -196,7 +196,7 @@ export function EmployeePortalSidebar({ mobileSheetClose }: EmployeePortalSideba
             >
               <link.icon className="w-5 h-5 shrink-0" />
               <span className="min-w-0 flex-1 truncate text-left">{link.label}</span>
-              {link.href === "/portal/employee" && employeeNotifUnread > 0 ? (
+              {link.href === "/portal/notifications" && employeeNotifUnread > 0 ? (
                 <Badge
                   variant="destructive"
                   className="ml-auto shrink-0 px-1.5 text-[10px] tabular-nums"
@@ -213,7 +213,7 @@ export function EmployeePortalSidebar({ mobileSheetClose }: EmployeePortalSideba
             >
               <link.icon className="w-5 h-5 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{link.label}</span>
-              {link.href === "/portal/employee" && employeeNotifUnread > 0 ? (
+              {link.href === "/portal/notifications" && employeeNotifUnread > 0 ? (
                 <Badge
                   variant="destructive"
                   className="ml-auto shrink-0 px-1.5 text-[10px] tabular-nums"

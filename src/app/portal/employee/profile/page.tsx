@@ -35,10 +35,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import Link from "next/link";
-import { EmployeeDebtsReadonlySection } from "@/components/portal/employee-debts-readonly";
-import { employeeDebtSelfViewAllowed } from "@/lib/employee-debt-visibility";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
 
 const DEBUG = process.env.NODE_ENV === "development";
 import { LIGHT_FORM_CONTROL_CLASS } from "@/lib/light-form-control-classes";
@@ -111,11 +108,6 @@ export default function EmployeeProfilePage() {
     return false;
   }, [company]);
 
-  const allowEmployeeDebtSelfView = useMemo(
-    () => employeeDebtSelfViewAllowed(company),
-    [company]
-  );
-
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
@@ -171,8 +163,6 @@ export default function EmployeeProfilePage() {
   const [empBankSaving, setEmpBankSaving] = useState(false);
   const belowLg = useIsBelowLg();
   const [bankSectionOpen, setBankSectionOpen] = useState(false);
-  const [debtsSectionOpen, setDebtsSectionOpen] = useState(false);
-
   const { t, lang: uiLang } = useEmployeeUiLang(profile);
 
   const employeeBankSnapshotKey = useMemo(
@@ -621,12 +611,6 @@ export default function EmployeeProfilePage() {
         </p>
       </div>
 
-      <EmployeeNotificationsPanel
-        companyId={companyId}
-        employeeId={employeeId}
-        compact
-      />
-
       <Card className="bg-white border-slate-200 shadow-sm">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">E-mail</CardTitle>
@@ -1064,39 +1048,6 @@ export default function EmployeeProfilePage() {
               )}
             </CardContent>
           </Card>
-        )
-      ) : null}
-
-      {companyId && employeeId && allowEmployeeDebtSelfView ? (
-        belowLg ? (
-          <Collapsible open={debtsSectionOpen} onOpenChange={setDebtsSectionOpen}>
-            <CollapsibleTrigger asChild>
-              <button
-                type="button"
-                className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm"
-              >
-                <span className="text-base font-semibold text-black">Vlastní dluhy</span>
-                <ChevronDown
-                  className={cn(
-                    "h-5 w-5 shrink-0 text-slate-600 transition-transform",
-                    debtsSectionOpen && "rotate-180"
-                  )}
-                />
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="mt-2 max-w-full overflow-x-hidden [&_button]:h-8 [&_button]:min-h-8 [&_button]:rounded-lg [&_button]:px-3 [&_button]:text-xs">
-                <EmployeeDebtsReadonlySection
-                  hideHeader
-                  className="shadow-md"
-                  companyId={companyId}
-                  employeeId={employeeId}
-                />
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        ) : (
-          <EmployeeDebtsReadonlySection companyId={companyId} employeeId={employeeId} />
         )
       ) : null}
 

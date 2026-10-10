@@ -10,7 +10,8 @@ import {
   useCompany,
 } from "@/firebase";
 import { doc, collection, query, where, limit } from "firebase/firestore";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
+import { startOfMonth } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -48,15 +49,25 @@ import {
 } from "@/components/ui/table";
 import { JOB_TERMINAL_AUTO_APPROVAL_SOURCE } from "@/lib/job-terminal-auto-shared";
 import { employeeDebtSelfViewAllowed } from "@/lib/employee-debt-visibility";
-import Link from "next/link";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   EmployeeCompactHeader,
   EmployeeMobileRecordRow,
   EmployeePortalPageShell,
-  EmployeeStatGrid,
-  EmployeeStatTile,
 } from "@/components/employee-portal/employee-portal-ui";
+import { EmployeeDebtsReadonlySection } from "@/components/portal/employee-debts-readonly";
+import {
+  EmployeeMoneyExpandableBlock,
+  EmployeeMoneyPeriodPicker,
+  EmployeeMoneySummaryCard,
+  formatAdvancePeriodSummary,
+} from "@/components/employee-portal/employee-money-ui";
+import {
+  formatMoneyPeriodCaption,
+  periodIsoBounds,
+  resolveEmployeeMoneyPeriod,
+  type MoneyPeriodPreset,
+} from "@/lib/employee-money-period";
 
 const MONEY_FETCH_LIMIT = 3000;
 
@@ -529,6 +540,127 @@ export default function EmployeeMoneyPage() {
     });
   }, [blocksMoney]);
 
+  const [periodPreset, setPeriodPreset] = useState<MoneyPeriodPreset>("this_month");
+  const [customFrom, setCustomFrom] = useState(() =>
+    format(startOfMonth(new Date()), "yyyy-MM-dd")
+  );
+  const [customTo, setCustomTo] = useState(() => format(new Date(), "yyyy-MM-dd"));
+
+  const moneyPeriodRange = useMemo(() => {
+    if (periodPreset === "custom") {
+      try {
+        const from = parseISO(customFrom);
+        const to = parseISO(customTo);
+        if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
+          return resolveEmployeeMoneyPeriod("custom", new Date(), { from, to });
+        }
+      } catch {
+        /* fallback */
+      }
+    }
+    return resolveEmployeeMoneyPeriod(periodPreset);
+  }, [periodPreset, customFrom, customTo]);
+
+  const { startIso: periodStartIso, endIso: periodEndIso } = useMemo(
+    () => periodIsoBounds(moneyPeriodRange),
+    [moneyPeriodRange]
+  );
+  const periodCaption = formatMoneyPeriodCaption(moneyPeriodRange);
+
+  const periodDetailTotals = useMemo(() => {
+    if (!employeeLiteMoney) return null;
+    const att = attendanceRowsMoney.filter((r) =>
+      rowInDateRange(r, periodStartIso, periodEndIso)
+    );
+    const dr = dailyReportsMoney.filter((r) =>
+      rowInDateRange(r, periodStartIso, periodEndIso)
+    );
+    const wb = blocksMoney.filter((b) => rowInDateRange(b, periodStartIso, periodEndIso));
+    const seg = workSegmentsMoney.filter((s) =>
+      rowInDateRange(s, periodStartIso, periodEndIso)
+    );
+    const rows = buildEmployeeDailyDetailRows({
+      range: moneyPeriodRange,
+      employee: employeeLiteMoney,
+      attendanceRaw: att,
+      dailyReports: dr,
+      workBlocks: wb,
+      segments: seg,
+    });
+    return totalsFromDailyDetailRows(rows);
+  }, [
+    employeeLiteMoney,
+    attendanceRowsMoney,
+    dailyReportsMoney,
+    blocksMoney,
+    workSegmentsMoney,
+    moneyPeriodRange,
+    periodStartIso,
+    periodEndIso,
+  ]);
+
+  const advancesInPeriod = useMemo(
+    () =>
+      sortedAdvances.filter((a) =>
+        rowInDateRange({ date: a.date }, periodStartIso, periodEndIso)
+      ),
+    [sortedAdvances, periodStartIso, periodEndIso]
+  );
+
+  const advanceSumInPeriod = useMemo(
+    () =>
+      Math.round(
+        advancesInPeriod.reduce((s, a) => s + (Number(a.amount) || 0), 0) * 100
+      ) / 100,
+    [advancesInPeriod]
+  );
+
+  const paidAdvancesInPeriod = useMemo(
+    () => sumPaidAdvances(advancesInPeriod),
+    [advancesInPeriod]
+  );
+
+  const blocksInPeriod = useMemo(
+    () =>
+      sortedBlocks.filter((b) => rowInDateRange(b, periodStartIso, periodEndIso)),
+    [sortedBlocks, periodStartIso, periodEndIso]
+  );
+
+  const debtPaymentsInPeriod = useMemo(() => {
+    const raw = (Array.isArray(debtPaymentsRaw) ? debtPaymentsRaw : []) as {
+      date?: string;
+      amount?: number;
+    }[];
+    return raw.filter((p) => rowInDateRange(p, periodStartIso, periodEndIso));
+  }, [debtPaymentsRaw, periodStartIso, periodEndIso]);
+
+  const repaidInPeriod = useMemo(
+    () =>
+      Math.round(
+        debtPaymentsInPeriod.reduce((s, p) => s + (Number(p?.amount) || 0), 0) * 100
+      ) / 100,
+    [debtPaymentsInPeriod]
+  );
+
+  const debtsCreatedInPeriod = useMemo(() => {
+    const raw = (Array.isArray(debtsRaw) ? debtsRaw : []) as { date?: string; amount?: number }[];
+    return raw.filter((d) => rowInDateRange(d, periodStartIso, periodEndIso));
+  }, [debtsRaw, periodStartIso, periodEndIso]);
+
+  const debtsCreatedInPeriodSum = useMemo(
+    () =>
+      Math.round(
+        debtsCreatedInPeriod.reduce((s, d) => s + (Number(d?.amount) || 0), 0) * 100
+      ) / 100,
+    [debtsCreatedInPeriod]
+  );
+
+  const allTimeCaption = useMemo(() => {
+    if (!rangeStrAll.start || !rangeStrAll.end) return "Celkem za celou dobu";
+    if (rangeStrAll.start === rangeStrAll.end) return `Celkem za celou dobu (${rangeStrAll.start})`;
+    return `Celkem za celou dobu (${format(parseISO(rangeStrAll.start), "d. M. yyyy")} – ${format(parseISO(rangeStrAll.end), "d. M. yyyy")})`;
+  }, [rangeStrAll.start, rangeStrAll.end]);
+
   if (isUserLoading || !user) {
     return (
       <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-800">
@@ -606,186 +738,240 @@ export default function EmployeeMoneyPage() {
         </Alert>
       )}
 
-      <EmployeeStatGrid className="sm:grid-cols-2 lg:grid-cols-4">
-        <EmployeeStatTile
-          label="Hodinová sazba"
-          value={hourlyRate > 0 ? `${hourlyRate} Kč/h` : "—"}
-          hint={hourlyRate <= 0 ? "Domluvte se s administrátorem" : undefined}
-        />
-        <EmployeeStatTile
-          label="Schválené hodiny"
-          value={blocksLoading ? "…" : `${approvedHoursTotal} h`}
-          hint={
-            !blocksLoading && pendingHoursTotal > 0
-              ? `Čeká: ${pendingHoursTotal} h`
-              : undefined
-          }
-        />
-        <EmployeeStatTile
-          label="Vyplaceno (zálohy)"
-          value={advancesLoading ? "…" : formatKc(paidTotal)}
-        />
-        <EmployeeStatTile
-          label="Zbývá k vyplacení"
-          value={moneyDataLoading || advancesLoading ? "…" : formatKc(remaining)}
-          hint={moneyDataLoading ? undefined : `Celkem ${formatKc(earnedAll)}`}
-        />
-      </EmployeeStatGrid>
+      <EmployeeMoneyPeriodPicker
+        preset={periodPreset}
+        onPresetChange={setPeriodPreset}
+        customFrom={customFrom}
+        customTo={customTo}
+        onCustomFromChange={setCustomFrom}
+        onCustomToChange={setCustomTo}
+        range={moneyPeriodRange}
+      />
 
-      <Tabs defaultValue="advances" className="space-y-3">
+      <Tabs defaultValue="reports" className="space-y-3">
         <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-slate-100/80 p-1">
-          <TabsTrigger value="advances" className="text-xs sm:text-sm">
-            Zálohy
-          </TabsTrigger>
-          <TabsTrigger value="reports" className="text-xs sm:text-sm">
+          <TabsTrigger value="reports" className="min-h-[40px] flex-1 text-xs sm:flex-none sm:text-sm">
             Výkazy
           </TabsTrigger>
-          <TabsTrigger value="summary" className="text-xs sm:text-sm">
-            Souhrn
+          <TabsTrigger value="advances" className="min-h-[40px] flex-1 text-xs sm:flex-none sm:text-sm">
+            Zálohy
           </TabsTrigger>
           {showDebtSummary ? (
-            <TabsTrigger value="debts" className="text-xs sm:text-sm">
+            <TabsTrigger value="debts" className="min-h-[40px] flex-1 text-xs sm:flex-none sm:text-sm">
               Dluhy
             </TabsTrigger>
           ) : null}
+          <TabsTrigger value="summary" className="min-h-[40px] flex-1 text-xs sm:flex-none sm:text-sm">
+            Celkový přehled
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="summary" className="mt-0">
+        <TabsContent value="summary" className="mt-0 space-y-3">
           <Card className="border-slate-200 bg-white shadow-sm">
             <CardHeader className="pb-2">
               <CardTitle className="text-base text-slate-900">Celkový přehled</CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="text-xs font-semibold text-slate-700">Celkem vyděláno</p>
-                <p className="mt-1 text-lg font-bold text-slate-900">
-                  {moneyDataLoading ? "…" : formatKc(earnedAll)}
-                </p>
-                <p className="text-[11px] text-slate-600">
-                  Docházka, tarify a schválené výkazy
-                </p>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="text-xs font-semibold text-slate-700">Dnes / týden / měsíc</p>
-                <p className="mt-1 text-sm text-slate-900">
-                  {moneyDataLoading
+            <CardContent className="grid gap-2 sm:grid-cols-2">
+              <EmployeeMoneySummaryCard
+                title="Odpracováno"
+                value={
+                  moneyDataLoading || !periodDetailTotals
                     ? "…"
-                    : `${formatKc(earnedToday)} · ${formatKc(earnedWeek)} · ${formatKc(earnedMonth)}`}
-                </p>
-              </div>
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-                <p className="text-xs font-semibold text-emerald-900">Zbývá k vyplacení</p>
-                <p className="mt-1 text-lg font-bold text-slate-900">
-                  {moneyDataLoading || advancesLoading ? "…" : formatKc(remaining)}
-                </p>
-              </div>
+                    : `${periodDetailTotals.hours.toLocaleString("cs-CZ")} h`
+                }
+                periodLabel={periodCaption}
+              />
+              <EmployeeMoneySummaryCard
+                title="Orientační výdělek"
+                value={
+                  moneyDataLoading || !periodDetailTotals
+                    ? "…"
+                    : formatKc(periodDetailTotals.orientacniKc)
+                }
+                periodLabel={periodCaption}
+              />
+              <EmployeeMoneySummaryCard
+                title="Schválený výdělek"
+                value={
+                  moneyDataLoading || !periodDetailTotals
+                    ? "…"
+                    : formatKc(periodDetailTotals.approvedKc)
+                }
+                periodLabel={periodCaption}
+              />
+              <EmployeeMoneySummaryCard
+                title="Vyplacené zálohy"
+                value={advancesLoading ? "…" : formatKc(paidAdvancesInPeriod)}
+                periodLabel={periodCaption}
+              />
+              {showDebtSummary ? (
+                <>
+                  <EmployeeMoneySummaryCard
+                    title="Splátky dluhů (ve vybraném období)"
+                    value={formatKc(repaidInPeriod)}
+                    periodLabel={periodCaption}
+                  />
+                  <EmployeeMoneySummaryCard
+                    title="Dluhy vzniklé ve vybraném období"
+                    value={formatKc(debtsCreatedInPeriodSum)}
+                    periodLabel={periodCaption}
+                  />
+                  <EmployeeMoneySummaryCard
+                    title="Zbývá doplatit (dluhy)"
+                    value={formatKc(debtRemaining)}
+                    allTimeHint={allTimeCaption}
+                    className="sm:col-span-2 border-rose-200 bg-rose-50/50"
+                  />
+                </>
+              ) : null}
+              <EmployeeMoneySummaryCard
+                title="Zbývá k vyplacení (výdělek − zálohy)"
+                value={moneyDataLoading || advancesLoading ? "…" : formatKc(remaining)}
+                allTimeHint={allTimeCaption}
+                className="sm:col-span-2 border-emerald-200 bg-emerald-50/50"
+              />
+              <EmployeeMoneySummaryCard
+                title="Schválený výdělek celkem"
+                value={moneyDataLoading ? "…" : formatKc(earnedAll)}
+                allTimeHint={allTimeCaption}
+              />
+              <EmployeeMoneySummaryCard
+                title="Hodinová sazba"
+                value={hourlyRate > 0 ? `${hourlyRate} Kč/h` : "—"}
+                allTimeHint="Platí pro výpočty dle nastavení účtu"
+              />
             </CardContent>
           </Card>
         </TabsContent>
 
         {showDebtSummary ? (
-          <TabsContent value="debts" className="mt-0">
-            <Card className="border-rose-200 bg-rose-50/40 shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base text-rose-950">Dluhy (souhrn)</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm text-rose-950">
-                <p>
-                  Celkem {formatKc(debtTotal)} · splaceno {formatKc(debtRepaid)} · zbývá{" "}
-                  {formatKc(debtRemaining)}
-                </p>
-                <Link
-                  href="/portal/employee/profile#employee-debts"
-                  className="font-medium text-orange-800 underline underline-offset-2"
-                >
-                  Detail dluhů a splátek na profilu
-                </Link>
-              </CardContent>
-            </Card>
+          <TabsContent value="debts" className="mt-0 space-y-3">
+            <div className="grid gap-2 sm:grid-cols-3">
+              <EmployeeMoneySummaryCard
+                title="Celkový dluh"
+                value={formatKc(debtTotal)}
+                allTimeHint={allTimeCaption}
+              />
+              <EmployeeMoneySummaryCard
+                title="Celkem splaceno"
+                value={formatKc(debtRepaid)}
+                allTimeHint={allTimeCaption}
+              />
+              <EmployeeMoneySummaryCard
+                title="Zbývá doplatit"
+                value={formatKc(debtRemaining)}
+                allTimeHint={allTimeCaption}
+              />
+            </div>
+            <EmployeeMoneyExpandableBlock
+              title="Detail dluhů a splátek"
+              expandLabel="Zobrazit detail dluhů a splátek"
+              collapsedSummary="Aktivní, splacené dluhy a historie splátek (pouze náhled)"
+            >
+              <EmployeeDebtsReadonlySection
+                hideHeader
+                companyId={companyId}
+                employeeId={employeeId}
+                className="border-0 shadow-none"
+              />
+            </EmployeeMoneyExpandableBlock>
           </TabsContent>
         ) : null}
 
         <TabsContent value="advances" className="mt-0">
-      <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base text-slate-900">Zálohy (výplaty)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {advancesLoading ? (
-            <div className="flex items-center gap-2 text-black">
-              <Loader2 className="h-6 w-6 animate-spin" />
-              Načítání…
-            </div>
-          ) : sortedAdvances.length === 0 ? (
-            <p className="text-base text-slate-800">
-              Zatím nemáte evidované žádné zálohy.
-            </p>
-          ) : (
-            <>
-              <ul className="flex flex-col gap-2 md:hidden">
-                {sortedAdvances.map((a) => (
-                  <li key={a.id}>
-                    <EmployeeMobileRecordRow
-                      primary={formatKc(a.amount)}
-                      secondary={`Datum: ${a.date || "—"}`}
-                      trailing={
-                        <Badge
-                          className={
-                            a.status === "paid"
-                              ? "bg-emerald-600 text-white hover:bg-emerald-600"
-                              : "bg-red-600 text-white hover:bg-red-600"
-                          }
-                        >
-                          {a.status === "paid" ? "Zaplaceno" : "Nezaplaceno"}
-                        </Badge>
-                      }
-                      detail={a.note ? String(a.note) : undefined}
-                    />
-                  </li>
-                ))}
-              </ul>
-              <div className="hidden overflow-x-auto rounded-md border border-slate-200 md:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-black">Datum</TableHead>
-                      <TableHead className="text-black">Částka</TableHead>
-                      <TableHead className="text-black">Stav</TableHead>
-                      <TableHead className="text-slate-800">Poznámka</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sortedAdvances.map((a) => (
-                      <AdvanceDesktopRow key={a.id} a={a} />
-                    ))}
-                  </TableBody>
-                </Table>
+          <EmployeeMoneyExpandableBlock
+            title="Zálohy (výplaty)"
+            expandLabel="Zobrazit zálohy"
+            collapsedSummary={
+              advancesLoading
+                ? "Načítání…"
+                : formatAdvancePeriodSummary(advanceSumInPeriod, advancesInPeriod.length)
+            }
+          >
+            {advancesLoading ? (
+              <div className="flex items-center gap-2 py-2 text-slate-800">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                Načítání…
               </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+            ) : advancesInPeriod.length === 0 ? (
+              <p className="py-2 text-sm text-slate-700">
+                Ve vybraném období nemáte evidované žádné zálohy.
+              </p>
+            ) : (
+              <>
+                <ul className="flex flex-col gap-2 md:hidden">
+                  {advancesInPeriod.map((a) => (
+                    <li key={a.id}>
+                      <EmployeeMobileRecordRow
+                        primary={formatKc(a.amount)}
+                        secondary={`Datum: ${a.date || "—"}`}
+                        trailing={
+                          <Badge
+                            className={
+                              a.status === "paid"
+                                ? "bg-emerald-600 text-white hover:bg-emerald-600"
+                                : "bg-red-600 text-white hover:bg-red-600"
+                            }
+                          >
+                            {a.status === "paid" ? "Zaplaceno" : "Nezaplaceno"}
+                          </Badge>
+                        }
+                        detail={a.note ? String(a.note) : undefined}
+                      />
+                    </li>
+                  ))}
+                </ul>
+                <div className="hidden overflow-x-auto rounded-md border border-slate-200 md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Datum</TableHead>
+                        <TableHead>Částka</TableHead>
+                        <TableHead>Stav</TableHead>
+                        <TableHead>Poznámka</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {advancesInPeriod.map((a) => (
+                        <AdvanceDesktopRow key={a.id} a={a} />
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
+          </EmployeeMoneyExpandableBlock>
         </TabsContent>
 
         <TabsContent value="reports" className="mt-0">
-      <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base text-slate-900">
-            Výkazy práce (přehled)
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+          <EmployeeMoneyExpandableBlock
+            title="Výkazy práce"
+            expandLabel="Zobrazit jednotlivé výkazy"
+            collapsedSummary={
+              blocksLoading || !periodDetailTotals ? (
+                "Načítání…"
+              ) : (
+                <>
+                  Období: {periodCaption}
+                  {" · "}
+                  {periodDetailTotals.hours.toLocaleString("cs-CZ")} h · orientační{" "}
+                  {formatKc(periodDetailTotals.orientacniKc)} · schváleno{" "}
+                  {formatKc(periodDetailTotals.approvedKc)} · {blocksInPeriod.length} výkazů
+                </>
+              )
+            }
+          >
           {blocksLoading ? (
-            <div className="flex items-center gap-2 text-black">
+            <div className="flex items-center gap-2 text-slate-800">
               <Loader2 className="h-6 w-6 animate-spin" />
               Načítání…
             </div>
-          ) : sortedBlocks.length === 0 ? (
-            <p className="text-base text-slate-800">Žádné záznamy výkazu.</p>
+          ) : blocksInPeriod.length === 0 ? (
+            <p className="text-sm text-slate-800">Ve vybraném období nejsou žádné výkazy.</p>
           ) : (
             <>
-              <ul className="flex flex-col gap-3 lg:hidden">
-                {sortedBlocks.map((b) => (
+              <ul className="flex flex-col gap-2 lg:hidden">
+                {blocksInPeriod.map((b) => (
                   <li
                     key={b.id}
                     className="rounded-lg border border-slate-300 p-4"
@@ -841,7 +1027,7 @@ export default function EmployeeMoneyPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {sortedBlocks.map((b) => (
+                    {blocksInPeriod.map((b) => (
                       <TableRow key={b.id}>
                         <TableCell className="font-medium text-black">
                           {b.date}
@@ -893,8 +1079,7 @@ export default function EmployeeMoneyPage() {
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+          </EmployeeMoneyExpandableBlock>
         </TabsContent>
       </Tabs>
     </EmployeePortalPageShell>
