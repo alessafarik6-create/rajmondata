@@ -16,6 +16,14 @@
     {
       "path": "/api/cron/process-email-queue",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/fleet-gps-sync?mode=positions",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/fleet-gps-sync?mode=catalog",
+      "schedule": "0 */6 * * *"
     }
   ],
   "functions": {

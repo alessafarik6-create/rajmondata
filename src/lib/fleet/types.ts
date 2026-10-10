@@ -132,6 +132,10 @@ export type FleetIntegrationDoc = {
   connectedByUserId?: string | null;
   lastSyncAt?: Timestamp | null;
   lastSyncVehicleCount?: number | null;
+  lastSyncImportedCount?: number | null;
+  lastSyncStoredCount?: number | null;
+  lastSyncGpsCount?: number | null;
+  lastSyncSummary?: string | null;
   lastSyncError?: string | null;
   lastTestAt?: Timestamp | null;
   lastError?: string | null;

@@ -3,17 +3,35 @@ import { satelitniOfflineThresholdMinutes } from "@/lib/integrations/satelitni-s
 
 export type SatelitniVehicleApi = Record<string, unknown>;
 
+/** Stabilní externí ID pro upsert — preferuje vehicle id, jinak device id. */
+export function pickSatelitniExternalVehicleId(v: SatelitniVehicleApi): string | null {
+  const candidates = [v.id, v.vehicle_id, v.vehicleId];
+  for (const c of candidates) {
+    if (c == null || c === "") continue;
+    const s = String(c).trim();
+    if (s && s !== "0") return s;
+  }
+  const dev = v.device_id ?? v.deviceId;
+  if (dev != null && String(dev).trim() && String(dev).trim() !== "0") {
+    return String(dev).trim();
+  }
+  return null;
+}
+
 export function mapSatelitniVehicle(v: SatelitniVehicleApi) {
-  const id = Number(v.id ?? v.vehicle_id ?? 0);
-  const label = String(v.label ?? v.name ?? "").trim();
-  const sub = String(v.sub_label ?? "").trim();
-  const name = [label, sub].filter(Boolean).join(" — ") || `Vozidlo ${id}`;
+  const externalVehicleId = pickSatelitniExternalVehicleId(v) ?? "0";
+  const label = String(v.label ?? v.name ?? v.title ?? "").trim();
+  const sub = String(v.sub_label ?? v.subtitle ?? "").trim();
+  const name =
+    [label, sub].filter(Boolean).join(" — ") ||
+    `Vozidlo ${externalVehicleId !== "0" ? externalVehicleId : "?"}`;
+  const deviceRaw = v.device_id ?? v.deviceId;
   return {
-    externalVehicleId: String(id),
+    externalVehicleId,
     name,
-    licensePlate: String(v.car_sign ?? v.registration_number ?? v.spz ?? "").trim(),
+    licensePlate: String(v.car_sign ?? v.registration_number ?? v.spz ?? v.plate ?? "").trim(),
     vin: String(v.vin ?? "").trim() || null,
-    externalDeviceId: v.device_id != null ? String(v.device_id) : null,
+    externalDeviceId: deviceRaw != null ? String(deviceRaw).trim() : null,
     vehicleType: v.type != null ? String(v.type) : null,
   };
 }

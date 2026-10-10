@@ -178,7 +178,19 @@ export function FleetDashboardPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-        <FleetMap markers={markers} selectedVehicleId={selectedId} onSelectVehicle={setSelectedId} height="min(55vh, 520px)" />
+        <div className="relative">
+          <FleetMap markers={markers} selectedVehicleId={selectedId} onSelectVehicle={setSelectedId} height="min(55vh, 520px)" />
+          {data && data.vehicles.length > 0 && markers.length === 0 ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Máte {data.vehicles.length} vozidel v seznamu, ale žádné nemá platnou GPS polohu. Spusťte synchronizaci
+              v Nastavení → Integrace.
+            </p>
+          ) : data && data.vehicles.length === 0 && data.gpsConnected ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              GPS je připojeno, ale vozidla nejsou importovaná. Použijte „Synchronizovat nyní“ v integraci.
+            </p>
+          ) : null}
+        </div>
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Detail vozidla</CardTitle>

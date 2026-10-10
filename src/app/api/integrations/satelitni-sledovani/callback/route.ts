@@ -165,7 +165,7 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      buildIntegraceOAuthRedirect(origin, { gps: "connected" })
+      buildIntegraceOAuthRedirect(origin, { gps: "connected", gps_sync: "1" })
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Token exchange selhal.";

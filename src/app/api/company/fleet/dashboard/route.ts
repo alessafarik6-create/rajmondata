@@ -45,6 +45,7 @@ export async function GET(request: NextRequest) {
           speedKmh: v.lastSpeedKmh ?? null,
         }))
   );
+  stats.total = vehicles.filter((v) => v.active !== false).length;
 
   return NextResponse.json({
     ok: true,

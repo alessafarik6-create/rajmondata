@@ -3,12 +3,9 @@ import crypto from "node:crypto";
 import { satelitniApiBaseUrl } from "@/lib/integrations/satelitni-sledovani/config";
 import { getSatelitniSledovaniAccessToken } from "@/lib/integrations/satelitni-sledovani/token-service";
 import { parseProblemJson, SatelitniApiError } from "@/lib/integrations/satelitni-sledovani/problem-json";
+import { extractListItems, extractMeta, type SatelitniListMeta } from "@/lib/integrations/satelitni-sledovani/api-payload";
 
-export type SatelitniListMeta = {
-  count?: number;
-  has_more?: boolean;
-  next_cursor?: string | null;
-};
+export type { SatelitniListMeta };
 
 export type SatelitniListResponse<T> = {
   data?: T[];
@@ -22,6 +19,8 @@ function joinUrl(path: string): string {
   if (p.startsWith("/api/v2")) return `${base.replace(/\/api\/v2$/, "")}${p}`;
   return `${base}${p}`;
 }
+
+export { extractListItems, extractMeta, unwrapSatelitniResource } from "@/lib/integrations/satelitni-sledovani/api-payload";
 
 export async function satelitniRequest<T>(
   db: Firestore,
@@ -100,17 +99,6 @@ export async function satelitniRequest<T>(
   return { data, headers: res.headers, httpStatus: res.status };
 }
 
-export function extractListItems<T>(payload: SatelitniListResponse<T> | T[]): T[] {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload.data)) return payload.data;
-  if (Array.isArray(payload.items)) return payload.items;
-  return [];
-}
-
-export function extractMeta(payload: SatelitniListResponse<unknown>): SatelitniListMeta {
-  return payload.meta ?? {};
-}
-
 export async function fetchAllSatelitniPages<T>(
   db: Firestore,
   organizationId: string,
@@ -125,7 +113,7 @@ export async function fetchAllSatelitniPages<T>(
     const { data } = await satelitniRequest<SatelitniListResponse<T>>(db, organizationId, path, {
       query,
     });
-    out.push(...extractListItems(data));
+    out.push(...extractListItems<T>(data));
     const meta = extractMeta(data);
     if (!meta.has_more) break;
     cursor = meta.next_cursor;

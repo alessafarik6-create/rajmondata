@@ -15,6 +15,8 @@ type Row = {
   id: string;
   name: string;
   licensePlate: string;
+  externalVehicleId: string | null;
+  externalDeviceId: string | null;
   currentDriverName: string | null;
   lastMovementStatus: FleetVehicleMovementStatus;
   lastLocationLabel: string | null;
@@ -69,11 +71,12 @@ export function FleetVehiclesPage() {
         <Loader2 className="h-8 w-8 animate-spin mx-auto" />
       ) : (
         <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-sm min-w-[720px]">
+          <table className="w-full text-sm min-w-[860px]">
             <thead className="bg-muted/50">
               <tr className="text-left">
                 <th className="p-3">Vozidlo</th>
                 <th className="p-3">SPZ</th>
+                <th className="p-3">GPS ID</th>
                 <th className="p-3">Řidič</th>
                 <th className="p-3">Stav</th>
                 <th className="p-3">Poloha</th>
@@ -86,8 +89,9 @@ export function FleetVehiclesPage() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="p-6 text-center text-muted-foreground">
-                    Zatím nemáte vozidla. Přidejte vozidlo ručně — po napojení Ecofleet ho spárujete s GPS.
+                  <td colSpan={10} className="p-6 text-center text-muted-foreground">
+                    Zatím nemáte vozidla. Propojte SatelitníSledování.cz v Nastavení → Integrace a spusťte
+                    synchronizaci, nebo přidejte vozidlo ručně.
                   </td>
                 </tr>
               ) : (
@@ -95,6 +99,12 @@ export function FleetVehiclesPage() {
                   <tr key={r.id} className="border-t">
                     <td className="p-3 font-medium">{r.name}</td>
                     <td className="p-3">{r.licensePlate}</td>
+                    <td className="p-3 text-xs font-mono">
+                      {r.externalVehicleId ?? "—"}
+                      {r.externalDeviceId && r.externalDeviceId !== r.externalVehicleId
+                        ? ` / ${r.externalDeviceId}`
+                        : ""}
+                    </td>
                     <td className="p-3">{r.currentDriverName ?? "—"}</td>
                     <td className="p-3">{movementStatusLabel(r.lastMovementStatus)}</td>
                     <td className="p-3">{r.lastLocationLabel ?? "—"}</td>

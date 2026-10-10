@@ -9,8 +9,10 @@ import type { FleetProviderContext } from "@/lib/fleet/providers/types";
 import type { FleetPositionSnapshot, FleetTripDoc, FleetVehicleDoc } from "@/lib/fleet/types";
 import { listFleetVehicles, fleetTripsCol } from "@/lib/fleet/stores";
 import {
+  extractListItems,
   fetchAllSatelitniPages,
   satelitniRequest,
+  unwrapSatelitniResource,
 } from "@/lib/integrations/satelitni-sledovani/client";
 import {
   mapSatelitniLatestPosition,
@@ -30,10 +32,21 @@ export class SatelitniSledovaniProvider implements FleetTrackingProvider {
 
   async testConnection(): Promise<FleetProviderConnectionTest> {
     try {
-      await satelitniRequest(this.ctx.db, this.ctx.companyId, "/vehicles", {
-        query: { limit: 1 },
+      const { data } = await satelitniRequest<unknown>(this.ctx.db, this.ctx.companyId, "/vehicles", {
+        query: { limit: 50 },
       });
-      return { ok: true, message: "Připojení k SatelitníSledování.cz je funkční." };
+      const count = extractListItems<SatelitniVehicleApi>(data).length;
+      if (count === 0) {
+        return {
+          ok: true,
+          message:
+            "OAuth a API odpovídají, ale seznam vozidel je prázdný. Spusťte synchronizaci nebo Otestovat API vozidel.",
+        };
+      }
+      return {
+        ok: true,
+        message: `Připojení k SatelitníSledování.cz je funkční (API vrátilo ${count} vozidel).`,
+      };
     } catch (e) {
       const msg = e instanceof SatelitniApiError ? e.message : e instanceof Error ? e.message : "Test selhal.";
       return { ok: false, message: msg, errorCode: "PROVIDER_ERROR" };
@@ -52,7 +65,7 @@ export class SatelitniSledovaniProvider implements FleetTrackingProvider {
         this.ctx.companyId,
         `/vehicles/${encodeURIComponent(vehicleExternalId)}/positions/latest`
       );
-      const pos = mapSatelitniLatestPosition(data);
+      const pos = mapSatelitniLatestPosition(unwrapSatelitniResource(data));
       if (!pos) return null;
       return {
         vehicleId: vehicleExternalId,

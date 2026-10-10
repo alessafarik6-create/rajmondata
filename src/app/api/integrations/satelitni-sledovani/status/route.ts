@@ -20,7 +20,11 @@ export async function GET(request: NextRequest) {
   const integration = await loadFleetIntegration(auth.db, organizationId);
   const tokens = await loadSatelitniOAuthTokens(auth.db, organizationId);
   const vehicles = await listFleetVehicles(auth.db, organizationId);
-  const satelitniCount = vehicles.filter((v) => v.externalProvider === "SATELITNI_SLEDOVANI").length;
+  const satelitniVehicles = vehicles.filter((v) => v.externalProvider === "SATELITNI_SLEDOVANI");
+  const satelitniCount = satelitniVehicles.length;
+  const storedWithGpsCount = satelitniVehicles.filter(
+    (v) => v.lastLatitude != null && v.lastLongitude != null && Number.isFinite(v.lastLatitude)
+  ).length;
 
   const connected = Boolean(tokens);
   let tokenActive = false;
@@ -48,6 +52,10 @@ export async function GET(request: NextRequest) {
     connectedAt: integration?.connectedAt?.toDate?.()?.toISOString?.() ?? null,
     connectedByLabel,
     vehicleCount: satelitniCount,
+    apiVehicleCount: integration?.lastSyncVehicleCount ?? null,
+    storedWithGpsCount,
+    lastSyncImportedCount: integration?.lastSyncImportedCount ?? null,
+    lastSyncSummary: integration?.lastSyncSummary ?? null,
     lastSyncError: integration?.lastSyncError ?? null,
   });
 }
