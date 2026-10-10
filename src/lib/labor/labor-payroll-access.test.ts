@@ -28,7 +28,9 @@ function testEmployeeSelfOnlyAndNoMutations() {
   assert.equal(isSelfPayrollOnlyUser(employee), true);
   assert.equal(canViewOthersPayrollData(employee), false);
   assert.equal(canManageOrganizationPayroll(employee), false);
-  assert.equal(assertPayrollMutationAllowed(employee).ok, false);
+  const mut = assertPayrollMutationAllowed(employee);
+  assert.equal(mut.ok, false);
+  if (!mut.ok) assert.equal(mut.status, 403);
   assert.equal(
     assertPayrollTargetEmployee({ ctx: employee, targetEmployeeId: "emp-a" }).ok,
     true
@@ -68,11 +70,27 @@ function testOwnerWithLaborWrite() {
   assert.equal(isSelfPayrollOnlyUser(owner), false);
 }
 
+function testEmployeeLaborWriteStillNoPayrollMutations() {
+  const employeeWriteMatrix = ctx("employee", "write", "emp-x");
+  assert.equal(canManageOrganizationPayroll(employeeWriteMatrix), false);
+  assert.equal(assertPayrollMutationAllowed(employeeWriteMatrix).ok, false);
+}
+
+function testPayrollTargetEmployeeIsolation() {
+  const employee = ctx("employee", "read", "emp-a");
+  assert.equal(
+    assertPayrollTargetEmployee({ ctx: employee, targetEmployeeId: "emp-b" }).ok,
+    false
+  );
+}
+
 function run() {
   testEmployeeSelfOnlyAndNoMutations();
   testAccountantReadWriteOthers();
   testManagerDefaultSelfOnly();
   testOwnerWithLaborWrite();
+  testEmployeeLaborWriteStillNoPayrollMutations();
+  testPayrollTargetEmployeeIsolation();
   console.log("labor-payroll-access.test.ts: OK");
 }
 

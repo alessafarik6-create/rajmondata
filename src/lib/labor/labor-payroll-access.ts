@@ -9,6 +9,13 @@ import {
 
 const LABOR_MODULE: PortalModuleId = "labor";
 
+export const PAYROLL_MUTATION_FORBIDDEN_EMPLOYEE_MESSAGE =
+  "Zaměstnanec smí mzdové údaje pouze prohlížet. Úpravy provádí administrátor organizace.";
+
+export function isEmployeePayrollReadOnlyRole(role: string): boolean {
+  return normalizeCompanyRole(role) === "employee";
+}
+
 export type PayrollAccessContext = {
   role: string;
   employeeId: string | null;
@@ -56,6 +63,9 @@ export function canViewOthersPayrollData(ctx: PayrollAccessContext): boolean {
 /** Smí provádět správu mezd (schvalování, zálohy, dluhy, úpravy výplat). */
 export function canManageOrganizationPayroll(ctx: PayrollAccessContext): boolean {
   const role = normalizeCompanyRole(ctx.role);
+  if (role === "employee" || role === "manager") {
+    return false;
+  }
   if (role === "owner" || role === "admin") {
     return canAccessPortalModule(ctx.permissions, LABOR_MODULE, "write");
   }
@@ -101,6 +111,13 @@ export function assertPayrollTargetEmployee(params: {
 export function assertPayrollMutationAllowed(
   ctx: PayrollAccessContext
 ): { ok: true } | { ok: false; status: number; error: string } {
+  if (isEmployeePayrollReadOnlyRole(ctx.role)) {
+    return {
+      ok: false,
+      status: 403,
+      error: PAYROLL_MUTATION_FORBIDDEN_EMPLOYEE_MESSAGE,
+    };
+  }
   if (!canManageOrganizationPayroll(ctx)) {
     return {
       ok: false,

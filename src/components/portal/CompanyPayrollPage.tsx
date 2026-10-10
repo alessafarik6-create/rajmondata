@@ -74,6 +74,7 @@ import {
   canManageOrganizationPayroll,
   canViewOthersPayrollData,
   isSelfPayrollOnlyUser,
+  PAYROLL_MUTATION_FORBIDDEN_EMPLOYEE_MESSAGE,
 } from "@/lib/labor/labor-payroll-access";
 import {
   filterActiveEmployees,
@@ -400,6 +401,17 @@ function PayrollAdminPageInner() {
       canManagePayroll ||
       (selfPayrollOnly && !!ownEmployeeId));
   const payrollMutationsDisabled = !canManagePayroll;
+  const showPayrollFinanceAdminUi = canManagePayroll;
+
+  const blockPayrollMutation = useCallback((): boolean => {
+    if (canManagePayroll) return false;
+    toast({
+      variant: "destructive",
+      title: "Pouze náhled",
+      description: PAYROLL_MUTATION_FORBIDDEN_EMPLOYEE_MESSAGE,
+    });
+    return true;
+  }, [canManagePayroll, toast]);
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || selfPayrollOnly) return null;
@@ -1835,6 +1847,7 @@ function PayrollAdminPageInner() {
   const [savingAdvance, setSavingAdvance] = useState(false);
 
   const addAdvance = async () => {
+    if (blockPayrollMutation()) return;
     if (!firestore || !companyId || !selectedEmployeeId || !user) return;
     const amt = parseFloat(newAdvanceAmount.replace(",", ".").trim());
     if (!Number.isFinite(amt) || amt <= 0) {
@@ -1869,6 +1882,7 @@ function PayrollAdminPageInner() {
   };
 
   const toggleAdvancePaid = async (a: AdvanceDoc) => {
+    if (blockPayrollMutation()) return;
     if (!firestore || !companyId || !a.id) return;
     const next = a.status === "paid" ? "unpaid" : "paid";
     try {
@@ -1889,6 +1903,7 @@ function PayrollAdminPageInner() {
   };
 
   const deleteAdvance = async (a: AdvanceDoc) => {
+    if (blockPayrollMutation()) return;
     if (!firestore || !companyId || !a.id) return;
     if (!confirm("Smazat tuto zálohu?")) return;
     try {
@@ -1911,6 +1926,7 @@ function PayrollAdminPageInner() {
   const [savingAdvEdit, setSavingAdvEdit] = useState(false);
 
   const openAdvanceEdit = (a: AdvanceDoc) => {
+    if (blockPayrollMutation()) return;
     setEditingAdvance(a);
     setEditAdvAmount(String(a.amount));
     setEditAdvDate(a.date || new Date().toISOString().split("T")[0]);
@@ -1920,6 +1936,7 @@ function PayrollAdminPageInner() {
   };
 
   const saveAdvanceEdit = async () => {
+    if (blockPayrollMutation()) return;
     if (!firestore || !companyId || !editingAdvance?.id) return;
     const amt = parseFloat(editAdvAmount.replace(",", ".").trim());
     if (!Number.isFinite(amt) || amt <= 0) {
@@ -2057,6 +2074,7 @@ function PayrollAdminPageInner() {
   const [paymentToDelete, setPaymentToDelete] = useState<EmployeeDebtPaymentDoc | null>(null);
   const [deletingPayment, setDeletingPayment] = useState(false);
   const addDebt = async () => {
+    if (blockPayrollMutation()) return;
     if (!firestore || !companyId || !selectedEmployeeId || !user || selectedEmployeeId === "all") return;
     const amount = Number(String(newDebtAmount).replace(",", "."));
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -2101,6 +2119,7 @@ function PayrollAdminPageInner() {
   );
 
   const openDebtPayment = (debtId: string) => {
+    if (blockPayrollMutation()) return;
     setEditingPayment(null);
     setPaymentDebtId(debtId);
     setPaymentAmount("");
@@ -2111,6 +2130,7 @@ function PayrollAdminPageInner() {
   };
 
   const openPaymentEdit = (p: EmployeeDebtPaymentDoc) => {
+    if (blockPayrollMutation()) return;
     setEditingPayment(p);
     setPaymentDebtId(p.debtId);
     setPaymentAmount(String(p.amount));
@@ -2121,6 +2141,7 @@ function PayrollAdminPageInner() {
   };
 
   const saveDebtPayment = async () => {
+    if (blockPayrollMutation()) return;
     if (!firestore || !companyId || !selectedEmployeeId || !user || !paymentDebtId) return;
     const amount = Number(String(paymentAmount).replace(",", "."));
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -2181,6 +2202,7 @@ function PayrollAdminPageInner() {
   };
 
   const confirmDeletePayment = async () => {
+    if (blockPayrollMutation()) return;
     if (!firestore || !companyId || !user || !paymentToDelete?.id || !paymentToDelete.debtId) return;
     setDeletingPayment(true);
     try {
@@ -2206,6 +2228,7 @@ function PayrollAdminPageInner() {
   };
 
   const openDebtEdit = (d: EmployeeDebtDoc) => {
+    if (blockPayrollMutation()) return;
     setEditingDebt(d);
     setEditDebtAmount(String(d.amount));
     setEditDebtDate(d.date || new Date().toISOString().split("T")[0]);
@@ -2215,6 +2238,7 @@ function PayrollAdminPageInner() {
   };
 
   const saveDebtEdit = async () => {
+    if (blockPayrollMutation()) return;
     if (!firestore || !companyId || !user || !editingDebt?.id) return;
     const amount = Number(String(editDebtAmount).replace(",", "."));
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -2251,6 +2275,7 @@ function PayrollAdminPageInner() {
   };
 
   const confirmDeleteDebt = async () => {
+    if (blockPayrollMutation()) return;
     if (!firestore || !companyId || !debtToDelete?.id) return;
     if (debtToDelete.status !== "active") {
       toast({
@@ -2342,39 +2367,43 @@ function PayrollAdminPageInner() {
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1">
             {statusBadge}
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="h-9 w-9 text-black"
-              aria-label="Upravit dluh"
-              onClick={() => openDebtEdit(d)}
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="h-9 w-9 text-destructive disabled:opacity-40"
-              aria-label="Smazat dluh"
-              title={
-                canDeleteDebt
-                  ? "Smazat jen aktivní dluh (doplacený nelze smazat)"
-                  : "Doplacený dluh nelze smazat — zůstává v evidenci."
-              }
-              disabled={!canDeleteDebt}
-              onClick={() => {
-                if (!canDeleteDebt) return;
-                setDebtToDelete(d);
-                setDebtDeleteOpen(true);
-              }}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-            <Button type="button" size="sm" onClick={() => openDebtPayment(d.id)}>
-              Přidat splátku
-            </Button>
+            {showPayrollFinanceAdminUi ? (
+              <>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 text-black"
+                  aria-label="Upravit dluh"
+                  onClick={() => openDebtEdit(d)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-9 w-9 text-destructive disabled:opacity-40"
+                  aria-label="Smazat dluh"
+                  title={
+                    canDeleteDebt
+                      ? "Smazat jen aktivní dluh (doplacený nelze smazat)"
+                      : "Doplacený dluh nelze smazat — zůstává v evidenci."
+                  }
+                  disabled={!canDeleteDebt}
+                  onClick={() => {
+                    if (!canDeleteDebt) return;
+                    setDebtToDelete(d);
+                    setDebtDeleteOpen(true);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+                <Button type="button" size="sm" onClick={() => openDebtPayment(d.id)}>
+                  Přidat splátku
+                </Button>
+              </>
+            ) : null}
           </div>
         </div>
         {payments.length > 0 ? (
@@ -2388,7 +2417,9 @@ function PayrollAdminPageInner() {
                   <TableHead>Poznámka</TableHead>
                   <TableHead>Zapsal</TableHead>
                   <TableHead>Zaznamenáno</TableHead>
-                  <TableHead className="w-[100px] text-right">Akce</TableHead>
+                  {showPayrollFinanceAdminUi ? (
+                    <TableHead className="w-[100px] text-right">Akce</TableHead>
+                  ) : null}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2400,6 +2431,7 @@ function PayrollAdminPageInner() {
                     <TableCell>{p.note || "—"}</TableCell>
                     <TableCell>{p.paidBy || p.createdBy || "—"}</TableCell>
                     <TableCell className="text-xs">{formatDebtAuditDateTime(p.paidAt)}</TableCell>
+                    {showPayrollFinanceAdminUi ? (
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button
@@ -2427,6 +2459,7 @@ function PayrollAdminPageInner() {
                         </Button>
                       </div>
                     </TableCell>
+                    ) : null}
                   </TableRow>
                 ))}
               </TableBody>
@@ -3297,6 +3330,15 @@ function PayrollAdminPageInner() {
           </TabsContent>
 
           <TabsContent value="advances" className="mt-2 space-y-3">
+            {!showPayrollFinanceAdminUi ? (
+              <Alert className="border-slate-300 bg-slate-50">
+                <AlertTitle className="text-black">Pouze náhled</AlertTitle>
+                <AlertDescription>
+                  {PAYROLL_MUTATION_FORBIDDEN_EMPLOYEE_MESSAGE}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {showPayrollFinanceAdminUi ? (
             <Card className="border-slate-200 bg-white">
               <CardHeader>
                 <CardTitle className="text-lg text-black">Nová záloha</CardTitle>
@@ -3367,12 +3409,19 @@ function PayrollAdminPageInner() {
                 </div>
               </CardContent>
             </Card>
+            ) : null}
 
             <Card className="border-slate-200 bg-white">
               <CardHeader>
                 <CardTitle className="text-lg text-black">
                   Evidence záloh
                 </CardTitle>
+                {!showPayrollFinanceAdminUi ? (
+                  <p className="text-sm text-slate-700">
+                    Celkem vyplacené zálohy v období:{" "}
+                    <span className="font-semibold">{formatKc(paidTotal)}</span>
+                  </p>
+                ) : null}
               </CardHeader>
               <CardContent>
                 {advancesLoading ? (
@@ -3391,6 +3440,7 @@ function PayrollAdminPageInner() {
                             <span className="text-lg font-bold text-black">
                               {formatKc(a.amount)}
                             </span>
+                            {showPayrollFinanceAdminUi ? (
                             <Button
                               type="button"
                               size="lg"
@@ -3414,6 +3464,17 @@ function PayrollAdminPageInner() {
                                 </>
                               )}
                             </Button>
+                            ) : (
+                              <Badge
+                                className={
+                                  a.status === "paid"
+                                    ? "bg-emerald-600 text-white"
+                                    : "bg-amber-600 text-white"
+                                }
+                              >
+                                {a.status === "paid" ? "Zaplaceno" : "Nezaplaceno"}
+                              </Badge>
+                            )}
                           </div>
                           <p className="mt-2 text-sm font-medium text-black">
                             {a.date}
@@ -3421,6 +3482,7 @@ function PayrollAdminPageInner() {
                           {a.note ? (
                             <p className="text-sm text-slate-800">{a.note}</p>
                           ) : null}
+                          {showPayrollFinanceAdminUi ? (
                           <div className="mt-2 flex flex-wrap gap-2">
                             <Button
                               type="button"
@@ -3441,6 +3503,7 @@ function PayrollAdminPageInner() {
                               Smazat
                             </Button>
                           </div>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -3452,7 +3515,9 @@ function PayrollAdminPageInner() {
                             <TableHead className="text-black">Částka</TableHead>
                             <TableHead className="text-black">Stav</TableHead>
                             <TableHead className="text-black">Poznámka</TableHead>
-                            <TableHead className="text-black">Akce</TableHead>
+                            {showPayrollFinanceAdminUi ? (
+                              <TableHead className="text-black">Akce</TableHead>
+                            ) : null}
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -3463,6 +3528,7 @@ function PayrollAdminPageInner() {
                                 {formatKc(a.amount)}
                               </TableCell>
                               <TableCell>
+                                {showPayrollFinanceAdminUi ? (
                                 <Button
                                   type="button"
                                   size="sm"
@@ -3478,10 +3544,22 @@ function PayrollAdminPageInner() {
                                     ? "Označit nezaplaceno"
                                     : "Označit zaplaceno"}
                                 </Button>
+                                ) : (
+                                  <Badge
+                                    className={
+                                      a.status === "paid"
+                                        ? "bg-emerald-600 text-white"
+                                        : "bg-amber-600 text-white"
+                                    }
+                                  >
+                                    {a.status === "paid" ? "Zaplaceno" : "Nezaplaceno"}
+                                  </Badge>
+                                )}
                               </TableCell>
                               <TableCell className="max-w-xs text-black">
                                 {a.note || "—"}
                               </TableCell>
+                              {showPayrollFinanceAdminUi ? (
                               <TableCell>
                                 <div className="flex gap-1">
                                   <Button
@@ -3506,6 +3584,7 @@ function PayrollAdminPageInner() {
                                   </Button>
                                 </div>
                               </TableCell>
+                              ) : null}
                             </TableRow>
                           ))}
                         </TableBody>
@@ -3517,6 +3596,15 @@ function PayrollAdminPageInner() {
             </Card>
           </TabsContent>
           <TabsContent value="debts" className="mt-2 space-y-3">
+            {!showPayrollFinanceAdminUi ? (
+              <Alert className="border-slate-300 bg-slate-50">
+                <AlertTitle className="text-black">Pouze náhled</AlertTitle>
+                <AlertDescription>
+                  {PAYROLL_MUTATION_FORBIDDEN_EMPLOYEE_MESSAGE}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {showPayrollFinanceAdminUi ? (
             <Card className="border-slate-200 bg-white">
               <CardHeader>
                 <CardTitle className="text-lg text-black">Dluh</CardTitle>
@@ -3551,6 +3639,7 @@ function PayrollAdminPageInner() {
                 </div>
               </CardContent>
             </Card>
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Card className="border-slate-200 bg-white"><CardContent className="pt-4"><p className="text-xs text-neutral-700">Celkové zálohy</p><p className="text-lg font-bold">{formatKc(paidTotal)}</p></CardContent></Card>
               <Card className="border-slate-200 bg-white"><CardContent className="pt-4"><p className="text-xs text-neutral-700">Celkový dluh</p><p className="text-lg font-bold">{formatKc(debtTotals.totalDebt)}</p></CardContent></Card>
