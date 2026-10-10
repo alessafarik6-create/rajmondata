@@ -70,6 +70,9 @@ export type EmployeeInviteWizardProps = {
     portalModulePermissions: Record<string, string> | null;
     calendarPermissions: Record<string, string> | null;
     dashboardAiAssistantEnabled: boolean;
+    phone: string;
+    terminalPin: string;
+    sendInviteEmail: boolean;
   }) => Promise<void>;
   trigger?: React.ReactNode;
 };
@@ -119,6 +122,9 @@ export function EmployeeInviteWizard(props: EmployeeInviteWizardProps) {
   const [moduleLevels, setModuleLevels] = useState(() => buildNewEmployeePermissionPreset());
   const [calendarLevels, setCalendarLevels] = useState(defaultCalendarLevelsForNewEmployee);
   const [dashboardAi, setDashboardAi] = useState(true);
+  const [phone, setPhone] = useState("");
+  const [terminalPin, setTerminalPin] = useState("");
+  const [sendInviteEmail, setSendInviteEmail] = useState(true);
 
   const reset = useCallback(() => {
     setStep(1);
@@ -134,6 +140,9 @@ export function EmployeeInviteWizard(props: EmployeeInviteWizardProps) {
     setModuleLevels(buildNewEmployeePermissionPreset());
     setCalendarLevels(defaultCalendarLevelsForNewEmployee());
     setDashboardAi(true);
+    setPhone("");
+    setTerminalPin("");
+    setSendInviteEmail(true);
   }, []);
 
   const handleOpenChange = (open: boolean) => {
@@ -203,6 +212,9 @@ export function EmployeeInviteWizard(props: EmployeeInviteWizardProps) {
       portalModulePermissions,
       calendarPermissions,
       dashboardAiAssistantEnabled: dashboardAi,
+      phone: phone.trim(),
+      terminalPin: terminalPin.trim(),
+      sendInviteEmail,
     });
   };
 
@@ -255,6 +267,16 @@ export function EmployeeInviteWizard(props: EmployeeInviteWizardProps) {
               />
             </div>
             <div className="space-y-2">
+              <Label className={INVITE_LABEL_CLASS}>Telefon (volitelné)</Label>
+              <Input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className={INVITE_INPUT_CLASS}
+                placeholder="+420 …"
+              />
+            </div>
+            <div className="space-y-2">
               <Label className={INVITE_LABEL_CLASS}>Pozice</Label>
               <Input
                 placeholder="Např. Svářeč"
@@ -301,6 +323,21 @@ export function EmployeeInviteWizard(props: EmployeeInviteWizardProps) {
             <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
               <Label className={INVITE_LABEL_CLASS}>Zobrazit v terminálu docházky</Label>
               <Switch checked={visibleInTerminal} onCheckedChange={setVisibleInTerminal} />
+            </div>
+            <div className="space-y-2">
+              <Label className={INVITE_LABEL_CLASS}>PIN terminálu (volitelné, 4–8 číslic)</Label>
+              <Input
+                inputMode="numeric"
+                autoComplete="off"
+                value={terminalPin}
+                onChange={(e) => setTerminalPin(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                className={INVITE_INPUT_CLASS}
+                placeholder="Nechte prázdné — PIN nastavíte později"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+              <Label className={INVITE_LABEL_CLASS}>Odeslat pozvánku e-mailem</Label>
+              <Switch checked={sendInviteEmail} onCheckedChange={setSendInviteEmail} />
             </div>
           </div>
         ) : null}
@@ -406,9 +443,9 @@ export function EmployeeInviteWizard(props: EmployeeInviteWizardProps) {
   );
 }
 
-export function EmployeeInviteWizardTriggerButton() {
+export function EmployeeInviteWizardTriggerButton({ onClick }: { onClick?: () => void }) {
   return (
-    <Button className="gap-2">
+    <Button type="button" className="gap-2" onClick={onClick}>
       <UserPlus className="w-4 h-4" /> Pozvat zaměstnance
     </Button>
   );

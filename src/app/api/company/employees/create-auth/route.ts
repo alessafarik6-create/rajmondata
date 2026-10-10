@@ -18,6 +18,13 @@ import {
   aggregateScheduleModuleLevel,
   normalizeCalendarPermissionsForFirestore,
 } from "@/lib/calendar/calendar-access";
+import { sendEmployeePortalInviteEmail } from "@/lib/employee-invite-email";
+import { hashTerminalPin } from "@/lib/terminal-pin-crypto";
+import {
+  normalizeTerminalPin,
+  validateTerminalPinFormat,
+} from "@/lib/terminal-pin-validation";
+import { loadCompanyDisplayName } from "@/lib/support-tickets-server";
 
 type Body = {
   firstName?: string;
@@ -32,6 +39,11 @@ type Body = {
   portalModulePermissions?: Record<string, string>;
   calendarPermissions?: Record<string, string> | null;
   dashboardAiAssistantEnabled?: boolean;
+  phone?: string;
+  /** Volitelný PIN terminálu (4–8 číslic). */
+  terminalPin?: string;
+  /** Odeslat uvítací e-mail s odkazem na portál (default true). */
+  sendInviteEmail?: boolean;
 };
 
 function normalizeEmail(email: string): string {
@@ -191,9 +203,18 @@ export async function POST(request: NextRequest) {
   let levelMap: Record<PortalModuleId, PortalAccessLevel> | null = null;
   let calendarStored: Record<string, string> | null = null;
 
-  if (orgRole !== "orgAdmin" && body.portalModulePermissions) {
+  const phone = String(body.phone ?? "").trim().slice(0, 40) || null;
+  const terminalPinRaw = body.terminalPin != null ? normalizeTerminalPin(String(body.terminalPin)) : "";
+  if (terminalPinRaw) {
+    const pinErr = validateTerminalPinFormat(terminalPinRaw);
+    if (pinErr) {
+      return NextResponse.json({ error: pinErr }, { status: 400 });
+    }
+  }
+
+  if (orgRole !== "orgAdmin") {
     const merged: Record<string, string> = {};
-    const incoming = body.portalModulePermissions;
+    const incoming = body.portalModulePermissions ?? {};
     for (const id of ALL_PORTAL_MODULE_IDS) {
       const fromBody = incoming[id];
       const v =
@@ -216,6 +237,7 @@ export async function POST(request: NextRequest) {
     firstName,
     lastName,
     email,
+    phone,
     role: orgRole,
     jobTitle,
     hourlyRate,
@@ -272,6 +294,23 @@ export async function POST(request: NextRequest) {
 
   try {
     await batch.commit();
+    if (terminalPinRaw) {
+      const pinHash = await hashTerminalPin(terminalPinRaw);
+      await employeeRef.collection("private").doc("terminal").set(
+        {
+          pinHash,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      await employeeRef.set(
+        {
+          terminalPinActive: true,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
   } catch (e) {
     console.error("[create-auth] batch", e);
     try {
@@ -285,11 +324,34 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  let inviteEmailSent = false;
+  let inviteEmailError: string | null = null;
+  const shouldSendInvite = body.sendInviteEmail !== false;
+  if (shouldSendInvite) {
+    const companyName = await loadCompanyDisplayName(db, companyId);
+    const base =
+      String(process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? "").trim().replace(/\/$/, "") ||
+      "https://rajmondata.cz";
+    const mail = await sendEmployeePortalInviteEmail({
+      to: email,
+      firstName,
+      companyName,
+      loginUrl: `${base}/login`,
+    });
+    inviteEmailSent = mail.ok;
+    inviteEmailError = mail.ok ? null : mail.error ?? "E-mail se nepodařilo odeslat.";
+  }
+
   return NextResponse.json({
     ok: true,
     uid: newUid,
     employeeId,
-    message:
-      "Účet vytvořen. Zaměstnanec se může přihlásit emailem a heslem; bude přesměrován do zaměstnaneckého portálu.",
+    inviteEmailSent,
+    inviteEmailError,
+    message: inviteEmailSent
+      ? "Účet vytvořen a pozvánka odeslána e-mailem."
+      : inviteEmailError
+        ? `Účet vytvořen. E-mail se nepodařilo odeslat: ${inviteEmailError}`
+        : "Účet vytvořen. Zaměstnanec se může přihlásit emailem a heslem.",
   });
 }

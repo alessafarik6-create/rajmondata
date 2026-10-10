@@ -652,6 +652,9 @@ export default function EmployeesPage() {
     portalModulePermissions: Record<string, string> | null;
     calendarPermissions: Record<string, string> | null;
     dashboardAiAssistantEnabled: boolean;
+    phone: string;
+    terminalPin: string;
+    sendInviteEmail: boolean;
   }) => {
     if (!canManage || !companyId || !user) return;
     if (isSubmitting) return;
@@ -676,6 +679,9 @@ export default function EmployeesPage() {
           portalModulePermissions: payload.portalModulePermissions ?? undefined,
           calendarPermissions: payload.calendarPermissions,
           dashboardAiAssistantEnabled: payload.dashboardAiAssistantEnabled,
+          phone: payload.phone || undefined,
+          terminalPin: payload.terminalPin || undefined,
+          sendInviteEmail: payload.sendInviteEmail,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1168,19 +1174,7 @@ export default function EmployeesPage() {
         </div>
         <div className="flex gap-2 sm:gap-3">
           {canManage ? (
-            <EmployeeInviteWizard
-              open={isInviteOpen}
-              onOpenChange={(open) => {
-                setIsInviteOpen(open);
-                if (!open) {
-                  releaseDocumentModalLocks();
-                  releaseModalLocksAfterDismiss();
-                }
-              }}
-              isSubmitting={isSubmitting}
-              onSubmit={handleInviteSubmit}
-              trigger={<EmployeeInviteWizardTriggerButton />}
-            />
+            <EmployeeInviteWizardTriggerButton onClick={() => setIsInviteOpen(true)} />
           ) : null}
         </div>
       </div>
@@ -2458,6 +2452,20 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
+      {canManage ? (
+        <EmployeeInviteWizard
+          open={isInviteOpen}
+          onOpenChange={(open) => {
+            setIsInviteOpen(open);
+            if (!open) {
+              releaseDocumentModalLocks();
+              releaseModalLocksAfterDismiss();
+            }
+          }}
+          isSubmitting={isSubmitting}
+          onSubmit={handleInviteSubmit}
+        />
+      ) : null}
     </div>
   );
 }

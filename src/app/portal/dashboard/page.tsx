@@ -82,6 +82,7 @@ import type { ActivityActorProfile } from "@/lib/activity-log";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { MobileDashboard } from "@/components/portal/mobile-dashboard/MobileDashboard";
 import { DashboardAiSecretaryPanel } from "@/components/portal/dashboard-ai-secretary-panel";
+import { PlatformCampaignDashboardSection } from "@/components/portal/platform-campaign-dashboard-section";
 import { czechTimeGreeting } from "@/lib/ai/organization-ai-briefing";
 import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
 import { MobileSchedulePreviewCard } from "@/components/portal/mobile-dashboard/MobileSchedulePreviewCard";
@@ -1198,6 +1199,7 @@ export default function CompanyDashboard() {
           {companyId ? (
             <>
               {showAiSecretary ? <DashboardAiSecretaryPanel companyId={companyId} /> : null}
+              <PlatformCampaignDashboardSection />
               <PortalDashboardCompactGrid
                 companyId={companyId}
                 todayIso={todayIso}

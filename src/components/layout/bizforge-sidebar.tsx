@@ -20,6 +20,7 @@ import {
   Sparkles,
   ShieldAlert,
   Landmark,
+  Megaphone,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
@@ -53,6 +54,7 @@ const adminLinksStatic: PortalNavLink[] = [
   { label: 'Analytika', href: '/admin/analytics', icon: BarChart3, navId: 'admin-analytics' },
   { label: 'Bezpečnost', href: '/admin/security', icon: ShieldAlert },
   { label: 'Organizace', href: '/admin/companies', icon: Building2 },
+  { label: 'Komunikace s organizacemi', href: '/admin/org-communications', icon: Megaphone },
   { label: 'Moduly', href: '/admin/modules', icon: Briefcase },
   { label: 'Ceník', href: '/admin/pricing', icon: Tags },
   { label: 'SEO', href: '/admin/seo', icon: FileText },

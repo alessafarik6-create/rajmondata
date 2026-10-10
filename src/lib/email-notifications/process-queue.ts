@@ -4,6 +4,8 @@ import { MAIL_DISPATCH_QUEUE } from "./dispatch";
 import { sendModuleNotification } from "./module-notify";
 import { defaultSubjectForEvent } from "./subjects";
 import { createNotification } from "@/lib/notification-service/notification-service";
+import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
+import { PLATFORM_ORG_CAMPAIGNS_COLLECTION } from "@/lib/firestore-collections";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 
 async function pushCalendarReminderToParticipants(
@@ -96,7 +98,34 @@ export async function processDueMailDispatchQueue(
     const data = doc.data();
     const kind = String(data.kind ?? "");
     try {
-      if (kind === "calendar_reminder") {
+      if (kind === "platform_campaign_email") {
+        const campaignId = String(data.campaignId ?? "").trim();
+        const organizationId = String(data.organizationId ?? "").trim();
+        const toRaw = data.to;
+        const to = Array.isArray(toRaw)
+          ? toRaw.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+          : [];
+        const subject = String(data.subject ?? "RAJMONDATA").trim();
+        const html = String(data.html ?? "").trim();
+        if (!to.length || !html) {
+          await doc.ref.delete();
+          processed++;
+          continue;
+        }
+        const sent = await sendTransactionalEmail({ to, subject, html });
+        if (campaignId && organizationId) {
+          const campRef = db.collection(PLATFORM_ORG_CAMPAIGNS_COLLECTION).doc(campaignId);
+          await campRef.collection("recipients").doc(organizationId).set(
+            {
+              emailStatus: sent.ok ? "sent" : "error",
+              emailSentAt: sent.ok ? Timestamp.now() : null,
+              emailError: sent.ok ? null : sent.error?.slice(0, 300) ?? "Chyba",
+            },
+            { merge: true }
+          );
+        }
+        if (!sent.ok && sent.error) errors.push(sent.error);
+      } else if (kind === "calendar_reminder") {
         const companyId = String(data.companyId ?? "").trim();
         const p = data.payload as Record<string, unknown> | undefined;
         const eventId = String(p?.eventId ?? "").trim();

@@ -24,6 +24,12 @@ export const SUPPORT_TICKETS_COLLECTION = "supportTickets";
 /** Globální notifikace pro superadministrátora platformy (zápis jen Admin SDK). */
 export const PLATFORM_ADMIN_NOTIFICATIONS_COLLECTION = "platform_admin_notifications";
 
+/** Kampaně / zprávy superadmina směrem k organizacím (Admin SDK). */
+export const PLATFORM_ORG_CAMPAIGNS_COLLECTION = "platform_org_campaigns";
+
+/** Doručené kampaně v portálu organizace: companies/{id}/platform_campaign_inbox/{campaignId}. */
+export const PLATFORM_CAMPAIGN_INBOX_SUBCOLLECTION = "platform_campaign_inbox";
+
 /** Agregovaná denní analytika veřejného webu (bez PII). */
 export const PLATFORM_ANALYTICS_DAILY_COLLECTION = "platform_analytics_daily";
 /** Unikátní návštěvníci / den — doc id = `{date}_{visitorHash}`. */
