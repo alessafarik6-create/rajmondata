@@ -305,9 +305,20 @@ export function resolveEffectivePortalPermissions(
   }
 
   if (role === "employee") {
-    const base = employeeHasExplicitPortalModuleMatrix(input.employeeDoc)
-      ? initialPortalPermissionLevelsForEmployee(input.employeeDoc, "employee")
-      : buildLegacyEmployeePermissionPreset(input.employeeDoc);
+    const overrides = parsePortalModulePermissionsFromEmployee(input.employeeDoc ?? null);
+    const overrideKeys = Object.keys(overrides);
+    let base: Record<PortalModuleId, PortalAccessLevel>;
+    if (employeeHasExplicitPortalModuleMatrix(input.employeeDoc)) {
+      base = initialPortalPermissionLevelsForEmployee(input.employeeDoc, "employee");
+    } else if (overrideKeys.length > 0) {
+      base = applyOverrides(
+        buildLegacyEmployeePermissionPreset(input.employeeDoc),
+        overrides,
+        "write"
+      );
+    } else {
+      base = buildLegacyEmployeePermissionPreset(input.employeeDoc);
+    }
     return applyEmployeeOrgRolePermissionCaps(
       migrateLegacyEmployeeMoneyPermission(base, input.employeeDoc ?? null)
     );
@@ -423,11 +434,27 @@ export function applyPermissionPreset(
   }
 }
 
+/** Nastaví se při uložení celé matice přes admin API (create-auth / update-org). */
+export const PORTAL_MODULE_PERMISSIONS_MATERIALIZED_FIELD =
+  "portalModulePermissionsMaterialized";
+
+export function isPortalModulePermissionsMaterialized(
+  employeeDoc: Record<string, unknown> | null | undefined
+): boolean {
+  return employeeDoc?.[PORTAL_MODULE_PERMISSIONS_MATERIALIZED_FIELD] === true;
+}
+
+/**
+ * Explicitní matice = materializovaná nebo kompletní záznam všech modulů.
+ * Dílčí staré záznamy (např. jen `schedule`) nespouštějí režim „vše ostatní none“.
+ */
 export function employeeHasExplicitPortalModuleMatrix(
   employeeDoc: Record<string, unknown> | null | undefined
 ): boolean {
+  if (isPortalModulePermissionsMaterialized(employeeDoc)) return true;
   const raw = employeeDoc?.portalModulePermissions;
-  return Boolean(raw && typeof raw === "object" && Object.keys(raw as object).length > 0);
+  if (!raw || typeof raw !== "object") return false;
+  return Object.keys(raw as object).length >= ALL_PORTAL_MODULE_IDS.length;
 }
 
 /** Uloží celou matici včetně explicitního `none` (individuální oprávnění). */

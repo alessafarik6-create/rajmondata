@@ -84,6 +84,7 @@ const MOBILE_EMP_ACTION_BTN =
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
+import { EmployeeInviteWizard, EmployeeInviteWizardTriggerButton } from "@/components/employees/employee-invite-wizard";
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
 import {
   releaseDocumentModalLocks,
@@ -358,15 +359,6 @@ export default function EmployeesPage() {
   >(null);
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
-  const [inviteData, setInviteData] = useState({
-    firstName: '',
-    lastName: '',
-    email: '',
-    orgRole: 'employee' as EmployeePortalRoleId,
-    visibleInAttendanceTerminal: true,
-    jobTitle: '',
-    hourlyRate: ''
-  });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [qrEmployee, setQrEmployee] = useState<any | null>(null);
@@ -388,9 +380,6 @@ export default function EmployeesPage() {
     // toast z useToast() má nestabilní referenci — v deps způsobuje zbytečné opakování efektu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, canView, userRole, router]);
-
-  const [invitePassword, setInvitePassword] = useState("");
-  const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("");
 
   const [pwdResetEmployee, setPwdResetEmployee] = useState<any | null>(null);
   const [pwdResetNew, setPwdResetNew] = useState("");
@@ -651,33 +640,23 @@ export default function EmployeesPage() {
     }
   };
 
-  const handleInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleInviteSubmit = async (payload: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    password: string;
+    jobTitle: string;
+    hourlyRate: number | null;
+    orgRole: EmployeePortalRoleId;
+    visibleInAttendanceTerminal: boolean;
+    portalModulePermissions: Record<string, string> | null;
+    calendarPermissions: Record<string, string> | null;
+    dashboardAiAssistantEnabled: boolean;
+  }) => {
     if (!canManage || !companyId || !user) return;
-
-    if (invitePassword.length < MIN_EMPLOYEE_PASSWORD_LENGTH) {
-      toast({
-        variant: "destructive",
-        title: "Slabé heslo",
-        description: `Heslo pro přihlášení musí mít alespoň ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků.`,
-      });
-      return;
-    }
-    if (invitePassword !== invitePasswordConfirm) {
-      toast({
-        variant: "destructive",
-        title: "Hesla se neshodují",
-        description: "Zkontrolujte pole heslo a potvrzení.",
-      });
-      return;
-    }
-
     if (isSubmitting) return;
     setIsSubmitting(true);
     try {
-      const rateStr = inviteData.hourlyRate.trim();
-      const hourlyRate =
-        rateStr === "" ? null : Number(rateStr);
       const idToken = await user.getIdToken();
       const res = await fetch("/api/company/employees/create-auth", {
         method: "POST",
@@ -686,15 +665,17 @@ export default function EmployeesPage() {
           Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
-          firstName: inviteData.firstName.trim(),
-          lastName: inviteData.lastName.trim(),
-          email: inviteData.email.trim().toLowerCase(),
-          password: invitePassword,
-          jobTitle: inviteData.jobTitle.trim(),
-          hourlyRate:
-            hourlyRate != null && !Number.isNaN(hourlyRate) ? hourlyRate : null,
-          role: inviteData.orgRole,
-          visibleInAttendanceTerminal: inviteData.visibleInAttendanceTerminal,
+          firstName: payload.firstName,
+          lastName: payload.lastName,
+          email: payload.email,
+          password: payload.password,
+          jobTitle: payload.jobTitle,
+          hourlyRate: payload.hourlyRate,
+          role: payload.orgRole,
+          visibleInAttendanceTerminal: payload.visibleInAttendanceTerminal,
+          portalModulePermissions: payload.portalModulePermissions ?? undefined,
+          calendarPermissions: payload.calendarPermissions,
+          dashboardAiAssistantEnabled: payload.dashboardAiAssistantEnabled,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -708,20 +689,9 @@ export default function EmployeesPage() {
         title: "Zaměstnanec přidán",
         description:
           data.message ||
-          `${inviteData.firstName} má účet a přístup do zaměstnaneckého portálu.`,
+          `${payload.firstName} má účet a přístup do zaměstnaneckého portálu.`,
       });
       closeInviteFlow();
-      setInviteData({
-        firstName: "",
-        lastName: "",
-        email: "",
-        orgRole: "employee",
-        visibleInAttendanceTerminal: true,
-        jobTitle: "",
-        hourlyRate: "",
-      });
-      setInvitePassword("");
-      setInvitePasswordConfirm("");
     } catch (error: unknown) {
       const msg =
         error instanceof Error ? error.message : "Nepodařilo se přidat zaměstnance.";
@@ -1197,8 +1167,8 @@ export default function EmployeesPage() {
           ) : null}
         </div>
         <div className="flex gap-2 sm:gap-3">
-          {canManage && (
-            <Dialog
+          {canManage ? (
+            <EmployeeInviteWizard
               open={isInviteOpen}
               onOpenChange={(open) => {
                 setIsInviteOpen(open);
@@ -1207,198 +1177,11 @@ export default function EmployeesPage() {
                   releaseModalLocksAfterDismiss();
                 }
               }}
-            >
-              <DialogTrigger asChild>
-                <Button className="gap-2">
-                  <UserPlus className="w-4 h-4" /> Pozvat zaměstnance
-                </Button>
-              </DialogTrigger>
-              <DialogContent
-                className="max-w-xl border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
-              >
-                <DialogHeader>
-                  <DialogTitle className="text-lg font-semibold text-black">
-                    Pozvat nového člena týmu
-                  </DialogTitle>
-                  <DialogDescription className="text-sm text-gray-700">
-                    Vytvoří se profil zaměstnance a přihlašovací účet (email + heslo). Heslo se
-                    neukládá do databáze, pouze do Firebase Authentication.
-                  </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleInvite} className="space-y-4 py-4 text-black">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="firstName" className={INVITE_LABEL_CLASS}>
-                        Jméno
-                      </Label>
-                      <Input
-                        id="firstName"
-                        required
-                        value={inviteData.firstName}
-                        onChange={(e) =>
-                          setInviteData({ ...inviteData, firstName: e.target.value })
-                        }
-                        className={INVITE_INPUT_CLASS}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="lastName" className={INVITE_LABEL_CLASS}>
-                        Příjmení
-                      </Label>
-                      <Input
-                        id="lastName"
-                        required
-                        value={inviteData.lastName}
-                        onChange={(e) =>
-                          setInviteData({ ...inviteData, lastName: e.target.value })
-                        }
-                        className={INVITE_INPUT_CLASS}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="email" className={INVITE_LABEL_CLASS}>
-                      Email
-                    </Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      required
-                      value={inviteData.email}
-                      onChange={(e) =>
-                        setInviteData({ ...inviteData, email: e.target.value })
-                      }
-                      className={INVITE_INPUT_CLASS}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="jobTitle" className={INVITE_LABEL_CLASS}>
-                      Pracovní pozice
-                    </Label>
-                    <Input
-                      id="jobTitle"
-                      placeholder="Např. Svářeč"
-                      value={inviteData.jobTitle}
-                      onChange={(e) =>
-                        setInviteData({ ...inviteData, jobTitle: e.target.value })
-                      }
-                      className={INVITE_INPUT_CLASS}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="invite-org-role" className={INVITE_LABEL_CLASS}>
-                      Role v organizaci
-                    </Label>
-                    <select
-                      id="invite-org-role"
-                      className={INVITE_SELECT_TRIGGER_CLASS}
-                      value={inviteData.orgRole}
-                      onChange={(e) =>
-                        setInviteData({
-                          ...inviteData,
-                          orgRole: parseEmployeePortalRole(e.target.value),
-                        })
-                      }
-                    >
-                      {EMPLOYEE_PORTAL_ROLE_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[10px] text-gray-600">
-                      Administrátor organizace spravuje tuto firmu v portálu (zaměstnanci, zakázky, docházka…), bez
-                      přístupu ke globální správě platformy.
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
-                    <div className="min-w-0 space-y-0.5">
-                      <Label htmlFor="invite-terminal-visible" className={INVITE_LABEL_CLASS}>
-                        Zobrazit v terminálu docházky
-                      </Label>
-                      <p className="text-[10px] text-gray-600">
-                        Vypnutí skryje zaměstnance na veřejné docházce — nelze ho vybrat ani přihlásit PINem.
-                      </p>
-                    </div>
-                    <Switch
-                      id="invite-terminal-visible"
-                      checked={inviteData.visibleInAttendanceTerminal}
-                      onCheckedChange={(v) =>
-                        setInviteData({ ...inviteData, visibleInAttendanceTerminal: v })
-                      }
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="invitePassword" className={INVITE_LABEL_CLASS}>
-                        Heslo pro přihlášení
-                      </Label>
-                      <Input
-                        id="invitePassword"
-                        type="password"
-                        autoComplete="new-password"
-                        required
-                        minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
-                        value={invitePassword}
-                        onChange={(e) => setInvitePassword(e.target.value)}
-                        className={INVITE_INPUT_CLASS}
-                        placeholder={`Min. ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků`}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="invitePasswordConfirm" className={INVITE_LABEL_CLASS}>
-                        Potvrzení hesla
-                      </Label>
-                      <Input
-                        id="invitePasswordConfirm"
-                        type="password"
-                        autoComplete="new-password"
-                        required
-                        minLength={8}
-                        value={invitePasswordConfirm}
-                        onChange={(e) => setInvitePasswordConfirm(e.target.value)}
-                        className={INVITE_INPUT_CLASS}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="hourlyRate" className={INVITE_LABEL_CLASS}>
-                      Hodinová sazba (Kč/h)
-                    </Label>
-                    <div className="relative">
-                      <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-600" />
-                      <Input
-                        id="hourlyRate"
-                        type="number"
-                        placeholder="např. 350"
-                        value={inviteData.hourlyRate}
-                        onChange={(e) =>
-                          setInviteData({ ...inviteData, hourlyRate: e.target.value })
-                        }
-                        className={cn(INVITE_INPUT_CLASS, "pl-10")}
-                      />
-                    </div>
-                    <p className="text-[10px] text-gray-600">
-                      Tato sazba se používá pro výpočet finančních nákladů firmy.
-                    </p>
-                  </div>
-                  <DialogFooter>
-                    <Button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="w-full"
-                    >
-                      {isSubmitting ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        "Vytvořit zaměstnance a účet"
-                      )}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
-          )}
+              isSubmitting={isSubmitting}
+              onSubmit={handleInviteSubmit}
+              trigger={<EmployeeInviteWizardTriggerButton />}
+            />
+          ) : null}
         </div>
       </div>
 

@@ -135,3 +135,28 @@ test("applyEmployeeOrgRolePermissionCaps labor write -> read", () => {
   >);
   assert.equal(out.labor, "read");
 });
+
+test("partial portal matrix merges with legacy coarse modules", () => {
+  const perms = resolveEffectivePortalPermissions({
+    role: "employee",
+    employeeDoc: {
+      employeePortalModules: { zakazky: true, penize: true, zpravy: true, dochazka: true },
+      portalModulePermissions: { schedule: "none" },
+    },
+  });
+  assert.equal(perms.schedule, "none");
+  assert.equal(canAccessPortalModule(perms, "jobs", "read"), true);
+});
+
+test("materialized all-none employee has no calendar access", () => {
+  const row = {
+    portalModulePermissionsMaterialized: true,
+    portalModulePermissions: { schedule: "none", jobs: "none", customers: "none" },
+    employeePortalModules: { zakazky: false, penize: false, zpravy: false, dochazka: false },
+  };
+  const perms = resolveEffectivePortalPermissions({ role: "employee", employeeDoc: row });
+  assert.equal(perms.jobs, "none");
+  const cal = resolveCalendarSubLevels({ employeeDoc: row, portalModuleScheduleLevel: perms.schedule });
+  assert.equal(cal.meetings, "none");
+  assert.equal(cal.installations, "none");
+});

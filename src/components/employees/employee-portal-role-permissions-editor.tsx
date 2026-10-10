@@ -28,6 +28,10 @@ import {
   type PortalAccessLevel,
   type PortalModuleId,
 } from "@/lib/portal-permissions";
+import {
+  buildNewEmployeePermissionPreset,
+  defaultCalendarLevelsForNewEmployee,
+} from "@/lib/portal-permissions-admin";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { EmployeeCalendarPermissionsBlock } from "@/components/employees/employee-calendar-permissions-block";
@@ -86,6 +90,9 @@ export function EmployeePortalRolePermissionsEditor(props: {
       const next = buildManagerPermissionPreset();
       onLevelsChange(next);
       syncCalendarFromLevels(next);
+    } else if (role === "employee") {
+      onLevelsChange(buildNewEmployeePermissionPreset());
+      onCalendarLevelsChange(defaultCalendarLevelsForNewEmployee());
     }
   };
 

@@ -4,6 +4,20 @@ import { FieldValue } from "firebase-admin/firestore";
 import { passwordPolicyError } from "@/lib/employee-password-policy";
 import { userPortalRoleForEmployeeDocRole, type EmployeeOrgRole } from "@/lib/employee-organization";
 import { parseEmployeePortalRole } from "@/lib/employee-portal-role";
+import {
+  ALL_PORTAL_MODULE_IDS,
+  legacyAccessFlagsFromPortalPermissions,
+  portalModuleLevelsFromFirestoreRecord,
+  portalModulePermissionsRecordFromLevelMap,
+  portalPermissionsToLegacyEmployeeModules,
+  sanitizePortalPermissionsForOrgRole,
+  type PortalAccessLevel,
+  type PortalModuleId,
+} from "@/lib/portal-permissions";
+import {
+  aggregateScheduleModuleLevel,
+  normalizeCalendarPermissionsForFirestore,
+} from "@/lib/calendar/calendar-access";
 
 type Body = {
   firstName?: string;
@@ -15,6 +29,9 @@ type Body = {
   /** Role v organizaci: employee | accountant | manager | orgAdmin */
   role?: string;
   visibleInAttendanceTerminal?: boolean;
+  portalModulePermissions?: Record<string, string>;
+  calendarPermissions?: Record<string, string> | null;
+  dashboardAiAssistantEnabled?: boolean;
 };
 
 function normalizeEmail(email: string): string {
@@ -95,6 +112,7 @@ export async function POST(request: NextRequest) {
     );
   }
   const visibleInAttendanceTerminal = body.visibleInAttendanceTerminal !== false;
+  const dashboardAiAssistantEnabled = body.dashboardAiAssistantEnabled !== false;
 
   if (!firstName || !lastName || !email || !password) {
     return NextResponse.json(
@@ -170,7 +188,31 @@ export async function POST(request: NextRequest) {
 
   const portalRole = userPortalRoleForEmployeeDocRole(orgRole);
 
-  batch.set(employeeRef, {
+  let levelMap: Record<PortalModuleId, PortalAccessLevel> | null = null;
+  let calendarStored: Record<string, string> | null = null;
+
+  if (orgRole !== "orgAdmin" && body.portalModulePermissions) {
+    const merged: Record<string, string> = {};
+    const incoming = body.portalModulePermissions;
+    for (const id of ALL_PORTAL_MODULE_IDS) {
+      const fromBody = incoming[id];
+      const v =
+        typeof fromBody === "string" ? fromBody.trim().toLowerCase() : "none";
+      merged[id] =
+        v === "read" || v === "write" || v === "none" ? v : "none";
+    }
+    if (body.calendarPermissions !== undefined && body.calendarPermissions !== null) {
+      const calNorm = normalizeCalendarPermissionsForFirestore(body.calendarPermissions);
+      calendarStored = calNorm;
+      merged.schedule = aggregateScheduleModuleLevel(body.calendarPermissions);
+    }
+    levelMap = sanitizePortalPermissionsForOrgRole(
+      portalModuleLevelsFromFirestoreRecord(merged),
+      orgRole
+    );
+  }
+
+  const employeePayload: Record<string, unknown> = {
     firstName,
     lastName,
     email,
@@ -184,6 +226,7 @@ export async function POST(request: NextRequest) {
     profileImage: null,
     isActive: true,
     visibleInAttendanceTerminal,
+    dashboardAiAssistantEnabled,
     /** Výchozí zapnuto; admin může vypnout v dialogu „Zakázky pro výkaz práce“. */
     enableDailyWorkLog: true,
     enableWorkLog: true,
@@ -191,7 +234,24 @@ export async function POST(request: NextRequest) {
     updatedAt: FieldValue.serverTimestamp(),
     hireDate: new Date().toISOString().split("T")[0],
     attendanceQrId,
-  });
+  };
+
+  if (levelMap) {
+    const flags = legacyAccessFlagsFromPortalPermissions(levelMap);
+    employeePayload.portalModulePermissions =
+      portalModulePermissionsRecordFromLevelMap(levelMap);
+    employeePayload.portalModulePermissionsMaterialized = true;
+    employeePayload.employeePortalModules = portalPermissionsToLegacyEmployeeModules(levelMap);
+    employeePayload.canAccessWarehouse = flags.canAccessWarehouse;
+    employeePayload.canAccessProduction = flags.canAccessProduction;
+    employeePayload.canAccessMeetingNotes = flags.canAccessMeetingNotes;
+    employeePayload.portalPermissionsRevision = 0;
+    if (calendarStored) {
+      employeePayload.calendarPermissions = calendarStored;
+    }
+  }
+
+  batch.set(employeeRef, employeePayload);
 
   batch.set(db.collection("users").doc(newUid), {
     id: newUid,

@@ -48,6 +48,12 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmployeePortalRolePermissionsEditor } from "@/components/employees/employee-portal-role-permissions-editor";
+import { EmployeeEffectiveAccessPanel } from "@/components/employees/employee-effective-access-panel";
+import {
+  calendarLevelsForAdminEditor,
+  defaultCalendarLevelsForNewEmployee,
+  portalPermissionLevelsForAdminEditor,
+} from "@/lib/portal-permissions-admin";
 import {
   EmployeeCameraPermissionsBlock,
   parseEmployeeCameraFlagsFromDoc,
@@ -71,7 +77,6 @@ import {
   canAccessPortalModule,
   canManagePortalPermissions,
   employeeHasExplicitPortalModuleMatrix,
-  initialPortalPermissionLevelsForEmployee,
   type PortalAccessLevel,
   type PortalModuleId,
   parseDashboardAiAssistantEnabled,
@@ -80,7 +85,6 @@ import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-cont
 import { normalizeCompanyRole } from "@/lib/company-privilege";
 import {
   aggregateScheduleModuleLevel,
-  initialCalendarPermissionsForEmployee,
   normalizeCalendarPermissionsForFirestore,
   type CalendarSubPermissionKey,
 } from "@/lib/calendar/calendar-access";
@@ -577,11 +581,11 @@ export default function EmployeeDetailPage() {
   const [orgSaving, setOrgSaving] = useState(false);
   const [portalRole, setPortalRole] = useState<EmployeePortalRoleId>("employee");
   const [moduleLevels, setModuleLevels] = useState<Record<PortalModuleId, PortalAccessLevel>>(() =>
-    initialPortalPermissionLevelsForEmployee(null, "employee")
+    portalPermissionLevelsForAdminEditor(null, "employee")
   );
   const [calendarLevels, setCalendarLevels] = useState<
     Record<CalendarSubPermissionKey, PortalAccessLevel>
-  >(() => initialCalendarPermissionsForEmployee(null, "none"));
+  >(() => defaultCalendarLevelsForNewEmployee());
   const [visibleInTerminal, setVisibleInTerminal] = useState(true);
   const [dashboardAiAssistantEnabled, setDashboardAiAssistantEnabled] = useState(true);
   const [cameraFlags, setCameraFlags] = useState(parseEmployeeCameraFlagsFromDoc(null));
@@ -601,11 +605,11 @@ export default function EmployeeDetailPage() {
     if (!employeeDoc) return false;
     const row = employeeDoc as Record<string, unknown>;
     const savedRole = parseEmployeePortalRole(row.role);
-    const savedLevels = initialPortalPermissionLevelsForEmployee(row, savedRole);
+    const savedLevels = portalPermissionLevelsForAdminEditor(row, savedRole);
     const saved = orgPermissionsPayloadJson({
       portalRole: savedRole,
       moduleLevels: savedLevels,
-      calendarLevels: initialCalendarPermissionsForEmployee(row, savedLevels.schedule ?? "none"),
+      calendarLevels: calendarLevelsForAdminEditor(row, savedRole, savedLevels),
       visibleInTerminal: row.visibleInAttendanceTerminal !== false,
       dashboardAiAssistantEnabled: parseDashboardAiAssistantEnabled(row),
       cameraFlags: parseEmployeeCameraFlagsFromDoc(row),
@@ -635,11 +639,9 @@ export default function EmployeeDetailPage() {
     const role = parseEmployeePortalRole((employeeDoc as Record<string, unknown>).role);
     const row = employeeDoc as Record<string, unknown>;
     setPortalRole(role);
-    const levels = initialPortalPermissionLevelsForEmployee(row, role);
+    const levels = portalPermissionLevelsForAdminEditor(row, role);
     setModuleLevels(levels);
-    setCalendarLevels(
-      initialCalendarPermissionsForEmployee(row, levels.schedule ?? "none")
-    );
+    setCalendarLevels(calendarLevelsForAdminEditor(row, role, levels));
     setVisibleInTerminal(row.visibleInAttendanceTerminal !== false);
     setDashboardAiAssistantEnabled(parseDashboardAiAssistantEnabled(row));
     setCameraFlags(parseEmployeeCameraFlagsFromDoc(row));
@@ -1634,6 +1636,11 @@ export default function EmployeeDetailPage() {
                   </AlertDescription>
                 </Alert>
               ) : (
+                <>
+                <EmployeeEffectiveAccessPanel
+                  employeeDoc={employeeDoc as Record<string, unknown>}
+                  portalRole={portalRole}
+                />
                 <EmployeePortalRolePermissionsEditor
                   disabled={!canManageOrgRoles}
                   portalRole={portalRole}
@@ -1647,6 +1654,7 @@ export default function EmployeeDetailPage() {
                   onDashboardAiAssistantEnabledChange={setDashboardAiAssistantEnabled}
                   roleSelectClassName={selectCls}
                 />
+                </>
               )}
 
               {canManageOrgRoles ? (

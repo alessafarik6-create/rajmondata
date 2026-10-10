@@ -219,6 +219,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (hasPortalMatrix && body.portalModulePermissions) {
+    patch.portalModulePermissionsMaterialized = true;
     const incoming = body.portalModulePermissions;
     const existing = parsePortalModulePermissionsFromEmployee(emp);
     const merged: Record<string, string> = {};
@@ -245,6 +246,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (body.calendarPermissions !== undefined) {
+    patch.portalModulePermissionsMaterialized = true;
     const normalized = normalizeCalendarPermissionsForFirestore(body.calendarPermissions ?? {});
     if (normalized) patch.calendarPermissions = normalized;
     else patch.calendarPermissions = FieldValue.delete();
