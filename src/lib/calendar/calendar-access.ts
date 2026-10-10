@@ -64,12 +64,9 @@ export function resolveCalendarSubLevels(input: {
   employeeDoc?: Record<string, unknown> | null;
   portalModuleScheduleLevel?: PortalAccessLevel;
 }): Record<CalendarSubPermissionKey, PortalAccessLevel> {
-  const explicit = parseCalendarPermissionsDoc(input.employeeDoc);
-  const hasExplicit =
-    explicit.meetings != null ||
-    explicit.installations != null ||
-    (input.employeeDoc?.calendarPermissions != null &&
-      typeof input.employeeDoc.calendarPermissions === "object");
+  const rawCal = input.employeeDoc?.calendarPermissions;
+  const hasExplicitDoc =
+    rawCal != null && typeof rawCal === "object" && !Array.isArray(rawCal);
 
   const scheduleFallback =
     input.portalModuleScheduleLevel ??
@@ -79,11 +76,16 @@ export function resolveCalendarSubLevels(input: {
     }).schedule ??
     "none";
 
-  if (hasExplicit) {
+  if (hasExplicitDoc) {
+    const o = rawCal as Record<string, unknown>;
     const fallback = calendarPermissionsFromScheduleLevel(scheduleFallback);
     return {
-      meetings: explicit.meetings ?? fallback.meetings ?? "none",
-      installations: explicit.installations ?? fallback.installations ?? "none",
+      meetings: Object.prototype.hasOwnProperty.call(o, "meetings")
+        ? parseLevel(o.meetings)
+        : fallback.meetings ?? "none",
+      installations: Object.prototype.hasOwnProperty.call(o, "installations")
+        ? parseLevel(o.installations)
+        : fallback.installations ?? "none",
     };
   }
 
@@ -161,10 +163,8 @@ export function normalizeCalendarPermissionsForFirestore(
   const meetings = parseLevel(doc.meetings);
   const installations = parseLevel(doc.installations);
   if (meetings === "none" && installations === "none") return null;
-  const out: Record<string, string> = {};
-  if (meetings !== "none") out.meetings = meetings;
-  if (installations !== "none") out.installations = installations;
-  return Object.keys(out).length > 0 ? out : null;
+  /** Vždy uložit obě podsekce — jinak chybějící klíč spadne na agregovaný `schedule` a přepíše montáže/schůzky. */
+  return { meetings, installations };
 }
 
 export function initialCalendarPermissionsForEmployee(

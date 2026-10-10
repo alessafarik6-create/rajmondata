@@ -13,6 +13,7 @@ import {
 } from "@/lib/portal-menu-visibility";
 import {
   canAccessPortalModule,
+  EMPLOYEE_PERSONAL_MONEY_MODULE_ID,
   type PortalAccessLevel,
   type PortalModuleId,
 } from "@/lib/portal-permissions";
@@ -46,7 +47,7 @@ const EMPLOYEE_HREF_BY_MODULE: Partial<Record<PortalModuleId, string>> = {
   chat: "/portal/employee/messages",
 };
 
-const MONEY_MODULE_IDS: PortalModuleId[] = [
+const LEGACY_MONEY_MODULE_IDS: PortalModuleId[] = [
   "finance",
   "invoices",
   "documents",
@@ -75,8 +76,8 @@ function employeeCanSeeModule(
   def: PortalSidebarMenuDef,
   input: ResolveEmployeePortalMenuInput
 ): boolean {
-  if (!def.roles.includes("employee")) return false;
   if (EXCLUDED_MENU_IDS.has(def.id)) return false;
+  if (def.id === "employeeMoney") return false;
 
   const modId = def.id as PortalModuleId;
   if (!canAccessPortalModule(input.permissions, modId, "read")) return false;
@@ -165,9 +166,11 @@ export function resolveEmployeePortalMenuItems(
     }
   }
 
-  const showMoney = MONEY_MODULE_IDS.some((id) =>
-    canAccessPortalModule(input.permissions, id, "read")
-  );
+  const showMoney =
+    canAccessPortalModule(input.permissions, EMPLOYEE_PERSONAL_MONEY_MODULE_ID, "read") ||
+    LEGACY_MONEY_MODULE_IDS.some((id) =>
+      canAccessPortalModule(input.permissions, id, "read")
+    );
   if (showMoney) {
     push({
       id: "_money",
@@ -207,7 +210,7 @@ export function portalModuleIdForEmployeeRoute(pathname: string): PortalModuleId
   const path = String(pathname ?? "").trim() || "/";
   if (path.startsWith("/portal/employee/jobs")) return "jobs";
   if (path.startsWith("/portal/employee/messages")) return "chat";
-  if (path.startsWith("/portal/employee/money")) return "finance";
+  if (path.startsWith("/portal/employee/money")) return EMPLOYEE_PERSONAL_MONEY_MODULE_ID;
   if (
     path.startsWith("/portal/employee/daily-reports") ||
     path.startsWith("/portal/employee/worklogs") ||

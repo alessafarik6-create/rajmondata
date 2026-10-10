@@ -597,21 +597,6 @@ export default function EmployeeDetailPage() {
     [profile?.role, profile?.globalRoles]
   );
 
-  useEffect(() => {
-    if (!employeeDoc) return;
-    const role = parseEmployeePortalRole((employeeDoc as Record<string, unknown>).role);
-    const row = employeeDoc as Record<string, unknown>;
-    setPortalRole(role);
-    const levels = initialPortalPermissionLevelsForEmployee(row, role);
-    setModuleLevels(levels);
-    setCalendarLevels(
-      initialCalendarPermissionsForEmployee(row, levels.schedule ?? "none")
-    );
-    setVisibleInTerminal(row.visibleInAttendanceTerminal !== false);
-    setDashboardAiAssistantEnabled(parseDashboardAiAssistantEnabled(row));
-    setCameraFlags(parseEmployeeCameraFlagsFromDoc(row));
-  }, [employeeDoc]);
-
   const orgPermissionsDirty = useMemo(() => {
     if (!employeeDoc) return false;
     const row = employeeDoc as Record<string, unknown>;
@@ -643,6 +628,22 @@ export default function EmployeeDetailPage() {
     dashboardAiAssistantEnabled,
     cameraFlags,
   ]);
+
+  useEffect(() => {
+    if (!employeeDoc) return;
+    if (orgPermissionsDirty) return;
+    const role = parseEmployeePortalRole((employeeDoc as Record<string, unknown>).role);
+    const row = employeeDoc as Record<string, unknown>;
+    setPortalRole(role);
+    const levels = initialPortalPermissionLevelsForEmployee(row, role);
+    setModuleLevels(levels);
+    setCalendarLevels(
+      initialCalendarPermissionsForEmployee(row, levels.schedule ?? "none")
+    );
+    setVisibleInTerminal(row.visibleInAttendanceTerminal !== false);
+    setDashboardAiAssistantEnabled(parseDashboardAiAssistantEnabled(row));
+    setCameraFlags(parseEmployeeCameraFlagsFromDoc(row));
+  }, [employeeDoc, orgPermissionsDirty]);
 
   useEffect(() => {
     if (!orgPermissionsDirty || tab !== "roles") return;

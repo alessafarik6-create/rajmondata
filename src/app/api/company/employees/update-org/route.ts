@@ -248,10 +248,12 @@ export async function PATCH(request: NextRequest) {
     const normalized = normalizeCalendarPermissionsForFirestore(body.calendarPermissions ?? {});
     if (normalized) patch.calendarPermissions = normalized;
     else patch.calendarPermissions = FieldValue.delete();
-    if (hasPortalMatrix && patch.portalModulePermissions) {
-      const merged = patch.portalModulePermissions as Record<string, string>;
-      merged.schedule = aggregateScheduleModuleLevel(body.calendarPermissions ?? {});
-      patch.portalModulePermissions = merged;
+    const scheduleLevel = aggregateScheduleModuleLevel(body.calendarPermissions ?? {});
+    if (patch.portalModulePermissions) {
+      (patch.portalModulePermissions as Record<string, string>).schedule = scheduleLevel;
+    } else {
+      const existing = (emp.portalModulePermissions ?? {}) as Record<string, string>;
+      patch.portalModulePermissions = { ...existing, schedule: scheduleLevel };
     }
   }
 
@@ -267,6 +269,14 @@ export async function PATCH(request: NextRequest) {
 
   const beforePermissions = (emp.portalModulePermissions ?? {}) as Record<string, string>;
   const beforeAi = emp.dashboardAiAssistantEnabled;
+
+  if (
+    hasPortalMatrix ||
+    body.calendarPermissions !== undefined ||
+    hasPortalMods
+  ) {
+    patch.portalPermissionsRevision = FieldValue.increment(1);
+  }
 
   await empRef.set(patch, { merge: true });
 
@@ -303,5 +313,13 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ ok: true });
+  const savedSnap = await empRef.get();
+  const saved = savedSnap.data() as Record<string, unknown> | undefined;
+
+  return NextResponse.json({
+    ok: true,
+    portalModulePermissions: saved?.portalModulePermissions ?? null,
+    calendarPermissions: saved?.calendarPermissions ?? null,
+    portalPermissionsRevision: saved?.portalPermissionsRevision ?? null,
+  });
 }

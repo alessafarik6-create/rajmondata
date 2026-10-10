@@ -129,7 +129,24 @@ export function EmployeePortalRolePermissionsEditor(props: {
     });
   };
 
-  const moduleRows = PORTAL_PERMISSION_MODULES.filter((m) => m.id !== "schedule");
+  const moduleRows = PORTAL_PERMISSION_MODULES.filter((m) => {
+    if (m.id === "schedule") return false;
+    if (portalRole === "employee") {
+      const adminOnly = new Set([
+        "finance",
+        "bank",
+        "invoices",
+        "billing",
+        "vyuctovani",
+        "employees",
+        "reports",
+        "activity",
+        "aiCenter",
+      ]);
+      if (adminOnly.has(m.id)) return false;
+    }
+    return true;
+  });
   const [moduleSearch, setModuleSearch] = useState("");
   const filteredModuleRows = useMemo(() => {
     const q = moduleSearch.trim().toLowerCase();
@@ -289,8 +306,12 @@ export function EmployeePortalRolePermissionsEditor(props: {
                     </Label>
                     {mod.id === "labor" && portalRole === "employee" ? (
                       <p className="mt-0.5 text-xs text-slate-600">
-                        Zaměstnanec má přístup pouze ke svým mzdovým údajům. Jejich
-                        úprava není povolena.
+                        Docházka a vlastní výkazy — bez správy mezd ostatních.
+                      </p>
+                    ) : null}
+                    {mod.id === "employeeMoney" ? (
+                      <p className="mt-0.5 text-xs text-slate-600">
+                        Vlastní výplaty, zálohy a dluhy. Úpravy mezd zde nejsou možné (jen náhled).
                       </p>
                     ) : null}
                   </div>
@@ -298,9 +319,17 @@ export function EmployeePortalRolePermissionsEditor(props: {
                     disabled={disabled}
                     value={levels[mod.id as PortalModuleId]}
                     onValueChange={(v) => {
+                      let level = v as PortalAccessLevel;
+                      if (
+                        portalRole === "employee" &&
+                        (mod.id === "employeeMoney" || mod.id === "labor") &&
+                        level === "write"
+                      ) {
+                        level = "read";
+                      }
                       const next = {
                         ...levels,
-                        [mod.id]: v as PortalAccessLevel,
+                        [mod.id]: level,
                       };
                       onLevelsChange(isManager ? applyManagerPermissionCaps(next) : next);
                     }}
@@ -311,7 +340,10 @@ export function EmployeePortalRolePermissionsEditor(props: {
                     <SelectContent>
                       <SelectItem value="none">{ACCESS_LABELS.none}</SelectItem>
                       <SelectItem value="read">{ACCESS_LABELS.read}</SelectItem>
-                      <SelectItem value="write">{ACCESS_LABELS.write}</SelectItem>
+                      {portalRole === "employee" &&
+                      (mod.id === "employeeMoney" || mod.id === "labor") ? null : (
+                        <SelectItem value="write">{ACCESS_LABELS.write}</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </li>

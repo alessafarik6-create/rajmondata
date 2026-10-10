@@ -39,9 +39,31 @@ function portalMenuPermissionReadOk(
   return canAccessPortalModule(perms, def.id as PortalModuleId, "read");
 }
 
-function portalMenuRoleAllowed(def: PortalSidebarMenuDef, role: string): boolean {
-  const r = normalizeCompanyRole(role);
-  return def.roles.some((allowed) => normalizeCompanyRole(allowed) === r);
+/** Moduly, které role Zaměstnanec nikdy nevidí, i když je v matici omylem WRITE. */
+const EMPLOYEE_FORBIDDEN_MENU_MODULE_IDS = new Set<PortalModuleId>([
+  "employees",
+  "finance",
+  "bank",
+  "invoices",
+  "billing",
+  "reports",
+  "activity",
+  "vyuctovani",
+  "aiCenter",
+]);
+
+function portalMenuRoleAllowed(def: PortalSidebarMenuDef, ctx: PortalMenuVisibilityCtx): boolean {
+  const r = normalizeCompanyRole(ctx.role);
+  if (def.roles.some((allowed) => normalizeCompanyRole(allowed) === r)) return true;
+  if (r !== "employee") return false;
+  const modId = def.id as PortalModuleId;
+  if (EMPLOYEE_FORBIDDEN_MENU_MODULE_IDS.has(modId)) return false;
+  const perms = resolveEffectivePortalPermissions({
+    role: ctx.role,
+    globalRoles: ctx.globalRoles,
+    employeeDoc: ctx.employeeRow,
+  });
+  return canAccessPortalModule(perms, modId, "read");
 }
 
 export type PortalMenuVisibilityCtx = {
@@ -59,7 +81,7 @@ export function isPortalMenuItemVisible(
 ): boolean {
   const { role, globalRoles, company, effectiveModules, platformCatalog, employeeRow } = ctx;
 
-  if (!portalMenuRoleAllowed(def, role)) return false;
+  if (!portalMenuRoleAllowed(def, ctx)) return false;
 
   const normalizedRole = normalizeCompanyRole(role);
 

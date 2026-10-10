@@ -36,6 +36,21 @@ const SENSITIVE_MODULE_IDS = new Set<PortalModuleId>([
   "fleet",
 ]);
 
+/** Osobní mzdový přehled zaměstnance — odděleně od administrátorského modulu Finance. */
+export const EMPLOYEE_PERSONAL_MONEY_MODULE_ID = "employeeMoney" as PortalModuleId;
+
+const EMPLOYEE_ORG_ROLE_ADMIN_ONLY_MODULES: readonly PortalModuleId[] = [
+  "employees",
+  "finance",
+  "bank",
+  "invoices",
+  "billing",
+  "reports",
+  "activity",
+  "vyuctovani",
+  "aiCenter",
+];
+
 /** Individuální widget AI sekretářky na dashboardu (≠ modul AI centrum). */
 export const DASHBOARD_AI_ASSISTANT_EMPLOYEE_FIELD = "dashboardAiAssistantEnabled";
 
@@ -192,6 +207,9 @@ function legacyEmployeeModuleCoarseAllowed(
   if (moduleId === "labor") {
     return coarse.dochazka;
   }
+  if (moduleId === EMPLOYEE_PERSONAL_MONEY_MODULE_ID) {
+    return coarse.penize;
+  }
   if (moduleId === "chat") {
     return coarse.zpravy;
   }
@@ -287,10 +305,12 @@ export function resolveEffectivePortalPermissions(
   }
 
   if (role === "employee") {
-    if (employeeHasExplicitPortalModuleMatrix(input.employeeDoc)) {
-      return initialPortalPermissionLevelsForEmployee(input.employeeDoc, "employee");
-    }
-    return buildLegacyEmployeePermissionPreset(input.employeeDoc);
+    const base = employeeHasExplicitPortalModuleMatrix(input.employeeDoc)
+      ? initialPortalPermissionLevelsForEmployee(input.employeeDoc, "employee")
+      : buildLegacyEmployeePermissionPreset(input.employeeDoc);
+    return applyEmployeeOrgRolePermissionCaps(
+      migrateLegacyEmployeeMoneyPermission(base, input.employeeDoc ?? null)
+    );
   }
 
   return emptyPermissionMap();
@@ -357,7 +377,7 @@ export function portalModuleIdFromPathname(pathname: string): PortalModuleId | n
   if (!path.startsWith("/portal")) return null;
   if (path.startsWith("/portal/employee/jobs")) return "jobs";
   if (path.startsWith("/portal/employee/messages")) return "chat";
-  if (path.startsWith("/portal/employee/money")) return "finance";
+  if (path.startsWith("/portal/employee/money")) return EMPLOYEE_PERSONAL_MONEY_MODULE_ID;
   if (
     path.startsWith("/portal/employee/daily-reports") ||
     path.startsWith("/portal/employee/worklogs") ||
@@ -481,10 +501,73 @@ export function portalPermissionsToLegacyEmployeeModules(
       "customerChats",
       "meetingRecords",
     ]),
-    penize: anyAccess(["finance", "invoices", "documents", "billing", "vyuctovani"]),
+    penize:
+      level(EMPLOYEE_PERSONAL_MONEY_MODULE_ID) !== "none" ||
+      anyAccess(["finance", "invoices", "documents", "billing", "vyuctovani"]),
     zpravy: level("chat") !== "none",
     dochazka: level("labor") !== "none",
   };
+}
+
+/** Migrace starých polí (Finance / hrubý přepínač penize) na modul Moje peníze. */
+export function migrateLegacyEmployeeMoneyPermission(
+  map: Record<PortalModuleId, PortalAccessLevel>,
+  employeeDoc: Record<string, unknown> | null | undefined
+): Record<PortalModuleId, PortalAccessLevel> {
+  const out = { ...map };
+  if ((out[EMPLOYEE_PERSONAL_MONEY_MODULE_ID] ?? "none") !== "none") {
+    return out;
+  }
+
+  const rawMatrix = employeeDoc?.portalModulePermissions;
+  const matrixObj =
+    rawMatrix && typeof rawMatrix === "object"
+      ? (rawMatrix as Record<string, unknown>)
+      : null;
+  if (
+    matrixObj &&
+    Object.prototype.hasOwnProperty.call(matrixObj, EMPLOYEE_PERSONAL_MONEY_MODULE_ID)
+  ) {
+    return out;
+  }
+
+  const legacyMoneyIds: PortalModuleId[] = [
+    "finance",
+    "invoices",
+    "documents",
+    "vyuctovani",
+  ];
+  if (legacyMoneyIds.some((id) => (out[id] ?? "none") !== "none")) {
+    out[EMPLOYEE_PERSONAL_MONEY_MODULE_ID] = "read";
+    return out;
+  }
+
+  if (employeeHasExplicitPortalModuleMatrix(employeeDoc)) {
+    return out;
+  }
+
+  const coarse = parseEmployeePortalModules(employeeDoc);
+  if (coarse.penize) {
+    out[EMPLOYEE_PERSONAL_MONEY_MODULE_ID] = "read";
+  }
+  return out;
+}
+
+/** Zaměstnanec v organizaci — max READ u osobních modulů, bez admin sekcí. */
+export function applyEmployeeOrgRolePermissionCaps(
+  map: Record<PortalModuleId, PortalAccessLevel>
+): Record<PortalModuleId, PortalAccessLevel> {
+  const out = { ...map };
+  for (const id of EMPLOYEE_ORG_ROLE_ADMIN_ONLY_MODULES) {
+    out[id] = "none";
+  }
+  if ((out[EMPLOYEE_PERSONAL_MONEY_MODULE_ID] ?? "none") === "write") {
+    out[EMPLOYEE_PERSONAL_MONEY_MODULE_ID] = "read";
+  }
+  if ((out.labor ?? "none") === "write") {
+    out.labor = "read";
+  }
+  return out;
 }
 
 export function legacyAccessFlagsFromPortalPermissions(
@@ -517,6 +600,11 @@ export function initialPortalPermissionLevelsForEmployee(
     if (portalRole === "manager") {
       return applyManagerPermissionCaps(m);
     }
+    if (portalRole === "employee") {
+      return applyEmployeeOrgRolePermissionCaps(
+        migrateLegacyEmployeeMoneyPermission(m, employeeDoc)
+      );
+    }
     return m;
   }
   if (portalRole === "orgAdmin") {
@@ -537,6 +625,9 @@ export function sanitizePortalPermissionsForOrgRole(
 ): Record<PortalModuleId, PortalAccessLevel> {
   if (portalRole === "manager") {
     return applyManagerPermissionCaps(map);
+  }
+  if (portalRole === "employee") {
+    return applyEmployeeOrgRolePermissionCaps(migrateLegacyEmployeeMoneyPermission(map, null));
   }
   return map;
 }
