@@ -12,7 +12,6 @@ import {
   useCompany,
 } from "@/firebase";
 import { doc, collection, query, where, limit } from "firebase/firestore";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -21,18 +20,26 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatKc } from "@/lib/employee-money";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
-import { Loader2, AlertCircle, Mail, Phone } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useIsBelowLg } from "@/hooks/use-mobile";
 import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
+  Loader2,
+  AlertCircle,
+  Bell,
+  CalendarDays,
+  ClipboardList,
+  Clock,
+  ListTodo,
+} from "lucide-react";
+import {
+  EmployeeCompactHeader,
+  EmployeePortalPageShell,
+  EmployeePortalSection,
+  EmployeePortalSections,
+  EmployeeStatGrid,
+  EmployeeStatTile,
+  EmployeeMobileRecordRow,
+} from "@/components/employee-portal/employee-portal-ui";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
@@ -61,7 +68,6 @@ export default function EmployeeHomePage() {
     useDoc<any>(userRef);
 
   const { t } = useEmployeeUiLang(profile);
-  const belowLg = useIsBelowLg();
 
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
@@ -127,6 +133,26 @@ export default function EmployeeHomePage() {
   const dailyReportsLoadFailed =
     !dailyReportsLoading && (dailyReportsError != null || dailyReportsIndexPending);
 
+  const dailyReportStats = useMemo(() => {
+    let approvedAmount = 0;
+    let approvedHours = 0;
+    let pendingCount = 0;
+    for (const row of dailyReportsSorted) {
+      const st = String((row as { status?: string }).status || "");
+      const payable = (row as { payableAmountCzk?: number }).payableAmountCzk;
+      const hRaw =
+        (row as { hoursConfirmed?: unknown }).hoursConfirmed ??
+        (row as { hoursFromAttendance?: unknown }).hoursFromAttendance;
+      const h = hRaw != null ? Number(hRaw) : null;
+      if (st === "approved") {
+        if (typeof payable === "number" && Number.isFinite(payable)) approvedAmount += payable;
+        if (h != null && Number.isFinite(h)) approvedHours += h;
+      }
+      if (st === "pending" || st === "draft" || st === "returned") pendingCount += 1;
+    }
+    return { approvedAmount, approvedHours, pendingCount };
+  }, [dailyReportsSorted]);
+
   const hourlyRateEmployee = useMemo(() => {
     const raw = employeeDoc?.hourlyRate ?? profile?.hourlyRate;
     if (raw == null || raw === "") return 0;
@@ -140,8 +166,6 @@ export default function EmployeeHomePage() {
     [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") ||
     user?.email ||
     "Zaměstnanec";
-
-  const photoUrl = profile?.profileImage || profile?.photoUrl;
 
   useEffect(() => {
     if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
@@ -274,334 +298,264 @@ export default function EmployeeHomePage() {
     }
   };
 
-  const panel =
-    "border-2 border-neutral-950 bg-white text-neutral-950 shadow-sm rounded-xl";
+  const headerSubtitle = [
+    profile?.jobTitle || "Pracovní pozice není vyplněná",
+    companyName && companyName !== "Organization" ? companyName : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
-  const contactEmail = String(profile?.email || user?.email || "").trim();
-  const contactPhone = String(profile?.phone ?? employeeDoc?.phone ?? "").trim();
+  const reportsSummary =
+    dailyReportsLoading
+      ? "Načítám výkazy…"
+      : dailyReportsLoadFailed
+        ? "Výkazy se nepodařilo načíst"
+        : dailyReportsSorted.length === 0
+          ? "Zatím žádný výkaz"
+          : `${dailyReportsSorted.length} záznamů · schváleno ${formatKc(dailyReportStats.approvedAmount)}`;
 
-  const shellClass = cn(
-    "mx-auto max-w-5xl",
-    belowLg && "min-h-screen overflow-x-hidden bg-slate-950 px-3 pb-12 pt-4",
-    !belowLg && "space-y-6 sm:space-y-8 px-2 sm:px-0"
-  );
+  const defaultOpenSections =
+    homeNotifUnread > 0 ? ["notifications"] : undefined;
 
-  const sectionCard = cn(
-    "rounded-2xl border p-4 shadow-sm sm:p-5",
-    belowLg ? "border-white/10 bg-slate-900/95 text-slate-100" : panel
-  );
-
-  const headTitle = cn("text-base font-semibold", belowLg ? "text-white" : "text-neutral-950");
-  const headSub = cn("mt-1 text-sm", belowLg ? "text-slate-400" : "text-neutral-800");
-  const linkClass = belowLg
-    ? "font-medium text-orange-400 underline underline-offset-2"
-    : "font-medium text-neutral-950 underline underline-offset-2";
-
-  return (
-    <div className={shellClass}>
-      <section className={cn(sectionCard, "mb-4")}>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-          <Avatar
-            className={cn(
-              "h-20 w-20 shrink-0 sm:h-24 sm:w-24",
-              belowLg ? "border-2 border-white/20" : "border-2 border-neutral-950"
-            )}
-          >
-            <AvatarImage src={photoUrl || undefined} alt="" className="object-cover" />
-            <AvatarFallback className="text-2xl font-semibold bg-orange-500 text-white">
-              {displayName && displayName[0] ? displayName[0].toUpperCase() : "?"}
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0 flex-1">
-            <h1
-              className={cn(
-                "flex flex-wrap items-center gap-2 text-xl font-bold tracking-tight sm:text-3xl",
-                belowLg ? "text-white" : "text-neutral-950"
-              )}
-            >
-              <span>
-                {t("goodDay")}, {greetingName}!
-              </span>
-              {homeNotifUnread > 0 ? (
-                <Badge
-                  variant="destructive"
-                  className="text-xs font-semibold tabular-nums"
-                  title={`Nepřečtená upozornění: ${homeNotifUnread}`}
-                >
-                  {homeNotifUnread > 99 ? "99+" : homeNotifUnread} nepřečtených
-                </Badge>
-              ) : null}
-            </h1>
-            <p className={cn("mt-2 text-base leading-relaxed", belowLg ? "text-slate-200" : "text-neutral-950")}>
-              {profile?.jobTitle ? (
-                <span className="font-semibold">{profile.jobTitle}</span>
-              ) : (
-                <span>Pracovní pozice není vyplněná.</span>
-              )}
-              {companyName && companyName !== "Organization" ? (
-                <span
-                  className={cn(
-                    "mt-1 block text-sm font-medium",
-                    belowLg ? "text-slate-300" : "text-neutral-900"
-                  )}
-                >
-                  {companyName}
-                </span>
-              ) : null}
-            </p>
-            <div className="mt-3 flex flex-col gap-2 text-sm">
-              {contactEmail ? (
-                <a
-                  href={`mailto:${contactEmail}`}
-                  className={cn(
-                    "flex min-h-[44px] items-center gap-2 rounded-lg py-1 transition-colors",
-                    belowLg ? "text-orange-400 hover:text-orange-300" : "text-primary hover:underline"
-                  )}
-                >
-                  <Mail className="h-4 w-4 shrink-0" aria-hidden />
-                  <span className="break-all">{contactEmail}</span>
-                </a>
-              ) : null}
-              {contactPhone ? (
-                <a
-                  href={`tel:${contactPhone.replace(/\s/g, "")}`}
-                  className={cn(
-                    "flex min-h-[44px] items-center gap-2 rounded-lg py-1 transition-colors",
-                    belowLg ? "text-orange-400 hover:text-orange-300" : "text-primary hover:underline"
-                  )}
-                >
-                  <Phone className="h-4 w-4 shrink-0" aria-hidden />
-                  <span>{contactPhone}</span>
-                </a>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {showCalendarBlock ? (
-        <section className={cn(sectionCard, "mb-4")}>
-          <h2 className={cn(headTitle)}>{calendarBlockTitle}</h2>
-          <p className={cn(headSub, "mb-3")}>{calendarBlockDescription}</p>
-          <CompanyScheduleCalendar
-            companyId={companyId}
-            headingTitle={calendarBlockTitle}
-            layout="full"
-            appearance={belowLg ? "darkPortal" : "default"}
-            readOnly={!calendar.anyWrite}
-            restrictEmployeeEvents
-            scheduleFilter={calendarScheduleFilter}
-          />
-        </section>
-      ) : null}
-
-      {showTasks ? (
-        <section className={cn(sectionCard, "mb-4 space-y-3")}>
-          <h2 className={cn(headTitle)}>Moje úkoly</h2>
-          <DashboardOpenTasks companyId={companyId} employeeId={employeeId} isPrivileged={false} />
-        </section>
-      ) : null}
-
-      {user && showAttendance ? (
-        <section className={cn(sectionCard, "mb-4")}>
-          <h2 className={cn(headTitle, "mb-3")}>Docházka</h2>
-          <EmployeeAttendanceOverview
-            companyId={companyId}
-            employeeId={employeeId}
-            authUserId={user.uid}
-            employeeDisplayName={displayName}
-            companyName={companyName}
-            hourlyRate={hourlyRateEmployee}
-          />
-        </section>
-      ) : null}
-
-      {belowLg ? (
-        <Accordion type="multiple" className="space-y-2 pb-4">
-          <AccordionItem
-            value="notifications"
-            className="rounded-2xl border border-white/10 bg-slate-900/95 px-3 text-slate-100"
-          >
-            <AccordionTrigger className="py-4 text-left text-base font-semibold hover:no-underline">
-              Upozornění
-            </AccordionTrigger>
-            <AccordionContent className="pb-4 pt-0">
-              <EmployeeNotificationsPanel companyId={companyId} employeeId={employeeId} compact />
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem
-            value="reports"
-            className="rounded-2xl border border-white/10 bg-slate-900/95 px-3 text-slate-100"
-          >
-            <AccordionTrigger className="py-4 text-left text-base font-semibold hover:no-underline">
-              Denní výkazy a částky
-            </AccordionTrigger>
-            <AccordionContent className="pb-4 pt-0">
-              <p className="mb-3 text-sm text-slate-400">
-                Úpravy v sekci{" "}
-                <Link href="/portal/employee/daily-reports" className={linkClass}>
-                  Denní výkazy
-                </Link>
-                .
-              </p>
-              {dailyReportsLoading ? (
-                <p className="flex items-center gap-2 text-slate-300">
-                  <Loader2 className="h-4 w-4 animate-spin text-orange-400" />
-                  Načítám výkazy…
-                </p>
-              ) : dailyReportsLoadFailed ? (
-                <Alert className="border-amber-500/40 bg-amber-950/40 text-amber-50">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Výkazy se nepodařilo načíst</AlertTitle>
-                  <AlertDescription className="text-amber-100">
-                    {isFirestoreIndexError(dailyReportsError)
-                      ? "Zkuste stránku později nebo kontaktujte administrátora."
-                      : "Zkuste obnovit stránku."}
-                  </AlertDescription>
-                </Alert>
-              ) : dailyReportsSorted.length === 0 ? (
-                <p className="text-sm text-slate-400">
-                  Zatím nemáte žádný denní výkaz.
-                </p>
-              ) : (
-                <ul className="space-y-3">
-                  {dailyReportsSorted.map((row: Record<string, unknown>, idx: number) => {
-                    const st = String(row.status || "");
-                    const amt =
-                      st === "approved" && typeof row.payableAmountCzk === "number"
-                        ? (row.payableAmountCzk as number)
-                        : 0;
-                    const h =
-                      row.hoursConfirmed != null
-                        ? Number(row.hoursConfirmed)
-                        : row.hoursFromAttendance != null
-                          ? Number(row.hoursFromAttendance)
-                          : null;
-                    return (
-                      <li
-                        key={`${String(row.date)}-${idx}`}
-                        className="rounded-xl border border-white/10 bg-slate-950/50 p-3 text-sm"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-semibold text-white">{String(row.date || "—")}</span>
-                          <span className="text-xs text-orange-300">{dailyReportStatusLabel(st)}</span>
-                        </div>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-slate-300">
-                          <div>
-                            <span className="text-[11px] uppercase text-slate-500">Hodiny</span>
-                            <p className="tabular-nums">
-                              {h != null && Number.isFinite(h) ? `${h} h` : "—"}
-                            </p>
-                          </div>
-                          <div>
-                            <span className="text-[11px] uppercase text-slate-500">Částka</span>
-                            <p className="tabular-nums">{amt > 0 ? formatKc(amt) : "—"}</p>
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-              <p className="mt-4 text-xs leading-relaxed text-slate-500">
-                Do výplaty se započítávají jen schválené denní výkazy.
-              </p>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
+  const dailyReportsPreview = (
+    <div className="space-y-3 text-sm text-slate-800">
+      <p className="text-xs text-slate-600">
+        Úpravy v sekci{" "}
+        <Link
+          href="/portal/employee/daily-reports"
+          className="font-medium text-orange-700 underline underline-offset-2"
+        >
+          Denní výkazy
+        </Link>
+        .
+      </p>
+      {dailyReportsLoading ? (
+        <p className="flex items-center gap-2 text-slate-600">
+          <Loader2 className="h-4 w-4 animate-spin text-orange-600" />
+          Načítám výkazy…
+        </p>
+      ) : dailyReportsLoadFailed ? (
+        <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Výkazy se nepodařilo načíst</AlertTitle>
+          <AlertDescription>
+            {isFirestoreIndexError(dailyReportsError)
+              ? "Zkuste stránku později nebo kontaktujte administrátora."
+              : "Zkuste obnovit stránku."}
+          </AlertDescription>
+        </Alert>
+      ) : dailyReportsSorted.length === 0 ? (
+        <p className="text-slate-600">Zatím nemáte žádný denní výkaz.</p>
       ) : (
         <>
-          <EmployeeNotificationsPanel companyId={companyId} employeeId={employeeId} compact />
-
-          <Card className={cn(panel)}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base font-semibold text-neutral-950">
-                Denní výkazy a částky
-              </CardTitle>
-              <p className="mt-1 text-sm text-neutral-800">
-                Náhled — celková historie výkazů. Úpravy provedete v sekci{" "}
-                <Link
-                  href="/portal/employee/daily-reports"
-                  className="font-medium text-neutral-950 underline underline-offset-2"
-                >
-                  Denní výkazy
-                </Link>
-                .
-              </p>
-            </CardHeader>
-            <CardContent className="text-sm text-neutral-900">
-              {dailyReportsLoading ? (
-                <p className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Načítám výkazy…
-                </p>
-              ) : dailyReportsLoadFailed ? (
-                <Alert className="border-amber-300 bg-amber-50 text-amber-950">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Výkazy se nepodařilo načíst</AlertTitle>
-                  <AlertDescription>
-                    {isFirestoreIndexError(dailyReportsError)
-                      ? "Data se z databáze momentálně nepodařilo načíst. Zkuste stránku později nebo kontaktujte administrátora."
-                      : "Zkuste obnovit stránku. Pokud problém přetrvává, kontaktujte administrátora."}
-                  </AlertDescription>
-                </Alert>
-              ) : dailyReportsSorted.length === 0 ? (
-                <p>
-                  Zatím nemáte žádný denní výkaz. Částka se započte až po schválení administrátorem.
-                </p>
-              ) : (
-                <div className="overflow-x-auto rounded-lg border-2 border-neutral-950">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-b-2 border-neutral-950 bg-white hover:bg-white">
-                        <TableHead className="font-semibold text-neutral-950">Datum</TableHead>
-                        <TableHead className="font-semibold text-neutral-950">Hodiny</TableHead>
-                        <TableHead className="font-semibold text-neutral-950">Částka (po schv.)</TableHead>
-                        <TableHead className="font-semibold text-neutral-950">Stav</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {dailyReportsSorted.map((row: Record<string, unknown>, idx: number) => {
-                        const st = String(row.status || "");
-                        const amt =
-                          st === "approved" && typeof row.payableAmountCzk === "number"
-                            ? (row.payableAmountCzk as number)
-                            : 0;
-                        const h =
-                          row.hoursConfirmed != null
-                            ? Number(row.hoursConfirmed)
-                            : row.hoursFromAttendance != null
-                              ? Number(row.hoursFromAttendance)
-                              : null;
-                        return (
-                          <TableRow
-                            key={`${String(row.date)}-${idx}`}
-                            className="border-b border-neutral-950/20"
-                          >
-                            <TableCell className="whitespace-nowrap font-medium text-neutral-950">
-                              {String(row.date || "—")}
-                            </TableCell>
-                            <TableCell className="tabular-nums text-neutral-950">
-                              {h != null && Number.isFinite(h) ? `${h} h` : "—"}
-                            </TableCell>
-                            <TableCell className="tabular-nums text-neutral-950">
-                              {amt > 0 ? formatKc(amt) : "—"}
-                            </TableCell>
-                            <TableCell className="text-neutral-950">{dailyReportStatusLabel(st)}</TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-              <p className="mt-4 text-xs leading-relaxed text-neutral-900">
-                Do výplaty se započítávají jen schválené denní výkazy. Docházka sama o sobě peníze nevyplácí.
-              </p>
-            </CardContent>
-          </Card>
+          <div className="hidden sm:block overflow-x-auto rounded-lg border border-slate-200">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-b border-slate-200 bg-slate-50/80 hover:bg-slate-50/80">
+                  <TableHead className="text-xs font-semibold text-slate-700">Datum</TableHead>
+                  <TableHead className="text-xs font-semibold text-slate-700">Hodiny</TableHead>
+                  <TableHead className="text-xs font-semibold text-slate-700">Částka</TableHead>
+                  <TableHead className="text-xs font-semibold text-slate-700">Stav</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {dailyReportsSorted.slice(0, 12).map((row: Record<string, unknown>, idx: number) => {
+                  const st = String(row.status || "");
+                  const amt =
+                    st === "approved" && typeof row.payableAmountCzk === "number"
+                      ? (row.payableAmountCzk as number)
+                      : 0;
+                  const h =
+                    row.hoursConfirmed != null
+                      ? Number(row.hoursConfirmed)
+                      : row.hoursFromAttendance != null
+                        ? Number(row.hoursFromAttendance)
+                        : null;
+                  return (
+                    <TableRow key={`${String(row.date)}-${idx}`} className="border-b border-slate-100">
+                      <TableCell className="whitespace-nowrap font-medium text-slate-900">
+                        {String(row.date || "—")}
+                      </TableCell>
+                      <TableCell className="tabular-nums text-slate-800">
+                        {h != null && Number.isFinite(h) ? `${h} h` : "—"}
+                      </TableCell>
+                      <TableCell className="tabular-nums text-slate-800">
+                        {amt > 0 ? formatKc(amt) : "—"}
+                      </TableCell>
+                      <TableCell className="text-slate-700">{dailyReportStatusLabel(st)}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <ul className="space-y-2 sm:hidden">
+            {dailyReportsSorted.slice(0, 8).map((row: Record<string, unknown>, idx: number) => {
+              const st = String(row.status || "");
+              const amt =
+                st === "approved" && typeof row.payableAmountCzk === "number"
+                  ? (row.payableAmountCzk as number)
+                  : 0;
+              const h =
+                row.hoursConfirmed != null
+                  ? Number(row.hoursConfirmed)
+                  : row.hoursFromAttendance != null
+                    ? Number(row.hoursFromAttendance)
+                    : null;
+              return (
+                <li key={`${String(row.date)}-${idx}`}>
+                  <EmployeeMobileRecordRow
+                    primary={String(row.date || "—")}
+                    secondary={dailyReportStatusLabel(st)}
+                    trailing={
+                      <span className="text-xs tabular-nums text-slate-800">
+                        {amt > 0 ? formatKc(amt) : h != null && Number.isFinite(h) ? `${h} h` : "—"}
+                      </span>
+                    }
+                  />
+                </li>
+              );
+            })}
+          </ul>
+          {dailyReportsSorted.length > 12 ? (
+            <p className="text-xs text-slate-500">
+              Zobrazeno posledních 12 z {dailyReportsSorted.length}. Kompletní historie v Denních výkazech.
+            </p>
+          ) : null}
         </>
       )}
+      <p className="text-xs leading-relaxed text-slate-500">
+        Do výplaty se započítávají jen schválené denní výkazy.
+      </p>
     </div>
+  );
+
+  return (
+    <EmployeePortalPageShell>
+      <EmployeeCompactHeader
+        title={`${t("goodDay")}, ${greetingName}!`}
+        subtitle={headerSubtitle}
+        badge={
+          homeNotifUnread > 0 ? (
+            <Badge variant="destructive" className="text-[10px] font-semibold tabular-nums sm:text-xs">
+              {homeNotifUnread > 99 ? "99+" : homeNotifUnread} nepřečtených
+            </Badge>
+          ) : null
+        }
+      />
+
+      <EmployeeStatGrid>
+        {showAttendance ? (
+          <EmployeeStatTile
+            label="Docházka"
+            value="Přehled"
+            hint="Otevřete sekci níže pro detail a historii"
+          />
+        ) : null}
+        <EmployeeStatTile
+          label="Schválený výdělek"
+          value={
+            dailyReportsLoading
+              ? "…"
+              : formatKc(dailyReportStats.approvedAmount)
+          }
+          hint={
+            dailyReportStats.approvedHours > 0
+              ? `${dailyReportStats.approvedHours.toLocaleString("cs-CZ")} h schváleno`
+              : undefined
+          }
+        />
+        <EmployeeStatTile
+          label="Výkazy ke schválení"
+          value={dailyReportStats.pendingCount}
+          hint={
+            dailyReportStats.pendingCount > 0
+              ? "Rozpracované nebo odeslané"
+              : "Žádné čekající"
+          }
+        />
+        <EmployeeStatTile
+          label="Upozornění"
+          value={homeNotifUnread}
+          hint={homeNotifUnread > 0 ? "Nepřečtená upozornění" : "Vše přečteno"}
+        />
+      </EmployeeStatGrid>
+
+      <EmployeePortalSections defaultValue={defaultOpenSections}>
+        {showCalendarBlock ? (
+          <EmployeePortalSection
+            value="calendar"
+            icon={CalendarDays}
+            title={calendarBlockTitle}
+            summary={calendarBlockDescription}
+          >
+            <CompanyScheduleCalendar
+              companyId={companyId}
+              headingTitle={calendarBlockTitle}
+              layout="full"
+              appearance="default"
+              readOnly={!calendar.anyWrite}
+              restrictEmployeeEvents
+              scheduleFilter={calendarScheduleFilter}
+            />
+          </EmployeePortalSection>
+        ) : null}
+
+        {showTasks ? (
+          <EmployeePortalSection
+            value="tasks"
+            icon={ListTodo}
+            title="Moje úkoly"
+            summary="Aktivní úkoly přiřazené vám nebo všem"
+          >
+            <DashboardOpenTasks
+              companyId={companyId}
+              employeeId={employeeId}
+              isPrivileged={false}
+            />
+          </EmployeePortalSection>
+        ) : null}
+
+        <EmployeePortalSection
+          value="notifications"
+          icon={Bell}
+          title="Upozornění"
+          summary={
+            homeNotifUnread > 0
+              ? `${homeNotifUnread} nepřečtených`
+              : "Kalendář a systémová upozornění"
+          }
+        >
+          <EmployeeNotificationsPanel companyId={companyId} employeeId={employeeId} compact />
+        </EmployeePortalSection>
+
+        {user && showAttendance ? (
+          <EmployeePortalSection
+            value="attendance"
+            icon={Clock}
+            title="Docházka"
+            summary="Denní přehled, historie a odpracované hodiny"
+          >
+            <EmployeeAttendanceOverview
+              companyId={companyId}
+              employeeId={employeeId}
+              authUserId={user.uid}
+              employeeDisplayName={displayName}
+              companyName={companyName}
+              hourlyRate={hourlyRateEmployee}
+            />
+          </EmployeePortalSection>
+        ) : null}
+
+        <EmployeePortalSection
+          value="reports"
+          icon={ClipboardList}
+          title="Denní výkazy a částky"
+          summary={reportsSummary}
+        >
+          {dailyReportsPreview}
+        </EmployeePortalSection>
+      </EmployeePortalSections>
+    </EmployeePortalPageShell>
   );
 }

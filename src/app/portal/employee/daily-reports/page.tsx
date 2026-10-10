@@ -528,7 +528,7 @@ export default function EmployeeDailyReportsPage() {
     calRejected:
       "border-2 border-red-700 bg-red-100 text-red-950 hover:bg-red-100 rounded-md min-h-10 min-w-10 text-base",
     calLocked:
-      "border-2 border-neutral-950 bg-slate-200 text-neutral-950 hover:bg-slate-200 rounded-md ring-2 ring-neutral-950/30 min-h-10 min-w-10 text-base",
+      "border border-slate-200 bg-slate-200 text-neutral-950 hover:bg-slate-200 rounded-md ring-2 ring-neutral-950/30 min-h-10 min-w-10 text-base",
     calPunchWork: "ring-2 ring-emerald-600 ring-offset-2 ring-offset-white",
     calSegmentsOnlyWork: "ring-2 ring-sky-600 ring-offset-2 ring-offset-white",
   };
@@ -1060,17 +1060,17 @@ export default function EmployeeDailyReportsPage() {
   }
 
   const cardBox =
-    "border-2 border-neutral-950 bg-white text-neutral-950 shadow-sm";
-  const cardTitle = "text-lg font-semibold text-neutral-950";
-  const cardDesc = "text-sm text-neutral-900";
+    "rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm";
+  const cardTitle = "text-base font-semibold text-slate-900";
+  const cardDesc = "text-xs text-slate-600 sm:text-sm";
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 sm:space-y-8 px-3 sm:px-4 lg:px-0">
-      <div className="rounded-xl border-2 border-neutral-950 bg-white p-4 sm:p-6">
-        <h1 className="text-2xl font-bold tracking-tight text-neutral-950 sm:text-3xl">
+    <div className="mx-auto max-w-6xl space-y-3 px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-3 sm:space-y-4 sm:px-4 lg:px-0">
+      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 sm:px-4 sm:py-3">
+        <h1 className="text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
           Výkaz práce
         </h1>
-        <p className="mt-2 text-sm leading-relaxed text-neutral-900 sm:text-base">
+        <p className="mt-1 text-xs leading-relaxed text-slate-700 sm:text-sm">
           Jeden denní zápis: docházka z terminálu, tarify a rozdělení zbývajícího času do řádků (hodiny, popis,
           volitelná zakázka). {companyName ? <span className="font-semibold">{companyName}</span> : null}
         </p>
@@ -1097,7 +1097,7 @@ export default function EmployeeDailyReportsPage() {
       ) : null}
 
       {segmentsFetchFailed ? (
-        <Alert variant="destructive" className="border-2 border-neutral-950">
+        <Alert variant="destructive" className="border border-slate-200">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Úseky z terminálu se nenačetly</AlertTitle>
           <AlertDescription className="text-neutral-900">
@@ -1125,7 +1125,7 @@ export default function EmployeeDailyReportsPage() {
       ) : null}
 
       {isLockedBy24h && !formLocked ? (
-        <Alert className="border-2 border-neutral-950 bg-slate-100 text-neutral-950">
+        <Alert className="border border-slate-200 bg-slate-100 text-neutral-950">
           <Lock className="h-4 w-4 text-neutral-950" />
           <AlertTitle>Zápis je uzamčen po 24 hodinách</AlertTitle>
           <AlertDescription className="text-neutral-900">
@@ -1134,35 +1134,33 @@ export default function EmployeeDailyReportsPage() {
         </Alert>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,280px)_1fr]">
-        <Card className={cn(cardBox, "order-2 overflow-hidden lg:order-1")}>
-          <CardHeader className="space-y-1 pb-2">
+      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(280px,320px)_minmax(0,1fr)] lg:items-start lg:gap-5">
+        <Card className={cn(cardBox, "w-full overflow-hidden lg:sticky lg:top-4")}>
+          <CardHeader className="space-y-0.5 px-3 pb-1 pt-3 sm:px-4">
             <CardTitle className={cardTitle}>Den</CardTitle>
             <CardDescription className={cardDesc}>Vyberte pracovní den</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col items-stretch p-3 sm:p-4">
-            <div className="flex justify-center">
-              <Calendar
-                mode="single"
-                month={calendarMonth}
-                onMonthChange={setCalendarMonth}
-                selected={selectedDay}
-                onSelect={(d) => {
-                  if (d) {
-                    setSelectedDay(d);
-                    setCalendarMonth(d);
-                  }
-                }}
-                locale={cs}
-                modifiers={calendarModifiers}
-                modifiersClassNames={calendarModifiersClassNames}
-                className="rounded-lg border-2 border-neutral-950 bg-white p-2 sm:p-3 [&_.cell]:h-11 [&_.cell]:w-11 [&_.cell]:min-h-[2.75rem] [&_.cell]:min-w-[2.75rem] [&_button.day]:h-full [&_button.day]:min-h-[2.75rem] [&_button.day]:w-full [&_button.day]:min-w-[2.75rem] [&_button.day]:text-base"
-              />
-            </div>
+          <CardContent className="flex w-full flex-col items-stretch p-2 sm:p-3">
+            <Calendar
+              mode="single"
+              month={calendarMonth}
+              onMonthChange={setCalendarMonth}
+              selected={selectedDay}
+              onSelect={(d) => {
+                if (d) {
+                  setSelectedDay(d);
+                  setCalendarMonth(d);
+                }
+              }}
+              locale={cs}
+              modifiers={calendarModifiers}
+              modifiersClassNames={calendarModifiersClassNames}
+              className="w-full max-w-none rounded-lg border border-slate-200 bg-white p-2 sm:p-3 [&_table]:w-full [&_.cell]:aspect-square [&_.cell]:h-auto [&_.cell]:w-full [&_.cell]:max-w-[2.75rem] [&_.cell]:p-0 [&_button.day]:aspect-square [&_button.day]:h-full [&_button.day]:w-full [&_button.day]:text-sm"
+            />
             {selectedDayMarker ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2 border-t-2 border-neutral-950 pt-3 text-xs text-neutral-900">
-                <span className="font-semibold text-neutral-950">Stav dne:</span>
-                <Badge variant="outline" className="border-2 border-neutral-950 bg-white text-neutral-950">
+              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2 text-xs text-slate-800">
+                <span className="font-semibold text-slate-900">Stav dne:</span>
+                <Badge variant="outline" className="border-slate-300 bg-white text-slate-900">
                   {selectedDayMarker === "no_shift"
                     ? "Bez docházky"
                     : selectedDayMarker === "work_no_report"
@@ -1183,8 +1181,8 @@ export default function EmployeeDailyReportsPage() {
                 </Badge>
               </div>
             ) : null}
-            <div className="mt-4 space-y-2 border-t-2 border-neutral-950 pt-3 text-xs leading-relaxed text-neutral-900 sm:text-[11px] sm:leading-snug">
-              <p className="font-semibold text-neutral-950">Legenda kalendáře</p>
+            <div className="mt-3 space-y-2 border-t border-slate-200 pt-2 text-[11px] leading-snug text-slate-700">
+              <p className="font-semibold text-slate-900">Legenda kalendáře</p>
               <ul className="grid gap-2 sm:grid-cols-2 sm:gap-1.5">
                 <li className="flex items-center gap-2">
                   <span className="inline-block h-3.5 w-3.5 shrink-0 rounded border-2 border-emerald-600 bg-white" />{" "}
@@ -1223,7 +1221,7 @@ export default function EmployeeDailyReportsPage() {
                   Zamítnuto
                 </li>
                 <li className="flex items-center gap-2">
-                  <span className="inline-block h-3 w-3 shrink-0 rounded border-2 border-neutral-950 bg-slate-200" />{" "}
+                  <span className="inline-block h-3 w-3 shrink-0 rounded border border-slate-200 bg-slate-200" />{" "}
                   Uzamčeno (24 h)
                 </li>
               </ul>
@@ -1231,14 +1229,14 @@ export default function EmployeeDailyReportsPage() {
           </CardContent>
         </Card>
 
-        <div className="order-1 space-y-5 lg:order-2">
+        <div className="min-w-0 space-y-3 sm:space-y-4">
           {selectedDay && dayKey ? (
-            <div className="space-y-4">
-              <div className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-3 sm:px-5 sm:py-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-600">
+            <div className="space-y-3">
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 sm:px-4 sm:py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                   Vybraný den
                 </p>
-                <p className="text-lg font-bold leading-tight text-neutral-950 sm:text-xl">
+                <p className="text-base font-semibold leading-tight text-slate-900 sm:text-lg">
                   {format(selectedDay, "EEEE d. MMMM yyyy", { locale: cs })}
                 </p>
               </div>
@@ -1251,14 +1249,14 @@ export default function EmployeeDailyReportsPage() {
                   </AlertDescription>
                 </Alert>
               ) : dayWorkedCap > SUM_COMPARE_EPS ? (
-                <div className="rounded-2xl border-2 border-neutral-950 bg-gradient-to-b from-white to-neutral-50 p-5 shadow-sm sm:p-7">
+                <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-neutral-50 p-5 shadow-sm sm:p-7">
                   <h2 className="text-xl font-bold leading-snug text-neutral-950 sm:text-2xl">
                     Rozdělte práci podle svých odpracovaných hodin
                   </h2>
                   <p className="mt-2 text-base leading-relaxed text-neutral-700 sm:text-lg">
                     Uveďte, co jste dělali a kolik hodin jste na tom strávili v každém řádku.
                   </p>
-                  <div className="mt-5 rounded-2xl border-2 border-neutral-950 bg-white px-5 py-6 sm:px-7 sm:py-8">
+                  <div className="mt-5 rounded-2xl border border-slate-200 bg-white px-5 py-6 sm:px-7 sm:py-8">
                     <p className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
                       K rozdělení do řádků
                     </p>
@@ -1388,20 +1386,20 @@ export default function EmployeeDailyReportsPage() {
                   ) : null}
 
                   {tariffSum > 0 ? (
-                    <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
+                    <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-neutral-950">
                       <span className="font-semibold tabular-nums">{tariffSum} h</span> z tarifu z terminálu
                       se započítá automaticky (needitovatelné) a odečte se z času pro výkaz níže.
                     </p>
                   ) : null}
                   {jobTerminalSumOnly > 0 ? (
-                    <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
+                    <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-neutral-950">
                       <span className="font-semibold tabular-nums">{jobTerminalSumOnly} h</span> je uzamčeno
                       zakázkou vybranou v terminálu — výběr zakázky ve formuláři se netýká těchto úseků.
                     </p>
                   ) : null}
 
                   {jobTerminalSegments.length > 0 ? (
-                    <div className="space-y-3 rounded-lg border-2 border-neutral-950 bg-white p-4">
+                    <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
                       <p className="text-sm font-medium text-neutral-950">
                         Zakázka z terminálu — volitelný popis
                       </p>
@@ -1430,7 +1428,7 @@ export default function EmployeeDailyReportsPage() {
                               </Label>
                               <Textarea
                                 rows={3}
-                                className="min-h-[88px] border-2 border-neutral-950 text-neutral-950"
+                                className="min-h-[88px] border border-slate-200 text-neutral-950"
                                 placeholder="Volitelně: co jste na zakázce dělali…"
                                 value={jobTerminalLineNotes[seg.id] ?? ""}
                                 onChange={(e) =>
@@ -1458,7 +1456,7 @@ export default function EmployeeDailyReportsPage() {
                 </div>
               ) : null}
 
-              <div className="space-y-5 rounded-2xl border-2 border-neutral-950 bg-white p-4 sm:space-y-6 sm:p-6 lg:p-8">
+              <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:space-y-6 sm:p-6 lg:p-8">
                 <div>
                   <p className="text-xl font-bold text-neutral-950 sm:text-2xl">
                     Rozdělení práce do řádků
@@ -1481,7 +1479,7 @@ export default function EmployeeDailyReportsPage() {
                     Načítání přiřazených zakázek…
                   </p>
                 ) : assignedJobIds.length === 0 ? (
-                  <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-3 text-base text-neutral-900 sm:text-sm">
+                  <p className="rounded-lg border border-slate-200 bg-white px-3 py-3 text-base text-neutral-900 sm:text-sm">
                     Nemáte přiřazené žádné zakázky — v rozbalovacím poli je jen „Bez zakázky / interní práce“.
                   </p>
                 ) : (
@@ -1493,7 +1491,7 @@ export default function EmployeeDailyReportsPage() {
                   {dayFormRows.map((row) => (
                     <div
                       key={row.rowId}
-                      className="flex flex-col gap-5 rounded-2xl border-2 border-neutral-950 bg-neutral-50/80 p-4 sm:p-5 lg:grid lg:grid-cols-[minmax(0,7rem)_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-5"
+                      className="flex flex-col gap-5 rounded-2xl border border-slate-200 bg-neutral-50/80 p-4 sm:p-5 lg:grid lg:grid-cols-[minmax(0,7rem)_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-5"
                     >
                       <div className="w-full space-y-2 lg:w-auto">
                         <Label className="text-base font-semibold text-neutral-950">
@@ -1501,7 +1499,7 @@ export default function EmployeeDailyReportsPage() {
                         </Label>
                         <Input
                           inputMode="decimal"
-                          className="h-16 min-h-[56px] border-2 border-neutral-950 px-4 text-xl tabular-nums text-neutral-950"
+                          className="h-16 min-h-[56px] border border-slate-200 px-4 text-xl tabular-nums text-neutral-950"
                           placeholder="např. 1,5"
                           value={row.hoursStr}
                           onChange={(e) =>
@@ -1518,7 +1516,7 @@ export default function EmployeeDailyReportsPage() {
                         <Label className="text-base font-semibold text-neutral-950">Co jste dělali?</Label>
                         <Textarea
                           rows={3}
-                          className="min-h-[120px] border-2 border-neutral-950 px-4 py-3 text-lg leading-relaxed text-neutral-950"
+                          className="min-h-[120px] border border-slate-200 px-4 py-3 text-lg leading-relaxed text-neutral-950"
                           placeholder="Stručně popište práci (u řádku bez zakázky je popis povinný)…"
                           value={row.lineNote}
                           onChange={(e) =>
@@ -1535,7 +1533,7 @@ export default function EmployeeDailyReportsPage() {
                         <Label className="text-base font-semibold text-neutral-950">Zakázka</Label>
                         <p className="text-sm text-neutral-600">volitelné</p>
                         <select
-                          className="mt-1 flex h-16 min-h-[56px] w-full rounded-md border-2 border-neutral-950 bg-white px-4 text-lg text-neutral-950"
+                          className="mt-1 flex h-16 min-h-[56px] w-full rounded-md border border-slate-200 bg-white px-4 text-lg text-neutral-950"
                           value={row.jobId}
                           onChange={(e) =>
                             setDayFormRows((prev) =>
@@ -1559,7 +1557,7 @@ export default function EmployeeDailyReportsPage() {
                           type="button"
                           variant="outline"
                           size="icon"
-                          className="h-16 w-full min-h-[56px] min-w-0 border-2 border-neutral-950 bg-white lg:size-14"
+                          className="h-16 w-full min-h-[56px] min-w-0 border border-slate-200 bg-white lg:size-14"
                           disabled={
                             effectiveFormLocked || dailyWorkLogOff || dayFormRows.length <= 1
                           }
@@ -1589,7 +1587,7 @@ export default function EmployeeDailyReportsPage() {
                 <Button
                   type="button"
                   variant="secondary"
-                  className="min-h-[52px] w-full border-2 border-neutral-950 bg-white px-6 text-base font-semibold text-neutral-950 hover:bg-neutral-100 sm:text-lg"
+                  className="min-h-[52px] w-full border border-slate-200 bg-white px-6 text-base font-semibold text-neutral-950 hover:bg-neutral-100 sm:text-lg"
                   disabled={hoursDisabled}
                   onClick={() =>
                     setDayFormRows((prev) => [
@@ -1608,7 +1606,7 @@ export default function EmployeeDailyReportsPage() {
                 </Button>
               </div>
 
-              <div className="space-y-3 rounded-xl border-2 border-neutral-950 bg-white p-4 sm:p-5">
+              <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
                 <Label htmlFor="dr-note" className="text-base font-semibold text-neutral-950">
                   Poznámka k výkazu
                 </Label>
@@ -1618,12 +1616,12 @@ export default function EmployeeDailyReportsPage() {
                   onChange={(e) => setNote(e.target.value)}
                   disabled={effectiveFormLocked}
                   rows={3}
-                  className="min-h-[100px] border-2 border-neutral-950 px-4 py-3 text-lg text-neutral-950"
+                  className="min-h-[100px] border border-slate-200 px-4 py-3 text-lg text-neutral-950"
                 />
               </div>
 
               {status === "pending" ? (
-                <p className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-4 text-base text-neutral-950">
+                <p className="rounded-xl border border-slate-200 bg-white px-4 py-4 text-base text-neutral-950">
                   Výkaz čeká na schválení. Úpravy nejsou možné, dokud ho administrátor nevrátí nebo
                   nezamítne.
                 </p>
@@ -1648,7 +1646,7 @@ export default function EmployeeDailyReportsPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="min-h-[56px] w-full border-2 border-neutral-950 bg-white text-base font-semibold text-neutral-950 hover:bg-neutral-50 sm:min-h-[52px] sm:text-lg"
+                  className="min-h-[56px] w-full border border-slate-200 bg-white text-base font-semibold text-neutral-950 hover:bg-neutral-50 sm:min-h-[52px] sm:text-lg"
                   disabled={
                     saving ||
                     privileged ||
@@ -1746,7 +1744,7 @@ export default function EmployeeDailyReportsPage() {
                   </div>
                   {typeof existingReport?.estimatedLaborFromSegmentsCzk === "number" &&
                   existingReport.estimatedLaborFromSegmentsCzk > 0 ? (
-                    <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-2 text-xs text-neutral-900">
+                    <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-neutral-900">
                       <strong className="text-neutral-950">Odhad výdělku z uloženého výkazu:</strong>{" "}
                       {formatKc(existingReport.estimatedLaborFromSegmentsCzk as number)} (tarify podle ceníku
                       tarifu, zakázky a interní práce podle sazeb a vaší výchozí sazby).
@@ -1759,7 +1757,7 @@ export default function EmployeeDailyReportsPage() {
                   )}
 
                   {noTimeLeftToSplit ? (
-                    <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
+                    <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-neutral-950">
                       Pro tento den není žádný čas k rozdělení do řádků níže — tarify a uzamčené zakázky z
                       terminálu pokrývají celé odpracované hodiny.
                     </p>
@@ -1864,7 +1862,7 @@ export default function EmployeeDailyReportsPage() {
                         return (
                           <li
                             key={seg.id}
-                            className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border-2 border-neutral-950 bg-white px-3 py-3"
+                            className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-3"
                           >
                             <div>
                               <span className="text-xs font-semibold uppercase text-neutral-950">{st}</span>
@@ -1884,7 +1882,7 @@ export default function EmployeeDailyReportsPage() {
                 </CardContent>
               </Card>
 
-              <div className="rounded-xl border-2 border-neutral-950 bg-white p-4 text-sm leading-relaxed text-neutral-900 sm:p-5">
+              <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-neutral-900 sm:p-5">
                 <p className="text-base font-semibold text-neutral-950">Jak funguje výkaz za den</p>
                 <ul className="mt-3 list-disc space-y-2 pl-5 text-neutral-800">
                   <li>
@@ -1903,7 +1901,7 @@ export default function EmployeeDailyReportsPage() {
                 </ul>
               </div>
 
-              <div className="rounded-xl border-2 border-neutral-950 bg-white p-4 text-sm text-neutral-900 sm:p-5">
+              <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-neutral-900 sm:p-5">
                 <p className="text-base font-semibold text-neutral-950">Ruční výběr zakázky</p>
                 <p className="mt-2 text-sm leading-relaxed text-neutral-800">
                   Zakázky ve formuláři jsou přiřazené k vašemu účtu — nezávisle na tom, co jste vybrali na terminálu

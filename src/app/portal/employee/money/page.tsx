@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   useUser,
   useFirestore,
@@ -49,8 +49,60 @@ import {
 import { JOB_TERMINAL_AUTO_APPROVAL_SOURCE } from "@/lib/job-terminal-auto-shared";
 import { employeeDebtSelfViewAllowed } from "@/lib/employee-debt-visibility";
 import Link from "next/link";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  EmployeeCompactHeader,
+  EmployeeMobileRecordRow,
+  EmployeePortalPageShell,
+  EmployeeStatGrid,
+  EmployeeStatTile,
+} from "@/components/employee-portal/employee-portal-ui";
 
 const MONEY_FETCH_LIMIT = 3000;
+
+function AdvanceDesktopRow({ a }: { a: AdvanceDoc }) {
+  const [open, setOpen] = useState(false);
+  const note = String(a.note ?? "").trim();
+  return (
+    <>
+      <TableRow>
+        <TableCell className="font-medium text-slate-900">{a.date || "—"}</TableCell>
+        <TableCell className="font-bold text-slate-900">{formatKc(a.amount)}</TableCell>
+        <TableCell>
+          <Badge
+            className={
+              a.status === "paid"
+                ? "bg-emerald-600 text-white hover:bg-emerald-600"
+                : "bg-red-600 text-white hover:bg-red-600"
+            }
+          >
+            {a.status === "paid" ? "Zaplaceno" : "Nezaplaceno"}
+          </Badge>
+        </TableCell>
+        <TableCell className="text-slate-800">
+          {note ? (
+            <button
+              type="button"
+              className="text-xs font-medium text-orange-700 underline underline-offset-2"
+              onClick={() => setOpen((v) => !v)}
+            >
+              {open ? "Skrýt poznámku" : "Detail"}
+            </button>
+          ) : (
+            "—"
+          )}
+        </TableCell>
+      </TableRow>
+      {open && note ? (
+        <TableRow>
+          <TableCell colSpan={4} className="whitespace-pre-wrap bg-slate-50 text-sm text-slate-800">
+            {note}
+          </TableCell>
+        </TableRow>
+      ) : null}
+    </>
+  );
+}
 
 function mergeDocsById<T extends { id?: string }>(batches: T[][]): T[] {
   const map = new Map<string, T>();
@@ -530,19 +582,14 @@ export default function EmployeeMoneyPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-1 pb-10 sm:px-0">
-      <div className="flex items-start gap-3">
-        <Wallet className="mt-1 h-8 w-8 shrink-0 text-primary" />
-        <div>
-          <h1 className="text-2xl font-bold text-black sm:text-3xl">Peníze</h1>
-          <p className="mt-1 text-base text-slate-800">
-            Přehled výdělku ze schválených hodin a záloh.
-            {companyName && companyName !== "Organization"
-              ? ` · ${companyName}`
-              : ""}
-          </p>
-        </div>
-      </div>
+    <EmployeePortalPageShell className="max-w-5xl">
+      <EmployeeCompactHeader
+        title="Peníze"
+        subtitle={`Přehled výdělku ze schválených hodin a záloh${
+          companyName && companyName !== "Organization" ? ` · ${companyName}` : ""
+        }`}
+        actions={<Wallet className="h-6 w-6 text-orange-600" aria-hidden />}
+      />
 
       {(blocksError || advancesError) && (
         <Alert
@@ -559,135 +606,109 @@ export default function EmployeeMoneyPage() {
         </Alert>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="border-slate-200 bg-white shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold text-black">
-              Hodinová sazba
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-black">
-              {hourlyRate > 0 ? `${hourlyRate} Kč/h` : "—"}
-            </p>
-            {hourlyRate <= 0 && (
-              <p className="mt-1 text-xs text-slate-800">
-                Sazba není nastavena — domluvte se s administrátorem.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="border-slate-200 bg-white shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold text-black">
-              Schválené hodiny (celkem)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold text-black">
-              {blocksLoading ? "…" : `${approvedHoursTotal} h`}
-            </p>
-            {!blocksLoading && pendingHoursTotal > 0 && (
-              <p className="mt-1 text-xs font-medium text-amber-800">
-                Čeká na schválení: {pendingHoursTotal} h
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="border-slate-200 bg-white shadow-sm sm:col-span-2">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold text-black">
-              Schválený výdělek (docházka + tarify)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-            <div>
-              <p className="font-medium text-slate-700">Dnes</p>
-              <p className="text-lg font-bold text-black">
-                {moneyDataLoading ? "…" : formatKc(earnedToday)}
-              </p>
-            </div>
-            <div>
-              <p className="font-medium text-slate-700">Týden</p>
-              <p className="text-lg font-bold text-black">
-                {moneyDataLoading ? "…" : formatKc(earnedWeek)}
-              </p>
-            </div>
-            <div>
-              <p className="font-medium text-slate-700">Měsíc</p>
-              <p className="text-lg font-bold text-black">
-                {moneyDataLoading ? "…" : formatKc(earnedMonth)}
-              </p>
-            </div>
-            <div>
-              <p className="font-medium text-slate-700">Celkem</p>
-              <p className="text-lg font-bold text-black">
-                {moneyDataLoading ? "…" : formatKc(earnedAll)}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <EmployeeStatGrid className="sm:grid-cols-2 lg:grid-cols-4">
+        <EmployeeStatTile
+          label="Hodinová sazba"
+          value={hourlyRate > 0 ? `${hourlyRate} Kč/h` : "—"}
+          hint={hourlyRate <= 0 ? "Domluvte se s administrátorem" : undefined}
+        />
+        <EmployeeStatTile
+          label="Schválené hodiny"
+          value={blocksLoading ? "…" : `${approvedHoursTotal} h`}
+          hint={
+            !blocksLoading && pendingHoursTotal > 0
+              ? `Čeká: ${pendingHoursTotal} h`
+              : undefined
+          }
+        />
+        <EmployeeStatTile
+          label="Vyplaceno (zálohy)"
+          value={advancesLoading ? "…" : formatKc(paidTotal)}
+        />
+        <EmployeeStatTile
+          label="Zbývá k vyplacení"
+          value={moneyDataLoading || advancesLoading ? "…" : formatKc(remaining)}
+          hint={moneyDataLoading ? undefined : `Celkem ${formatKc(earnedAll)}`}
+        />
+      </EmployeeStatGrid>
 
-      <Card className="border-2 border-primary/25 bg-white shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-lg text-black">Celkový přehled</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-3">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-800">
-              Celkem vyděláno
-            </p>
-            <p className="mt-1 text-xl font-bold text-black">
-              {moneyDataLoading ? "…" : formatKc(earnedAll)}
-            </p>
-            <p className="text-xs text-slate-800">
-              Dle docházky, tarifů a schválených výkazů (stejná logika jako v přehledu)
-            </p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-800">
-              Celkem vyplaceno
-            </p>
-            <p className="mt-1 text-xl font-bold text-black">
-              {advancesLoading ? "…" : formatKc(paidTotal)}
-            </p>
-            <p className="text-xs text-slate-800">Součet záloh se stavem zaplaceno</p>
-          </div>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-            <p className="text-sm font-semibold text-emerald-900">
-              Zbývá k vyplacení
-            </p>
-            <p className="mt-1 text-xl font-bold text-black">
-              {moneyDataLoading || advancesLoading ? "…" : formatKc(remaining)}
-            </p>
-            <p className="text-xs text-emerald-900">
-              vyděláno − vyplacené zálohy
-            </p>
-          </div>
+      <Tabs defaultValue="advances" className="space-y-3">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-slate-100/80 p-1">
+          <TabsTrigger value="advances" className="text-xs sm:text-sm">
+            Zálohy
+          </TabsTrigger>
+          <TabsTrigger value="reports" className="text-xs sm:text-sm">
+            Výkazy
+          </TabsTrigger>
+          <TabsTrigger value="summary" className="text-xs sm:text-sm">
+            Souhrn
+          </TabsTrigger>
           {showDebtSummary ? (
-            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
-              <p className="text-sm font-semibold text-rose-900">Dluhy (souhrn)</p>
-              <p className="mt-1 text-xl font-bold text-black">{formatKc(debtTotal)}</p>
-              <p className="text-xs text-rose-900">
-                Splaceno {formatKc(debtRepaid)} · zbývá {formatKc(debtRemaining)}
-              </p>
-              <p className="mt-3 text-xs text-rose-950">
+            <TabsTrigger value="debts" className="text-xs sm:text-sm">
+              Dluhy
+            </TabsTrigger>
+          ) : null}
+        </TabsList>
+
+        <TabsContent value="summary" className="mt-0">
+          <Card className="border-slate-200 bg-white shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base text-slate-900">Celkový přehled</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold text-slate-700">Celkem vyděláno</p>
+                <p className="mt-1 text-lg font-bold text-slate-900">
+                  {moneyDataLoading ? "…" : formatKc(earnedAll)}
+                </p>
+                <p className="text-[11px] text-slate-600">
+                  Docházka, tarify a schválené výkazy
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold text-slate-700">Dnes / týden / měsíc</p>
+                <p className="mt-1 text-sm text-slate-900">
+                  {moneyDataLoading
+                    ? "…"
+                    : `${formatKc(earnedToday)} · ${formatKc(earnedWeek)} · ${formatKc(earnedMonth)}`}
+                </p>
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                <p className="text-xs font-semibold text-emerald-900">Zbývá k vyplacení</p>
+                <p className="mt-1 text-lg font-bold text-slate-900">
+                  {moneyDataLoading || advancesLoading ? "…" : formatKc(remaining)}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {showDebtSummary ? (
+          <TabsContent value="debts" className="mt-0">
+            <Card className="border-rose-200 bg-rose-50/40 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base text-rose-950">Dluhy (souhrn)</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-rose-950">
+                <p>
+                  Celkem {formatKc(debtTotal)} · splaceno {formatKc(debtRepaid)} · zbývá{" "}
+                  {formatKc(debtRemaining)}
+                </p>
                 <Link
                   href="/portal/employee/profile#employee-debts"
-                  className="font-medium underline underline-offset-2 hover:text-rose-900"
+                  className="font-medium text-orange-800 underline underline-offset-2"
                 >
-                  Jednotlivé dluhy, poznámky a splátky — zobrazit na profilu
+                  Detail dluhů a splátek na profilu
                 </Link>
-              </p>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        ) : null}
 
+        <TabsContent value="advances" className="mt-0">
       <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-lg text-black">Zálohy (výplaty)</CardTitle>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base text-slate-900">Zálohy (výplaty)</CardTitle>
         </CardHeader>
         <CardContent>
           {advancesLoading ? (
@@ -701,32 +722,25 @@ export default function EmployeeMoneyPage() {
             </p>
           ) : (
             <>
-              <ul className="flex flex-col gap-3 md:hidden">
+              <ul className="flex flex-col gap-2 md:hidden">
                 {sortedAdvances.map((a) => (
-                  <li
-                    key={a.id}
-                    className="rounded-lg border border-slate-300 bg-white p-4 shadow-sm"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-lg font-bold text-black">
-                        {formatKc(a.amount)}
-                      </span>
-                      <Badge
-                        className={
-                          a.status === "paid"
-                            ? "bg-emerald-600 text-white hover:bg-emerald-600"
-                            : "bg-red-600 text-white hover:bg-red-600"
-                        }
-                      >
-                        {a.status === "paid" ? "Zaplaceno" : "Nezaplaceno"}
-                      </Badge>
-                    </div>
-                    <p className="mt-2 text-sm font-medium text-black">
-                      Datum: {a.date || "—"}
-                    </p>
-                    {a.note ? (
-                      <p className="mt-1 text-sm text-slate-800">{a.note}</p>
-                    ) : null}
+                  <li key={a.id}>
+                    <EmployeeMobileRecordRow
+                      primary={formatKc(a.amount)}
+                      secondary={`Datum: ${a.date || "—"}`}
+                      trailing={
+                        <Badge
+                          className={
+                            a.status === "paid"
+                              ? "bg-emerald-600 text-white hover:bg-emerald-600"
+                              : "bg-red-600 text-white hover:bg-red-600"
+                          }
+                        >
+                          {a.status === "paid" ? "Zaplaceno" : "Nezaplaceno"}
+                        </Badge>
+                      }
+                      detail={a.note ? String(a.note) : undefined}
+                    />
                   </li>
                 ))}
               </ul>
@@ -737,33 +751,12 @@ export default function EmployeeMoneyPage() {
                       <TableHead className="text-black">Datum</TableHead>
                       <TableHead className="text-black">Částka</TableHead>
                       <TableHead className="text-black">Stav</TableHead>
-                      <TableHead className="text-black">Poznámka</TableHead>
+                      <TableHead className="text-slate-800">Poznámka</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {sortedAdvances.map((a) => (
-                      <TableRow key={a.id}>
-                        <TableCell className="font-medium text-black">
-                          {a.date || "—"}
-                        </TableCell>
-                        <TableCell className="font-bold text-black">
-                          {formatKc(a.amount)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            className={
-                              a.status === "paid"
-                                ? "bg-emerald-600 text-white hover:bg-emerald-600"
-                                : "bg-red-600 text-white hover:bg-red-600"
-                            }
-                          >
-                            {a.status === "paid" ? "Zaplaceno" : "Nezaplaceno"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="max-w-xs text-black">
-                          {a.note || "—"}
-                        </TableCell>
-                      </TableRow>
+                      <AdvanceDesktopRow key={a.id} a={a} />
                     ))}
                   </TableBody>
                 </Table>
@@ -772,10 +765,12 @@ export default function EmployeeMoneyPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="reports" className="mt-0">
       <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-lg text-black">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base text-slate-900">
             Výkazy práce (přehled)
           </CardTitle>
         </CardHeader>
@@ -900,6 +895,8 @@ export default function EmployeeMoneyPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+        </TabsContent>
+      </Tabs>
+    </EmployeePortalPageShell>
   );
 }

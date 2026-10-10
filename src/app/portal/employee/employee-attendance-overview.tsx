@@ -112,7 +112,7 @@ function rowInDateRange(
 const silentListen = { suppressGlobalPermissionError: true as const };
 
 const panel =
-  "border-2 border-neutral-950 bg-white text-neutral-950 shadow-sm rounded-xl";
+  "border border-slate-200 bg-white text-slate-900 shadow-sm rounded-xl";
 
 type Props = {
   companyId: string;

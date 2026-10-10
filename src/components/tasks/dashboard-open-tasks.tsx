@@ -137,12 +137,12 @@ export function DashboardOpenTasks({
       <ul className="space-y-2">
         {visible.map((t) => (
           <li key={t.id}>
-            <Alert className="border-2 border-red-600 bg-red-50 text-red-950 shadow-md dark:border-red-500 dark:bg-red-950/40 dark:text-red-50">
-              <ListTodo className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
-              <AlertTitle className="text-base font-semibold pr-8">
+            <Alert className="border border-red-300 bg-red-50 text-red-950 shadow-sm dark:border-red-500 dark:bg-red-950/50 dark:text-red-50">
+              <ListTodo className="h-5 w-5 shrink-0 text-red-700 dark:text-red-300" />
+              <AlertTitle className="text-sm font-semibold text-red-950 pr-8 dark:text-red-50">
                 {t.title}
               </AlertTitle>
-              <AlertDescription className="space-y-2 text-sm font-medium text-red-900 dark:text-red-100">
+              <AlertDescription className="space-y-2 text-sm font-medium text-red-950 dark:text-red-100">
                 {t.description ? (
                   <p className="whitespace-pre-wrap">{t.description}</p>
                 ) : null}
