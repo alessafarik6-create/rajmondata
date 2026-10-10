@@ -6,6 +6,10 @@ import {
   canManageProductionTasks,
 } from "@/lib/production-qr/production-access";
 import { productionTasksCol } from "@/lib/production-qr/production-task-paths";
+import {
+  closeActiveProductionEntriesForTask,
+  productionTaskHasTimeHistory,
+} from "@/lib/production-qr/production-time-server";
 
 export async function PATCH(
   request: NextRequest,
@@ -33,9 +37,13 @@ export async function PATCH(
   const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (body.name != null) patch.name = String(body.name).trim();
   if (body.description != null) patch.description = String(body.description).trim() || null;
+  if (body.nameUk != null) patch.nameUk = String(body.nameUk).trim() || null;
+  if (body.descriptionUk != null) patch.descriptionUk = String(body.descriptionUk).trim() || null;
+  if (body.activityType != null) patch.activityType = String(body.activityType).trim() || null;
   if (body.sortOrder != null) patch.sortOrder = Number(body.sortOrder);
   if (body.plannedMinutes != null) patch.plannedMinutes = Number(body.plannedMinutes) || null;
   if (body.active != null) patch.active = Boolean(body.active);
+  if (body.archived != null) patch.archived = Boolean(body.archived);
   if (body.status != null) {
     const st = String(body.status);
     if (["new", "in_progress", "done"].includes(st)) patch.status = st;
@@ -63,6 +71,25 @@ export async function DELETE(
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
   const ref = productionTasksCol(v.db, v.caller.companyId, jobId).doc(taskId);
+  const hasHistory = await productionTaskHasTimeHistory(v.db, v.caller.companyId, taskId);
+  await closeActiveProductionEntriesForTask(v.db, {
+    companyId: v.caller.companyId,
+    jobId,
+    productionTaskId: taskId,
+  });
+
+  if (hasHistory) {
+    await ref.set(
+      {
+        active: false,
+        archived: true,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return NextResponse.json({ ok: true, archived: true });
+  }
+
   await ref.set({ active: false, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, archived: false });
 }

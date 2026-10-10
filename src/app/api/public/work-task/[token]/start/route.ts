@@ -83,6 +83,7 @@ export async function POST(
       {
         error: errorMsg,
         code: eligibility.status,
+        attendanceBlocked: true,
         employee: { id: employeeId, name: employeeName },
       },
       { status: 403 }

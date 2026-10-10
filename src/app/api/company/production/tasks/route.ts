@@ -22,19 +22,31 @@ export async function GET(request: NextRequest) {
   const access = await assertProductionJobAccess(v.db, v.caller, jobId);
   if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
 
+  const includeArchived = request.nextUrl.searchParams.get("includeArchived") === "1";
   const snap = await productionTasksCol(v.db, v.caller.companyId, jobId)
     .orderBy("sortOrder", "asc")
     .get();
   const origin = request.nextUrl.origin;
-  const tasks = snap.docs.map((d) => {
+  const tasks = snap.docs
+    .filter((d) => {
+      const data = d.data() as Record<string, unknown>;
+      if (data.active === false) return false;
+      if (!includeArchived && data.archived === true) return false;
+      return true;
+    })
+    .map((d) => {
     const data = d.data() as Record<string, unknown>;
     const token = String(data.publicToken ?? "");
     return {
       id: d.id,
       name: String(data.name ?? ""),
       description: data.description ?? null,
+      nameUk: data.nameUk ?? null,
+      descriptionUk: data.descriptionUk ?? null,
+      activityType: data.activityType ?? null,
       status: String(data.status ?? "new"),
       active: data.active !== false,
+      archived: data.archived === true,
       sortOrder: Number(data.sortOrder ?? 0),
       plannedMinutes: data.plannedMinutes ?? null,
       publicToken: token,
@@ -53,7 +65,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Úpravu úkolů může provádět vedení." }, { status: 403 });
   }
 
-  let body: { jobId?: string; name?: string; description?: string; sortOrder?: number; plannedMinutes?: number };
+  let body: {
+    jobId?: string;
+    name?: string;
+    description?: string;
+    nameUk?: string;
+    descriptionUk?: string;
+    activityType?: string;
+    sortOrder?: number;
+    plannedMinutes?: number;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -72,6 +93,9 @@ export async function POST(request: NextRequest) {
     jobId,
     name,
     description: body.description,
+    nameUk: body.nameUk,
+    descriptionUk: body.descriptionUk,
+    activityType: body.activityType,
     sortOrder: body.sortOrder,
     plannedMinutes: body.plannedMinutes,
   });

@@ -239,6 +239,49 @@ export async function stopProductionTimeViaQr(
   });
 }
 
+/** Ukončí běžící záznamy vázané na konkrétní výrobní úkol (archivace / smazání). */
+export async function closeActiveProductionEntriesForTask(
+  db: Firestore,
+  input: {
+    companyId: string;
+    jobId: string;
+    productionTaskId: string;
+    endedReason?: ProductionTimeEndReason;
+  }
+): Promise<number> {
+  const entriesCol = productionTimeEntriesCol(db, input.companyId);
+  const endedReason = input.endedReason ?? "admin_edit";
+  const now = Timestamp.now();
+
+  return db.runTransaction(async (tx) => {
+    const q = entriesCol
+      .where("productionTaskId", "==", input.productionTaskId)
+      .where("jobId", "==", input.jobId)
+      .where("endedAt", "==", null)
+      .limit(30);
+    const snap = await tx.get(q);
+    for (const doc of snap.docs) {
+      const d = doc.data() as Record<string, unknown>;
+      const startedAt =
+        d.startedAt instanceof Timestamp ? d.startedAt : now;
+      tx.update(doc.ref, closeEntryUpdates(startedAt, now, endedReason));
+    }
+    return snap.size;
+  });
+}
+
+export async function productionTaskHasTimeHistory(
+  db: Firestore,
+  companyId: string,
+  productionTaskId: string
+): Promise<boolean> {
+  const snap = await productionTimeEntriesCol(db, companyId)
+    .where("productionTaskId", "==", productionTaskId)
+    .limit(1)
+    .get();
+  return !snap.empty;
+}
+
 export async function findActiveProductionEntryForEmployee(
   db: Firestore,
   companyId: string,

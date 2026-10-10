@@ -8,7 +8,9 @@ export type ResolvedProductionQrTask = {
   jobId: string;
   taskId: string;
   taskName: string;
+  taskNameUk: string | null;
   taskDescription: string | null;
+  taskDescriptionUk: string | null;
   taskStatus: ProductionTaskStatus;
   taskActive: boolean;
   jobDisplayName: string;
@@ -52,7 +54,9 @@ export async function resolveProductionTaskByPublicToken(
     jobId,
     taskId,
     taskName: String(task.name ?? "Úkol"),
+    taskNameUk: task.nameUk != null ? String(task.nameUk) : null,
     taskDescription: task.description != null ? String(task.description) : null,
+    taskDescriptionUk: task.descriptionUk != null ? String(task.descriptionUk) : null,
     taskStatus: (String(task.status ?? "new") as ProductionTaskStatus) || "new",
     taskActive: task.active !== false,
     jobDisplayName,

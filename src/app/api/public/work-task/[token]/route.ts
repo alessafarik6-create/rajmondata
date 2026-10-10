@@ -22,7 +22,9 @@ export async function GET(
     task: {
       id: resolved.taskId,
       name: resolved.taskName,
+      nameUk: resolved.taskNameUk,
       description: resolved.taskDescription,
+      descriptionUk: resolved.taskDescriptionUk,
       status: resolved.taskStatus,
     },
   });

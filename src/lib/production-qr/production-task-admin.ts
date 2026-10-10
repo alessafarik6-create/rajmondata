@@ -13,6 +13,9 @@ export async function createProductionTask(
     jobId: string;
     name: string;
     description?: string | null;
+    nameUk?: string | null;
+    descriptionUk?: string | null;
+    activityType?: string | null;
     sortOrder?: number;
     plannedMinutes?: number | null;
   }
@@ -25,8 +28,12 @@ export async function createProductionTask(
       jobId: input.jobId,
       name: input.name.trim(),
       description: input.description?.trim() || null,
+      nameUk: input.nameUk?.trim() || null,
+      descriptionUk: input.descriptionUk?.trim() || null,
+      activityType: input.activityType?.trim() || null,
       status: "new",
       active: true,
+      archived: false,
       sortOrder: input.sortOrder ?? 0,
       plannedMinutes: input.plannedMinutes ?? null,
       publicToken: token,
@@ -95,4 +102,53 @@ export async function regenerateProductionTaskQr(
   });
 
   return { publicToken: newToken };
+}
+
+export async function copyProductionTasksToJob(
+  db: Firestore,
+  input: {
+    companyId: string;
+    sourceJobId: string;
+    targetJobId: string;
+    taskIds: string[];
+  }
+): Promise<{ createdIds: string[] }> {
+  const { companyId, sourceJobId, targetJobId, taskIds } = input;
+  if (!taskIds.length) return { createdIds: [] };
+
+  const sourceCol = productionTasksCol(db, companyId, sourceJobId);
+  const snaps = await Promise.all(taskIds.map((id) => sourceCol.doc(id).get()));
+  const createdIds: string[] = [];
+
+  let sortBase = 0;
+  const targetSnap = await productionTasksCol(db, companyId, targetJobId)
+    .orderBy("sortOrder", "desc")
+    .limit(1)
+    .get();
+  if (!targetSnap.empty) {
+    sortBase = Number(targetSnap.docs[0]!.data().sortOrder ?? 0) + 1;
+  }
+
+  for (let i = 0; i < snaps.length; i++) {
+    const snap = snaps[i]!;
+    if (!snap.exists) continue;
+    const d = snap.data() as Record<string, unknown>;
+    const created = await createProductionTask(db, {
+      companyId,
+      jobId: targetJobId,
+      name: String(d.name ?? "Úkol"),
+      description: d.description != null ? String(d.description) : null,
+      nameUk: d.nameUk != null ? String(d.nameUk) : null,
+      descriptionUk: d.descriptionUk != null ? String(d.descriptionUk) : null,
+      activityType: d.activityType != null ? String(d.activityType) : null,
+      sortOrder: sortBase + i,
+      plannedMinutes:
+        d.plannedMinutes != null && !Number.isNaN(Number(d.plannedMinutes))
+          ? Number(d.plannedMinutes)
+          : null,
+    });
+    createdIds.push(created.taskId);
+  }
+
+  return { createdIds };
 }

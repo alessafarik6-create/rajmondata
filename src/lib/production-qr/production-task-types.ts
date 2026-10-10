@@ -6,8 +6,16 @@ export type ProductionTaskRow = {
   jobId: string;
   name: string;
   description?: string | null;
+  /** Ukrajinský název (volitelný, ukládá se po kontrole). */
+  nameUk?: string | null;
+  /** Ukrajinský popis (volitelný). */
+  descriptionUk?: string | null;
+  /** Volitelný typ činnosti pro filtry a tisk. */
+  activityType?: string | null;
   status: ProductionTaskStatus;
   active: boolean;
+  /** Archivace — úkol s historií času, skrytý z běžného seznamu. */
+  archived?: boolean;
   sortOrder: number;
   publicToken: string;
   plannedMinutes?: number | null;

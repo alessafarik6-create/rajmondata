@@ -54,6 +54,7 @@ import {
   filterImportantDashboardActivities,
   type PendingDocPreview,
 } from "@/components/portal/dashboard-compact-data-widgets";
+import { DashboardProductionActiveCompact } from "@/components/production/production-active-workers-dashboard";
 type JobData = {
   id: string;
   name?: string;
@@ -442,6 +443,17 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
         id: "production",
         node: <DashboardProductionCompact companyId={props.companyId} />,
       });
+      if (user?.getIdToken) {
+        list.push({
+          id: "productionActive",
+          node: (
+            <DashboardProductionActiveCompact
+              getToken={() => user.getIdToken()}
+              refreshMs={20_000}
+            />
+          ),
+        });
+      }
     }
     if (fleetAccess.canRead) {
       list.push({
@@ -522,6 +534,7 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
     activityAccess.canRead,
     props.leadPortfolioStats,
     props.leadPortfolioLoading,
+    user?.uid,
   ]);
 
   return (
