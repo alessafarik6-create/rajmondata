@@ -30,6 +30,9 @@ export const PLATFORM_ORG_CAMPAIGNS_COLLECTION = "platform_org_campaigns";
 /** Doručené kampaně v portálu organizace: companies/{id}/platform_campaign_inbox/{campaignId}. */
 export const PLATFORM_CAMPAIGN_INBOX_SUBCOLLECTION = "platform_campaign_inbox";
 
+/** Připomínky (budík) u poptávek — companies/{id}/lead_reminders/{reminderId}. */
+export const LEAD_REMINDERS_SUBCOLLECTION = "lead_reminders";
+
 /** Agregovaná denní analytika veřejného webu (bez PII). */
 export const PLATFORM_ANALYTICS_DAILY_COLLECTION = "platform_analytics_daily";
 /** Unikátní návštěvníci / den — doc id = `{date}_{visitorHash}`. */

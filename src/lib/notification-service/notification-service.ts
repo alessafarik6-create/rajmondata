@@ -52,7 +52,7 @@ export { pushSubscriptionStorageDocId };
 function defaultCategory(type: CreateNotificationInput["type"]): PortalNotificationCategory {
   if (type.startsWith("JOB") || type === "DOCUMENT_APPROVED") return "job";
   if (type.startsWith("EMAIL")) return "message";
-  if (type === "INQUIRY_CREATED") return "activity";
+  if (type === "INQUIRY_CREATED" || type === "LEAD_REMINDER") return "activity";
   if (type === "INVOICE_OVERDUE") return "document";
   if (type === "MEETING_REMINDER") return "activity";
   if (type === "ATTENDANCE_REMINDER") return "system";

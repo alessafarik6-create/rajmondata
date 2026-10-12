@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Mail,
   Sparkles,
+  AlarmClock,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cs } from "date-fns/locale";
@@ -125,6 +126,13 @@ import {
   InquiryAiQuotePreviewDialog,
 } from "@/components/leads/inquiry-ai-quote-dialog";
 import { LeadsFiltersPanel } from "@/components/leads/leads-filters-panel";
+import { LeadReminderDialog } from "@/components/leads/lead-reminder-dialog";
+import { LeadRemindersSection } from "@/components/leads/lead-reminders-section";
+import { LEAD_REMINDERS_SUBCOLLECTION } from "@/lib/firestore-collections";
+import { parseLeadReminderRow } from "@/lib/leads/lead-reminder-client";
+import type { LeadReminderRecord } from "@/lib/leads/lead-reminder-types";
+import { formatRemindAtPrague } from "@/lib/leads/lead-reminder-datetime";
+import { isCompanyPrivileged } from "@/lib/company-privilege";
 import {
   Sheet,
   SheetContent,
@@ -278,6 +286,20 @@ export default function PortalLeadsPage() {
     );
   }, [firestore, companyId]);
 
+  const leadRemindersQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, LEAD_REMINDERS_SUBCOLLECTION),
+      orderBy("remindAt", "desc"),
+      limit(400)
+    );
+  }, [firestore, companyId]);
+
+  const employeesQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, "companies", companyId, "employees");
+  }, [firestore, companyId]);
+
   const offerTemplatesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     return collection(firestore, "companies", companyId, "inquiry_offer_templates");
@@ -300,6 +322,8 @@ export default function PortalLeadsPage() {
   const { data: tagsRaw, isLoading: tagsLoading } = useCollection(tagsQuery);
   const { data: overlaysRaw } = useCollection(overlaysQuery);
   const { data: meetingsRaw } = useCollection(meetingsQuery);
+  const { data: leadRemindersRaw } = useCollection(leadRemindersQuery);
+  const { data: employeesRaw } = useCollection(employeesQuery);
   const { data: offerTemplatesRaw } = useCollection(offerTemplatesQuery);
   const { data: inquiryOffersRaw } = useCollection(inquiryOffersQuery);
   const { data: inquiryTypeRulesRaw } = useCollection(inquiryTypeRulesQuery);
@@ -328,6 +352,42 @@ export default function PortalLeadsPage() {
     }
     return m;
   }, [overlaysRaw]);
+
+  const leadReminders = useMemo(() => {
+    const list = (leadRemindersRaw ?? []) as Array<Record<string, unknown> & { id: string }>;
+    return list
+      .map((r) => parseLeadReminderRow(r.id, r))
+      .filter(Boolean) as LeadReminderRecord[];
+  }, [leadRemindersRaw]);
+
+  /** Nejbližší aktivní připomínka na leadKey. */
+  const nextReminderByLeadKey = useMemo(() => {
+    const map = new Map<string, LeadReminderRecord>();
+    const now = Date.now();
+    for (const r of leadReminders) {
+      if (r.status !== "active") continue;
+      const due = new Date(r.remindAt).getTime();
+      if (due < now - 7 * 24 * 60 * 60 * 1000) continue;
+      const prev = map.get(r.leadKey);
+      if (!prev || due < new Date(prev.remindAt).getTime()) map.set(r.leadKey, r);
+    }
+    return map;
+  }, [leadReminders]);
+
+  const reminderAssignees = useMemo(() => {
+    const list = Array.isArray(employeesRaw) ? employeesRaw : [];
+    const out: { authUserId: string; label: string }[] = [];
+    for (const raw of list) {
+      const row = raw as Record<string, unknown> & { id?: string };
+      const authUserId = String(row.authUserId ?? row.userId ?? "").trim();
+      if (!authUserId) continue;
+      const label =
+        String(row.displayName ?? row.name ?? row.fullName ?? "").trim() || "Zaměstnanec";
+      out.push({ authUserId, label });
+    }
+    out.sort((a, b) => a.label.localeCompare(b.label, "cs"));
+    return out;
+  }, [employeesRaw]);
 
   /** Nejbližší budoucí schůzka na leadKey (pro zobrazení u řádku). */
   const nextMeetingByLeadKey = useMemo(() => {
@@ -373,6 +433,7 @@ export default function PortalLeadsPage() {
   const [savingTag, setSavingTag] = useState(false);
 
   const [meetingLead, setMeetingLead] = useState<LeadImportRow | null>(null);
+  const [reminderLead, setReminderLead] = useState<LeadImportRow | null>(null);
   const [meetingCustomerName, setMeetingCustomerName] = useState("");
   const [meetingDateStr, setMeetingDateStr] = useState("");
   const [meetingHour, setMeetingHour] = useState("9");
@@ -828,6 +889,10 @@ export default function PortalLeadsPage() {
   const { canWrite: canWriteOffers } = usePortalModuleAccess("offers");
   const canManageTags = canWriteLeads;
   const canManageOffers = canWriteOffers;
+  const canAssignReminderOthers = isCompanyPrivileged(
+    role,
+    Array.isArray(profile?.globalRoles) ? (profile.globalRoles as string[]) : []
+  );
 
   const handleMarkEmailContact = async (lead: LeadImportRow) => {
     if (!firestore || !companyId || !user) return;
@@ -1778,6 +1843,7 @@ export default function PortalLeadsPage() {
                     const ov = overlayByDocId.get(key);
                     const currentTag = ov?.tagId ?? "";
                     const nextMt = nextMeetingByLeadKey.get(key);
+                    const nextRem = nextReminderByLeadKey.get(key);
                     const inquiryTypeSource = resolveEffectiveInquiryType(r, ov);
                     const rowTypOptions = typOptions.includes(inquiryTypeSource)
                       ? typOptions
@@ -1888,6 +1954,15 @@ export default function PortalLeadsPage() {
                                     {format(nextMt, "d. M. HH:mm", { locale: cs })}
                                   </span>
                                 ) : null}
+                                {nextRem ? (
+                                  <span
+                                    className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-800 sm:text-xs"
+                                    title="Nejbližší připomínka"
+                                  >
+                                    <AlarmClock className="h-3 w-3 shrink-0" />
+                                    {formatRemindAtPrague(new Date(nextRem.remindAt))}
+                                  </span>
+                                ) : null}
                               </div>
                             </div>
                           </div>
@@ -1920,6 +1995,19 @@ export default function PortalLeadsPage() {
                                   <Ruler className="mr-1 inline h-3.5 w-3.5 sm:h-4 sm:w-4" />
                                   Zaměřit
                                 </Link>
+                              </Button>
+                            ) : null}
+                            {canWriteLeads ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8 border-amber-500/50 px-2 text-xs text-amber-950 hover:bg-amber-50 sm:h-9 sm:px-3"
+                                onClick={() => setReminderLead(r)}
+                              >
+                                <AlarmClock className="mr-1 inline h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                <span className="hidden sm:inline">Připomenout</span>
+                                <span className="sm:hidden">Budík</span>
                               </Button>
                             ) : null}
                             <Button
@@ -2079,6 +2167,17 @@ export default function PortalLeadsPage() {
                                   </span>
                                 </div>
                               ) : null}
+                              {companyId && user ? (
+                                <LeadRemindersSection
+                                  leadKey={key}
+                                  companyId={companyId}
+                                  user={user}
+                                  reminders={leadReminders}
+                                  canWrite={canWriteLeads}
+                                  currentUserId={user.uid}
+                                  onOpenReminderDialog={() => setReminderLead(r)}
+                                />
+                              ) : null}
                               {canManageOffers ? (
                                 <div className="space-y-2 border-t border-slate-200/80 pt-3">
                                   <Label className="text-xs text-slate-800">Stav poptávky</Label>
@@ -2221,6 +2320,19 @@ export default function PortalLeadsPage() {
           )}
         </CardContent>
       </Card>
+
+      {reminderLead && companyId && user ? (
+        <LeadReminderDialog
+          open={!!reminderLead}
+          onOpenChange={(o) => !o && setReminderLead(null)}
+          lead={reminderLead}
+          overlayTyp={overlayByDocId.get(stableImportLeadDocumentId(reminderLead))}
+          companyId={companyId}
+          user={user}
+          assignees={reminderAssignees}
+          canAssignOthers={canAssignReminderOthers}
+        />
+      ) : null}
 
       {companyId && canWriteOffers ? (
         <StandaloneInquiryOfferDialog

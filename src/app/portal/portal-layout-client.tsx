@@ -56,6 +56,7 @@ import { PortalModuleAccessGate } from "@/components/portal/portal-module-access
 import { resolveEffectivePortalPermissions } from "@/lib/portal-permissions";
 import { portalPreviewSessionFromFirestore } from "@/lib/portal-preview";
 import { PortalPreviewBanner } from "@/components/portal/portal-preview-banner";
+import { LeadReminderAlarmHost } from "@/components/leads/lead-reminder-alarm-host";
 import {
   parseEmployeeOrgRole,
   userPortalRoleForEmployeeDocRole,
@@ -895,6 +896,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
           )}
         </main>
       </div>
+      {!isPortalCustomerOnly && user ? <LeadReminderAlarmHost /> : null}
       <ChatAssistant />
       <OnboardingOverlay enabled={!isPortalEmployeeOnly && !isPortalCustomerOnly} />
       <MobilePushPromptSheet

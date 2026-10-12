@@ -18,6 +18,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/lead-reminders",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/cron/fleet-gps-sync?mode=positions",
       "schedule": "*/10 * * * *"
     },

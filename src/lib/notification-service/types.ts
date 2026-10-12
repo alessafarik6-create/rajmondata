@@ -13,6 +13,7 @@ export type NotificationEventType =
   | "TASK_ASSIGNED"
   | "TASK_DUE"
   | "MEETING_REMINDER"
+  | "LEAD_REMINDER"
   | "ATTENDANCE_REMINDER"
   | "CHAT_MESSAGE"
   | "CHAT_ADMIN_MESSAGE"

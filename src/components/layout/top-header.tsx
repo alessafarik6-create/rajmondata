@@ -26,6 +26,7 @@ import { useEmployeeNotificationUnreadCount } from '@/hooks/use-employee-notific
 import { usePortalNotificationsSafe } from '@/components/portal/portal-notifications-context';
 import { cn } from "@/lib/utils";
 import { AdminNotificationsBell } from "@/components/admin/admin-notifications-bell";
+import { ALARM_EVENT } from "@/components/leads/lead-reminder-alarm-host";
 
 interface TopHeaderProps {
   onOpenMobileMenu?: () => void;
@@ -37,6 +38,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   const { user } = useUser();
   const firestore = useFirestore();
   const [superadminUsername, setSuperadminUsername] = useState<string | null>(null);
+  const [bellPulse, setBellPulse] = useState(false);
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -85,6 +87,15 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
     isEmployeePortal && isEmployeeRole
       ? employeeInboxUnread
       : portalNotifyCount;
+  useEffect(() => {
+    const onAlarm = () => {
+      setBellPulse(true);
+      window.setTimeout(() => setBellPulse(false), 4000);
+    };
+    window.addEventListener(ALARM_EVENT, onAlarm);
+    return () => window.removeEventListener(ALARM_EVENT, onAlarm);
+  }, []);
+
   useEffect(() => {
     if (!isAdminArea) return;
     fetch('/api/superadmin/session')
@@ -232,8 +243,13 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
         {isAdminArea ? <AdminNotificationsBell /> : null}
         {!isAdminArea ? (
           <Button asChild variant="ghost" size="icon" className={iconBtnClass}>
-            <Link href="/portal/notifications" aria-label="Oznámení portálu">
-              <Bell className="w-5 h-5" />
+            <Link href="/portal/notifications?reminders=1" aria-label="Oznámení portálu">
+              <Bell
+                className={cn(
+                  "w-5 h-5",
+                  bellPulse && "text-amber-600 animate-bounce"
+                )}
+              />
               {headerBellCount > 0 ? (
                 <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-bold leading-none text-slate-950 shadow-sm">
                   {headerBellCount > 99 ? "99+" : headerBellCount}

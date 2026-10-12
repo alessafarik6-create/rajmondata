@@ -2694,6 +2694,14 @@ service cloud.firestore {
       }
 
       /**
+       * Budíky u poptávek — zápis jen přes Admin SDK (API). Čtení v rámci organizace.
+       */
+      match /lead_reminders/{reminderId} {
+        allow read: if signedIn() && sameCompany(companyId);
+        allow create, update, delete: if false;
+      }
+
+      /**
        * Naplánované schůzky k poptávkám — companies/{companyId}/lead_meetings/{meetingId}
        */
       match /lead_meetings/{meetingId} {

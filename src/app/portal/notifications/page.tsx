@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Bell,
   Briefcase,
@@ -28,8 +28,8 @@ import { useIsBelowLg } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
 import { openPortalNotification } from "@/lib/portal-notification-open";
-import { useDoc, useMemoFirebase, useUser, useFirebase } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { useDoc, useMemoFirebase, useUser, useFirebase, useCollection } from "@/firebase";
+import { doc, collection, query, where, orderBy, limit } from "firebase/firestore";
 import { resolveNotificationTarget } from "@/lib/notification-target";
 import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
 import {
@@ -37,6 +37,10 @@ import {
   EmployeePortalPageShell,
 } from "@/components/employee-portal/employee-portal-ui";
 import { ArrowLeft } from "lucide-react";
+import { LEAD_REMINDERS_SUBCOLLECTION } from "@/lib/firestore-collections";
+import { parseLeadReminderRow } from "@/lib/leads/lead-reminder-client";
+import type { LeadReminderRecord } from "@/lib/leads/lead-reminder-types";
+import { LeadRemindersOverviewPanel } from "@/components/leads/lead-reminders-overview-panel";
 
 type FilterKey =
   | "all"
@@ -86,7 +90,11 @@ function matchesFilter(item: PortalNotificationItem, filter: FilterKey): boolean
     return t.includes("INVOICE") || item.targetType === "invoice" || item.targetType === "document";
   }
   if (filter === "calendar") {
-    return t.includes("MEETING") || item.targetType === "calendar-event";
+    return (
+      t.includes("MEETING") ||
+      t.includes("LEAD_REMINDER") ||
+      item.targetType === "calendar-event"
+    );
   }
   if (filter === "system") {
     return cat === "system" || t === "SYSTEM_ALERT" || item.targetType === "announcement";
@@ -97,6 +105,8 @@ function matchesFilter(item: PortalNotificationItem, filter: FilterKey): boolean
 export default function PortalNotificationsPage() {
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const showRemindersFirst = searchParams.get("reminders") === "1";
   const belowLg = useIsBelowLg();
   const { user } = useUser();
   const { firestore } = useFirebase();
@@ -113,6 +123,24 @@ export default function PortalNotificationsPage() {
   const [testBusy, setTestBusy] = useState(false);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [openingId, setOpeningId] = useState<string | null>(null);
+
+  const myRemindersQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !user || role === "customer") return null;
+    return query(
+      collection(firestore, "companies", companyId, LEAD_REMINDERS_SUBCOLLECTION),
+      where("assignedUserId", "==", user.uid),
+      orderBy("remindAt", "desc"),
+      limit(120)
+    );
+  }, [firestore, companyId, user?.uid, role]);
+
+  const { data: myRemindersRaw } = useCollection(myRemindersQuery);
+  const myLeadReminders = useMemo(() => {
+    const list = (myRemindersRaw ?? []) as Array<Record<string, unknown> & { id: string }>;
+    return list
+      .map((r) => parseLeadReminderRow(r.id, r))
+      .filter((x): x is LeadReminderRecord => x != null);
+  }, [myRemindersRaw]);
 
   const {
     items,
@@ -469,6 +497,14 @@ export default function PortalNotificationsPage() {
         </div>
 
         {pushCard}
+
+        {companyId && role !== "customer" ? (
+          <Card className={showRemindersFirst ? "ring-2 ring-amber-300" : undefined}>
+            <CardContent className="pt-6">
+              <LeadRemindersOverviewPanel reminders={myLeadReminders} />
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader className="pb-2">

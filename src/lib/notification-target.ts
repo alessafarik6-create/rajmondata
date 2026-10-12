@@ -158,7 +158,7 @@ export function resolveNotificationTarget(
     }
   }
 
-  if (type === "INQUIRY_CREATED" || entityType === "inquiry") {
+  if (type === "INQUIRY_CREATED" || type === "LEAD_REMINDER" || entityType === "inquiry") {
     if (inquiryId) {
       return {
         href: `/portal/leads?openLead=${enc(inquiryId)}`,

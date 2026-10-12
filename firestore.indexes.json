@@ -480,6 +480,45 @@
       "collectionGroup": "productionTasks",
       "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "sortOrder", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "lead_reminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "notificationFired", "order": "ASCENDING" },
+        { "fieldPath": "remindAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lead_reminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "leadKey", "order": "ASCENDING" },
+        { "fieldPath": "remindAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lead_reminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedUserId", "order": "ASCENDING" },
+        { "fieldPath": "remindAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "lead_reminders",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "remindAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "lead_reminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedUserId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "remindAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

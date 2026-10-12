@@ -48,6 +48,7 @@ function preferenceGroupForEvent(type: NotificationEventType): keyof Notificatio
     case "EMAIL_OVERDUE":
       return "emails";
     case "INQUIRY_CREATED":
+    case "LEAD_REMINDER":
       return "inquiries";
     case "INVOICE_OVERDUE":
     case "DOCUMENT_APPROVED":
