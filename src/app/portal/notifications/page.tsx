@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
 import { openPortalNotification } from "@/lib/portal-notification-open";
 import { useDoc, useMemoFirebase, useUser, useFirebase, useCollection } from "@/firebase";
-import { doc, collection, query, where, orderBy, limit } from "firebase/firestore";
+import { doc, collection, query, where, limit } from "firebase/firestore";
 import { resolveNotificationTarget } from "@/lib/notification-target";
 import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
 import {
@@ -129,7 +129,6 @@ export default function PortalNotificationsPage() {
     return query(
       collection(firestore, "companies", companyId, LEAD_REMINDERS_SUBCOLLECTION),
       where("assignedUserId", "==", user.uid),
-      orderBy("remindAt", "desc"),
       limit(120)
     );
   }, [firestore, companyId, user?.uid, role]);
@@ -139,7 +138,8 @@ export default function PortalNotificationsPage() {
     const list = (myRemindersRaw ?? []) as Array<Record<string, unknown> & { id: string }>;
     return list
       .map((r) => parseLeadReminderRow(r.id, r))
-      .filter((x): x is LeadReminderRecord => x != null);
+      .filter((x): x is LeadReminderRecord => x != null)
+      .sort((a, b) => new Date(b.remindAt).getTime() - new Date(a.remindAt).getTime());
   }, [myRemindersRaw]);
 
   const {

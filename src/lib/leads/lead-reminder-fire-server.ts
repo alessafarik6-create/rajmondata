@@ -1,4 +1,4 @@
-import type { Firestore } from "firebase-admin/firestore";
+import type { Firestore, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { createNotification } from "@/lib/notification-service/notification-service";
 import {
@@ -7,6 +7,7 @@ import {
 } from "@/lib/firestore-collections";
 import { formatRemindTimePrague } from "@/lib/leads/lead-reminder-datetime";
 import { leadReminderOpenUrl } from "@/lib/leads/lead-reminder-types";
+import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
 
 export type FireLeadReminderResult = {
   fired: boolean;
@@ -120,16 +121,24 @@ export async function processDueLeadRemindersGlobal(
   let processed = 0;
   let fired = 0;
 
-  const qs = await db
-    .collectionGroup(LEAD_REMINDERS_SUBCOLLECTION)
-    .where("status", "==", "active")
-    .where("notificationFired", "==", false)
-    .where("remindAt", "<=", now)
-    .orderBy("remindAt", "asc")
-    .limit(limit)
-    .get();
+  let docs: QueryDocumentSnapshot[] = [];
+  try {
+    const qs = await db
+      .collectionGroup(LEAD_REMINDERS_SUBCOLLECTION)
+      .where("status", "==", "active")
+      .where("notificationFired", "==", false)
+      .where("remindAt", "<=", now)
+      .orderBy("remindAt", "asc")
+      .limit(limit)
+      .get();
+    docs = qs.docs;
+  } catch (err) {
+    if (!isFirestoreIndexError(err)) throw err;
+    console.warn("[lead-reminders/cron] collectionGroup index missing, skipping batch");
+    return { processed: 0, fired: 0, errors: ["Firestore index se dokončuje — cron zkusí znovu."] };
+  }
 
-  for (const docSnap of qs.docs) {
+  for (const docSnap of docs) {
     processed++;
     const path = docSnap.ref.path.split("/");
     const companyIdx = path.indexOf(COMPANIES_COLLECTION);

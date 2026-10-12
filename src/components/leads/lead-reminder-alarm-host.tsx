@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AlarmClock, X } from "lucide-react";
-import { collection, query, where, orderBy, limit } from "firebase/firestore";
+import { collection, query, where, limit } from "firebase/firestore";
 import { useUser, useFirebase, useCollection, useMemoFirebase, useDoc } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
@@ -82,9 +82,7 @@ export function LeadReminderAlarmHost() {
     return query(
       collection(firestore, "companies", companyId, LEAD_REMINDERS_SUBCOLLECTION),
       where("assignedUserId", "==", user.uid),
-      where("status", "==", "active"),
-      orderBy("remindAt", "asc"),
-      limit(40)
+      limit(80)
     );
   }, [firestore, companyId, user?.uid]);
 
@@ -94,7 +92,8 @@ export function LeadReminderAlarmHost() {
     const list = (rawRows ?? []) as Array<Record<string, unknown> & { id: string }>;
     return list
       .map((r) => parseLeadReminderRow(r.id, r))
-      .filter(Boolean) as LeadReminderRecord[];
+      .filter((x): x is LeadReminderRecord => x != null && x.status === "active")
+      .sort((a, b) => new Date(a.remindAt).getTime() - new Date(b.remindAt).getTime());
   }, [rawRows]);
 
   const [toast, setToast] = useState<ActiveToast | null>(null);

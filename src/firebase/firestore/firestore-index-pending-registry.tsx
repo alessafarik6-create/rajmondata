@@ -7,8 +7,6 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-
 type Registry = {
   register: (id: string) => void;
   unregister: (id: string) => void;
@@ -46,20 +44,9 @@ export function FirestoreIndexPendingProvider({
   }, []);
 
   const value = useMemo(() => ({ register, unregister }), [register, unregister]);
-  const show = ids.size > 0;
 
   return (
     <FirestoreIndexPendingContext.Provider value={value}>
-      {show ? (
-        <Alert
-          role="status"
-          className="relative z-[100] mb-0 rounded-none border-x-0 border-t-0 bg-muted/80 text-foreground"
-        >
-          <AlertDescription className="text-center text-sm text-gray-900">
-            Data se připravují… (Firestore index se může ještě vytvářet)
-          </AlertDescription>
-        </Alert>
-      ) : null}
       {children}
     </FirestoreIndexPendingContext.Provider>
   );

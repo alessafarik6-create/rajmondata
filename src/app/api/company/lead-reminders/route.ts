@@ -14,50 +14,49 @@ import {
   resolveLeadReminderQuickPreset,
   type LeadReminderQuickPresetId,
 } from "@/lib/leads/lead-reminder-datetime";
-
+import { listLeadReminderDocs } from "@/lib/leads/lead-reminder-list-server";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const auth = await verifyCompanyBearer(request.headers.get("authorization"));
-  if (!auth.ok) {
-    return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
+  try {
+    const auth = await verifyCompanyBearer(request.headers.get("authorization"));
+    if (!auth.ok) {
+      return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
+    }
+
+    const perm = await requirePortalModuleAccess(auth.db, auth.caller, "leads", "read");
+    if (!perm.ok) {
+      return NextResponse.json({ ok: false, error: perm.error }, { status: perm.status });
+    }
+
+    const companyId = String(
+      request.nextUrl.searchParams.get("companyId") ?? auth.caller.companyId
+    ).trim();
+    if (companyId !== auth.caller.companyId && !auth.caller.globalRoles.includes("super_admin")) {
+      return NextResponse.json({ ok: false, error: "Přístup odepřen." }, { status: 403 });
+    }
+
+    const leadKey = String(request.nextUrl.searchParams.get("leadKey") ?? "").trim();
+    const mineOnly = request.nextUrl.searchParams.get("mine") === "1";
+    const limit = Math.min(200, Math.max(1, Number(request.nextUrl.searchParams.get("limit") ?? 100)));
+
+    const docs = await listLeadReminderDocs(auth.db, companyId, {
+      leadKey: leadKey || undefined,
+      assignedUserId: mineOnly ? auth.caller.uid : undefined,
+      limit,
+    });
+    const reminders = docs.map((d) =>
+      serializeLeadReminder(d.id, d.data() as Record<string, unknown>)
+    );
+
+    return NextResponse.json({ ok: true, reminders });
+  } catch (err) {
+    console.error("[lead-reminders GET]", err);
+    return NextResponse.json(
+      { ok: false, error: "Připomínky se nepodařilo načíst." },
+      { status: 500 }
+    );
   }
-
-  const perm = await requirePortalModuleAccess(auth.db, auth.caller, "leads", "read");
-  if (!perm.ok) {
-    return NextResponse.json({ ok: false, error: perm.error }, { status: perm.status });
-  }
-
-  const companyId = String(
-    request.nextUrl.searchParams.get("companyId") ?? auth.caller.companyId
-  ).trim();
-  if (companyId !== auth.caller.companyId && !auth.caller.globalRoles.includes("super_admin")) {
-    return NextResponse.json({ ok: false, error: "Přístup odepřen." }, { status: 403 });
-  }
-
-  const leadKey = String(request.nextUrl.searchParams.get("leadKey") ?? "").trim();
-  const mineOnly = request.nextUrl.searchParams.get("mine") === "1";
-  const limit = Math.min(200, Math.max(1, Number(request.nextUrl.searchParams.get("limit") ?? 100)));
-
-  const col = auth.db
-    .collection(COMPANIES_COLLECTION)
-    .doc(companyId)
-    .collection(LEAD_REMINDERS_SUBCOLLECTION);
-
-  const snap = leadKey
-    ? await col.where("leadKey", "==", leadKey).orderBy("remindAt", "desc").limit(limit).get()
-    : mineOnly
-      ? await col
-          .where("assignedUserId", "==", auth.caller.uid)
-          .orderBy("remindAt", "desc")
-          .limit(limit)
-          .get()
-      : await col.orderBy("remindAt", "desc").limit(limit).get();
-  const reminders = snap.docs.map((d) =>
-    serializeLeadReminder(d.id, d.data() as Record<string, unknown>)
-  );
-
-  return NextResponse.json({ ok: true, reminders });
 }
 
 export async function POST(request: NextRequest) {

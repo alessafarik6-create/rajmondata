@@ -13,7 +13,6 @@ import {
 } from "@/lib/leads/lead-reminder-api-server";
 import { localDateTimeFromParts } from "@/lib/leads/lead-reminder-datetime";
 import { fireLeadReminderIfDue } from "@/lib/leads/lead-reminder-fire-server";
-
 export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ reminderId: string }> };
@@ -36,6 +35,7 @@ async function loadReminder(
 }
 
 export async function PATCH(request: NextRequest, ctx: Ctx) {
+  try {
   const auth = await verifyCompanyBearer(request.headers.get("authorization"));
   if (!auth.ok) {
     return NextResponse.json({ ok: false, error: auth.error }, { status: auth.status });
@@ -101,8 +101,16 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     if (!isAssignee) {
       return NextResponse.json({ ok: false, error: "Nepovoleno." }, { status: 403 });
     }
-    const result = await fireLeadReminderIfDue(auth.db, companyId, reminderId, { graceMs: 60_000 });
-    return NextResponse.json({ ok: true, ...result });
+    try {
+      const result = await fireLeadReminderIfDue(auth.db, companyId, reminderId, { graceMs: 60_000 });
+      return NextResponse.json({ ok: true, ...result });
+    } catch (err) {
+      console.error("[lead-reminders/fire]", reminderId, err);
+      return NextResponse.json(
+        { ok: false, error: "Připomínku se nepodařilo odeslat. Zkuste obnovit stránku." },
+        { status: 500 }
+      );
+    }
   }
 
   if (!writePerm.ok) {
@@ -157,6 +165,13 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     ok: true,
     reminder: serializeLeadReminder(reminderId, (after.data() ?? {}) as Record<string, unknown>),
   });
+  } catch (err) {
+    console.error("[lead-reminders PATCH]", err);
+    return NextResponse.json(
+      { ok: false, error: "Akci s připomínkou se nepodařilo provést." },
+      { status: 500 }
+    );
+  }
 }
 
 export async function DELETE(request: NextRequest, ctx: Ctx) {

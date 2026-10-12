@@ -290,7 +290,6 @@ export default function PortalLeadsPage() {
     if (!firestore || !companyId) return null;
     return query(
       collection(firestore, "companies", companyId, LEAD_REMINDERS_SUBCOLLECTION),
-      orderBy("remindAt", "desc"),
       limit(400)
     );
   }, [firestore, companyId]);
@@ -322,7 +321,12 @@ export default function PortalLeadsPage() {
   const { data: tagsRaw, isLoading: tagsLoading } = useCollection(tagsQuery);
   const { data: overlaysRaw } = useCollection(overlaysQuery);
   const { data: meetingsRaw } = useCollection(meetingsQuery);
-  const { data: leadRemindersRaw } = useCollection(leadRemindersQuery);
+  const {
+    data: leadRemindersRaw,
+    isLoading: leadRemindersLoading,
+    error: leadRemindersError,
+    isIndexPending: leadRemindersIndexPending,
+  } = useCollection(leadRemindersQuery);
   const { data: employeesRaw } = useCollection(employeesQuery);
   const { data: offerTemplatesRaw } = useCollection(offerTemplatesQuery);
   const { data: inquiryOffersRaw } = useCollection(inquiryOffersQuery);
@@ -357,7 +361,8 @@ export default function PortalLeadsPage() {
     const list = (leadRemindersRaw ?? []) as Array<Record<string, unknown> & { id: string }>;
     return list
       .map((r) => parseLeadReminderRow(r.id, r))
-      .filter(Boolean) as LeadReminderRecord[];
+      .filter((x): x is LeadReminderRecord => x != null)
+      .sort((a, b) => new Date(b.remindAt).getTime() - new Date(a.remindAt).getTime());
   }, [leadRemindersRaw]);
 
   /** Nejbližší aktivní připomínka na leadKey. */
@@ -1795,9 +1800,9 @@ export default function PortalLeadsPage() {
               <p className="text-sm">Načítám poptávky…</p>
             </div>
           ) : error ? (
-            <div className="p-6">
+            <div className="p-6 space-y-3">
               <Alert variant="destructive">
-                <AlertTitle>Chyba importu</AlertTitle>
+                <AlertTitle>Poptávky se nepodařilo načíst</AlertTitle>
                 <AlertDescription className="space-y-2 break-words">
                   <span className="block">{error}</span>
                   {errorDebugUrl ? (
@@ -1805,6 +1810,16 @@ export default function PortalLeadsPage() {
                   ) : null}
                 </AlertDescription>
               </Alert>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                disabled={loading}
+                onClick={() => void loadLeads({ silent: false })}
+              >
+                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Zkusit znovu
+              </Button>
             </div>
           ) : (
             <>
@@ -1813,6 +1828,18 @@ export default function PortalLeadsPage() {
                   <AlertTitle>Upozornění</AlertTitle>
                   <AlertDescription>{warning}</AlertDescription>
                 </Alert>
+              ) : null}
+              {leadRemindersError && !leadRemindersIndexPending ? (
+                <Alert className="mx-4 mt-4 border-amber-200 bg-amber-50 text-amber-950">
+                  <AlertTitle>Připomínky</AlertTitle>
+                  <AlertDescription>
+                    Nepodařilo se načíst budíky u poptávek. Seznam poptávek zůstává k dispozici; obnovte stránku
+                    nebo to zkuste za chvíli.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {leadRemindersLoading && leadReminders.length === 0 ? (
+                <p className="mx-4 mt-2 text-xs text-slate-600">Načítám připomínky…</p>
               ) : null}
               {rows.length === 0 ? (
                 <p className="py-16 text-center text-sm text-slate-800">
