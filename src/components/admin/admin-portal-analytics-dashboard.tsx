@@ -26,6 +26,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  AdminPortalLiveAnalytics,
+  type OrgTableLiveMeta,
+} from "@/components/admin/admin-portal-live-analytics";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type RangeDays = 7 | 30 | 90;
 
@@ -56,6 +67,12 @@ export function AdminPortalAnalyticsDashboard() {
   const [usage, setUsage] = useState<Record<string, unknown> | null>(null);
   const [alerts, setAlerts] = useState<Record<string, unknown>[]>([]);
   const [search, setSearch] = useState("");
+  const [liveMeta, setLiveMeta] = useState<OrgTableLiveMeta>({});
+  const [activityFilter, setActivityFilter] = useState<
+    "all" | "active_today" | "inactive_7" | "inactive_30" | "never"
+  >("all");
+  const [page, setPage] = useState(0);
+  const pageSize = 25;
 
   const query = useMemo(() => {
     const p = new URLSearchParams();
@@ -102,11 +119,41 @@ export function AdminPortalAnalyticsDashboard() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return orgs;
-    return orgs.filter(
-      (o) => o.name.toLowerCase().includes(q) || o.organizationId.toLowerCase().includes(q)
-    );
-  }, [orgs, search]);
+    let list = orgs;
+    if (q) {
+      list = list.filter(
+        (o) => o.name.toLowerCase().includes(q) || o.organizationId.toLowerCase().includes(q)
+      );
+    }
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    if (activityFilter === "active_today") {
+      list = list.filter((o) => {
+        const live = liveMeta[o.organizationId];
+        if (live?.onlineUsers) return true;
+        const t = o.lastActivityAt ? Date.parse(o.lastActivityAt) : NaN;
+        return Number.isFinite(t) && now - t < dayMs;
+      });
+    } else if (activityFilter === "inactive_7") {
+      list = list.filter((o) => {
+        const t = o.lastActivityAt ? Date.parse(o.lastActivityAt) : NaN;
+        return !Number.isFinite(t) || now - t > 7 * dayMs;
+      });
+    } else if (activityFilter === "inactive_30") {
+      list = list.filter((o) => {
+        const t = o.lastActivityAt ? Date.parse(o.lastActivityAt) : NaN;
+        return !Number.isFinite(t) || now - t > 30 * dayMs;
+      });
+    } else if (activityFilter === "never") {
+      list = list.filter((o) => !o.lastActivityAt && (o.jobs ?? 0) + (o.leads ?? 0) === 0);
+    }
+    return list;
+  }, [orgs, search, activityFilter, liveMeta]);
+
+  const paged = useMemo(() => {
+    const start = page * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page]);
 
   const moduleChart = useMemo(() => {
     const m = (usage?.modules ?? {}) as Record<string, number>;
@@ -163,9 +210,11 @@ export function AdminPortalAnalyticsDashboard() {
         </Button>
       </div>
 
+      <AdminPortalLiveAnalytics onLiveMeta={setLiveMeta} />
+
       <p className="text-xs text-slate-500">
-        Analytika portálu: agregované sémantické události bez obsahu formulářů. Detailní přístup superadmina se
-        audituje. Upozornění generuje cron{" "}
+        Analytika portálu: agregované sémantické události bez obsahu formulářů. Živá data se obnovují každých 15 s
+        (polling). Detailní přístup superadmina se audituje. Upozornění generuje cron{" "}
         <code className="rounded bg-slate-100 px-1">/api/cron/portal-analytics-alerts</code>.
       </p>
 
@@ -289,59 +338,153 @@ export function AdminPortalAnalyticsDashboard() {
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Organizace → Analytika</CardTitle>
-          <Input
-            placeholder="Hledat organizaci…"
-            className="max-w-xs"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <div className="flex flex-wrap gap-2">
+            <Input
+              placeholder="Hledat organizaci…"
+              className="max-w-xs"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(0);
+              }}
+            />
+            <Select
+              value={activityFilter}
+              onValueChange={(v) => {
+                setActivityFilter(v as typeof activityFilter);
+                setPage(0);
+              }}
+            >
+              <SelectTrigger className="w-[220px] h-9">
+                <SelectValue placeholder="Filtr aktivity" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Všechny organizace</SelectItem>
+                <SelectItem value="active_today">Aktivní dnes</SelectItem>
+                <SelectItem value="inactive_7">Neaktivní &gt; 7 dní</SelectItem>
+                <SelectItem value="inactive_30">Neaktivní &gt; 30 dní</SelectItem>
+                <SelectItem value="never">Bez použití</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Organizace</TableHead>
-                <TableHead>Registrace</TableHead>
-                <TableHead>Uživ.</TableHead>
-                <TableHead>Zam.</TableHead>
-                <TableHead>Zakázky</TableHead>
-                <TableHead>Poptávky</TableHead>
-                <TableHead>Nabídky</TableHead>
-                <TableHead>Faktury</TableHead>
-                <TableHead>Aktivita</TableHead>
-                <TableHead>Skóre</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((o) => (
-                <TableRow key={o.organizationId}>
-                  <TableCell className="font-medium">{o.name}</TableCell>
-                  <TableCell className="text-xs whitespace-nowrap">
-                    {o.registeredAt ? new Date(o.registeredAt).toLocaleDateString("cs-CZ") : "—"}
-                  </TableCell>
-                  <TableCell>{o.userAccounts}</TableCell>
-                  <TableCell>{o.employees}</TableCell>
-                  <TableCell>{o.jobs}</TableCell>
-                  <TableCell>{o.leads}</TableCell>
-                  <TableCell>{o.offers}</TableCell>
-                  <TableCell>{o.invoices}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{o.activityLabelCs}</Badge>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {o.activeDays30d} dní · {o.logins30d} přihl.
-                    </p>
-                  </TableCell>
-                  <TableCell>{o.activityScore}</TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="link" asChild>
-                      <Link href={`/admin/analytics/organizations/${o.organizationId}`}>Detail</Link>
-                    </Button>
-                  </TableCell>
+        <CardContent>
+          <div className="space-y-2 md:hidden">
+            {paged.map((o) => {
+              const live = liveMeta[o.organizationId];
+              return (
+                <div key={o.organizationId} className="rounded-lg border border-slate-200 p-3 text-sm">
+                  <p className="font-semibold">{o.name}</p>
+                  {live?.onlineUsers ? (
+                    <p className="text-emerald-800 text-xs">🟢 Online: {live.onlineUsers}</p>
+                  ) : null}
+                  <p className="text-xs text-slate-600">
+                    Poslední aktivita:{" "}
+                    {o.lastActivityAt
+                      ? new Date(o.lastActivityAt).toLocaleString("cs-CZ")
+                      : "Historická data nejsou k dispozici"}
+                  </p>
+                  <Button size="sm" className="mt-2" variant="outline" asChild>
+                    <Link href={`/admin/analytics/organizations/${o.organizationId}`}>Detail</Link>
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="hidden md:block overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Organizace</TableHead>
+                  <TableHead>Registrace</TableHead>
+                  <TableHead>Uživ.</TableHead>
+                  <TableHead className="whitespace-nowrap">Online</TableHead>
+                  <TableHead className="whitespace-nowrap">Posl. přihl.</TableHead>
+                  <TableHead className="whitespace-nowrap">Posl. aktivita</TableHead>
+                  <TableHead>Zam.</TableHead>
+                  <TableHead>Zak.</TableHead>
+                  <TableHead>Popt.</TableHead>
+                  <TableHead>Nab.</TableHead>
+                  <TableHead>Fakt.</TableHead>
+                  <TableHead>Skóre</TableHead>
+                  <TableHead />
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {paged.map((o) => {
+                  const live = liveMeta[o.organizationId];
+                  return (
+                    <TableRow key={o.organizationId}>
+                      <TableCell className="font-medium min-w-[10rem]">
+                        <div>{o.name}</div>
+                        <Badge variant="outline" className="mt-1 text-[10px]">
+                          {o.activityLabelCs}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {o.registeredAt ? new Date(o.registeredAt).toLocaleDateString("cs-CZ") : "—"}
+                      </TableCell>
+                      <TableCell>{o.userAccounts}</TableCell>
+                      <TableCell>{live?.onlineUsers ?? 0}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {live?.lastLoginAt
+                          ? new Date(live.lastLoginAt).toLocaleString("cs-CZ", {
+                              timeZone: "Europe/Prague",
+                              dateStyle: "short",
+                              timeStyle: "short",
+                            })
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {(live?.lastActivityAt ?? o.lastActivityAt)
+                          ? new Date(String(live?.lastActivityAt ?? o.lastActivityAt)).toLocaleString(
+                              "cs-CZ",
+                              { timeZone: "Europe/Prague" }
+                            )
+                          : "—"}
+                      </TableCell>
+                      <TableCell>{o.employees}</TableCell>
+                      <TableCell>{o.jobs}</TableCell>
+                      <TableCell>{o.leads}</TableCell>
+                      <TableCell>{o.offers}</TableCell>
+                      <TableCell>{o.invoices}</TableCell>
+                      <TableCell>{o.activityScore}</TableCell>
+                      <TableCell>
+                        <Button size="sm" variant="link" asChild>
+                          <Link href={`/admin/analytics/organizations/${o.organizationId}`}>Detail</Link>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="mt-3 flex items-center justify-between text-sm text-slate-600">
+            <span>
+              Zobrazeno {paged.length} / {filtered.length}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={page <= 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                Předchozí
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={(page + 1) * pageSize >= filtered.length}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Další
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>

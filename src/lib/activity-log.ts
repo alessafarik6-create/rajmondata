@@ -100,6 +100,35 @@ export async function logActivity(
     createdAt: serverTimestamp(),
     createdBy: user.uid,
   });
+
+  void user
+    .getIdToken()
+    .then((token) =>
+      fetch("/api/portal/analytics/live-activity", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          companyId: orgId,
+          actionType: payload.actionType,
+          actionLabel: payload.actionLabel,
+          entityType: payload.entityType,
+          entityId: payload.entityId ?? null,
+          entityName: payload.entityName ?? null,
+          sourceModule: payload.sourceModule ?? null,
+          route: payload.route ?? null,
+          sessionId:
+            typeof payload.metadata?.sessionId === "string"
+              ? payload.metadata.sessionId
+              : null,
+        }),
+        keepalive: true,
+      })
+    )
+    .catch(() => {});
 }
 
 export function logActivitySafe(
@@ -129,6 +158,21 @@ export function staffSessionStorageKey(companyId: string, uid: string): string {
   return `bf_staff_session_v1_${companyId}_${uid}`;
 }
 
+const TAB_ID_KEY = "bf_client_tab_id_v1";
+
+export function getOrCreateClientTabId(): string {
+  if (typeof sessionStorage === "undefined") return "srv";
+  let id = sessionStorage.getItem(TAB_ID_KEY);
+  if (!id) {
+    id =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `tab_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    sessionStorage.setItem(TAB_ID_KEY, id);
+  }
+  return id;
+}
+
 export async function createOrResumeStaffSession(params: {
   firestore: Firestore;
   companyId: string;
@@ -151,6 +195,7 @@ export async function createOrResumeStaffSession(params: {
       if (d.isActive !== false) {
         await updateDoc(ref, {
           lastSeenAt: serverTimestamp(),
+          lastInteractionAt: serverTimestamp(),
           ...(route
             ? { lastRoute: route.slice(0, 500) }
             : {}),
@@ -183,6 +228,8 @@ export async function createOrResumeStaffSession(params: {
     employeeEmail: user.email?.trim() || null,
     loginAt: serverTimestamp(),
     lastSeenAt: serverTimestamp(),
+    lastInteractionAt: serverTimestamp(),
+    clientTabId: getOrCreateClientTabId(),
     logoutAt: null,
     durationSeconds: null,
     durationMinutes: null,

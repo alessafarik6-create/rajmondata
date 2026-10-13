@@ -69,3 +69,6 @@ export const PLATFORM_PORTAL_ANALYTICS_ALERTS_COLLECTION =
 /** Audit přístupu superadmina k detailní analytice organizace. */
 export const PLATFORM_PORTAL_ANALYTICS_AUDIT_COLLECTION =
   "platform_portal_analytics_audit";
+
+/** Živý audit portálu pro superadmina (Admin SDK, retence dle nastavení). */
+export const PLATFORM_PORTAL_LIVE_EVENTS_COLLECTION = "platform_portal_live_events";

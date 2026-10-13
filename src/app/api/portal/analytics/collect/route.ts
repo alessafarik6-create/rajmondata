@@ -46,10 +46,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, skipped: "rate_limit" });
   }
 
+  const displayName =
+    String(callerData?.displayName ?? "").trim() ||
+    String(callerData?.email ?? "").split("@")[0] ||
+    "Uživatel";
+
   void recordPortalAnalyticsEvent(auth.db, {
     ...parsed,
     userId: auth.caller.uid,
     organizationId: auth.caller.companyId,
+    userDisplayName: displayName,
+    userEmail: typeof callerData?.email === "string" ? callerData.email : null,
   }).catch(() => {});
 
   return NextResponse.json({ ok: true });

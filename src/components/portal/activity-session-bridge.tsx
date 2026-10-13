@@ -6,6 +6,7 @@ import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
 import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
 import {
   createOrResumeStaffSession,
+  getOrCreateClientTabId,
   staffSessionStorageKey,
 } from "@/lib/activity-log";
 
@@ -46,11 +47,13 @@ export function ActivitySessionBridge() {
         doc(firestore, "companies", companyId, "staffSessions", sid),
         {
           lastSeenAt: serverTimestamp(),
+          lastInteractionAt: serverTimestamp(),
+          clientTabId: getOrCreateClientTabId(),
           lastRoute: pathname.slice(0, 500),
         }
       ).catch(() => {});
     };
-    intervalRef.current = window.setInterval(tick, 60_000);
+    intervalRef.current = window.setInterval(tick, 30_000);
     return () => {
       if (intervalRef.current) window.clearInterval(intervalRef.current);
     };
@@ -69,6 +72,8 @@ export function ActivitySessionBridge() {
         doc(firestore, "companies", companyId, "staffSessions", sid),
         {
           lastSeenAt: serverTimestamp(),
+          lastInteractionAt: serverTimestamp(),
+          clientTabId: getOrCreateClientTabId(),
           lastRoute: pathname.slice(0, 500),
         }
       ).catch(() => {});

@@ -17,11 +17,31 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ArrowLeft } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
+type LiveUserRow = {
+  userId: string;
+  employeeName: string;
+  employeeEmail: string | null;
+  presence: "online" | "idle" | "offline";
+  moduleLabelCs: string;
+  lastActivityRelativeCs: string;
+  loginAt: string | null;
+  sessions: { sessionId: string; deviceType: string | null; moduleLabelCs: string }[];
+};
 
 export function AdminOrgAnalyticsDetail({ organizationId }: { organizationId: string }) {
   const [days, setDays] = useState(30);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<Record<string, unknown> | null>(null);
+  const [liveUsers, setLiveUsers] = useState<LiveUserRow[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,6 +60,32 @@ export function AdminOrgAnalyticsDetail({ organizationId }: { organizationId: st
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pull = async () => {
+      const res = await fetch(
+        `/api/superadmin/portal-analytics/companies/${encodeURIComponent(organizationId)}/live`,
+        { credentials: "include", cache: "no-store" }
+      );
+      const json = await res.json();
+      if (!cancelled && res.ok) {
+        setLiveUsers((json.users ?? []) as LiveUserRow[]);
+      }
+    };
+    void pull();
+    const iv = window.setInterval(() => void pull(), 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(iv);
+    };
+  }, [organizationId]);
+
+  const presenceLabel = (p: string) => {
+    if (p === "online") return "🟢 Online";
+    if (p === "idle") return "🟡 Nečinný";
+    return "⚫ Offline";
+  };
 
   const org = data?.organization as { name?: string; registeredAt?: string } | undefined;
   const counts = (data?.counts ?? {}) as Record<string, number>;
@@ -132,6 +178,54 @@ export function AdminOrgAnalyticsDetail({ organizationId }: { organizationId: st
           </Card>
         ))}
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Uživatelé v reálném čase</CardTitle>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Uživatel</TableHead>
+                <TableHead>Stav</TableHead>
+                <TableHead>Přihlášen od</TableHead>
+                <TableHead>Poslední aktivita</TableHead>
+                <TableHead>Aktuální stránka</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {liveUsers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-slate-600">
+                    Žádní uživatelé s aktivní relací — historická data mohou chybět.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                liveUsers.map((u) => (
+                  <TableRow key={u.userId}>
+                    <TableCell>
+                      <div className="font-medium">{u.employeeName}</div>
+                      <div className="text-xs text-slate-500">{u.employeeEmail ?? "—"}</div>
+                    </TableCell>
+                    <TableCell>{presenceLabel(u.presence)}</TableCell>
+                    <TableCell className="text-xs whitespace-nowrap">
+                      {u.loginAt ? new Date(u.loginAt).toLocaleString("cs-CZ") : "—"}
+                    </TableCell>
+                    <TableCell className="text-xs">{u.lastActivityRelativeCs ?? "—"}</TableCell>
+                    <TableCell>{u.moduleLabelCs}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+          {liveUsers.some((u) => u.sessions.length > 1) ? (
+            <p className="mt-2 text-xs text-slate-500">
+              Uživatelé s více zařízeními/záložkami mají více relací; v součtu online se počítají jednou.
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

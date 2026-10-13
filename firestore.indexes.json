@@ -519,6 +519,19 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "remindAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "platform_portal_live_events",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "platform_portal_live_events",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

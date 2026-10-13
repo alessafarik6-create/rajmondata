@@ -20,6 +20,10 @@ export type RecordPortalAnalyticsInput = {
   actionKey?: string;
   deviceClass?: string;
   userAgent?: string;
+  userDisplayName?: string | null;
+  userEmail?: string | null;
+  organizationName?: string | null;
+  route?: string | null;
 };
 
 function todayKey(): string {
@@ -172,6 +176,21 @@ export async function recordPortalAnalyticsEvent(
 
     return true;
   });
+
+  if (recorded) {
+    const { appendPortalLiveEvent } = await import("@/lib/analytics-realtime/live-events-server");
+    void appendPortalLiveEvent(db, {
+      organizationId: input.organizationId,
+      organizationName: input.organizationName,
+      userId: input.userId,
+      userDisplayName: input.userDisplayName,
+      userEmail: input.userEmail,
+      event: input.event,
+      moduleId: input.moduleId,
+      actionKey: input.actionKey,
+      route: input.route,
+    }).catch(() => {});
+  }
 
   return { recorded, duplicate: !recorded };
 }
