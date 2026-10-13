@@ -190,14 +190,21 @@ async function buildEzopenSession(
 
   const expireMs = stream.appToken ? Date.now() + 6 * 3600 * 1000 : Date.now() + 3600 * 1000;
 
-  /** Výchozí live = přesná URL z OpenAPI (funkční chování před web stream pickerem). */
+  /** Výchozí live pro web = H.264 substream, pokud je k dispozici (EZUIKit v prohlížeči). */
   if (!liveOpts) {
-    const parsedDefault = parseEzopenLiveUrl(openapiUrl);
+    const pick = pickWebLiveEzopenStream({
+      openapiUrl,
+      streams: streamMeta,
+      requestedVariant: "sub",
+      subCandidateIndex: 0,
+    });
+    const ezopenUrl = pick.ezopenUrl;
+    const parsedDefault = parseEzopenLiveUrl(ezopenUrl);
     return {
       ok: true,
       playbackType: "ezopen",
       sessionType: "sdk",
-      ezopenUrl: openapiUrl,
+      ezopenUrl,
       accessToken: stream.appToken,
       appKey: stream.appKey,
       streamAreaDomain: stream.streamAreaDomain,
@@ -206,15 +213,15 @@ async function buildEzopenSession(
       deviceSerialMasked: maskDeviceSerial(cam.deviceSerial),
       channelNo: parsedDefault?.channelNo ?? cam.channelNo,
       streamType: parsedDefault?.streamSuffix ?? "live",
-      streamVariant: parsedDefault?.streamProfile === "sub" ? "sub" : "main",
+      streamVariant: pick.streamVariant,
       protocol: parsedDefault?.protocol ?? "ezopen",
-      codecHint: streamMeta.main.codec,
+      codecHint: pick.codecHint,
       openapiEzopenUrl: openapiUrl,
       mainStream: streamMeta.main,
       subStream: streamMeta.sub,
-      webLiveSelectionReason: "openapi_default",
-      subCandidateIndex: 0,
-      webLiveWarning: null,
+      webLiveSelectionReason: pick.selectionReason,
+      subCandidateIndex: pick.subCandidateIndex,
+      webLiveWarning: pick.webLiveWarning ?? null,
     };
   }
 

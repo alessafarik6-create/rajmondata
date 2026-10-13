@@ -24,6 +24,7 @@ import {
 import {
   hikPlayerContainerHasVideo,
   isLikelyHikStreamFatalError,
+  resizePlayerToContainer,
   waitForNonZeroContainerSize,
   watchHikPlayerFirstFrame,
 } from "@/components/cameras/hikvision-player-utils";
@@ -81,10 +82,12 @@ export type HikvisionLivePlayerState =
 const USER_ERROR_MESSAGE = "Živý obraz se nepodařilo zobrazit.";
 const LIVE_PLAYER_WIDTH = 800;
 const LIVE_PLAYER_HEIGHT = 450;
+const LIVE_CONNECT_TIMEOUT_MS = 15_000;
 
 type PlayerInstance = {
   stop: () => void;
   destroy?: () => void;
+  play?: () => void;
   openSound: () => void;
   closeSound: () => void;
   fullScreen: () => void;
@@ -142,6 +145,7 @@ export function HikvisionEzopenPlayer(props: {
     className,
     onClose,
     onRetry,
+    onSubStreamFallback,
     compact,
     streamErrorCode,
     showDeveloperDetail,
@@ -163,6 +167,9 @@ export function HikvisionEzopenPlayer(props: {
   compactRef.current = compact;
   const onRetryRef = useRef(onRetry);
   onRetryRef.current = onRetry;
+  const onSubStreamFallbackRef = useRef(onSubStreamFallback);
+  onSubStreamFallbackRef.current = onSubStreamFallback;
+  const subStreamTriedRef = useRef(false);
 
   const [muted, setMuted] = useState(true);
   const [uiState, setUiState] = useState<HikvisionLivePlayerState>("LOADING_SDK");
@@ -274,8 +281,15 @@ export function HikvisionEzopenPlayer(props: {
         return;
       }
 
-      const containerEl = playerContainerRef.current;
-      if (!containerEl) return;
+      let containerEl = playerContainerRef.current;
+      if (!containerEl) {
+        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        containerEl = playerContainerRef.current;
+        if (!containerEl || cancelled) {
+          initializingRef.current = false;
+          return;
+        }
+      }
 
       if (playerRef.current && initStreamKeyRef.current !== streamKey) {
         destroyHikPlayer(playerRef, cameraId);
@@ -286,11 +300,18 @@ export function HikvisionEzopenPlayer(props: {
       setErrorCode(null);
       setHikvisionPlayerPhase("PLAYER_CREATING");
 
-      const sized = await waitForNonZeroContainerSize(containerEl);
-      if (cancelled || !sized) {
+      let sized = await waitForNonZeroContainerSize(containerEl);
+      if (cancelled) {
         initializingRef.current = false;
-        logHik("[HIK] ERROR", { cameraId, phase: "container_size", sized });
         return;
+      }
+      if (!sized) {
+        const isCompact = compactRef.current;
+        sized = {
+          width: isCompact ? 320 : LIVE_PLAYER_WIDTH,
+          height: isCompact ? 180 : LIVE_PLAYER_HEIGHT,
+        };
+        logHik("[HIK] WARN", { cameraId, phase: "container_size_fallback", sized });
       }
 
       const EZUIKitPlayer = getHikvisionPlayerConstructor();
@@ -387,6 +408,13 @@ export function HikvisionEzopenPlayer(props: {
           hikLiveLog("FIRST FRAME (dom)");
           markPlaying("dom_firstFrame");
         });
+
+        try {
+          player.play?.();
+        } catch {
+          /* SDK auto-play */
+        }
+        resizePlayerToContainer(containerEl, player);
       } catch (e) {
         logHik("[HIK] ERROR", { cameraId, phase: "player_init", error: e });
         setUiState("ERROR");
@@ -408,7 +436,53 @@ export function HikvisionEzopenPlayer(props: {
 
   useEffect(() => {
     streamRetriedRef.current = false;
+    subStreamTriedRef.current = false;
   }, [streamKey]);
+
+  useEffect(() => {
+    if (
+      uiState !== "INITIALIZING_PLAYER" &&
+      uiState !== "CONNECTING" &&
+      uiState !== "LOADING_STREAM"
+    ) {
+      return;
+    }
+    const deadline = window.setTimeout(() => {
+      const containerEl = playerContainerRef.current;
+      if (hikPlayerContainerHasVideo(containerEl)) return;
+      const liveSession = sessionRef.current;
+      const mainCodec = liveSession?.mainStream?.codec ?? liveSession?.codecHint;
+      if (
+        !subStreamTriedRef.current &&
+        onSubStreamFallbackRef.current &&
+        liveSession?.streamVariant !== "sub" &&
+        (mainCodec === "H265" || liveSession?.webLiveWarning)
+      ) {
+        subStreamTriedRef.current = true;
+        destroyHikPlayer(playerRef, cameraId);
+        initStreamKeyRef.current = null;
+        setUiState("LOADING_STREAM");
+        hikLiveLog("PLAY timeout — sub stream fallback");
+        onSubStreamFallbackRef.current();
+        return;
+      }
+      if (!streamRetriedRef.current && onRetryRef.current) {
+        streamRetriedRef.current = true;
+        destroyHikPlayer(playerRef, cameraId);
+        initStreamKeyRef.current = null;
+        setUiState("CONNECTING");
+        hikLiveLog("PLAY timeout — token retry");
+        onRetryRef.current();
+        return;
+      }
+      setUiState("ERROR");
+      setErrorCode("PLAY_FAILED");
+      setHikvisionPlayerPhase("PLAY_ERROR");
+      setHikvisionPlayerError("PLAY_FAILED");
+      logHik("[HIK] ERROR", { cameraId, phase: "connect_timeout_ms", ms: LIVE_CONNECT_TIMEOUT_MS });
+    }, LIVE_CONNECT_TIMEOUT_MS);
+    return () => window.clearTimeout(deadline);
+  }, [uiState, streamKey, cameraId]);
 
   useEffect(() => {
     return () => {
@@ -425,10 +499,12 @@ export function HikvisionEzopenPlayer(props: {
     uiState === "LOADING_SDK"
       ? "Načítám přehrávač…"
       : uiState === "LOADING_STREAM"
-        ? "Připojuji živý obraz…"
+        ? "Získávám video stream…"
         : uiState === "CONNECTING"
-          ? "Připojuji stream…"
-          : "Inicializuji přehrávač…";
+          ? "Načítám obraz…"
+          : uiState === "INITIALIZING_PLAYER"
+            ? "Připojuji ke kameře…"
+            : "Inicializuji přehrávač…";
 
   async function toggleFullscreen() {
     const el = shellRef.current;
@@ -553,8 +629,12 @@ export function HikvisionEzopenPlayer(props: {
         </div>
       </div>
 
-      <div className={shellVideoClass}>
-        <div ref={playerContainerRef} id={containerId} />
+      <div className={cn(shellVideoClass, "relative")}>
+        <div
+          ref={playerContainerRef}
+          id={containerId}
+          className="absolute inset-0 w-full h-full min-h-[120px] overflow-hidden [&_video]:max-w-full [&_video]:max-h-full [&_canvas]:max-w-full [&_canvas]:max-h-full"
+        />
         {showLoadingOverlay ? (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 z-20">
             <Loader2 className="h-8 w-8 animate-spin" />

@@ -190,16 +190,39 @@ export function hikPlayerContainerHasVideo(container: HTMLElement | null): boole
   return hikContainerHasRenderedFrame(container);
 }
 
+function measurePlayerHost(el: HTMLElement): { width: number; height: number } | null {
+  const self = el.getBoundingClientRect();
+  if (self.width > 0 && self.height > 0) {
+    return { width: Math.floor(self.width), height: Math.floor(self.height) };
+  }
+  const parent = el.parentElement;
+  if (parent) {
+    const parentRect = parent.getBoundingClientRect();
+    if (parentRect.width > 0 && parentRect.height > 0) {
+      return {
+        width: Math.floor(parentRect.width),
+        height: Math.floor(parentRect.height),
+      };
+    }
+  }
+  return null;
+}
+
 export function waitForNonZeroContainerSize(
   el: HTMLElement,
   maxWaitMs = 8000
 ): Promise<{ width: number; height: number } | null> {
   return new Promise((resolve) => {
+    const immediate = measurePlayerHost(el);
+    if (immediate) {
+      resolve(immediate);
+      return;
+    }
     const start = Date.now();
     const check = () => {
-      const rect = el.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        resolve({ width: Math.floor(rect.width), height: Math.floor(rect.height) });
+      const sized = measurePlayerHost(el);
+      if (sized) {
+        resolve(sized);
         return;
       }
       if (Date.now() - start >= maxWaitMs) {

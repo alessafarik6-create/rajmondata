@@ -1,7 +1,8 @@
 /** Veřejná konfigurace Hikvision EZUIKit JSSDK (bez API Secret). */
 
 export const HIKVISION_JSSDK_DEFAULT_SCRIPT = "/hikvision-jssdk/ezuikit.js";
-export const HIKVISION_JSSDK_DEFAULT_CSS = "/hikvision-jssdk/ezuikit.css";
+/** Soubor v public/ je `ezUIKit.css` (velké U). */
+export const HIKVISION_JSSDK_DEFAULT_CSS = "/hikvision-jssdk/ezUIKit.css";
 export const HIKVISION_JSSDK_DEFAULT_STATIC = "/hikvision-jssdk/ezuikit_static";
 
 export type HikvisionJssdkPublicConfig = {
