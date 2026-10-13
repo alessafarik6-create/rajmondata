@@ -54,6 +54,8 @@ import {
   type DailyWorkReportMoney,
 } from "@/lib/employee-money";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
+import { DashboardPersonalTaskAlerts } from "@/components/tasks/dashboard-personal-task-alerts";
+import { DashboardMergedTasksProvider } from "@/contexts/dashboard-merged-tasks-context";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
 import { PortalDashboardCompactGrid } from "@/components/portal/portal-dashboard-compact-grid";
 import type { DashboardActivityRow } from "@/components/portal/dashboard-activity-section";
@@ -1197,8 +1199,20 @@ export default function CompanyDashboard() {
       {showAdminDashboard ? (
         <div className="space-y-4 sm:space-y-5">
           {companyId ? (
-            <>
+            <DashboardMergedTasksProvider
+              companyId={companyId}
+              allJobs={typedJobs}
+              jobsLoading={isJobsLoading}
+              todayIso={todayIso}
+            >
               {showAiSecretary ? <DashboardAiSecretaryPanel companyId={companyId} /> : null}
+              {!belowLg && !isCustomer ? (
+                <DashboardPersonalTaskAlerts
+                  companyId={companyId}
+                  employeeId={typedProfile?.employeeId}
+                  todayIso={todayIso}
+                />
+              ) : null}
               <PlatformCampaignDashboardSection />
               <PortalDashboardCompactGrid
                 companyId={companyId}
@@ -1238,7 +1252,7 @@ export default function CompanyDashboard() {
                 userId={user?.uid ?? null}
                 profile={profile as { role?: string; globalRoles?: unknown } | null}
               />
-            </>
+            </DashboardMergedTasksProvider>
           ) : null}
         </div>
       ) : (

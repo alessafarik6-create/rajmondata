@@ -23,6 +23,8 @@ export type DashboardTaskItem = {
   jobName?: string;
   assignedTo: string | null;
   assignedMode: TaskAssignedMode;
+  /** Firebase Auth uid zadavatele */
+  createdBy?: string | null;
 };
 
 const PRIORITY_RANK: Record<JobTaskPriority, number> = {
@@ -76,6 +78,54 @@ export function itemForAll(t: DashboardTaskItem): boolean {
   return !t.assignedTo || String(t.assignedTo).trim() === "";
 }
 
+/** Osobní úkol přiřazený konkrétnímu zaměstnanci (ne „Všem“). */
+export function taskAssignedToEmployee(
+  t: DashboardTaskItem,
+  employeeId: string | null | undefined
+): boolean {
+  const eid = String(employeeId ?? "").trim();
+  if (!eid || itemForAll(t)) return false;
+  return String(t.assignedTo ?? "").trim() === eid;
+}
+
+export type PersonalTaskDueBucket = "overdue" | "today" | "upcoming" | "none";
+
+export function personalTaskDueBucket(
+  dueIso: string | undefined,
+  todayIso: string
+): PersonalTaskDueBucket {
+  const due = validDue(dueIso);
+  if (!due) return "none";
+  if (due < todayIso) return "overdue";
+  if (due === todayIso) return "today";
+  return "upcoming";
+}
+
+const BUCKET_RANK: Record<PersonalTaskDueBucket, number> = {
+  overdue: 0,
+  today: 1,
+  upcoming: 2,
+  none: 3,
+};
+
+/** Řazení osobních úkolů: po termínu → dnes → ostatní aktivní. */
+export function sortPersonalAssignedTasks(
+  rows: DashboardTaskItem[],
+  todayIso: string
+): DashboardTaskItem[] {
+  return [...rows].sort((a, b) => {
+    const ba = BUCKET_RANK[personalTaskDueBucket(a.dueIso, todayIso)];
+    const bb = BUCKET_RANK[personalTaskDueBucket(b.dueIso, todayIso)];
+    if (ba !== bb) return ba - bb;
+    const da = validDue(a.dueIso) || "9999-12-31";
+    const db = validDue(b.dueIso) || "9999-12-31";
+    if (da !== db) return da.localeCompare(db);
+    const pa = PRIORITY_RANK[a.priority];
+    const pb = PRIORITY_RANK[b.priority];
+    return pa - pb;
+  });
+}
+
 function sortDashboardTasks(
   rows: DashboardTaskItem[],
   todayIso: string
@@ -127,6 +177,7 @@ export function buildMergedDashboardTaskItems(
       jobName: jid ? jobNameById.get(jid) : undefined,
       assignedTo: at,
       assignedMode: mode,
+      createdBy: dStr(row.createdBy as string | null | undefined),
     });
   }
 
@@ -156,6 +207,7 @@ export function buildMergedDashboardTaskItems(
       orgStatus: (t.status as OrganizationTaskStatus) || "open",
       assignedTo: at,
       assignedMode: mode,
+      createdBy: dStr(t.createdBy),
     });
   }
 

@@ -477,3 +477,47 @@
     outline-color: rgb(249 115 22 / 0.95);
   }
 }
+
+@keyframes rajmon-personal-task-border-pulse {
+  0%,
+  100% {
+    border-color: rgb(239 68 68);
+  }
+  50% {
+    border-color: rgb(252 165 165);
+  }
+}
+
+@keyframes rajmon-personal-task-border-pulse-strong {
+  0%,
+  100% {
+    border-color: rgb(185 28 28);
+    box-shadow: 0 0 0 0 rgb(185 28 28 / 0.25);
+  }
+  50% {
+    border-color: rgb(220 38 38);
+    box-shadow: 0 0 0 3px rgb(220 38 38 / 0.15);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rajmon-personal-task-alert {
+    animation: rajmon-personal-task-border-pulse 2.8s ease-in-out infinite;
+  }
+  .rajmon-personal-task-alert--overdue {
+    animation: rajmon-personal-task-border-pulse-strong 2.2s ease-in-out infinite;
+  }
+  .rajmon-personal-task-alert-icon {
+    animation: rajmon-personal-task-icon-pulse 2.8s ease-in-out infinite;
+  }
+}
+
+@keyframes rajmon-personal-task-icon-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}

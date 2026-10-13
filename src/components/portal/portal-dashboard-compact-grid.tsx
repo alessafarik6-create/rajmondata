@@ -2,8 +2,8 @@
 
 import React, { useMemo } from "react";
 import Link from "next/link";
-import { collection, doc, limit, query } from "firebase/firestore";
-import { useCollection, useMemoFirebase, useUser, useDoc } from "@/firebase";
+import { doc } from "firebase/firestore";
+import { useMemoFirebase, useUser, useDoc } from "@/firebase";
 import { DashboardCompactCalendar } from "@/components/portal/dashboard-compact-calendar";
 import {
   Briefcase,
@@ -21,9 +21,8 @@ import { useCameraPermissions } from "@/hooks/use-camera-permissions";
 import { useCompany } from "@/firebase/firestore/use-company";
 import { canAccessCompanyModule } from "@/lib/platform-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
-import { useActiveJobTasksFromJobList } from "@/components/jobs/use-active-job-tasks-from-jobs";
 import { useFirestore } from "@/firebase";
-import { buildMergedDashboardTaskItems } from "@/lib/dashboard-task-items-merge";
+import { useDashboardMergedTasksContext } from "@/contexts/dashboard-merged-tasks-context";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { LeadPortfolioStats } from "@/lib/lead-portfolio-value";
 import { formatMoneyKc } from "@/lib/job-payment-summary";
@@ -121,52 +120,13 @@ export function PortalDashboardCompactGrid(props: PortalDashboardCompactGridProp
   const chatAccess = usePortalModuleAccess("chat");
   const activityAccess = usePortalModuleAccess("activity");
 
-  const jobNameById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const j of props.allJobs) {
-      m.set(j.id, j.name?.trim() || j.id);
-    }
-    return m;
-  }, [props.allJobs]);
-
-  const jobIds = useMemo(
-    () => props.allJobs.map((j) => j.id).filter(Boolean),
-    [props.allJobs]
-  );
-  const { data: taskRows, isLoading: jobTasksLoading } = useActiveJobTasksFromJobList(
-    firestore,
-    props.companyId,
-    jobIds,
-    props.jobsLoading
-  );
-
-  const orgTasksQuery = useMemoFirebase(() => {
-    if (!firestore || !props.companyId) return null;
-    return query(
-      collection(firestore, "companies", props.companyId, "tasks"),
-      limit(300)
-    );
-  }, [firestore, props.companyId]);
-
-  const { data: orgRaw, isLoading: orgTasksLoading } = useCollection(orgTasksQuery);
-
-  const mergedTasks = useMemo(
-    () =>
-      buildMergedDashboardTaskItems(
-        taskRows ?? [],
-        orgRaw,
-        jobNameById,
-        props.todayIso
-      ),
-    [taskRows, orgRaw, jobNameById, props.todayIso]
-  );
+  const { mergedTasks, isLoading: tasksLoading } = useDashboardMergedTasksContext();
   const openTasks = useMemo(() => mergedTasks.slice(0, 3), [mergedTasks]);
   const overdueTasks = useMemo(
     () =>
       mergedTasks.filter((t) => t.dueIso && t.dueIso < props.todayIso).length,
     [mergedTasks, props.todayIso]
   );
-  const tasksLoading = props.jobsLoading || jobTasksLoading || orgTasksLoading;
 
   const jobStats = useMemo(() => {
     const active = props.jobs.filter((j) => j.status !== "dokončená");

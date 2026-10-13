@@ -50,6 +50,7 @@ import {
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { filterEmployeesForAssignment } from "@/lib/employee-active";
 import { useActiveJobTasksFromJobList } from "@/components/jobs/use-active-job-tasks-from-jobs";
+import { markDashboardTaskDone } from "@/lib/dashboard-task-complete-client";
 
 type JobRef = { id: string; name?: string };
 
@@ -342,34 +343,7 @@ export function DashboardJobTasksWidget({
     e.stopPropagation();
     if (!firestore || !cid) return;
     try {
-      if (item.source === "job") {
-        const jid = item.jobId?.trim();
-        if (!jid) return;
-        await updateDoc(
-          doc(
-            firestore,
-            "companies",
-            cid,
-            "jobs",
-            jid,
-            "tasks",
-            item.taskId
-          ),
-          {
-            status: "done" as JobTaskStatus,
-            updatedAt: serverTimestamp(),
-          }
-        );
-      } else {
-        await updateDoc(
-          doc(firestore, "companies", cid, "tasks", item.taskId),
-          {
-            status: "done" as OrganizationTaskStatus,
-            completedAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          }
-        );
-      }
+      await markDashboardTaskDone(firestore, cid, item);
       toast({ title: "Úkol vyřízen" });
     } catch (e) {
       console.error(e);
