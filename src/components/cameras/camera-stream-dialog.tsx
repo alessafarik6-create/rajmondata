@@ -24,14 +24,15 @@ import {
 
 type CameraRow = { id: string; name: string; online: boolean };
 
-function mapStreamApiError(data: {
-  code?: string;
-  error?: string;
-}): HikvisionLivePlayerErrorCode {
+function mapStreamApiError(
+  data: { code?: string; error?: string },
+  httpStatus?: number
+): HikvisionLivePlayerErrorCode {
   const code = String(data.code ?? "").trim();
   if (code === "CAMERA_OFFLINE" || code === "DEVICE_OFFLINE") return "DEVICE_OFFLINE";
   if (code === "HIKVISION_TOKEN_FAILED" || code === "HIKVISION_STREAM_UNAVAILABLE")
     return "STREAM_TOKEN_FAILED";
+  if (httpStatus === 500 || httpStatus === 502) return "LIVE_API_FAILED";
   return "STREAM_TOKEN_FAILED";
 }
 
@@ -114,7 +115,7 @@ export function CameraLiveDialog(props: {
           if (reason === "open") {
             setSession(null);
           }
-          setStreamErrorCode(mapStreamApiError(data));
+          setStreamErrorCode(mapStreamApiError(data, res.status));
           return;
         }
         setSession({

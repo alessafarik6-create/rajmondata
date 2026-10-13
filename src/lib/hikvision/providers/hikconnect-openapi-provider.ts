@@ -19,6 +19,7 @@ import {
   parseEzopenLiveUrl,
   parseRecordSettingStreams,
   pickWebLiveEzopenStream,
+  resolveHccCaptureChannelNo,
   type RecordSettingStreams,
 } from "@/lib/hikvision/ezopen-stream-meta";
 import type {
@@ -190,16 +191,48 @@ async function buildEzopenSession(
 
   const expireMs = stream.appToken ? Date.now() + 6 * 3600 * 1000 : Date.now() + 3600 * 1000;
 
-  /** Výchozí live pro web = H.264 substream, pokud je k dispozici (EZUIKit v prohlížeči). */
+  /** Výchozí live = přesná URL z OpenAPI (platná u HCC). Substream jen při potvrzeném H.264 sub. */
   if (!liveOpts) {
-    const pick = pickWebLiveEzopenStream({
-      openapiUrl,
-      streams: streamMeta,
-      requestedVariant: "sub",
+    const parsedOpen = parseEzopenLiveUrl(openapiUrl);
+    if (!parsedOpen) {
+      return {
+        ok: false,
+        code: "LIVE_VIEW_NOT_SUPPORTED",
+        error: "Hik-Connect vrátil neplatnou ezopen adresu.",
+      };
+    }
+    const mainH265 = streamMeta.main.codec === "H265";
+    const subH264 = streamMeta.sub?.codec === "H264";
+    let ezopenUrl = openapiUrl;
+    let pick = {
+      streamVariant: parsedOpen.streamProfile === "sub" ? ("sub" as const) : ("main" as const),
+      codecHint: streamMeta.main.codec,
+      selectionReason: "openapi_default",
       subCandidateIndex: 0,
-    });
-    const ezopenUrl = pick.ezopenUrl;
-    const parsedDefault = parseEzopenLiveUrl(ezopenUrl);
+      webLiveWarning: null as string | null,
+    };
+    if (mainH265 && subH264) {
+      const subPick = pickWebLiveEzopenStream({
+        openapiUrl,
+        streams: streamMeta,
+        requestedVariant: "sub",
+        subCandidateIndex: 0,
+      });
+      if (parseEzopenLiveUrl(subPick.ezopenUrl)) {
+        ezopenUrl = subPick.ezopenUrl;
+        pick = {
+          streamVariant: subPick.streamVariant,
+          codecHint: subPick.codecHint,
+          selectionReason: subPick.selectionReason,
+          subCandidateIndex: subPick.subCandidateIndex,
+          webLiveWarning: subPick.webLiveWarning ?? null,
+        };
+      }
+    } else if (mainH265) {
+      pick.webLiveWarning =
+        "Main stream používá H.265 — v prohlížeči nemusí být obraz vidět. Zapněte substream H.264 na kameře/NVR.";
+    }
+    const parsedDefault = parseEzopenLiveUrl(ezopenUrl)!;
     return {
       ok: true,
       playbackType: "ezopen",
@@ -211,17 +244,17 @@ async function buildEzopenSession(
       expiresAt: new Date(expireMs).toISOString(),
       message: "Přehrávání přes oficiální Hik-Connect JSSDK (ezopen).",
       deviceSerialMasked: maskDeviceSerial(cam.deviceSerial),
-      channelNo: parsedDefault?.channelNo ?? cam.channelNo,
-      streamType: parsedDefault?.streamSuffix ?? "live",
+      channelNo: parsedDefault.channelNo ?? cam.channelNo,
+      streamType: parsedDefault.streamSuffix ?? "live",
       streamVariant: pick.streamVariant,
-      protocol: parsedDefault?.protocol ?? "ezopen",
+      protocol: parsedDefault.protocol ?? "ezopen",
       codecHint: pick.codecHint,
       openapiEzopenUrl: openapiUrl,
       mainStream: streamMeta.main,
       subStream: streamMeta.sub,
       webLiveSelectionReason: pick.selectionReason,
       subCandidateIndex: pick.subCandidateIndex,
-      webLiveWarning: pick.webLiveWarning ?? null,
+      webLiveWarning: pick.webLiveWarning,
     };
   }
 
@@ -393,10 +426,12 @@ export const hikConnectOpenApiProvider: HikvisionProvider = {
     const cam = camSnap.data() as {
       serialNumber?: string | null;
       channelId?: string;
+      channelNo?: string | null;
+      trackStreamId?: string | null;
       externalDeviceId?: string | null;
     };
     const deviceSerial = String(cam.serialNumber ?? "").trim();
-    const channelNo = String(cam.channelId ?? "1").trim();
+    const channelNo = String(resolveHccCaptureChannelNo(cam));
     if (!deviceSerial) {
       return { ok: false, code: "CAMERA_OFFLINE", error: "Chybí serial zařízení — synchronizujte kamery." };
     }

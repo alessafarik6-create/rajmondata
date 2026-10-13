@@ -26,6 +26,47 @@ export type RecordSettingStreams = {
   sub: StreamTrackMeta | null;
 };
 
+/** Doména pro EZUIKit `env.domain` z ezopen hostitele (např. open.ezvizlife.com). */
+export function ezopenHostToStreamDomain(url: string): string | undefined {
+  const parsed = parseEzopenLiveUrl(url);
+  if (!parsed?.host) return undefined;
+  const host = parsed.host.replace(/^\/\//, "").trim();
+  if (!host) return undefined;
+  return `https://${host}`;
+}
+
+export function normalizeStreamAreaDomain(raw?: string | null): string | undefined {
+  let s = String(raw ?? "").trim();
+  if (!s) return undefined;
+  s = s.replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+  return s;
+}
+
+/** Číslo kanálu pro HCC capturePic / ISAPI z uložených polí kamery. */
+export function resolveHccCaptureChannelNo(cam: {
+  channelId?: string | null;
+  channelNo?: string | null;
+  trackStreamId?: string | null;
+}): number {
+  const candidates = [cam.channelNo, cam.channelId, cam.trackStreamId];
+  for (const raw of candidates) {
+    const s = String(raw ?? "").trim();
+    if (!s) continue;
+    if (/^\d+$/.test(s)) {
+      const n = parseInt(s, 10);
+      if (n >= 1 && n <= 512) return n;
+    }
+    if (/^\d{3,}$/.test(s)) {
+      const n = parseInt(s, 10);
+      const ch = n % 100;
+      if (ch >= 1 && ch <= 64) return ch;
+      if (n >= 101 && n <= 999) return Math.floor(n / 100);
+    }
+  }
+  return 1;
+}
+
 export function parseEzopenLiveUrl(url: string): ParsedEzopenUrl | null {
   const raw = String(url ?? "").trim();
   const m = raw.match(/^ezopen:\/\/([^/]+)\/([^/]+)\/([^/.]+)\.(.+)$/i);

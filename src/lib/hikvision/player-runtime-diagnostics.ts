@@ -37,6 +37,7 @@ export type HikvisionPlayerRuntimePhase =
   | "STREAM_CONFIG_LOADED"
   | "PLAYER_CREATING"
   | "PLAYER_CREATED"
+  | "STREAM_CONNECTED"
   | "PLAY_STARTED"
   | "PLAY_ERROR"
   | "PLAYER_DESTROYED";

@@ -28,6 +28,10 @@ import {
   waitForNonZeroContainerSize,
   watchHikPlayerFirstFrame,
 } from "@/components/cameras/hikvision-player-utils";
+import {
+  ezopenHostToStreamDomain,
+  normalizeStreamAreaDomain,
+} from "@/lib/hikvision/ezopen-stream-meta";
 
 /** Metadata z API — player používá jen url, token, domain. */
 export type EzopenSession = {
@@ -68,7 +72,9 @@ export type HikvisionLivePlayerErrorCode =
   | "STREAM_EXPIRED"
   | "DEVICE_OFFLINE"
   | "PLAYER_INIT_FAILED"
-  | "PLAY_FAILED";
+  | "PLAY_FAILED"
+  | "STREAM_NOT_CONNECTED"
+  | "DECODE_FAILED";
 
 export type HikvisionLivePlayerState =
   | "LOADING_SDK"
@@ -79,7 +85,24 @@ export type HikvisionLivePlayerState =
   | "ERROR"
   | "OFFLINE";
 
-const USER_ERROR_MESSAGE = "Živý obraz se nepodařilo zobrazit.";
+function userErrorMessage(code: HikvisionLivePlayerErrorCode | null): string {
+  switch (code) {
+    case "STREAM_NOT_CONNECTED":
+      return "Živý obraz se nepodařilo spustit. Kamera je dostupná, ale video stream nebyl navázán.";
+    case "DEVICE_OFFLINE":
+      return "Kamera je offline nebo nedostupná.";
+    case "LIVE_API_FAILED":
+      return "Server nevrátil platný stream (chyba API). Zkuste to znovu nebo kontaktujte správce integrace Hik-Connect.";
+    case "STREAM_TOKEN_FAILED":
+    case "STREAM_EXPIRED":
+      return "Nepodařilo se získat autorizovaný přístup ke streamu. Zkuste obnovit připojení.";
+    case "DECODE_FAILED":
+    case "PLAY_FAILED":
+      return "Video stream se nepodařilo dekódovat v prohlížeči (zkuste substream H.264).";
+    default:
+      return "Živý obraz se nepodařilo zobrazit.";
+  }
+}
 const LIVE_PLAYER_WIDTH = 800;
 const LIVE_PLAYER_HEIGHT = 450;
 const LIVE_CONNECT_TIMEOUT_MS = 15_000;
@@ -170,6 +193,7 @@ export function HikvisionEzopenPlayer(props: {
   const onSubStreamFallbackRef = useRef(onSubStreamFallback);
   onSubStreamFallbackRef.current = onSubStreamFallback;
   const subStreamTriedRef = useRef(false);
+  const renderedFrameRef = useRef(false);
 
   const [muted, setMuted] = useState(true);
   const [uiState, setUiState] = useState<HikvisionLivePlayerState>("LOADING_SDK");
@@ -263,6 +287,12 @@ export function HikvisionEzopenPlayer(props: {
 
     const markPlaying = (source: string) => {
       if (cancelled) return;
+      const containerEl = playerContainerRef.current;
+      if (!hikPlayerContainerHasVideo(containerEl)) {
+        logHik("[HIK] PLAY skip — no rendered frame", { cameraId, source });
+        return;
+      }
+      renderedFrameRef.current = true;
       bumpHikvisionPlayStartCount();
       hikLiveLog("PLAYING");
       logHik("[HIK] PLAY RESULT", { cameraId, ok: true, source });
@@ -336,7 +366,9 @@ export function HikvisionEzopenPlayer(props: {
         return;
       }
 
-      const domain = liveSession.streamAreaDomain?.replace(/\/$/, "");
+      const domain =
+        normalizeStreamAreaDomain(liveSession.streamAreaDomain) ??
+        ezopenHostToStreamDomain(liveSession.ezopenUrl);
       const liveMode = modeRef.current;
       const isCompact = compactRef.current;
       const playerWidth = isCompact ? 320 : LIVE_PLAYER_WIDTH;
@@ -380,11 +412,15 @@ export function HikvisionEzopenPlayer(props: {
         },
         handleSuccess: () => {
           if (cancelled) return;
-          hikLiveLog("PLAY START");
-          logHik("[HIK] PLAY", { cameraId });
-          markPlaying("handleSuccess");
+          hikLiveLog("STREAM CONNECTED (sdk)");
+          logHik("[HIK] STREAM", { cameraId, phase: "sdk_connected" });
+          setUiState("CONNECTING");
+          setHikvisionPlayerPhase("STREAM_CONNECTED");
         },
       };
+      if (liveSession.appKey) {
+        playerOpts.appKey = liveSession.appKey;
+      }
       if (domain) {
         playerOpts.env = { domain };
       }
@@ -437,6 +473,7 @@ export function HikvisionEzopenPlayer(props: {
   useEffect(() => {
     streamRetriedRef.current = false;
     subStreamTriedRef.current = false;
+    renderedFrameRef.current = false;
   }, [streamKey]);
 
   useEffect(() => {
@@ -449,7 +486,7 @@ export function HikvisionEzopenPlayer(props: {
     }
     const deadline = window.setTimeout(() => {
       const containerEl = playerContainerRef.current;
-      if (hikPlayerContainerHasVideo(containerEl)) return;
+      if (renderedFrameRef.current || hikPlayerContainerHasVideo(containerEl)) return;
       const liveSession = sessionRef.current;
       const mainCodec = liveSession?.mainStream?.codec ?? liveSession?.codecHint;
       if (
@@ -476,9 +513,9 @@ export function HikvisionEzopenPlayer(props: {
         return;
       }
       setUiState("ERROR");
-      setErrorCode("PLAY_FAILED");
+      setErrorCode("STREAM_NOT_CONNECTED");
       setHikvisionPlayerPhase("PLAY_ERROR");
-      setHikvisionPlayerError("PLAY_FAILED");
+      setHikvisionPlayerError("STREAM_NOT_CONNECTED");
       logHik("[HIK] ERROR", { cameraId, phase: "connect_timeout_ms", ms: LIVE_CONNECT_TIMEOUT_MS });
     }, LIVE_CONNECT_TIMEOUT_MS);
     return () => window.clearTimeout(deadline);
@@ -644,7 +681,7 @@ export function HikvisionEzopenPlayer(props: {
         {showErrorOverlay ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center bg-black/80 z-20">
             <p className="text-sm">
-              {uiState === "OFFLINE" ? "Kamera je offline." : USER_ERROR_MESSAGE}
+              {uiState === "OFFLINE" ? "Kamera je offline." : userErrorMessage(errorCode)}
             </p>
             {showDeveloperDetail && errorCode ? (
               <p className="text-xs text-white/60 font-mono">Detail: {errorCode}</p>
