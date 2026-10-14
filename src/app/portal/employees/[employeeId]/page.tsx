@@ -53,6 +53,7 @@ import {
   calendarLevelsForAdminEditor,
   defaultCalendarLevelsForNewEmployee,
   portalPermissionLevelsForAdminEditor,
+  verifyEmployeeOrgPermissionsSaveResponse,
 } from "@/lib/portal-permissions-admin";
 import {
   EmployeeCameraPermissionsBlock,
@@ -650,12 +651,10 @@ export default function EmployeeDetailPage() {
     const row = employeeDoc as Record<string, unknown>;
     const docRevision =
       typeof row.portalPermissionsRevision === "number" ? row.portalPermissionsRevision : null;
-    if (
-      pendingPermissionsRevisionRef.current != null &&
-      docRevision != null &&
-      docRevision < pendingPermissionsRevisionRef.current
-    ) {
-      return;
+    if (pendingPermissionsRevisionRef.current != null) {
+      if (docRevision == null || docRevision < pendingPermissionsRevisionRef.current) {
+        return;
+      }
     }
     if (
       pendingPermissionsRevisionRef.current != null &&
@@ -756,6 +755,12 @@ export default function EmployeeDetailPage() {
     setOrgSaving(true);
     try {
       const idToken = await user.getIdToken();
+      const schedule = aggregateScheduleModuleLevel(calendarLevels);
+      const portalModulePermissions: Record<string, string> = {};
+      for (const id of ALL_PORTAL_MODULE_IDS) {
+        portalModulePermissions[id] =
+          id === "schedule" ? schedule : moduleLevels[id] ?? "none";
+      }
       const res = await fetch("/api/company/employees/update-org", {
         method: "PATCH",
         headers: {
@@ -766,15 +771,7 @@ export default function EmployeeDetailPage() {
           employeeId,
           role: portalRole,
           visibleInAttendanceTerminal: visibleInTerminal,
-          portalModulePermissions: (() => {
-            const schedule = aggregateScheduleModuleLevel(calendarLevels);
-            const full: Record<string, string> = {};
-            for (const id of ALL_PORTAL_MODULE_IDS) {
-              full[id] =
-                id === "schedule" ? schedule : moduleLevels[id] ?? "none";
-            }
-            return full;
-          })(),
+          portalModulePermissions,
           calendarPermissions: normalizeCalendarPermissionsForFirestore(calendarLevels),
           cameraPermissions: cameraFlags,
           dashboardAiAssistantEnabled,
@@ -782,7 +779,9 @@ export default function EmployeeDetailPage() {
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
         error?: string;
+        role?: string;
         portalModulePermissions?: Record<string, string> | null;
         calendarPermissions?: Record<string, string> | null;
         portalPermissionsRevision?: number | null;
@@ -790,10 +789,21 @@ export default function EmployeeDetailPage() {
       if (!res.ok) {
         throw new Error(typeof data.error === "string" ? data.error : "Uložení se nezdařilo.");
       }
+      const verifyError = verifyEmployeeOrgPermissionsSaveResponse({
+        requestedRole: portalRole,
+        requestedPortalModulePermissions: portalModulePermissions,
+        responseRole: data.role,
+        responsePortalModulePermissions: data.portalModulePermissions ?? undefined,
+      });
+      if (verifyError) {
+        throw new Error(verifyError);
+      }
+      const savedRole = parseEmployeePortalRole(data.role);
+      setPortalRole(savedRole);
       if (data.portalModulePermissions && typeof data.portalModulePermissions === "object") {
         const savedLevels = portalModuleLevelsFromFirestoreRecord(data.portalModulePermissions);
         setModuleLevels(
-          portalRole === "manager"
+          savedRole === "manager"
             ? applyManagerPermissionCaps(savedLevels)
             : savedLevels
         );
@@ -801,11 +811,12 @@ export default function EmployeeDetailPage() {
           calendarLevelsForAdminEditor(
             {
               ...(employeeDoc as Record<string, unknown>),
+              role: savedRole,
               portalModulePermissions: data.portalModulePermissions,
               portalModulePermissionsMaterialized: true,
               calendarPermissions: data.calendarPermissions ?? undefined,
             },
-            portalRole,
+            savedRole,
             savedLevels
           )
         );

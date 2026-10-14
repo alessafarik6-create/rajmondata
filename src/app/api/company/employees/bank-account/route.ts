@@ -5,6 +5,7 @@ import {
   validateEmployeeBankAccountInput,
   type EmployeeBankAccount,
 } from "@/lib/employee-bank-account";
+import { employeeRecordBelongsToCompany } from "@/lib/employee-record-company";
 
 type Body = {
   employeeId?: string;
@@ -106,7 +107,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Zaměstnanec neexistuje." }, { status: 404 });
   }
   const emp = empSnap.data() as Record<string, unknown>;
-  if (String(emp.companyId || "") !== companyId) {
+  if (!employeeRecordBelongsToCompany(emp, companyId)) {
     return NextResponse.json({ error: "Neplatná firma." }, { status: 403 });
   }
 

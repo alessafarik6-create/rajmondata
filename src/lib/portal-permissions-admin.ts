@@ -7,7 +7,10 @@ import {
   resolveCalendarSubLevels,
   type CalendarSubPermissionKey,
 } from "@/lib/calendar/calendar-access";
-import type { EmployeePortalRoleId } from "@/lib/employee-portal-role";
+import {
+  parseEmployeePortalRole,
+  type EmployeePortalRoleId,
+} from "@/lib/employee-portal-role";
 import { userPortalRoleForEmployeeDocRole } from "@/lib/employee-organization";
 import {
   ALL_PORTAL_MODULE_IDS,
@@ -17,6 +20,9 @@ import {
   isPortalModulePermissionsMaterialized,
   PORTAL_PERMISSION_MODULES,
   resolveEffectivePortalPermissions,
+  portalModuleLevelsFromFirestoreRecord,
+  portalModulePermissionsRecordFromLevelMap,
+  sanitizePortalPermissionsForOrgRole,
   type PortalAccessLevel,
   type PortalModuleId,
 } from "@/lib/portal-permissions";
@@ -215,4 +221,35 @@ export function buildEmployeePortalAccessSnapshot(
     },
     materialized,
   };
+}
+
+/** Porovnání odpovědi API po uložení oprávnění — úspěch jen při shodě s požadavkem. */
+export function verifyEmployeeOrgPermissionsSaveResponse(input: {
+  requestedRole: EmployeePortalRoleId;
+  requestedPortalModulePermissions: Record<string, string>;
+  responseRole: unknown;
+  responsePortalModulePermissions: Record<string, string> | null | undefined;
+}): string | null {
+  const savedRole = parseEmployeePortalRole(input.responseRole);
+  if (savedRole !== input.requestedRole) {
+    return `Role se v databázi neuložila (očekáváno ${input.requestedRole}, uloženo ${savedRole}).`;
+  }
+  const savedRaw = input.responsePortalModulePermissions;
+  if (!savedRaw || typeof savedRaw !== "object") {
+    return "Chybí uložená matice oprávnění v odpovědi serveru.";
+  }
+  const requestedLevels = portalModuleLevelsFromFirestoreRecord(
+    input.requestedPortalModulePermissions
+  );
+  const expectedRecord = portalModulePermissionsRecordFromLevelMap(
+    sanitizePortalPermissionsForOrgRole(requestedLevels, input.requestedRole)
+  );
+  const savedLevels = portalModuleLevelsFromFirestoreRecord(savedRaw);
+  const expectedLevels = portalModuleLevelsFromFirestoreRecord(expectedRecord);
+  for (const id of ALL_PORTAL_MODULE_IDS) {
+    if ((savedLevels[id] ?? "none") !== (expectedLevels[id] ?? "none")) {
+      return `Oprávnění modulu „${id}“ se neuložilo správně.`;
+    }
+  }
+  return null;
 }

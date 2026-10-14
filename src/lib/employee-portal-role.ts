@@ -19,11 +19,21 @@ export const EMPLOYEE_PORTAL_ROLE_OPTIONS: readonly {
 ];
 
 export function parseEmployeePortalRole(raw: unknown): EmployeePortalRoleId {
-  const v = String(raw ?? "").trim();
-  if (v === "orgAdmin") return "orgAdmin";
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (v === "orgadmin") return "orgAdmin";
   if (v === "accountant") return "accountant";
   if (v === "manager") return "manager";
   return "employee";
+}
+
+/** Validace hodnoty z API formuláře (case-insensitive). */
+export function parseEmployeePortalRoleFromRequest(raw: unknown): EmployeePortalRoleId | null {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase();
+  const allowed = new Set(["employee", "accountant", "manager", "orgadmin"]);
+  if (!allowed.has(normalized)) return null;
+  return parseEmployeePortalRole(trimmed);
 }
 
 /** Mapování na users.role (Firebase profil). */

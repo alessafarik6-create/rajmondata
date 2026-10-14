@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { parseEmployeeOrgRole } from "@/lib/employee-organization";
-import { parseEmployeePortalRole } from "@/lib/employee-portal-role";
+import {
+  parseEmployeePortalRole,
+  parseEmployeePortalRoleFromRequest,
+} from "@/lib/employee-portal-role";
+import { employeeRecordBelongsToCompany } from "@/lib/employee-record-company";
 import {
   legacyAccessFlagsFromPortalPermissions,
   parsePortalModulePermissionsFromEmployee,
@@ -136,7 +140,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Zaměstnanec neexistuje." }, { status: 404 });
   }
   const emp = empSnap.data() as Record<string, unknown>;
-  if (String(emp.companyId || "") !== companyId) {
+  if (!employeeRecordBelongsToCompany(emp, companyId)) {
     return NextResponse.json({ error: "Neplatná firma." }, { status: 403 });
   }
 
@@ -177,9 +181,8 @@ export async function PATCH(request: NextRequest) {
 
   let orgRole = parseEmployeeOrgRole(emp as { role?: unknown });
   if (hasOrgRole) {
-    const raw = String(body.role || "").trim();
-    const parsed = parseEmployeePortalRole(raw);
-    if (raw !== parsed) {
+    const parsed = parseEmployeePortalRoleFromRequest(body.role);
+    if (!parsed) {
       return NextResponse.json(
         { error: "role musí být employee, accountant, manager nebo orgAdmin." },
         { status: 400 }
@@ -190,6 +193,8 @@ export async function PATCH(request: NextRequest) {
 
   const patch: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),
+    companyId,
+    organizationId: companyId,
   };
   if (hasOrgRole) {
     patch.role = orgRole;
@@ -275,6 +280,7 @@ export async function PATCH(request: NextRequest) {
   const beforeMailboxManage = emp.emailMailboxManageEnabled;
 
   if (
+    hasOrgRole ||
     hasPortalMatrix ||
     body.calendarPermissions !== undefined ||
     hasPortalMods
@@ -325,11 +331,17 @@ export async function PATCH(request: NextRequest) {
   const savedSnap = await empRef.get();
   const saved = savedSnap.data() as Record<string, unknown> | undefined;
 
+  const savedRole = parseEmployeePortalRole(saved?.role);
+
   return NextResponse.json({
     ok: true,
+    role: savedRole,
     portalModulePermissions: saved?.portalModulePermissions ?? null,
     calendarPermissions: saved?.calendarPermissions ?? null,
     portalModulePermissionsMaterialized: saved?.portalModulePermissionsMaterialized ?? null,
     portalPermissionsRevision: saved?.portalPermissionsRevision ?? null,
+    dashboardAiAssistantEnabled: saved?.dashboardAiAssistantEnabled ?? null,
+    emailMailboxManageEnabled: saved?.emailMailboxManageEnabled ?? null,
+    visibleInAttendanceTerminal: saved?.visibleInAttendanceTerminal ?? null,
   });
 }
