@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { JobProductSelectionDoc, ProductCatalogDoc, ProductCatalogProduct } from "@/lib/product-catalogs";
 import {
@@ -66,7 +67,19 @@ export default function ProductCatalogsPage() {
   const { companyId } = useCompany();
   const { toast } = useToast();
   const access = usePortalModuleAccess("productCatalogs");
+  const portalPerms = usePortalPermissionsOptional();
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development" || !user || !companyId) return;
+    console.info("[ProductCatalogs] UI access", {
+      uid: user.uid,
+      companyId,
+      canRead: access.canRead,
+      canWrite: access.canWrite,
+      effectiveProductCatalogs: portalPerms?.permissions.productCatalogs ?? null,
+    });
+  }, [user, companyId, access.canRead, access.canWrite, portalPerms?.permissions.productCatalogs]);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newCategory, setNewCategory] = useState("");
@@ -159,6 +172,40 @@ export default function ProductCatalogsPage() {
     console.log("product images", products.map((p) => ({ id: p.id, imageUrl: p.imageUrl, gallery: p.gallery ?? [] })));
   }
 
+  const patchCatalogApi = async (catalogId: string, patch: Record<string, unknown>) => {
+    if (!user || !companyId) {
+      throw new Error("Nejste přihlášeni nebo chybí organizace.");
+    }
+    const token = await user.getIdToken();
+    const res = await fetch(`/api/company/product-catalogs/${encodeURIComponent(catalogId)}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ companyId, ...patch }),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      diagnostic?: Record<string, unknown>;
+    };
+    if (process.env.NODE_ENV === "development") {
+      console.log("[ProductCatalogs] API PATCH response", { status: res.status, data });
+    }
+    if (!res.ok || !data.ok) {
+      if (process.env.NODE_ENV === "development" && data.diagnostic) {
+        console.warn("[ProductCatalogs] autorizace — diagnostika", data.diagnostic);
+      }
+      throw new Error(
+        data.error ??
+          (res.status === 403
+            ? "Nemáte oprávnění k úpravě produktových katalogů (vyžadován Zápis)."
+            : "Uložení katalogu selhalo.")
+      );
+    }
+  };
+
   const uploadImages = async (files: File[], pathPrefix: string) => {
     const storage = getFirebaseStorage();
     const urls: string[] = [];
@@ -176,80 +223,80 @@ export default function ProductCatalogsPage() {
     patch: Partial<ProductCatalogDoc>,
     successToastTitle?: string | false
   ) => {
-    if (!firestore || !companyId || !user?.uid) return;
-    const payload: Record<string, unknown> = {
-      ...patch,
-      updatedBy: user.uid,
-      updatedAt: serverTimestamp(),
-    };
+    if (!companyId || !user?.uid) return;
+    const payload: Record<string, unknown> = { ...patch };
     if (Array.isArray(patch.products)) {
-      payload.products = patch.products.map((p) =>
-        serializeProductForFirestore(p as ProductCatalogProduct)
-      );
+      payload.products = patch.products.map((p) => {
+        const row = { ...(p as ProductCatalogProduct) };
+        if (row.archivedAt && typeof row.archivedAt === "object" && "seconds" in (row.archivedAt as object)) {
+          row.archivedAt = new Date().toISOString();
+        }
+        return serializeProductForFirestore(row);
+      });
     }
     const saveData = omitUndefinedKeys(payload);
     if (process.env.NODE_ENV === "development") {
-      if (Object.values(saveData).includes(undefined)) {
-        console.warn("[ProductCatalogs] SAVE DATA: neočekávané undefined po sanitizaci", saveData);
-      }
-      console.log("[ProductCatalogs] SAVE DATA", saveData);
+      console.log("[ProductCatalogs] SAVE DATA (API)", saveData);
     }
-    await updateDoc(
-      doc(firestore, "companies", companyId, "product_catalogs", catalogId),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Firestore update payload z mapovaných produktů
-      saveData as any
-    );
+    await patchCatalogApi(catalogId, saveData);
     if (successToastTitle !== false) {
       toast({ title: successToastTitle ?? "Katalog byl uložen" });
     }
   };
 
   const createCatalog = async () => {
-    if (!firestore || !companyId || !user?.uid || !newName.trim()) return;
+    if (!companyId || !user?.uid || !newName.trim()) return;
     setSaving(true);
     try {
       let coverImageUrl = "";
       if (newCoverImage) {
         [coverImageUrl] = await uploadImages([newCoverImage], `companies/${companyId}/catalog-covers`);
       }
-      const newCatalogPayload = omitUndefinedKeys({
-        companyId,
-        name: newName.trim(),
-        description: newDescription.trim(),
-        category: newCategory.trim(),
-        ...(coverImageUrl.trim() ? { coverImageUrl } : {}),
-        active: true,
-        customerVisible: false,
-        archived: false,
-        order: catalogs.length,
-        selectionMode,
-        assignedJobIds: [] as string[],
-        assignedCustomerIds: [] as string[],
-        products: [] as ProductCatalogProduct[],
-        createdBy: user.uid,
-        createdAt: serverTimestamp(),
-        updatedBy: user.uid,
-        updatedAt: serverTimestamp(),
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/product-catalogs", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          omitUndefinedKeys({
+            companyId,
+            name: newName.trim(),
+            description: newDescription.trim(),
+            category: newCategory.trim(),
+            ...(coverImageUrl.trim() ? { coverImageUrl } : {}),
+            order: catalogs.length,
+            selectionMode,
+            products: [],
+          })
+        ),
       });
-      if (process.env.NODE_ENV === "development") {
-        console.log("[ProductCatalogs] SAVE DATA (create catalog)", newCatalogPayload);
+      const data = (await res.json()) as { ok?: boolean; error?: string; diagnostic?: Record<string, unknown> };
+      if (!res.ok || !data.ok) {
+        if (process.env.NODE_ENV === "development" && data.diagnostic) {
+          console.warn("[ProductCatalogs] create auth diagnostic", data.diagnostic);
+        }
+        throw new Error(data.error ?? "Vytvoření katalogu selhalo.");
       }
-      await addDoc(
-        collection(firestore, "companies", companyId, "product_catalogs"),
-        newCatalogPayload as Parameters<typeof addDoc>[1]
-      );
       setNewName("");
       setNewDescription("");
       setNewCategory("");
       setNewCoverImage(null);
       toast({ title: "Katalog byl uložen" });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Katalog se nepodařilo vytvořit",
+        description: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setSaving(false);
     }
   };
 
   const reorderCatalog = async (catalogId: string, dir: -1 | 1) => {
-    if (!firestore || !companyId || !user?.uid) return;
+    if (!companyId || !user?.uid) return;
     const arr = [...catalogs];
     const idx = arr.findIndex((c) => c.id === catalogId);
     if (idx < 0) return;
@@ -258,15 +305,15 @@ export default function ProductCatalogsPage() {
     const tmp = arr[idx];
     arr[idx] = arr[to];
     arr[to] = tmp;
-    await Promise.all(
-      arr.map((c, i) =>
-        updateDoc(doc(firestore, "companies", companyId, "product_catalogs", c.id), {
-          order: i,
-          updatedBy: user.uid,
-          updatedAt: serverTimestamp(),
-        })
-      )
-    );
+    try {
+      await Promise.all(arr.map((c, i) => patchCatalogApi(c.id, { order: i })));
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Pořadí katalogů se nepodařilo uložit",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
   };
 
   const safeDeleteCatalog = async (catalog: CatalogRow) => {
@@ -388,7 +435,7 @@ export default function ProductCatalogsPage() {
     await updateProduct(catalogId, product.id, {
       active: false,
       archived: true,
-      archivedAt: serverTimestamp(),
+      archivedAt: new Date().toISOString(),
     });
     toast({
       title: "Produkt byl smazán",

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
-import { parseEmployeeOrgRole } from "@/lib/employee-organization";
+import { parseEmployeeOrgRole, userPortalRoleForEmployeeDocRole } from "@/lib/employee-organization";
 import {
   legacyAccessFlagsFromPortalPermissions,
   mergePortalModulePermissionsForFirestore,
@@ -114,8 +114,10 @@ export async function PATCH(request: NextRequest) {
 
   const patch: Record<string, unknown> = {
     portalModulePermissions: sanitizedMerged,
+    portalModulePermissionsMaterialized: true,
     employeePortalModules: portalPermissionsToLegacyEmployeeModules(levelMap),
     ...legacyAccessFlagsFromPortalPermissions(levelMap),
+    portalPermissionsRevision: FieldValue.increment(1),
     updatedAt: FieldValue.serverTimestamp(),
   };
 
@@ -138,6 +140,18 @@ export async function PATCH(request: NextRequest) {
   }
 
   await empRef.set(patch, { merge: true });
+
+  const authUserId = String(empData?.authUserId ?? "").trim();
+  if (authUserId) {
+    const portalRole = userPortalRoleForEmployeeDocRole(orgRole);
+    await db.collection("users").doc(authUserId).set(
+      {
+        role: portalRole,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
 
   try {
     await db.collection("companies").doc(companyId).collection("activity_log").add({

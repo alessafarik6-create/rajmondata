@@ -4,6 +4,7 @@ import {
   canWriteModule,
   resolveEffectivePortalPermissions,
 } from "./portal-permissions";
+import { effectivePortalRoleForCaller } from "./portal-caller-role";
 import { buildEmployeePortalAccessSnapshot } from "./portal-permissions-admin";
 
 function test(name: string, fn: () => void) {
@@ -44,6 +45,25 @@ test("employee productCatalogs read cannot write", () => {
   });
   assert.equal(canAccessPortalModule(perms, "productCatalogs", "read"), true);
   assert.equal(canAccessPortalModule(perms, "productCatalogs", "write"), false);
+});
+
+test("effectivePortalRole uses employee doc manager when users.role is employee", () => {
+  const role = effectivePortalRoleForCaller(
+    {
+      uid: "u1",
+      companyId: "c1",
+      role: "employee",
+      employeeId: "e1",
+      globalRoles: [],
+    },
+    { role: "manager", portalModulePermissions: { productCatalogs: "write" } }
+  );
+  assert.equal(role, "manager");
+  const perms = resolveEffectivePortalPermissions({
+    role,
+    employeeDoc: { role: "manager", portalModulePermissions: { productCatalogs: "write" } },
+  });
+  assert.equal(canAccessPortalModule(perms, "productCatalogs", "write"), true);
 });
 
 test("access snapshot shows mismatch when org role caps write", () => {

@@ -46,10 +46,11 @@ service cloud.firestore {
 
     /** READ k modulu portálu (zaměstnanec s read/write v matici). */
     function portalModuleReadOk(companyId, moduleId) {
-      if (isPrivileged()) {
+      let eff = effectivePortalRoleForRules(companyId);
+      if (eff in ['owner', 'admin', 'manager', 'accountant']) {
         return true;
       }
-      if (userRole() == 'employee' && ownEmployeeId() != null) {
+      if (eff == 'employee' && ownEmployeeId() != null) {
         let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
         if (!exists(empRef)) {
           return false;
@@ -66,13 +67,14 @@ service cloud.firestore {
 
     /** WRITE k modulu portálu z employees.portalModulePermissions (zaměstnanec). */
     function portalModuleWriteOk(companyId, moduleId) {
-      if (userRole() in ['owner', 'admin', 'manager']) {
+      let eff = effectivePortalRoleForRules(companyId);
+      if (eff in ['owner', 'admin', 'manager']) {
         return canPrivilegedWrite();
       }
-      if (userRole() == 'accountant') {
+      if (eff == 'accountant') {
         return false;
       }
-      if (userRole() == 'employee' && ownEmployeeId() != null) {
+      if (eff == 'employee' && ownEmployeeId() != null) {
         let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
         if (!exists(empRef)) {
           return false;
@@ -228,6 +230,36 @@ service cloud.firestore {
 
     function ownEmployeeId() {
       return hasUser() ? userDoc().employeeId : null;
+    }
+
+    /** Stejná logika jako portál — role z employees/{id}.role když users.role je employee. */
+    function employeeOrgRoleRaw(companyId) {
+      if (ownEmployeeId() == null) {
+        return null;
+      }
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+      if (!exists(empRef)) {
+        return null;
+      }
+      return get(empRef).data.role;
+    }
+
+    function effectivePortalRoleForRules(companyId) {
+      let ur = userRole();
+      if (ur in ['owner', 'admin', 'manager', 'accountant']) {
+        return ur;
+      }
+      let org = employeeOrgRoleRaw(companyId);
+      if (org == 'manager') {
+        return 'manager';
+      }
+      if (org == 'accountant') {
+        return 'accountant';
+      }
+      if (org == 'orgAdmin') {
+        return 'admin';
+      }
+      return ur;
     }
 
     /** Montáž v kalendáři — zaměstnanec smí měnit jen stav a auditová pole. */

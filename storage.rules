@@ -73,12 +73,39 @@ service firebase.storage {
         : null;
     }
 
+    function storageEffectivePortalRole(companyId) {
+      let ur = storageUserRole();
+      if (ur in ['owner', 'admin', 'manager', 'accountant']) {
+        return ur;
+      }
+      let eid = storageOwnEmployeeId();
+      if (eid == null) {
+        return ur;
+      }
+      let empRef = /databases/(default)/documents/companies/$(companyId)/employees/$(eid);
+      if (!firestore.exists(empRef)) {
+        return ur;
+      }
+      let org = firestore.get(empRef).data.role;
+      if (org == 'manager') {
+        return 'manager';
+      }
+      if (org == 'accountant') {
+        return 'accountant';
+      }
+      if (org == 'orgAdmin') {
+        return 'admin';
+      }
+      return ur;
+    }
+
     /** Stejná logika jako Firestore `portalModuleReadOk` — pro uploady z klientského SDK. */
     function storagePortalModuleReadOk(companyId, moduleId) {
-      if (storageIsPrivileged()) {
+      let eff = storageEffectivePortalRole(companyId);
+      if (eff in ['owner', 'admin', 'manager', 'accountant']) {
         return true;
       }
-      if (storageUserRole() == 'employee' && storageOwnEmployeeId() != null) {
+      if (eff == 'employee' && storageOwnEmployeeId() != null) {
         let empRef = /databases/(default)/documents/companies/$(companyId)/employees/$(storageOwnEmployeeId());
         return firestore.exists(empRef) &&
           'portalModulePermissions' in firestore.get(empRef).data &&
@@ -91,13 +118,14 @@ service firebase.storage {
     }
 
     function storagePortalModuleWriteOk(companyId, moduleId) {
-      if (storageUserRole() in ['owner', 'admin', 'manager']) {
+      let eff = storageEffectivePortalRole(companyId);
+      if (eff in ['owner', 'admin', 'manager']) {
         return storageSameCompany(companyId);
       }
-      if (storageUserRole() == 'accountant') {
+      if (eff == 'accountant') {
         return false;
       }
-      if (storageUserRole() == 'employee' && storageOwnEmployeeId() != null) {
+      if (eff == 'employee' && storageOwnEmployeeId() != null) {
         let empRef = /databases/(default)/documents/companies/$(companyId)/employees/$(storageOwnEmployeeId());
         return storageSameCompany(companyId) &&
           firestore.exists(empRef) &&
