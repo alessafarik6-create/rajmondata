@@ -7,6 +7,8 @@ import { DashboardCompactCard } from "@/components/portal/dashboard-compact-card
 import { formatDurationCs } from "@/lib/production-qr/format-duration-cs";
 import { formatTimeCs } from "@/lib/production-qr/format-datetime-cs";
 
+import type { ProductionQrDisplayStatus } from "@/lib/production-qr/production-qr-session-types";
+
 export type ActiveProductionWorkerRow = {
   entryId: string;
   employeeId: string;
@@ -16,7 +18,14 @@ export type ActiveProductionWorkerRow = {
   taskId: string;
   taskName: string;
   startedAt: string | null;
+  sessionStartedAt?: string | null;
   runningSeconds: number;
+  qrStatus?: ProductionQrDisplayStatus;
+  qrStatusLabel?: string;
+  activeTariffName?: string | null;
+  tariffRunningSeconds?: number;
+  isPaused?: boolean;
+  activelyWorking?: boolean;
 };
 
 type Props = {
@@ -28,6 +37,13 @@ type Props = {
 export function useProductionActiveWorkers(getToken: () => Promise<string>, refreshMs = 20_000) {
   const [workers, setWorkers] = useState<ActiveProductionWorkerRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchedAt, setFetchedAt] = useState(() => Date.now());
+  const [, tick] = useState(0);
+
+  useEffect(() => {
+    const tickId = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(tickId);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +54,10 @@ export function useProductionActiveWorkers(getToken: () => Promise<string>, refr
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
-        if (!cancelled && data.ok) setWorkers(data.workers ?? []);
+        if (!cancelled && data.ok) {
+          setWorkers(data.workers ?? []);
+          setFetchedAt(Date.now());
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -51,11 +70,36 @@ export function useProductionActiveWorkers(getToken: () => Promise<string>, refr
     };
   }, [getToken, refreshMs]);
 
-  return { workers, loading };
+  return { workers, loading, fetchedAt };
+}
+
+export function liveProductionWorkedSeconds(
+  w: ActiveProductionWorkerRow,
+  fetchedAtMs: number,
+  nowMs = Date.now()
+): number {
+  if (w.isPaused) return w.runningSeconds;
+  if (w.activelyWorking === false) return w.runningSeconds;
+  const drift = Math.max(0, Math.floor((nowMs - fetchedAtMs) / 1000));
+  return w.runningSeconds + drift;
+}
+
+export function liveTariffSeconds(
+  w: ActiveProductionWorkerRow,
+  fetchedAtMs: number,
+  nowMs = Date.now()
+): number {
+  const base = w.tariffRunningSeconds ?? 0;
+  if (!w.activeTariffName) return base;
+  const drift = Math.max(0, Math.floor((nowMs - fetchedAtMs) / 1000));
+  return base + drift;
 }
 
 export function DashboardProductionActiveCompact(props: Props) {
-  const { workers, loading } = useProductionActiveWorkers(props.getToken, props.refreshMs ?? 20_000);
+  const { workers, loading, fetchedAt } = useProductionActiveWorkers(
+    props.getToken,
+    props.refreshMs ?? 20_000
+  );
 
   return (
     <DashboardCompactCard
@@ -84,7 +128,7 @@ export function DashboardProductionActiveCompact(props: Props) {
               <p className="text-muted-foreground tabular-nums">
                 {w.startedAt ? `Od ${formatTimeCs(w.startedAt)}` : "—"}
                 {" · "}
-                {formatDurationCs(w.runningSeconds)}
+                {formatDurationCs(liveProductionWorkedSeconds(w, fetchedAt))}
               </p>
             </li>
           ))}

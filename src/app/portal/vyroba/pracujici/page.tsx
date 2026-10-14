@@ -9,11 +9,32 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   useProductionActiveWorkers,
+  liveProductionWorkedSeconds,
+  liveTariffSeconds,
   type ActiveProductionWorkerRow,
 } from "@/components/production/production-active-workers-dashboard";
 import { formatDurationCs } from "@/lib/production-qr/format-duration-cs";
 import { formatTimeCs } from "@/lib/production-qr/format-datetime-cs";
+import type { ProductionQrDisplayStatus } from "@/lib/production-qr/production-qr-session-types";
 import { VYROBA_CARD } from "@/lib/production-mobile-ui";
+import { cn } from "@/lib/utils";
+
+function statusBadgeClass(status: ProductionQrDisplayStatus | undefined): string {
+  switch (status) {
+    case "active":
+      return "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40";
+    case "paused_travel":
+      return "text-orange-800 bg-orange-50 dark:bg-orange-950/40";
+    case "paused_lunch":
+      return "text-amber-800 bg-amber-50 dark:bg-amber-950/40";
+    case "paused_tariff":
+      return "text-slate-700 bg-slate-100 dark:bg-slate-800/60";
+    case "ended":
+      return "text-slate-500 bg-slate-100 dark:bg-slate-800/40";
+    default:
+      return "text-emerald-700 bg-emerald-50";
+  }
+}
 
 export default function ProductionWorkforcePage() {
   const { user } = useUser();
@@ -21,7 +42,7 @@ export default function ProductionWorkforcePage() {
     if (!user) throw new Error("Nepřihlášen");
     return user.getIdToken();
   };
-  const { workers, loading } = useProductionActiveWorkers(getToken, 15_000);
+  const { workers, loading, fetchedAt } = useProductionActiveWorkers(getToken, 15_000);
 
   const [jobFilter, setJobFilter] = useState("");
   const [employeeFilter, setEmployeeFilter] = useState("");
@@ -45,13 +66,18 @@ export default function ProductionWorkforcePage() {
     for (const w of filtered) {
       const cur = map.get(w.jobId) ?? { jobName: w.jobName, count: 0, seconds: 0 };
       cur.count += 1;
-      cur.seconds += w.runningSeconds;
+      cur.seconds += liveProductionWorkedSeconds(w, fetchedAt);
       map.set(w.jobId, cur);
     }
     return Array.from(map.entries());
-  }, [filtered]);
+  }, [filtered, fetchedAt]);
 
-  const totalRunningSeconds = filtered.reduce((s, w) => s + w.runningSeconds, 0);
+  const activelyWorking = filtered.filter((w) => w.activelyWorking !== false && !w.isPaused).length;
+  const pausedCount = filtered.filter((w) => w.isPaused).length;
+  const totalWorkedSeconds = filtered.reduce(
+    (s, w) => s + liveProductionWorkedSeconds(w, fetchedAt),
+    0
+  );
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4">
@@ -79,9 +105,13 @@ export default function ProductionWorkforcePage() {
           </div>
 
           <p className="text-sm text-muted-foreground">
-            Pracujících: <strong>{filtered.length}</strong>
+            Ve výrobě: <strong>{filtered.length}</strong>
             {" · "}
-            Součet běžících časů: <strong>{formatDurationCs(totalRunningSeconds)}</strong>
+            Aktivně pracuje: <strong className="text-emerald-700">{activelyWorking}</strong>
+            {" · "}
+            Pozastaveno: <strong className="text-amber-700">{pausedCount}</strong>
+            {" · "}
+            Součet odpracovaného QR času: <strong>{formatDurationCs(totalWorkedSeconds)}</strong>
           </p>
 
           {loading ? (
@@ -93,7 +123,7 @@ export default function ProductionWorkforcePage() {
           ) : (
             <ul className="space-y-3">
               {filtered.map((w) => (
-                <WorkerRow key={w.entryId} w={w} />
+                <WorkerRow key={w.entryId} w={w} fetchedAt={fetchedAt} />
               ))}
             </ul>
           )}
@@ -108,7 +138,7 @@ export default function ProductionWorkforcePage() {
                       {info.jobName}
                     </Link>
                     {" — "}
-                    {info.count} pracovník(ů), {formatDurationCs(info.seconds)} celkem
+                    {info.count} pracovník(ů), {formatDurationCs(info.seconds)} odpracováno (QR)
                   </li>
                 ))}
               </ul>
@@ -120,9 +150,23 @@ export default function ProductionWorkforcePage() {
   );
 }
 
-function WorkerRow({ w }: { w: ActiveProductionWorkerRow }) {
+function WorkerRow({ w, fetchedAt }: { w: ActiveProductionWorkerRow; fetchedAt: number }) {
+  const worked = liveProductionWorkedSeconds(w, fetchedAt);
+  const tariffSec = liveTariffSeconds(w, fetchedAt);
+  const status = w.qrStatus ?? (w.isPaused ? "paused_tariff" : "active");
+  const label = w.qrStatusLabel ?? (w.isPaused ? "Pozastaveno" : "Aktivní");
+  const startLabel = w.sessionStartedAt ?? w.startedAt;
+
   return (
-    <li className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700">
+    <li
+      className={cn(
+        "rounded-md border p-3 text-sm",
+        status === "active" && "border-emerald-200 dark:border-emerald-900/50",
+        status === "paused_lunch" && "border-amber-200 dark:border-amber-900/50",
+        status === "paused_travel" && "border-orange-200 dark:border-orange-900/50",
+        status === "paused_tariff" && "border-slate-200 dark:border-slate-700"
+      )}
+    >
       <p className="font-semibold">{w.employeeName}</p>
       <p>
         Zakázka:{" "}
@@ -131,9 +175,31 @@ function WorkerRow({ w }: { w: ActiveProductionWorkerRow }) {
         </Link>
       </p>
       <p>Úkol: {w.taskName}</p>
-      <p className="text-muted-foreground tabular-nums">
-        Pracuje od: {w.startedAt ? formatTimeCs(w.startedAt) : "—"} · Doba:{" "}
-        {formatDurationCs(w.runningSeconds)} · <span className="text-emerald-700">Aktivní</span>
+      <p className="mt-1">
+        <span
+          className={cn(
+            "inline-block rounded px-2 py-0.5 text-xs font-medium",
+            statusBadgeClass(status)
+          )}
+        >
+          {label}
+        </span>
+      </p>
+      {w.activeTariffName ? (
+        <p className="text-muted-foreground mt-1">
+          Tarif: <strong>{w.activeTariffName}</strong>
+          {tariffSec > 0 ? (
+            <>
+              {" "}
+              · Doba tarifu: <span className="tabular-nums">{formatDurationCs(tariffSec)}</span>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      <p className="text-muted-foreground tabular-nums mt-1">
+        Zahájení QR úkolu: {startLabel ? formatTimeCs(startLabel) : "—"}
+        {" · "}
+        Odpracováno na úkolu: <strong>{formatDurationCs(worked)}</strong>
       </p>
     </li>
   );

@@ -7,6 +7,7 @@ import {
   productionTasksCol,
   productionTimeEntriesCol,
 } from "@/lib/production-qr/production-task-paths";
+import { productionQrSessionsCol } from "@/lib/production-qr/production-qr-session-server";
 import type {
   ProductionTaskStatus,
   ProductionTimeEndReason,
@@ -76,6 +77,23 @@ export async function closeAllActiveProductionEntriesForEmployee(
       closedEntryIds.push(doc.id);
     }
 
+    if (endedReason === "attendance_clock_out") {
+      const sessionRef = productionQrSessionsCol(db, companyId).doc(employeeId);
+      tx.set(
+        sessionRef,
+        {
+          displayStatus: "ended",
+          activeEntryId: null,
+          pendingResume: false,
+          pausedAt: null,
+          pauseTariffId: null,
+          pauseTariffName: null,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+
     return { closedCount: closedEntryIds.length, closedEntryIds };
   });
 }
@@ -88,11 +106,15 @@ export async function startProductionTimeViaQr(
     productionTaskId: string;
     employeeId: string;
     deviceInfo?: string | null;
+    shiftDateIso?: string;
   }
 ): Promise<StartProductionQrResult> {
   const { companyId, jobId, productionTaskId, employeeId } = input;
+  const shiftDateIso =
+    input.shiftDateIso ?? new Date().toISOString().split("T")[0]!;
   const entriesCol = productionTimeEntriesCol(db, companyId);
   const taskRef = productionTasksCol(db, companyId, jobId).doc(productionTaskId);
+  const sessionRef = productionQrSessionsCol(db, companyId).doc(employeeId);
 
   return db.runTransaction(async (tx) => {
     const taskSnap = await tx.get(taskRef);
@@ -137,6 +159,26 @@ export async function startProductionTimeViaQr(
     }
 
     if (alreadyActiveOnSameTask && existingSameId) {
+      tx.set(
+        sessionRef,
+        {
+          companyId,
+          employeeId,
+          jobId,
+          productionTaskId,
+          displayStatus: "active",
+          activeEntryId: existingSameId,
+          pendingResume: false,
+          pausedAt: null,
+          pauseTariffId: null,
+          pauseTariffName: null,
+          sessionStartedAt:
+            tsToIso(existingSameStarted) ?? now.toDate().toISOString(),
+          shiftDateIso,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
       return {
         alreadyActiveOnSameTask: true,
         previousTaskStopped,
@@ -169,6 +211,28 @@ export async function startProductionTimeViaQr(
         updatedAt: FieldValue.serverTimestamp(),
       });
     }
+
+    const taskName = String(taskData.name ?? productionTaskId);
+    tx.set(
+      sessionRef,
+      {
+        companyId,
+        employeeId,
+        jobId,
+        productionTaskId,
+        taskName,
+        displayStatus: "active",
+        activeEntryId: newRef.id,
+        pendingResume: false,
+        pausedAt: null,
+        pauseTariffId: null,
+        pauseTariffName: null,
+        sessionStartedAt: now.toDate().toISOString(),
+        shiftDateIso,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     return {
       alreadyActiveOnSameTask: false,
@@ -229,6 +293,31 @@ export async function stopProductionTimeViaQr(
       stoppedDoc.ref,
       closeEntryUpdates(startedAt, now, endedReason)
     );
+
+    const sessionRef = productionQrSessionsCol(db, input.companyId).doc(input.employeeId);
+    if (endedReason === "attendance_clock_out") {
+      tx.set(
+        sessionRef,
+        {
+          displayStatus: "ended",
+          activeEntryId: null,
+          pendingResume: false,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } else if (endedReason !== "attendance_lunch" && endedReason !== "attendance_break") {
+      tx.set(
+        sessionRef,
+        {
+          displayStatus: "ended",
+          activeEntryId: null,
+          pendingResume: false,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
 
     return {
       stopped: true,

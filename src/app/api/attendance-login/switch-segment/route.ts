@@ -7,11 +7,14 @@ import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
 import {
   closeAllOpenWorkSegmentsForEmployee,
   createWorkSegment,
+  findOpenWorkSegment,
   loadEmployeeAndRatesForSegment,
   type WorkSegmentSource,
 } from "@/lib/work-segment-server";
-import { productionEndReasonForTariffMeta } from "@/lib/production-qr/attendance-eligibility";
-import { closeAllActiveProductionEntriesForEmployee } from "@/lib/production-qr/production-time-server";
+import {
+  pauseActiveProductionForTariff,
+  tryResumeProductionAfterTariffEnd,
+} from "@/lib/production-qr/production-qr-session-server";
 import { Timestamp } from "firebase-admin/firestore";
 
 type Body = {
@@ -104,6 +107,11 @@ export async function POST(request: NextRequest) {
     }
 
     const segmentSwitchTs = Timestamp.now();
+    const openBefore = await findOpenWorkSegment(db, companyId, employeeId, todayIso);
+    const closingTariffSegment =
+      openBefore != null &&
+      String((openBefore.data() as { sourceType?: string }).sourceType ?? "") === "tariff";
+
     await closeAllOpenWorkSegmentsForEmployee(
       db,
       companyId,
@@ -115,6 +123,15 @@ export async function POST(request: NextRequest) {
     const jobId = sourceType === "job" ? String(body.jobId || "").trim() : null;
     const tariffId = sourceType === "tariff" ? String(body.tariffId || "").trim() : null;
 
+    if (sourceType === "job" && closingTariffSegment) {
+      await tryResumeProductionAfterTariffEnd(db, {
+        companyId,
+        employeeId,
+        shiftDateIso: todayIso,
+        endedAt: segmentSwitchTs,
+      });
+    }
+
     if (sourceType === "tariff" && tariffId) {
       const tSnap = await db
         .collection("companies")
@@ -123,14 +140,13 @@ export async function POST(request: NextRequest) {
         .doc(tariffId)
         .get();
       const td = tSnap.data() as { name?: string; category?: string } | undefined;
-      const endedReason = productionEndReasonForTariffMeta({
-        name: td?.name,
-        category: td?.category,
-      });
-      await closeAllActiveProductionEntriesForEmployee(db, {
+      await pauseActiveProductionForTariff(db, {
         companyId,
         employeeId,
-        endedReason,
+        shiftDateIso: todayIso,
+        tariffId,
+        tariffName: td?.name ?? body.tariffName ?? null,
+        tariffMeta: { name: td?.name, category: td?.category },
         endedAt: segmentSwitchTs,
       });
     }

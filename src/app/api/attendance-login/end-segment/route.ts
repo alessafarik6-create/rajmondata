@@ -7,7 +7,10 @@ import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
 import {
   clearEmployeeTerminalActiveSnapshot,
   closeAllOpenWorkSegmentsForEmployee,
+  findOpenWorkSegment,
 } from "@/lib/work-segment-server";
+import { tryResumeProductionAfterTariffEnd } from "@/lib/production-qr/production-qr-session-server";
+import { Timestamp } from "firebase-admin/firestore";
 
 type Body = {
   companyId?: string;
@@ -55,6 +58,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const openBefore = await findOpenWorkSegment(db, companyId, employeeId, todayIso);
+    const closingTariffSegment =
+      openBefore != null &&
+      String((openBefore.data() as { sourceType?: string }).sourceType ?? "") === "tariff";
+
     const closedCount = await closeAllOpenWorkSegmentsForEmployee(
       db,
       companyId,
@@ -62,6 +70,14 @@ export async function POST(request: NextRequest) {
       todayIso,
       nowMs
     );
+    if (closingTariffSegment) {
+      await tryResumeProductionAfterTariffEnd(db, {
+        companyId,
+        employeeId,
+        shiftDateIso: todayIso,
+        endedAt: Timestamp.fromMillis(nowMs),
+      });
+    }
     await clearEmployeeTerminalActiveSnapshot(db, companyId, employeeId);
 
     console.log("Employee ended active job but remains checked in", {

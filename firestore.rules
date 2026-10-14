@@ -2698,6 +2698,12 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      /** Stav pozastavené / aktivní QR výroby — zápis jen Admin SDK. */
+      match /productionQrSessions/{employeeId} {
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow write: if false;
+      }
+
       /**
        * Štítky / stavy poptávek (import) — companies/{companyId}/lead_tags/{tagId}
        */
