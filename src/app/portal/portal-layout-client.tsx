@@ -3,8 +3,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { signOut } from "firebase/auth";
-import { useUser, useCompany, useFirebase, useDoc, useMemoFirebase } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { useUser, useCompany, useFirebase, useDoc, useMemoFirebase, useCollection } from "@/firebase";
+import { collection, doc, limit, query, where } from "firebase/firestore";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { CustomerPortalSidebar } from "@/components/layout/customer-portal-sidebar";
 import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
@@ -133,7 +133,33 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       String(profile.employeeId)
     );
   }, [areServicesAvailable, firestore, companyId, profile?.employeeId]);
-  const { data: profileEmployeeRow } = useDoc<Record<string, unknown>>(profileEmployeeRef);
+  const { data: profileEmployeeRowById } = useDoc<Record<string, unknown>>(profileEmployeeRef);
+
+  const profileEmployeeByAuthQuery = useMemoFirebase(() => {
+    if (
+      !isBindableFirestoreInstance(areServicesAvailable, firestore) ||
+      !companyId ||
+      !user?.uid ||
+      profile?.employeeId
+    ) {
+      return null;
+    }
+    return query(
+      collection(firestore, "companies", companyId, "employees"),
+      where("authUserId", "==", user.uid),
+      limit(1)
+    );
+  }, [areServicesAvailable, firestore, companyId, user?.uid, profile?.employeeId]);
+
+  const { data: profileEmployeeByAuthRows } = useCollection<Record<string, unknown>>(
+    profileEmployeeByAuthQuery
+  );
+
+  const profileEmployeeRow = useMemo(() => {
+    if (profileEmployeeRowById) return profileEmployeeRowById;
+    const row = profileEmployeeByAuthRows?.[0];
+    return row ?? null;
+  }, [profileEmployeeRowById, profileEmployeeByAuthRows]);
 
   const previewSession = useMemo(
     () => portalPreviewSessionFromFirestore(profile?.portalPreviewSession),

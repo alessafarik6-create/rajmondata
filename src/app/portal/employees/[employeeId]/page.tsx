@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -584,6 +584,8 @@ export default function EmployeeDetailPage() {
 
   // roles & portal modules via existing API
   const [orgSaving, setOrgSaving] = useState(false);
+  /** Po uložení — ignorovat starší Firestore snapshot, dokud nepřijde shodná revize. */
+  const pendingPermissionsRevisionRef = useRef<number | null>(null);
   const [portalRole, setPortalRole] = useState<EmployeePortalRoleId>("employee");
   const [moduleLevels, setModuleLevels] = useState<Record<PortalModuleId, PortalAccessLevel>>(() =>
     portalPermissionLevelsForAdminEditor(null, "employee")
@@ -645,8 +647,24 @@ export default function EmployeeDetailPage() {
   useEffect(() => {
     if (!employeeDoc) return;
     if (orgPermissionsDirty) return;
-    const role = parseEmployeePortalRole((employeeDoc as Record<string, unknown>).role);
     const row = employeeDoc as Record<string, unknown>;
+    const docRevision =
+      typeof row.portalPermissionsRevision === "number" ? row.portalPermissionsRevision : null;
+    if (
+      pendingPermissionsRevisionRef.current != null &&
+      docRevision != null &&
+      docRevision < pendingPermissionsRevisionRef.current
+    ) {
+      return;
+    }
+    if (
+      pendingPermissionsRevisionRef.current != null &&
+      docRevision != null &&
+      docRevision >= pendingPermissionsRevisionRef.current
+    ) {
+      pendingPermissionsRevisionRef.current = null;
+    }
+    const role = parseEmployeePortalRole(row.role);
     setPortalRole(role);
     const levels = portalPermissionLevelsForAdminEditor(row, role);
     setModuleLevels(levels);
@@ -767,6 +785,7 @@ export default function EmployeeDetailPage() {
         error?: string;
         portalModulePermissions?: Record<string, string> | null;
         calendarPermissions?: Record<string, string> | null;
+        portalPermissionsRevision?: number | null;
       };
       if (!res.ok) {
         throw new Error(typeof data.error === "string" ? data.error : "Uložení se nezdařilo.");
@@ -790,6 +809,9 @@ export default function EmployeeDetailPage() {
             savedLevels
           )
         );
+      }
+      if (typeof data.portalPermissionsRevision === "number") {
+        pendingPermissionsRevisionRef.current = data.portalPermissionsRevision;
       }
       toast({
         title: "Oprávnění byla úspěšně uložena",

@@ -8,10 +8,10 @@ export function usePortalModuleAccess(moduleId: PortalModuleId) {
   const ctx = usePortalPermissionsOptional();
   if (!ctx) {
     return {
-      canRead: true,
-      canWrite: true,
-      canExport: true,
-      canPrint: true,
+      canRead: false,
+      canWrite: false,
+      canExport: false,
+      canPrint: false,
       readOnlyPortal: false,
       isReadOnly: false,
     };

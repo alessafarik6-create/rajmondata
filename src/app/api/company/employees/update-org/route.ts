@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
-import {
-  parseEmployeeOrgRole,
-  userPortalRoleForEmployeeDocRole,
-} from "@/lib/employee-organization";
+import { parseEmployeeOrgRole } from "@/lib/employee-organization";
 import { parseEmployeePortalRole } from "@/lib/employee-portal-role";
 import {
   legacyAccessFlagsFromPortalPermissions,
@@ -24,6 +21,7 @@ import {
 } from "@/lib/calendar/calendar-access";
 import { normalizeCameraPermissionsForFirestore } from "@/lib/hikvision/camera-access";
 import { portalPreviewSessionFromFirestore } from "@/lib/portal-preview";
+import { syncUserProfileAfterEmployeePermissionsSave } from "@/lib/portal-user-employee-link";
 
 type Body = {
   employeeId?: string;
@@ -316,14 +314,12 @@ export async function PATCH(request: NextRequest) {
   const authUserId = String(emp.authUserId || "").trim();
   const effectiveOrgRole = hasOrgRole ? orgRole : parseEmployeeOrgRole(emp as { role?: unknown });
   if (authUserId && (hasOrgRole || hasPortalMatrix)) {
-    const portalRole = userPortalRoleForEmployeeDocRole(effectiveOrgRole);
-    await db.collection("users").doc(authUserId).set(
-      {
-        role: portalRole,
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    await syncUserProfileAfterEmployeePermissionsSave(db, {
+      companyId,
+      employeeId,
+      authUserId,
+      orgRole: effectiveOrgRole,
+    });
   }
 
   const savedSnap = await empRef.get();
@@ -333,6 +329,7 @@ export async function PATCH(request: NextRequest) {
     ok: true,
     portalModulePermissions: saved?.portalModulePermissions ?? null,
     calendarPermissions: saved?.calendarPermissions ?? null,
+    portalModulePermissionsMaterialized: saved?.portalModulePermissionsMaterialized ?? null,
     portalPermissionsRevision: saved?.portalPermissionsRevision ?? null,
   });
 }

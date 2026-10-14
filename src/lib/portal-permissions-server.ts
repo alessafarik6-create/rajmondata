@@ -8,27 +8,30 @@ import {
   type PortalModuleId,
 } from "@/lib/portal-permissions";
 import { effectivePortalRoleForCaller } from "@/lib/portal-caller-role";
+import { resolveEmployeeRecordForCaller } from "@/lib/portal-employee-doc-resolve";
 
 export async function loadEmployeeDocForCaller(
   db: Firestore,
   caller: VerifiedCompanyCaller
 ): Promise<Record<string, unknown> | null> {
-  if (!caller.employeeId) return null;
-  const snap = await db
-    .collection("companies")
-    .doc(caller.companyId)
-    .collection("employees")
-    .doc(caller.employeeId)
-    .get();
-  if (!snap.exists) return null;
-  return snap.data() as Record<string, unknown>;
+  const resolved = await resolveEmployeeRecordForCaller(db, caller);
+  return resolved?.employeeDoc ?? null;
+}
+
+export async function resolveEmployeeIdForCaller(
+  db: Firestore,
+  caller: VerifiedCompanyCaller
+): Promise<string | null> {
+  const resolved = await resolveEmployeeRecordForCaller(db, caller);
+  return resolved?.employeeId ?? null;
 }
 
 export async function resolveCallerPortalPermissions(
   db: Firestore,
   caller: VerifiedCompanyCaller
 ): Promise<ReturnType<typeof resolveEffectivePortalPermissions>> {
-  const employeeDoc = await loadEmployeeDocForCaller(db, caller);
+  const resolved = await resolveEmployeeRecordForCaller(db, caller);
+  const employeeDoc = resolved?.employeeDoc ?? null;
   const portalRole = effectivePortalRoleForCaller(caller, employeeDoc);
   return resolveEffectivePortalPermissions({
     role: portalRole,
@@ -47,7 +50,8 @@ export async function requirePortalModuleAccess(
   moduleId: PortalModuleId,
   required: "read" | "write"
 ): Promise<PortalPermissionCheckResult> {
-  const employeeDoc = await loadEmployeeDocForCaller(db, caller);
+  const resolved = await resolveEmployeeRecordForCaller(db, caller);
+  const employeeDoc = resolved?.employeeDoc ?? null;
   const portalRole = effectivePortalRoleForCaller(caller, employeeDoc);
   const permissions = resolveEffectivePortalPermissions({
     role: portalRole,

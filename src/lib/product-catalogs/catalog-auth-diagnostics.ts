@@ -13,10 +13,13 @@ export type CatalogAuthDiagnostic = {
   companyId: string;
   usersRole: string;
   employeeId: string | null;
+  resolvedEmployeeId: string | null;
+  employeeDocSource: string | null;
   effectivePortalRole: string;
   module: PortalModuleId;
   operation: string;
   storedProductCatalogs: string | null;
+  materialized: boolean;
   canRead: boolean;
   canWrite: boolean;
   authorized: boolean;
@@ -27,7 +30,11 @@ export function buildCatalogAuthDiagnostic(
   caller: VerifiedCompanyCaller,
   employeeDoc: Record<string, unknown> | null,
   operation: string,
-  required: "read" | "write"
+  required: "read" | "write",
+  resolveMeta?: {
+    resolvedEmployeeId?: string | null;
+    employeeDocSource?: string | null;
+  }
 ): CatalogAuthDiagnostic {
   const effectivePortalRole = effectivePortalRoleForCaller(caller, employeeDoc);
   const permissions = resolveEffectivePortalPermissions({
@@ -53,15 +60,20 @@ export function buildCatalogAuthDiagnostic(
         : "Efektivní oprávnění modulu productCatalogs není read.";
   }
 
+  const materialized = employeeDoc?.portalModulePermissionsMaterialized === true;
+
   return {
     uid: caller.uid,
     companyId: caller.companyId,
     usersRole: caller.role,
     employeeId: caller.employeeId,
+    resolvedEmployeeId: resolveMeta?.resolvedEmployeeId ?? null,
+    employeeDocSource: resolveMeta?.employeeDocSource ?? null,
     effectivePortalRole,
     module: MODULE,
     operation,
     storedProductCatalogs: stored,
+    materialized,
     canRead,
     canWrite,
     authorized,
@@ -70,6 +82,34 @@ export function buildCatalogAuthDiagnostic(
 }
 
 export function logCatalogAuthDiagnostic(diag: CatalogAuthDiagnostic): void {
-  if (process.env.NODE_ENV === "production") return;
-  console.info("[product-catalogs/auth]", diag);
+  if (diag.authorized) return;
+  console.warn("[product-catalogs/auth] zamítnuto", {
+    operation: diag.operation,
+    companyId: diag.companyId,
+    employeeId: diag.employeeId,
+    resolvedEmployeeId: diag.resolvedEmployeeId,
+    employeeDocSource: diag.employeeDocSource,
+    module: diag.module,
+    required: diag.operation,
+    storedProductCatalogs: diag.storedProductCatalogs,
+    materialized: diag.materialized,
+    effectivePortalRole: diag.effectivePortalRole,
+    canRead: diag.canRead,
+    canWrite: diag.canWrite,
+    denialReason: diag.denialReason,
+  });
+}
+
+export function catalogAuthUserMessage(diag: CatalogAuthDiagnostic, httpStatus: number): string {
+  if (diag.authorized) return "";
+  if (httpStatus === 403 && diag.denialReason) {
+    if (!diag.resolvedEmployeeId) {
+      return "Účet není propojen s dokumentem zaměstnance v této organizaci. Kontaktujte administrátora.";
+    }
+    if (diag.storedProductCatalogs !== "write") {
+      return "Nemáte oprávnění Zápis k produktovým katalogům. Administrátor musí v profilu zaměstnance nastavit Produktové katalogy → Zápis a uložit oprávnění.";
+    }
+    return "K této akci nemáte oprávnění (vyžadován zápis do produktových katalogů).";
+  }
+  return "Operaci s katalogem se nepodařilo provést. Zkuste to znovu nebo kontaktujte administrátora.";
 }

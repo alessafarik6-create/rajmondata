@@ -44,6 +44,8 @@ import {
   buildProductGalleryUrls,
   serializeProductForFirestore,
 } from "@/lib/product-catalogs";
+import { catalogAuthUserMessage } from "@/lib/product-catalogs/catalog-auth-diagnostics";
+import type { CatalogAuthDiagnostic } from "@/lib/product-catalogs/catalog-auth-diagnostics";
 
 type CatalogRow = { id: string } & Partial<ProductCatalogDoc>;
 
@@ -188,7 +190,7 @@ export default function ProductCatalogsPage() {
     const data = (await res.json()) as {
       ok?: boolean;
       error?: string;
-      diagnostic?: Record<string, unknown>;
+      diagnostic?: CatalogAuthDiagnostic;
     };
     if (process.env.NODE_ENV === "development") {
       console.log("[ProductCatalogs] API PATCH response", { status: res.status, data });
@@ -197,12 +199,15 @@ export default function ProductCatalogsPage() {
       if (process.env.NODE_ENV === "development" && data.diagnostic) {
         console.warn("[ProductCatalogs] autorizace — diagnostika", data.diagnostic);
       }
-      throw new Error(
-        data.error ??
-          (res.status === 403
-            ? "Nemáte oprávnění k úpravě produktových katalogů (vyžadován Zápis)."
-            : "Uložení katalogu selhalo.")
-      );
+      const diag = data.diagnostic;
+      const msg =
+        diag && !diag.authorized
+          ? catalogAuthUserMessage(diag, res.status)
+          : data.error ??
+            (res.status === 403
+              ? "Nemáte oprávnění k úpravě produktových katalogů (vyžadován Zápis)."
+              : "Uložení katalogu selhalo.");
+      throw new Error(msg);
     }
   };
 
