@@ -17,6 +17,7 @@ import {
   collection,
   deleteField,
   doc,
+  getDocFromServer,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -645,34 +646,53 @@ export default function EmployeeDetailPage() {
     cameraFlags,
   ]);
 
+  const applyOrgPermissionsFromEmployeeRow = useCallback(
+    (row: Record<string, unknown>) => {
+      if (orgPermissionsDirty) return;
+      const docRevision =
+        typeof row.portalPermissionsRevision === "number" ? row.portalPermissionsRevision : null;
+      if (pendingPermissionsRevisionRef.current != null) {
+        if (docRevision == null || docRevision < pendingPermissionsRevisionRef.current) {
+          return;
+        }
+      }
+      if (
+        pendingPermissionsRevisionRef.current != null &&
+        docRevision != null &&
+        docRevision >= pendingPermissionsRevisionRef.current
+      ) {
+        pendingPermissionsRevisionRef.current = null;
+      }
+      const role = parseEmployeePortalRole(row.role);
+      setPortalRole(role);
+      const levels = portalPermissionLevelsForAdminEditor(row, role);
+      setModuleLevels(levels);
+      setCalendarLevels(calendarLevelsForAdminEditor(row, role, levels));
+      setVisibleInTerminal(row.visibleInAttendanceTerminal !== false);
+      setDashboardAiAssistantEnabled(parseDashboardAiAssistantEnabled(row));
+      setEmailMailboxManageEnabled(parseEmailMailboxManageEnabled(row));
+      setCameraFlags(parseEmployeeCameraFlagsFromDoc(row));
+    },
+    [orgPermissionsDirty]
+  );
+
   useEffect(() => {
     if (!employeeDoc) return;
-    if (orgPermissionsDirty) return;
-    const row = employeeDoc as Record<string, unknown>;
-    const docRevision =
-      typeof row.portalPermissionsRevision === "number" ? row.portalPermissionsRevision : null;
-    if (pendingPermissionsRevisionRef.current != null) {
-      if (docRevision == null || docRevision < pendingPermissionsRevisionRef.current) {
-        return;
-      }
-    }
-    if (
-      pendingPermissionsRevisionRef.current != null &&
-      docRevision != null &&
-      docRevision >= pendingPermissionsRevisionRef.current
-    ) {
-      pendingPermissionsRevisionRef.current = null;
-    }
-    const role = parseEmployeePortalRole(row.role);
-    setPortalRole(role);
-    const levels = portalPermissionLevelsForAdminEditor(row, role);
-    setModuleLevels(levels);
-    setCalendarLevels(calendarLevelsForAdminEditor(row, role, levels));
-    setVisibleInTerminal(row.visibleInAttendanceTerminal !== false);
-    setDashboardAiAssistantEnabled(parseDashboardAiAssistantEnabled(row));
-    setEmailMailboxManageEnabled(parseEmailMailboxManageEnabled(row));
-    setCameraFlags(parseEmployeeCameraFlagsFromDoc(row));
-  }, [employeeDoc, orgPermissionsDirty]);
+    applyOrgPermissionsFromEmployeeRow(employeeDoc as Record<string, unknown>);
+  }, [employeeDoc, applyOrgPermissionsFromEmployeeRow]);
+
+  /** Po F5 může onSnapshot krátce vrátit starou cache — vždy potvrdit stav ze serveru. */
+  useEffect(() => {
+    if (!employeeRef) return;
+    let cancelled = false;
+    void getDocFromServer(employeeRef).then((snap) => {
+      if (cancelled || !snap.exists()) return;
+      applyOrgPermissionsFromEmployeeRow(snap.data() as Record<string, unknown>);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [employeeRef, employeeId, applyOrgPermissionsFromEmployeeRow]);
 
   useEffect(() => {
     if (!orgPermissionsDirty || tab !== "roles") return;

@@ -13,6 +13,8 @@ import {
 import { normalizeCameraPermissionsForFirestore } from "@/lib/hikvision/camera-access";
 import { portalPreviewSessionFromFirestore } from "@/lib/portal-preview";
 import { syncUserProfileAfterEmployeePermissionsSave } from "@/lib/portal-user-employee-link";
+import { employeeRecordBelongsToCompany } from "@/lib/employee-record-company";
+import { parseEmployeePortalRole } from "@/lib/employee-portal-role";
 import {
   aggregateScheduleModuleLevel,
   normalizeCalendarPermissionsForFirestore,
@@ -93,6 +95,9 @@ export async function PATCH(request: NextRequest) {
   }
 
   const empData = empSnap.data() as Record<string, unknown>;
+  if (!employeeRecordBelongsToCompany(empData, companyId)) {
+    return NextResponse.json({ error: "Neplatná firma." }, { status: 403 });
+  }
   const before = (empData?.portalModulePermissions ?? {}) as Record<string, string>;
   const beforeAi = empData.dashboardAiAssistantEnabled;
   const beforeMailboxManage = empData.emailMailboxManageEnabled;
@@ -120,6 +125,8 @@ export async function PATCH(request: NextRequest) {
     ...legacyAccessFlagsFromPortalPermissions(levelMap),
     portalPermissionsRevision: FieldValue.increment(1),
     updatedAt: FieldValue.serverTimestamp(),
+    companyId,
+    organizationId: companyId,
   };
 
   if (body.cameraPermissions !== undefined) {
@@ -178,6 +185,7 @@ export async function PATCH(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    role: parseEmployeePortalRole(saved?.role),
     portalModulePermissions: saved?.portalModulePermissions ?? sanitizedMerged,
     calendarPermissions: saved?.calendarPermissions ?? null,
     portalPermissionsRevision: saved?.portalPermissionsRevision ?? null,
