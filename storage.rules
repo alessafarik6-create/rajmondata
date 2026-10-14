@@ -117,22 +117,60 @@ service firebase.storage {
       return false;
     }
 
+    function storageCompanyOwner(companyId) {
+      let cref = /databases/(default)/documents/companies/$(companyId);
+      return request.auth != null &&
+        firestore.exists(cref) && (
+          ('ownerId' in firestore.get(cref).data && firestore.get(cref).data.ownerId == request.auth.uid) ||
+          ('ownerUserId' in firestore.get(cref).data && firestore.get(cref).data.ownerUserId == request.auth.uid)
+        );
+    }
+
+    function storageEmployeePortalMatrixMaterialized(companyId) {
+      let eid = storageOwnEmployeeId();
+      if (eid == null) {
+        return false;
+      }
+      let empRef = /databases/(default)/documents/companies/$(companyId)/employees/$(eid);
+      return firestore.exists(empRef) &&
+        ('portalModulePermissionsMaterialized' in firestore.get(empRef).data) &&
+        firestore.get(empRef).data.portalModulePermissionsMaterialized == true;
+    }
+
+    function storageEmployeePortalModuleWriteFromMatrix(companyId, moduleId) {
+      let eid = storageOwnEmployeeId();
+      if (eid == null) {
+        return false;
+      }
+      let empRef = /databases/(default)/documents/companies/$(companyId)/employees/$(eid);
+      return firestore.exists(empRef) &&
+        'portalModulePermissions' in firestore.get(empRef).data &&
+        firestore.get(empRef).data.portalModulePermissions is map &&
+        moduleId in firestore.get(empRef).data.portalModulePermissions &&
+        firestore.get(empRef).data.portalModulePermissions[moduleId] == 'write';
+    }
+
     function storagePortalModuleWriteOk(companyId, moduleId) {
+      if (storageCompanyOwner(companyId)) {
+        return storageSameCompany(companyId);
+      }
       let eff = storageEffectivePortalRole(companyId);
-      if (eff in ['owner', 'admin', 'manager']) {
+      if (eff in ['owner', 'admin']) {
         return storageSameCompany(companyId);
       }
       if (eff == 'accountant') {
         return false;
       }
+      if (eff == 'manager') {
+        if (storageEmployeePortalMatrixMaterialized(companyId)) {
+          return storageSameCompany(companyId) &&
+            storageEmployeePortalModuleWriteFromMatrix(companyId, moduleId);
+        }
+        return storageSameCompany(companyId);
+      }
       if (eff == 'employee' && storageOwnEmployeeId() != null) {
-        let empRef = /databases/(default)/documents/companies/$(companyId)/employees/$(storageOwnEmployeeId());
         return storageSameCompany(companyId) &&
-          firestore.exists(empRef) &&
-          'portalModulePermissions' in firestore.get(empRef).data &&
-          firestore.get(empRef).data.portalModulePermissions is map &&
-          moduleId in firestore.get(empRef).data.portalModulePermissions &&
-          firestore.get(empRef).data.portalModulePermissions[moduleId] == 'write';
+          storageEmployeePortalModuleWriteFromMatrix(companyId, moduleId);
       }
       return false;
     }

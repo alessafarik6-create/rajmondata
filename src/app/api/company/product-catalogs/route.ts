@@ -7,8 +7,10 @@ import type { ProductCatalogProduct } from "@/lib/product-catalogs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  let companyIdForLog: string | undefined;
   try {
   const perm = await requireProductCatalogAccess(request, "write");
+  companyIdForLog = perm.ok ? perm.caller.companyId : undefined;
   if (!perm.ok) {
     return NextResponse.json({ ok: false, error: perm.error, diagnostic: perm.diagnostic }, { status: perm.status });
   }
@@ -58,7 +60,10 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ ok: true, catalogId: ref.id });
   } catch (e) {
-    console.error("[product-catalogs POST]", e);
+    console.error("[product-catalogs POST]", {
+      companyId: companyIdForLog,
+      message: e instanceof Error ? e.message : String(e),
+    });
     return NextResponse.json(
       { ok: false, error: "Vytvoření katalogu selhalo kvůli chybě serveru." },
       { status: 500 }

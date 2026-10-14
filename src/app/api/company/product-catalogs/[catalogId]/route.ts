@@ -9,8 +9,10 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ catalogId: string }> };
 
 export async function PATCH(request: NextRequest, ctx: Ctx) {
+  let companyIdForLog: string | undefined;
   try {
   const perm = await requireProductCatalogAccess(request, "write");
+  companyIdForLog = perm.ok ? perm.caller.companyId : undefined;
   if (!perm.ok) {
     return NextResponse.json({ ok: false, error: perm.error, diagnostic: perm.diagnostic }, { status: perm.status });
   }
@@ -53,7 +55,15 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
   for (const k of scalarKeys) {
     if (body[k] !== undefined) patch[k] = body[k];
   }
-  if (body.deletedAt !== undefined) patch.deletedAt = body.deletedAt === null ? FieldValue.delete() : body.deletedAt;
+  if (body.deletedAt !== undefined) {
+    if (body.deletedAt === null) {
+      patch.deletedAt = FieldValue.delete();
+    } else if (typeof body.deletedAt === "string" && body.deletedAt.trim()) {
+      patch.deletedAt = FieldValue.serverTimestamp();
+    } else if (body.deletedAt === true) {
+      patch.deletedAt = FieldValue.serverTimestamp();
+    }
+  }
   if (Array.isArray(body.assignedJobIds)) patch.assignedJobIds = body.assignedJobIds;
   if (Array.isArray(body.assignedCustomerIds)) patch.assignedCustomerIds = body.assignedCustomerIds;
   if (Array.isArray(body.products)) {
@@ -63,7 +73,10 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
   await ref.set(patch, { merge: true });
   return NextResponse.json({ ok: true, catalogId });
   } catch (e) {
-    console.error("[product-catalogs PATCH]", e);
+    console.error("[product-catalogs PATCH]", {
+      companyId: companyIdForLog,
+      message: e instanceof Error ? e.message : String(e),
+    });
     return NextResponse.json(
       { ok: false, error: "Úprava katalogu selhala kvůli chybě serveru." },
       { status: 500 }

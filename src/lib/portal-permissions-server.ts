@@ -7,9 +7,19 @@ import {
   resolveEffectivePortalPermissions,
   type PortalModuleId,
 } from "@/lib/portal-permissions";
+import { companyOwnerUidFromRecord } from "@/lib/company-owner";
 import { effectivePortalRoleForCaller } from "@/lib/portal-caller-role";
 import { resolveEmployeeRecordForCaller } from "@/lib/portal-employee-doc-resolve";
 import { computeEffectivePortalAccessForCaller } from "@/lib/portal-effective-access-server";
+
+export async function loadCompanyOwnerUid(
+  db: Firestore,
+  companyId: string
+): Promise<string | null> {
+  const snap = await db.collection("companies").doc(companyId).get();
+  if (!snap.exists) return null;
+  return companyOwnerUidFromRecord(snap.data() as Record<string, unknown>);
+}
 
 export async function loadEmployeeDocForCaller(
   db: Firestore,
@@ -47,7 +57,8 @@ export async function requirePortalModuleAccess(
 ): Promise<PortalPermissionCheckResult> {
   const resolved = await resolveEmployeeRecordForCaller(db, caller);
   const employeeDoc = resolved?.employeeDoc ?? null;
-  const portalRole = effectivePortalRoleForCaller(caller, employeeDoc);
+  const companyOwnerUid = await loadCompanyOwnerUid(db, caller.companyId);
+  const portalRole = effectivePortalRoleForCaller(caller, employeeDoc, { companyOwnerUid });
   const permissions = resolveEffectivePortalPermissions({
     role: portalRole,
     globalRoles: caller.globalRoles,

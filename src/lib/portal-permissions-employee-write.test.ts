@@ -51,9 +51,7 @@ test("effectivePortalRole uses employee doc manager when users.role is employee"
   const role = effectivePortalRoleForCaller(
     {
       uid: "u1",
-      companyId: "c1",
       role: "employee",
-      employeeId: "e1",
       globalRoles: [],
     },
     { role: "manager", portalModulePermissions: { productCatalogs: "write" } }

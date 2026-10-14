@@ -35,6 +35,18 @@ service cloud.firestore {
       return hasUser() ? userDoc().role : null;
     }
 
+    function companyRecord(companyId) {
+      return get(/databases/$(database)/documents/companies/$(companyId)).data;
+    }
+
+    /** Vlastník organizace (companies.ownerId) — plný přístup i při chybném users.role. */
+    function isCompanyDocumentOwner(companyId) {
+      return signedIn() && (
+        ('ownerId' in companyRecord(companyId) && companyRecord(companyId).ownerId == request.auth.uid) ||
+        ('ownerUserId' in companyRecord(companyId) && companyRecord(companyId).ownerUserId == request.auth.uid)
+      );
+    }
+
     function isPrivileged() {
       return userRole() in ['owner', 'admin', 'manager', 'accountant'];
     }
@@ -46,6 +58,9 @@ service cloud.firestore {
 
     /** READ k modulu portálu (zaměstnanec s read/write v matici). */
     function portalModuleReadOk(companyId, moduleId) {
+      if (isCompanyDocumentOwner(companyId)) {
+        return true;
+      }
       let eff = effectivePortalRoleForRules(companyId);
       if (eff in ['owner', 'admin', 'manager', 'accountant']) {
         return true;
@@ -95,6 +110,9 @@ service cloud.firestore {
 
     /** WRITE k modulu portálu — stejná logika jako API (materializovaná matice má prioritu). */
     function portalModuleWriteOk(companyId, moduleId) {
+      if (isCompanyDocumentOwner(companyId)) {
+        return true;
+      }
       let eff = effectivePortalRoleForRules(companyId);
       if (eff in ['owner', 'admin']) {
         return canPrivilegedWrite();

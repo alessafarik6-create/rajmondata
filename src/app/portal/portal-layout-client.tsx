@@ -57,10 +57,7 @@ import { resolveEffectivePortalPermissions } from "@/lib/portal-permissions";
 import { portalPreviewSessionFromFirestore } from "@/lib/portal-preview";
 import { PortalPreviewBanner } from "@/components/portal/portal-preview-banner";
 import { LeadReminderAlarmHost } from "@/components/leads/lead-reminder-alarm-host";
-import {
-  parseEmployeeOrgRole,
-  userPortalRoleForEmployeeDocRole,
-} from "@/lib/employee-organization";
+import { effectivePortalRoleForCaller } from "@/lib/portal-caller-role";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -199,15 +196,33 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     ? previewEmployeeRow ?? null
     : profileEmployeeRow ?? null;
 
+  const companyOwnerUid = useMemo(() => {
+    const c = company as { ownerId?: string; ownerUserId?: string } | null | undefined;
+    const uid = String(c?.ownerId ?? c?.ownerUserId ?? "").trim();
+    return uid || null;
+  }, [company]);
+
   const portalContextRole = useMemo(() => {
+    if (!user?.uid) return String(profile?.role ?? "employee");
     const employeeRow = previewSession ? previewEmployeeRow : profileEmployeeRow;
-    if (employeeRow) {
-      return userPortalRoleForEmployeeDocRole(
-        parseEmployeeOrgRole(employeeRow as { role?: unknown })
-      );
-    }
-    return String(profile?.role ?? "employee");
-  }, [previewSession, previewEmployeeRow, profileEmployeeRow, profile?.role]);
+    return effectivePortalRoleForCaller(
+      {
+        uid: user.uid,
+        role: String(profile?.role ?? "employee"),
+        globalRoles: previewSession ? [] : (profile?.globalRoles as string[] | undefined) ?? [],
+      },
+      (employeeRow as Record<string, unknown> | null) ?? null,
+      { companyOwnerUid: previewSession ? null : companyOwnerUid }
+    );
+  }, [
+    previewSession,
+    previewEmployeeRow,
+    profileEmployeeRow,
+    profile?.role,
+    profile?.globalRoles,
+    user?.uid,
+    companyOwnerUid,
+  ]);
 
   const portalPermissionsResolved = useMemo(() => {
     if (!profile?.role) return null;

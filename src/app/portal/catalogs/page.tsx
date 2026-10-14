@@ -2,14 +2,10 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  addDoc,
   collection,
   collectionGroup,
-  doc,
   getDocs,
   query,
-  serverTimestamp,
-  updateDoc,
   where,
 } from "firebase/firestore";
 import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
@@ -337,7 +333,7 @@ export default function ProductCatalogsPage() {
         archived: true,
         active: false,
         customerVisible: false,
-        deletedAt: serverTimestamp(),
+        deletedAt: new Date().toISOString(),
         assignedCustomerIds: [],
         assignedJobIds: [],
       },
@@ -386,7 +382,7 @@ export default function ProductCatalogsPage() {
         archived: false,
       };
       productsCurrent.push(product);
-      await updateCatalog(activeCatalog.id, { products: productsCurrent });
+      await updateCatalog(activeCatalog.id, { products: productsCurrent }, "Produkt byl uložen");
       setNewProductName("");
       setNewProductShortDescription("");
       setNewProductDescription("");
@@ -395,7 +391,12 @@ export default function ProductCatalogsPage() {
       setNewProductNote("");
       setNewProductInternalNote("");
       setNewProductImages([]);
-      toast({ title: "Produkt byl uložen" });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Produkt se nepodařilo uložit",
+        description: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setSaving(false);
     }

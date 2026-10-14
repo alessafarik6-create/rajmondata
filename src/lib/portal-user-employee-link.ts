@@ -24,6 +24,22 @@ export async function syncUserProfileAfterEmployeePermissionsSave(
   const authUserId = String(input.authUserId || "").trim();
   if (!authUserId) return;
 
+  const userSnap = await db.collection("users").doc(authUserId).get();
+  const existingRole = normalizeCompanyRole(String(userSnap.data()?.role ?? ""));
+  if (existingRole === "owner" || existingRole === "admin") {
+    return;
+  }
+  const companySnap = await db
+    .collection("companies")
+    .doc(input.companyId)
+    .get();
+  const ownerUid = String(
+    companySnap.data()?.ownerId ?? companySnap.data()?.ownerUserId ?? ""
+  ).trim();
+  if (ownerUid && ownerUid === authUserId) {
+    return;
+  }
+
   const portalRole = userPortalRoleForEmployeeDocRole(input.orgRole);
   await db.collection("users").doc(authUserId).set(
     {

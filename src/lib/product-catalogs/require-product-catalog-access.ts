@@ -1,8 +1,6 @@
 import type { NextRequest } from "next/server";
 import { verifyCompanyBearerFromRequest } from "@/lib/api-company-auth";
-import {
-  requirePortalModuleAccess,
-} from "@/lib/portal-permissions-server";
+import { loadCompanyOwnerUid, requirePortalModuleAccess } from "@/lib/portal-permissions-server";
 import { resolveEmployeeRecordForCaller } from "@/lib/portal-employee-doc-resolve";
 import {
   buildCatalogAuthDiagnostic,
@@ -20,9 +18,11 @@ export async function requireProductCatalogAccess(
 
   const resolved = await resolveEmployeeRecordForCaller(base.db, base.caller);
   const employeeDoc = resolved?.employeeDoc ?? null;
+  const companyOwnerUid = await loadCompanyOwnerUid(base.db, base.caller.companyId);
   const diag = buildCatalogAuthDiagnostic(base.caller, employeeDoc, request.method, required, {
     resolvedEmployeeId: resolved?.employeeId ?? null,
     employeeDocSource: resolved?.source ?? null,
+    companyOwnerUid,
   });
   logCatalogAuthDiagnostic(diag);
 

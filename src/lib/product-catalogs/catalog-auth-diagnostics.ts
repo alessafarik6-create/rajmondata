@@ -34,9 +34,12 @@ export function buildCatalogAuthDiagnostic(
   resolveMeta?: {
     resolvedEmployeeId?: string | null;
     employeeDocSource?: string | null;
+    companyOwnerUid?: string | null;
   }
 ): CatalogAuthDiagnostic {
-  const effectivePortalRole = effectivePortalRoleForCaller(caller, employeeDoc);
+  const effectivePortalRole = effectivePortalRoleForCaller(caller, employeeDoc, {
+    companyOwnerUid: resolveMeta?.companyOwnerUid ?? null,
+  });
   const permissions = resolveEffectivePortalPermissions({
     role: effectivePortalRole,
     globalRoles: caller.globalRoles,

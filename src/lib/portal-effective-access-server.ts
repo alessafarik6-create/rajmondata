@@ -5,6 +5,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import type { VerifiedCompanyCaller } from "@/lib/api-company-auth";
 import { parseEmployeeOrgRole, userPortalRoleForEmployeeDocRole } from "@/lib/employee-organization";
 import { parseEmployeePortalRole } from "@/lib/employee-portal-role";
+import { companyOwnerUidFromRecord } from "@/lib/company-owner";
 import { effectivePortalRoleForCaller } from "@/lib/portal-caller-role";
 import { resolveEmployeeRecordForCaller } from "@/lib/portal-employee-doc-resolve";
 import {
@@ -98,7 +99,11 @@ export async function computeEffectivePortalAccessForCaller(
 }> {
   const resolved = await resolveEmployeeRecordForCaller(db, caller);
   const employeeDoc = resolved?.employeeDoc ?? null;
-  const portalRole = effectivePortalRoleForCaller(caller, employeeDoc);
+  const companySnap = await db.collection("companies").doc(caller.companyId).get();
+  const companyOwnerUid = companySnap.exists
+    ? companyOwnerUidFromRecord(companySnap.data() as Record<string, unknown>)
+    : null;
+  const portalRole = effectivePortalRoleForCaller(caller, employeeDoc, { companyOwnerUid });
   const orgRole = employeeDoc ? parseEmployeeOrgRole(employeeDoc) : parseEmployeeOrgRole(null);
   const permissions = resolveEffectivePortalPermissions({
     role: portalRole,
