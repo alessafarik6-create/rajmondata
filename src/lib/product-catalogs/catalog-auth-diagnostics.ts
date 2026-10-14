@@ -107,6 +107,9 @@ export function catalogAuthUserMessage(diag: CatalogAuthDiagnostic, httpStatus: 
       return "Účet není propojen s dokumentem zaměstnance v této organizaci. Kontaktujte administrátora.";
     }
     if (diag.storedProductCatalogs !== "write") {
+      if (diag.canWrite) {
+        return "Efektivní přístup je Zápis (role nebo legacy pravidla). Pro trvalé nastavení uložte matici Produktové katalogy → Zápis v administraci zaměstnance.";
+      }
       return "Nemáte oprávnění Zápis k produktovým katalogům. Administrátor musí v profilu zaměstnance nastavit Produktové katalogy → Zápis a uložit oprávnění.";
     }
     return "K této akci nemáte oprávnění (vyžadován zápis do produktových katalogů).";

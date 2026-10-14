@@ -8,6 +8,7 @@ import {
   type CalendarSubPermissionKey,
 } from "@/lib/calendar/calendar-access";
 import {
+  employeePortalRoleLabel,
   parseEmployeePortalRole,
   type EmployeePortalRoleId,
 } from "@/lib/employee-portal-role";
@@ -117,19 +118,48 @@ export type PortalPermissionLimitReason =
 export type PortalModuleAccessSnapshotRow = {
   moduleId: PortalModuleId;
   label: string;
-  storedLevel: PortalAccessLevel;
+  /** Hodnota v editoru „Přístup k modulům“ (matice). */
+  editorLevel: PortalAccessLevel;
+  /** Výchozí úroveň jen z uložené organizační role (bez individuální matice). */
+  roleDefaultLevel: PortalAccessLevel;
   effectiveLevel: PortalAccessLevel;
   limitReason: PortalPermissionLimitReason | null;
 };
 
 export type EmployeePortalAccessSnapshot = {
+  /** Role uložená v employees.role — autorita pro běh portálu. */
+  savedOrgRole: EmployeePortalRoleId;
+  /** Role zobrazená v editoru (může být neuložená). */
+  editorOrgRole: EmployeePortalRoleId;
+  savedOrgRoleLabel: string;
+  editorOrgRoleLabel: string;
+  rolesDiffer: boolean;
   moduleRows: PortalModuleAccessSnapshotRow[];
   calendar: {
-    meetings: { stored: PortalAccessLevel; effective: PortalAccessLevel };
-    installations: { stored: PortalAccessLevel; effective: PortalAccessLevel };
+    meetings: {
+      editor: PortalAccessLevel;
+      roleDefault: PortalAccessLevel;
+      effective: PortalAccessLevel;
+    };
+    installations: {
+      editor: PortalAccessLevel;
+      roleDefault: PortalAccessLevel;
+      effective: PortalAccessLevel;
+    };
   };
   materialized: boolean;
 };
+
+function employeeDocForRoleDefaultsOnly(
+  employeeDoc: Record<string, unknown> | null | undefined
+): Record<string, unknown> | null {
+  if (!employeeDoc) return null;
+  return {
+    ...employeeDoc,
+    portalModulePermissions: {},
+    portalModulePermissionsMaterialized: false,
+  };
+}
 
 function storedLevelsFromDoc(
   employeeDoc: Record<string, unknown> | null | undefined
@@ -146,76 +176,82 @@ function storedLevelsFromDoc(
 
 export function buildEmployeePortalAccessSnapshot(
   employeeDoc: Record<string, unknown> | null | undefined,
-  portalRole: EmployeePortalRoleId
+  editorOrgRole: EmployeePortalRoleId
 ): EmployeePortalAccessSnapshot {
-  const userRole = userPortalRoleForEmployeeDocRole(portalRole);
-  const stored = storedLevelsFromDoc(employeeDoc);
-  const editorLevels = portalPermissionLevelsForAdminEditor(employeeDoc, portalRole);
+  const savedOrgRole = parseEmployeePortalRole(employeeDoc?.role);
+  const savedUserRole = userPortalRoleForEmployeeDocRole(savedOrgRole);
+
+  const editorLevels = portalPermissionLevelsForAdminEditor(employeeDoc, editorOrgRole);
   const effective = resolveEffectivePortalPermissions({
-    role: userRole,
+    role: savedUserRole,
     employeeDoc,
+  });
+  const roleDefaults = resolveEffectivePortalPermissions({
+    role: savedUserRole,
+    employeeDoc: employeeDocForRoleDefaultsOnly(employeeDoc),
   });
 
-  const storedCal = resolveCalendarSubLevels({
-    employeeDoc,
-    portalModuleScheduleLevel: stored.schedule ?? "none",
-  });
+  const editorCal = calendarLevelsForAdminEditor(employeeDoc, editorOrgRole, editorLevels);
   const effectiveCal = resolveCalendarPermissions({
-    role: userRole,
+    role: savedUserRole,
     employeeDoc,
     portalModuleScheduleLevel: effective.schedule ?? "none",
   });
+  const roleDefaultCal = resolveCalendarPermissions({
+    role: savedUserRole,
+    employeeDoc: employeeDocForRoleDefaultsOnly(employeeDoc),
+    portalModuleScheduleLevel: roleDefaults.schedule ?? "none",
+  });
 
   const materialized = isPortalModulePermissionsMaterialized(employeeDoc);
-  const legacy = !materialized;
 
-  const rawMatrix = employeeDoc?.portalModulePermissions;
   const moduleRows: PortalModuleAccessSnapshotRow[] = PORTAL_PERMISSION_MODULES.filter(
     (m) => m.id !== "schedule"
   ).map((mod) => {
     const id = mod.id as PortalModuleId;
-    const hasExplicitStoredKey =
-      rawMatrix != null &&
-      typeof rawMatrix === "object" &&
-      Object.prototype.hasOwnProperty.call(rawMatrix as object, id);
-    const storedLevel = materialized
-      ? stored[id] ?? "none"
-      : hasExplicitStoredKey
-        ? stored[id] ?? "none"
-        : legacy
-          ? "none"
-          : editorLevels[id] ?? "none";
+    const editorLevel = editorLevels[id] ?? "none";
+    const roleDefaultLevel = roleDefaults[id] ?? "none";
     const effectiveLevel = effective[id] ?? "none";
     let limitReason: PortalPermissionLimitReason | null = null;
-    if (storedLevel !== effectiveLevel) {
-      if (legacy && effectiveLevel !== "none" && !hasExplicitStoredKey && !materialized) {
+    if (editorLevel !== effectiveLevel) {
+      if (roleDefaultLevel !== "none" && editorLevel === "none" && effectiveLevel !== "none") {
+        limitReason = "legacy_preset";
+      } else if (roleDefaultLevel !== editorLevel && effectiveLevel === roleDefaultLevel) {
         limitReason = "legacy_preset";
       } else {
-        limitReason = "org_role_cap";
+        limitReason = materialized ? "org_role_cap" : "legacy_preset";
       }
-    } else if (legacy && effectiveLevel !== "none" && !materialized) {
-      limitReason = "legacy_preset";
-    } else if (materialized || hasExplicitStoredKey) {
+    } else if (materialized) {
       limitReason = "stored";
+    } else if (effectiveLevel !== "none") {
+      limitReason = "legacy_preset";
     }
     return {
       moduleId: id,
       label: mod.label,
-      storedLevel,
+      editorLevel,
+      roleDefaultLevel,
       effectiveLevel,
       limitReason,
     };
   });
 
   return {
+    savedOrgRole,
+    editorOrgRole,
+    savedOrgRoleLabel: employeePortalRoleLabel(savedOrgRole),
+    editorOrgRoleLabel: employeePortalRoleLabel(editorOrgRole),
+    rolesDiffer: savedOrgRole !== editorOrgRole,
     moduleRows,
     calendar: {
       meetings: {
-        stored: storedCal.meetings,
+        editor: editorCal.meetings,
+        roleDefault: roleDefaultCal.meetings.level,
         effective: effectiveCal.meetings.level,
       },
       installations: {
-        stored: storedCal.installations,
+        editor: editorCal.installations,
+        roleDefault: roleDefaultCal.installations.level,
         effective: effectiveCal.installations.level,
       },
     },

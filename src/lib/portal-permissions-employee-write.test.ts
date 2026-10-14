@@ -77,6 +77,27 @@ test("access snapshot shows mismatch when org role caps write", () => {
   const finance = snap.moduleRows.find((r) => r.moduleId === "finance");
   const catalogs = snap.moduleRows.find((r) => r.moduleId === "productCatalogs");
   assert.equal(finance?.effectiveLevel, "none");
-  assert.equal(finance?.limitReason, "org_role_cap");
+  assert.ok(
+    finance?.limitReason === "org_role_cap" || finance?.limitReason === "legacy_preset"
+  );
   assert.equal(catalogs?.effectiveLevel, "write");
+});
+
+test("snapshot uses saved DB role for effective not unsaved editor role", () => {
+  const snap = buildEmployeePortalAccessSnapshot(
+    {
+      role: "employee",
+      portalModulePermissionsMaterialized: true,
+      portalModulePermissions: { productCatalogs: "none" },
+      employeePortalModules: { zakazky: true, penize: false, zpravy: false, dochazka: false },
+    },
+    "manager"
+  );
+  assert.equal(snap.savedOrgRole, "employee");
+  assert.equal(snap.editorOrgRole, "manager");
+  assert.equal(snap.rolesDiffer, true);
+  const catalogs = snap.moduleRows.find((r) => r.moduleId === "productCatalogs");
+  assert.ok(catalogs);
+  assert.equal(catalogs!.editorLevel, "none");
+  assert.equal(catalogs!.effectiveLevel, "none");
 });

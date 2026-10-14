@@ -156,10 +156,19 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   );
 
   const profileEmployeeRow = useMemo(() => {
-    if (profileEmployeeRowById) return profileEmployeeRowById;
-    const row = profileEmployeeByAuthRows?.[0];
-    return row ?? null;
-  }, [profileEmployeeRowById, profileEmployeeByAuthRows]);
+    const byAuth = profileEmployeeByAuthRows?.[0];
+    if (byAuth && user?.uid) {
+      const authOnDoc = String(byAuth.authUserId ?? "").trim();
+      if (authOnDoc === user.uid) return byAuth;
+    }
+    if (profileEmployeeRowById) {
+      const authOnDoc = String(profileEmployeeRowById.authUserId ?? "").trim();
+      if (!user?.uid || !authOnDoc || authOnDoc === user.uid) {
+        return profileEmployeeRowById;
+      }
+    }
+    return byAuth ?? profileEmployeeRowById ?? null;
+  }, [profileEmployeeRowById, profileEmployeeByAuthRows, user?.uid]);
 
   const previewSession = useMemo(
     () => portalPreviewSessionFromFirestore(profile?.portalPreviewSession),

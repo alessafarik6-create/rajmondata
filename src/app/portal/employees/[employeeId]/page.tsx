@@ -748,6 +748,16 @@ export default function EmployeeDetailPage() {
     }
   };
 
+  const employeeAuthLinkWarning = useMemo(() => {
+    const row = employeeDoc as Record<string, unknown> | null | undefined;
+    if (!row) return null;
+    const auth = String(row.authUserId ?? "").trim();
+    if (!auth) {
+      return "Zaměstnanec nemá vyplněné authUserId — portál a API nemusí používat tento dokument. Propojte účet přes vytvoření přihlášení nebo reset hesla.";
+    }
+    return null;
+  }, [employeeDoc]);
+
   const confirmPortalRoleChange = useCallback(
     ({
       nextRole,
@@ -1699,6 +1709,12 @@ export default function EmployeeDetailPage() {
               <CardTitle className={cardTitleCls}>Role a oprávnění</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
+              {employeeAuthLinkWarning ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Propojení účtu</AlertTitle>
+                  <AlertDescription>{employeeAuthLinkWarning}</AlertDescription>
+                </Alert>
+              ) : null}
               <div className="rounded-md border border-slate-200 p-3 space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                   5. Docházkový terminál
@@ -1731,6 +1747,7 @@ export default function EmployeeDetailPage() {
                 <EmployeeEffectiveAccessPanel
                   employeeDoc={employeeDoc as Record<string, unknown>}
                   portalRole={portalRole}
+                  permissionsDirty={orgPermissionsDirty}
                 />
                 <EmployeePortalRolePermissionsEditor
                   disabled={!canManageOrgRoles}

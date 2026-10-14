@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ catalogId: string }> };
 
 export async function PATCH(request: NextRequest, ctx: Ctx) {
+  try {
   const perm = await requireProductCatalogAccess(request, "write");
   if (!perm.ok) {
     return NextResponse.json({ ok: false, error: perm.error, diagnostic: perm.diagnostic }, { status: perm.status });
@@ -61,4 +62,11 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
 
   await ref.set(patch, { merge: true });
   return NextResponse.json({ ok: true, catalogId });
+  } catch (e) {
+    console.error("[product-catalogs PATCH]", e);
+    return NextResponse.json(
+      { ok: false, error: "Úprava katalogu selhala kvůli chybě serveru." },
+      { status: 500 }
+    );
+  }
 }
