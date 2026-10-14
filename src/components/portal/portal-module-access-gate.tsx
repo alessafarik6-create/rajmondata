@@ -30,6 +30,11 @@ export function PortalModuleAccessGate(props: {
     return <>{props.children}</>;
   }
 
+  /** Profil a notifikace v nastavení — bez modulu Nastavení (citlivé firemní záložky řeší stránka). */
+  if (moduleId === "settings" && props.role !== "customer") {
+    return <>{props.children}</>;
+  }
+
   const permissions = resolveEffectivePortalPermissions({
     role: props.role,
     globalRoles: props.globalRoles,

@@ -5,11 +5,13 @@ import {
   canAccessPortalModule,
   portalPermissionsAllowMutation,
   parseDashboardAiAssistantEnabled,
+  parseEmailMailboxManageEnabled,
   resolveEffectivePortalPermissions,
   roleIsReadOnlyPortal,
   type PortalModuleId,
   type PortalAccessLevel,
 } from "@/lib/portal-permissions";
+import { normalizeCompanyRole } from "@/lib/company-privilege";
 import {
   resolveCameraPermissions,
   type CameraPermissionsResolved,
@@ -25,6 +27,7 @@ type PortalPermissionsContextValue = {
   canWrite: (moduleId: PortalModuleId) => boolean;
   readOnlyPortal: boolean;
   dashboardAiAssistantEnabled: boolean;
+  canManageEmailMailboxes: boolean;
   cameras: CameraPermissionsResolved;
   calendar: CalendarPermissionsResolved;
 };
@@ -45,6 +48,13 @@ export function PortalPermissionsProvider(props: {
     });
     const readOnlyPortal = roleIsReadOnlyPortal(props.role);
     const dashboardAiAssistantEnabled = parseDashboardAiAssistantEnabled(props.employeeDoc);
+    const globalRoles = Array.isArray(props.globalRoles) ? props.globalRoles : [];
+    const normalizedRole = normalizeCompanyRole(props.role);
+    const canManageEmailMailboxes =
+      globalRoles.includes("super_admin") ||
+      normalizedRole === "owner" ||
+      normalizedRole === "admin" ||
+      parseEmailMailboxManageEnabled(props.employeeDoc);
 
     const cameras = resolveCameraPermissions({
       role: props.role,
@@ -72,6 +82,7 @@ export function PortalPermissionsProvider(props: {
       },
       readOnlyPortal,
       dashboardAiAssistantEnabled,
+      canManageEmailMailboxes,
       cameras,
       calendar,
     };

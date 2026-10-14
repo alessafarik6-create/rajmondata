@@ -56,6 +56,8 @@ export function EmployeePortalRolePermissionsEditor(props: {
   onCalendarLevelsChange: (levels: Record<CalendarSubPermissionKey, PortalAccessLevel>) => void;
   dashboardAiAssistantEnabled?: boolean;
   onDashboardAiAssistantEnabledChange?: (enabled: boolean) => void;
+  emailMailboxManageEnabled?: boolean;
+  onEmailMailboxManageEnabledChange?: (enabled: boolean) => void;
   disabled?: boolean;
   roleSelectClassName?: string;
   /** Před změnou role (např. potvrzení přepsání individuální matice). */
@@ -73,6 +75,8 @@ export function EmployeePortalRolePermissionsEditor(props: {
     onCalendarLevelsChange,
     dashboardAiAssistantEnabled = true,
     onDashboardAiAssistantEnabledChange,
+    emailMailboxManageEnabled = false,
+    onEmailMailboxManageEnabledChange,
     disabled,
     roleSelectClassName,
     confirmRoleChange,
@@ -356,6 +360,30 @@ export function EmployeePortalRolePermissionsEditor(props: {
                 </li>
               ))}
             </ul>
+          </div>
+
+          <div className="rounded-md border border-slate-200 p-4 space-y-2">
+            <p className="text-sm font-semibold text-black">E-mailové schránky</p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <Label className="text-sm font-medium text-slate-900">
+                  Povolit přidávání a správu e-mailových schránek
+                </Label>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  Připojení, úprava a odpojení schránek v modulu E-mail. Nezahrnuje firemní
+                  notifikace ani sdílené účty celé organizace.
+                </p>
+              </div>
+              <Switch
+                checked={emailMailboxManageEnabled}
+                disabled={
+                  disabled ||
+                  !onEmailMailboxManageEnabledChange ||
+                  (levels.emails ?? "none") === "none"
+                }
+                onCheckedChange={(v) => onEmailMailboxManageEnabledChange?.(v)}
+              />
+            </div>
           </div>
 
           <div className="rounded-md border border-slate-200 p-4 space-y-2">

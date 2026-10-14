@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { useEmailMailboxManageAccess } from "@/hooks/use-email-mailbox-manage";
+import { EmailAccountsManageDialog } from "@/components/portal/email-accounts-manage-dialog";
 import { EmailConnectWizard } from "@/components/portal/email-connect-wizard";
 import type { EmailMessageWorkflowView } from "@/lib/email-mailbox/types";
 import { EMAIL_PORTAL_FOLDERS } from "@/lib/email-mailbox/intelligence-types";
@@ -109,10 +111,12 @@ export function EmailPortalPage() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const access = usePortalModuleAccess("emails");
+  const canManageMailboxes = useEmailMailboxManageAccess();
 
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(searchParams.get("setup") === "1");
+  const [manageAccountsOpen, setManageAccountsOpen] = useState(false);
   const initialView = (searchParams.get("view") ?? "inbox") as EmailMessageWorkflowView;
   const [folder, setFolder] = useState<EmailMessageWorkflowView>(
     EMAIL_PORTAL_FOLDERS.some((f) => f.id === initialView) ? initialView : "inbox"
@@ -894,6 +898,7 @@ export function EmailPortalPage() {
 
   if (accounts.length === 0 || (wizardOpen && connectedAccounts.length === 0)) {
     return (
+      <>
       <div className="mx-auto max-w-3xl p-4 sm:p-8">
         {!wizardOpen ? (
           <Card className="border-primary/20">
@@ -907,13 +912,14 @@ export function EmailPortalPage() {
               </p>
             </CardHeader>
             <CardContent className="space-y-6">
-              {access.canWrite ? (
+              {canManageMailboxes ? (
                 <Button size="lg" className="gap-2" onClick={() => setWizardOpen(true)}>
-                  <Plus className="h-4 w-4" /> Připojit e-mailovou schránku
+                  <Plus className="h-4 w-4" /> Přidat e-mailový účet
                 </Button>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Nemáte oprávnění připojit schránku. Požádejte administrátora o přístup k modulu E-mail.
+                  Nemáte oprávnění spravovat schránky. Požádejte administrátora o přístup k modulu E-mail a
+                  o povolení správy e-mailových schránek.
                 </p>
               )}
               <ul className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
@@ -924,9 +930,6 @@ export function EmailPortalPage() {
                   </li>
                 ))}
               </ul>
-              <Button variant="link" className="px-0" asChild>
-                <Link href="/portal/settings">Nastavení → Profil → Můj e-mail</Link>
-              </Button>
             </CardContent>
           </Card>
         ) : (
@@ -935,7 +938,7 @@ export function EmailPortalPage() {
               <CardTitle>Připojit schránku</CardTitle>
             </CardHeader>
             <CardContent>
-              {companyId && access.canWrite ? (
+              {companyId && canManageMailboxes ? (
                 <EmailConnectWizard
                   companyId={companyId}
                   getToken={getToken}
@@ -950,17 +953,33 @@ export function EmailPortalPage() {
           </Card>
         )}
       </div>
+      <EmailAccountsManageDialog
+        open={manageAccountsOpen}
+        onOpenChange={setManageAccountsOpen}
+        companyId={companyId ?? null}
+      />
+      </>
     );
   }
 
   return (
+    <>
     <div className="flex w-full min-w-0 flex-col bg-background max-lg:min-h-[100dvh] max-lg:max-h-[100dvh] max-lg:overflow-hidden">
       {connectedAccounts.length === 0 && accounts.length > 0 ? (
         <div className="mx-3 mt-3 shrink-0 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          Všechny účty jsou odpojené. Historii zpráv stále vidíte níže. Nový e-mail připojte v{" "}
-          <Link href="/portal/settings" className="text-primary underline">
-            Profil → Moje e-mailové účty
-          </Link>
+          Všechny účty jsou odpojené. Historii zpráv stále vidíte níže.
+          {canManageMailboxes ? (
+            <>
+              {" "}
+              <button
+                type="button"
+                className="text-primary underline"
+                onClick={() => setManageAccountsOpen(true)}
+              >
+                Přidat e-mailový účet
+              </button>
+            </>
+          ) : null}
           .
         </div>
       ) : null}
@@ -1083,9 +1102,14 @@ export function EmailPortalPage() {
         >
           {activeAccountId === EMAIL_ACCOUNT_ALL_MAILBOXES ? "Sync všechny" : "Synchronizovat"}
         </Button>
-        {access.canWrite && connectedAccounts.length > 0 ? (
-          <Button variant="link" size="sm" className="mt-2 w-full" asChild>
-            <Link href="/portal/settings">+ Další e-mail</Link>
+        {canManageMailboxes ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2 w-full min-h-[44px] gap-2"
+            onClick={() => setManageAccountsOpen(true)}
+          >
+            <Plus className="h-4 w-4" /> Přidat e-mailový účet
           </Button>
         ) : null}
       </aside>
@@ -1325,5 +1349,11 @@ export function EmailPortalPage() {
         />
       ) : null}
     </div>
+    <EmailAccountsManageDialog
+      open={manageAccountsOpen}
+      onOpenChange={setManageAccountsOpen}
+      companyId={companyId ?? null}
+    />
+    </>
   );
 }

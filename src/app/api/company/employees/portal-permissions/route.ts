@@ -29,6 +29,7 @@ type Body = {
   } | null;
   calendarPermissions?: CalendarPermissionsDoc | null;
   dashboardAiAssistantEnabled?: boolean;
+  emailMailboxManageEnabled?: boolean;
 };
 
 export async function PATCH(request: NextRequest) {
@@ -93,6 +94,7 @@ export async function PATCH(request: NextRequest) {
   const empData = empSnap.data() as Record<string, unknown>;
   const before = (empData?.portalModulePermissions ?? {}) as Record<string, string>;
   const beforeAi = empData.dashboardAiAssistantEnabled;
+  const beforeMailboxManage = empData.emailMailboxManageEnabled;
 
   const merged = mergePortalModulePermissionsForFirestore({
     incoming: body.permissions ?? {},
@@ -131,6 +133,9 @@ export async function PATCH(request: NextRequest) {
   if (typeof body.dashboardAiAssistantEnabled === "boolean") {
     patch.dashboardAiAssistantEnabled = body.dashboardAiAssistantEnabled;
   }
+  if (typeof body.emailMailboxManageEnabled === "boolean") {
+    patch.emailMailboxManageEnabled = body.emailMailboxManageEnabled;
+  }
 
   await empRef.set(patch, { merge: true });
 
@@ -145,6 +150,8 @@ export async function PATCH(request: NextRequest) {
         newPermissions: sanitizedMerged,
         oldDashboardAiAssistant: beforeAi,
         newDashboardAiAssistant: patch.dashboardAiAssistantEnabled ?? beforeAi,
+        oldEmailMailboxManage: beforeMailboxManage,
+        newEmailMailboxManage: patch.emailMailboxManageEnabled ?? beforeMailboxManage,
       }),
       createdBy: callerUid,
       createdAt: FieldValue.serverTimestamp(),

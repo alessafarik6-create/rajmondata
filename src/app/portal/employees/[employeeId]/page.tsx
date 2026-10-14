@@ -80,6 +80,7 @@ import {
   type PortalAccessLevel,
   type PortalModuleId,
   parseDashboardAiAssistantEnabled,
+  parseEmailMailboxManageEnabled,
 } from "@/lib/portal-permissions";
 import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
 import { normalizeCompanyRole } from "@/lib/company-privilege";
@@ -145,6 +146,7 @@ function orgPermissionsPayloadJson(params: {
   calendarLevels: Record<CalendarSubPermissionKey, PortalAccessLevel>;
   visibleInTerminal: boolean;
   dashboardAiAssistantEnabled: boolean;
+  emailMailboxManageEnabled: boolean;
   cameraFlags: EmployeeCameraFlags;
 }): string {
   const schedule = aggregateScheduleModuleLevel(params.calendarLevels);
@@ -160,6 +162,7 @@ function orgPermissionsPayloadJson(params: {
     calendarPermissions: normalizeCalendarPermissionsForFirestore(params.calendarLevels),
     cameraPermissions: params.cameraFlags,
     dashboardAiAssistantEnabled: params.dashboardAiAssistantEnabled,
+    emailMailboxManageEnabled: params.emailMailboxManageEnabled,
   });
 }
 
@@ -588,6 +591,7 @@ export default function EmployeeDetailPage() {
   >(() => defaultCalendarLevelsForNewEmployee());
   const [visibleInTerminal, setVisibleInTerminal] = useState(true);
   const [dashboardAiAssistantEnabled, setDashboardAiAssistantEnabled] = useState(true);
+  const [emailMailboxManageEnabled, setEmailMailboxManageEnabled] = useState(false);
   const [cameraFlags, setCameraFlags] = useState(parseEmployeeCameraFlagsFromDoc(null));
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
   const [previewStarting, setPreviewStarting] = useState(false);
@@ -612,6 +616,7 @@ export default function EmployeeDetailPage() {
       calendarLevels: calendarLevelsForAdminEditor(row, savedRole, savedLevels),
       visibleInTerminal: row.visibleInAttendanceTerminal !== false,
       dashboardAiAssistantEnabled: parseDashboardAiAssistantEnabled(row),
+      emailMailboxManageEnabled: parseEmailMailboxManageEnabled(row),
       cameraFlags: parseEmployeeCameraFlagsFromDoc(row),
     });
     const current = orgPermissionsPayloadJson({
@@ -620,6 +625,7 @@ export default function EmployeeDetailPage() {
       calendarLevels,
       visibleInTerminal,
       dashboardAiAssistantEnabled,
+      emailMailboxManageEnabled,
       cameraFlags,
     });
     return saved !== current;
@@ -630,6 +636,7 @@ export default function EmployeeDetailPage() {
     calendarLevels,
     visibleInTerminal,
     dashboardAiAssistantEnabled,
+    emailMailboxManageEnabled,
     cameraFlags,
   ]);
 
@@ -644,6 +651,7 @@ export default function EmployeeDetailPage() {
     setCalendarLevels(calendarLevelsForAdminEditor(row, role, levels));
     setVisibleInTerminal(row.visibleInAttendanceTerminal !== false);
     setDashboardAiAssistantEnabled(parseDashboardAiAssistantEnabled(row));
+    setEmailMailboxManageEnabled(parseEmailMailboxManageEnabled(row));
     setCameraFlags(parseEmployeeCameraFlagsFromDoc(row));
   }, [employeeDoc, orgPermissionsDirty]);
 
@@ -750,6 +758,7 @@ export default function EmployeeDetailPage() {
           calendarPermissions: normalizeCalendarPermissionsForFirestore(calendarLevels),
           cameraPermissions: cameraFlags,
           dashboardAiAssistantEnabled,
+          emailMailboxManageEnabled,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1652,6 +1661,8 @@ export default function EmployeeDetailPage() {
                   onCalendarLevelsChange={setCalendarLevels}
                   dashboardAiAssistantEnabled={dashboardAiAssistantEnabled}
                   onDashboardAiAssistantEnabledChange={setDashboardAiAssistantEnabled}
+                  emailMailboxManageEnabled={emailMailboxManageEnabled}
+                  onEmailMailboxManageEnabledChange={setEmailMailboxManageEnabled}
                   roleSelectClassName={selectCls}
                 />
                 </>

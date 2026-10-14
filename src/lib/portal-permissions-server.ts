@@ -7,6 +7,7 @@ import {
   resolveEffectivePortalPermissions,
   type PortalModuleId,
 } from "@/lib/portal-permissions";
+import { effectivePortalRoleForCaller } from "@/lib/portal-caller-role";
 
 export async function loadEmployeeDocForCaller(
   db: Firestore,
@@ -28,8 +29,9 @@ export async function resolveCallerPortalPermissions(
   caller: VerifiedCompanyCaller
 ): Promise<ReturnType<typeof resolveEffectivePortalPermissions>> {
   const employeeDoc = await loadEmployeeDocForCaller(db, caller);
+  const portalRole = effectivePortalRoleForCaller(caller, employeeDoc);
   return resolveEffectivePortalPermissions({
-    role: caller.role,
+    role: portalRole,
     globalRoles: caller.globalRoles,
     employeeDoc,
   });

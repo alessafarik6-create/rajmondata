@@ -7,6 +7,7 @@ import {
 } from "@/lib/email-mailbox/account-access";
 import {
   emailMailboxTenantOk,
+  requireEmailMailboxAccountManage,
   requireEmailMailboxWrite,
 } from "@/lib/email-mailbox/api-auth";
 import {
@@ -29,7 +30,7 @@ type Ctx = { params: Promise<{ accountId: string }> };
 
 export async function DELETE(request: NextRequest, ctx: Ctx) {
   try {
-    const auth = await requireEmailMailboxWrite(request);
+    const auth = await requireEmailMailboxAccountManage(request);
     if (!auth.ok) {
       return emailJsonErr({ status: auth.status, message: auth.error, errorCode: "FORBIDDEN" });
     }
@@ -67,7 +68,7 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
 
 export async function PATCH(request: NextRequest, ctx: Ctx) {
   try {
-    const auth = await requireEmailMailboxWrite(request);
+    const auth = await requireEmailMailboxAccountManage(request);
     if (!auth.ok) {
       return emailJsonErr({ status: auth.status, message: auth.error, errorCode: "FORBIDDEN" });
     }

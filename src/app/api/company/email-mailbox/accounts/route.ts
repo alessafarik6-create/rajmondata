@@ -20,9 +20,10 @@ import {
 import { isEmailSyncStateStale } from "@/lib/email-mailbox/sync-timeout";
 import {
   emailMailboxTenantOk,
+  requireEmailMailboxAccountManage,
   requireEmailMailboxRead,
-  requireEmailMailboxWrite,
 } from "@/lib/email-mailbox/api-auth";
+import { callerIsOrgMailboxAdmin } from "@/lib/email-mailbox/mailbox-manage-auth";
 import { emailJsonErr, emailJsonOk, emailRouteErrorResponse } from "@/lib/email-mailbox/api-json";
 import { isEmailCredentialsEncryptionConfigured } from "@/lib/email-mailbox/credential-crypto";
 import { logEmailMailboxAudit } from "@/lib/email-mailbox/audit-server";
@@ -130,7 +131,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireEmailMailboxWrite(request);
+    const auth = await requireEmailMailboxAccountManage(request);
     if (!auth.ok) {
       return emailJsonErr({
         status: auth.status,
@@ -192,6 +193,13 @@ export async function POST(request: NextRequest) {
     }
 
     const accountType = body.accountType === "SHARED" ? "SHARED" : "PERSONAL";
+    if (accountType === "SHARED" && !callerIsOrgMailboxAdmin(auth.caller)) {
+      return emailJsonErr({
+        status: 403,
+        message: "Sdílené firemní schránky může přidávat pouze administrátor organizace.",
+        errorCode: "FORBIDDEN_SHARED_MAILBOX",
+      });
+    }
     const normalizedEmail = normalizeMailboxEmail(email);
 
     if (accountType === "PERSONAL") {

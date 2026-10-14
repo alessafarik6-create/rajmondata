@@ -165,13 +165,14 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     : profileEmployeeRow ?? null;
 
   const portalContextRole = useMemo(() => {
-    if (previewSession && previewEmployeeRow) {
+    const employeeRow = previewSession ? previewEmployeeRow : profileEmployeeRow;
+    if (employeeRow) {
       return userPortalRoleForEmployeeDocRole(
-        parseEmployeeOrgRole(previewEmployeeRow as { role?: unknown })
+        parseEmployeeOrgRole(employeeRow as { role?: unknown })
       );
     }
     return String(profile?.role ?? "employee");
-  }, [previewSession, previewEmployeeRow, profile?.role]);
+  }, [previewSession, previewEmployeeRow, profileEmployeeRow, profile?.role]);
 
   const portalPermissionsResolved = useMemo(() => {
     if (!profile?.role) return null;

@@ -64,6 +64,16 @@ export function parseDashboardAiAssistantEnabled(
   return employeeDoc[DASHBOARD_AI_ASSISTANT_EMPLOYEE_FIELD] !== false;
 }
 
+/** Připojení / odpojení / úprava vlastních schránek (≠ modul E-mail – Zápis). */
+export const EMAIL_MAILBOX_MANAGE_EMPLOYEE_FIELD = "emailMailboxManageEnabled";
+
+export function parseEmailMailboxManageEnabled(
+  employeeDoc: Record<string, unknown> | null | undefined
+): boolean {
+  if (!employeeDoc) return false;
+  return employeeDoc[EMAIL_MAILBOX_MANAGE_EMPLOYEE_FIELD] === true;
+}
+
 export const PORTAL_PERMISSION_MODULES: readonly PortalPermissionModuleMeta[] =
   PORTAL_SIDEBAR_MENU_DEFS.map((d) => ({
     id: d.id as PortalModuleId,

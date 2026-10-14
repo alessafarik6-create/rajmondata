@@ -101,6 +101,23 @@ export default function SettingsPage() {
   }, [initialTab]);
 
   useEffect(() => {
+    if (isAdmin) return;
+    const adminOnly = new Set<string>([
+      'organization',
+      'integrace',
+      'management',
+      'email-notifications',
+      'email-mailbox',
+      'employee-doc-templates',
+      'backups',
+    ]);
+    if (adminOnly.has(settingsTab)) {
+      setSettingsTab('profile');
+      router.replace('/portal/settings?tab=profile');
+    }
+  }, [isAdmin, settingsTab, router]);
+
+  useEffect(() => {
     const gps = searchParams.get('gps');
     if (gps === 'connected') {
       toast({ title: 'SatelitníSledování.cz připojeno' });

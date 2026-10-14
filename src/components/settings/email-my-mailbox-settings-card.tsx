@@ -22,6 +22,7 @@ import { EmailConnectWizard } from "@/components/portal/email-connect-wizard";
 import { Loader2, Mail, RefreshCw } from "lucide-react";
 import { parseEmailApiResponse } from "@/lib/email-mailbox/client-fetch";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { useEmailMailboxManageAccess } from "@/hooks/use-email-mailbox-manage";
 import { Badge } from "@/components/ui/badge";
 
 type AccountRow = {
@@ -54,10 +55,18 @@ function statusColor(status: string, disconnected?: boolean): string {
   return "text-amber-600";
 }
 
-export function EmailMyMailboxSettingsCard({ companyId }: { companyId: string | null }) {
+export function EmailMyMailboxSettingsCard({
+  companyId,
+  embedded,
+}: {
+  companyId: string | null;
+  /** Bez vnější karty — např. dialog v modulu E-mail. */
+  embedded?: boolean;
+}) {
   const { user } = useUser();
   const { toast } = useToast();
   const access = usePortalModuleAccess("emails");
+  const canManageMailboxes = useEmailMailboxManageAccess();
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
@@ -224,23 +233,13 @@ export function EmailMyMailboxSettingsCard({ companyId }: { companyId: string | 
 
   const connectedCount = accounts.filter((a) => !a.disconnected).length;
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Mail className="h-5 w-5" /> Moje e-mailové účty
-        </CardTitle>
-        <CardDescription>
-          Můžete mít více schránek (např. osobní i obchodní). Každá má vlastní přihlašovací údaje. Změnu adresy
-          řešte připojením nového účtu a odpojením starého.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+  const inner = (
+      <CardContent className={embedded ? "space-y-4 p-0" : "space-y-4"}>
         <div className="flex flex-col sm:flex-row flex-wrap gap-2">
-          {access.canWrite ? (
+          {canManageMailboxes ? (
             <>
               <Button type="button" className="min-h-[44px]" onClick={() => setShowWizard(true)}>
-                + Připojit další e-mail
+                + Přidat e-mailový účet
               </Button>
               {connectedCount > 1 ? (
                 <Button type="button" variant="secondary" disabled={busy} onClick={() => void syncAllMine()}>
@@ -249,15 +248,17 @@ export function EmailMyMailboxSettingsCard({ companyId }: { companyId: string | 
               ) : null}
             </>
           ) : null}
-          <Button type="button" variant="outline" asChild className="min-h-[44px]">
-            <Link href="/portal/email">Otevřít poštu</Link>
-          </Button>
+          {!embedded ? (
+            <Button type="button" variant="outline" asChild className="min-h-[44px]">
+              <Link href="/portal/email">Otevřít poštu</Link>
+            </Button>
+          ) : null}
           <Button type="button" variant="ghost" disabled={loading} onClick={() => void load()}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           </Button>
         </div>
 
-        {showWizard && access.canWrite ? (
+        {showWizard && canManageMailboxes ? (
           <EmailConnectWizard
             companyId={companyId}
             getToken={() => user!.getIdToken()}
@@ -302,7 +303,7 @@ export function EmailMyMailboxSettingsCard({ companyId }: { companyId: string | 
                     {a.lastSyncAt ? new Date(a.lastSyncAt).toLocaleString("cs-CZ") : "—"}
                   </p>
                 ) : null}
-                {reauthId === a.id && access.canWrite && !a.disconnected ? (
+                {reauthId === a.id && canManageMailboxes && !a.disconnected ? (
                   <div className="space-y-2 rounded-md border p-3 bg-muted/20">
                     <Label>Heslo / heslo aplikace</Label>
                     <Input
@@ -321,7 +322,7 @@ export function EmailMyMailboxSettingsCard({ companyId }: { companyId: string | 
                     </div>
                   </div>
                 ) : null}
-                {access.canWrite ? (
+                {canManageMailboxes ? (
                   <div className="flex flex-wrap gap-2 pt-1">
                     <Button size="sm" variant="outline" asChild>
                       <Link href={`/portal/email?account=${encodeURIComponent(a.id)}`}>Otevřít</Link>
@@ -353,6 +354,26 @@ export function EmailMyMailboxSettingsCard({ companyId }: { companyId: string | 
           </ul>
         )}
       </CardContent>
+  );
+
+  return (
+    <>
+      {embedded ? (
+        inner
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5" /> Moje e-mailové účty
+            </CardTitle>
+            <CardDescription>
+              Můžete mít více schránek (např. osobní i obchodní). Každá má vlastní přihlašovací údaje. Změnu
+              adresy řešte připojením nového účtu a odpojením starého.
+            </CardDescription>
+          </CardHeader>
+          {inner}
+        </Card>
+      )}
 
       <AlertDialog open={Boolean(disconnectTarget)} onOpenChange={(o) => !o && setDisconnectTarget(null)}>
         <AlertDialogContent>
@@ -371,6 +392,6 @@ export function EmailMyMailboxSettingsCard({ companyId }: { companyId: string | 
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
+    </>
   );
 }

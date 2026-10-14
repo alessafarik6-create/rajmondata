@@ -56,6 +56,7 @@ type Body = {
   } | null;
   /** Widget RAJMONDATA AI na /portal/dashboard (user-scoped). */
   dashboardAiAssistantEnabled?: boolean;
+  emailMailboxManageEnabled?: boolean;
 };
 
 /**
@@ -262,6 +263,9 @@ export async function PATCH(request: NextRequest) {
   if (typeof body.dashboardAiAssistantEnabled === "boolean") {
     patch.dashboardAiAssistantEnabled = body.dashboardAiAssistantEnabled;
   }
+  if (typeof body.emailMailboxManageEnabled === "boolean") {
+    patch.emailMailboxManageEnabled = body.emailMailboxManageEnabled;
+  }
 
   if (body.cameraPermissions !== undefined) {
     const normalized = normalizeCameraPermissionsForFirestore(body.cameraPermissions ?? {});
@@ -271,6 +275,7 @@ export async function PATCH(request: NextRequest) {
 
   const beforePermissions = (emp.portalModulePermissions ?? {}) as Record<string, string>;
   const beforeAi = emp.dashboardAiAssistantEnabled;
+  const beforeMailboxManage = emp.emailMailboxManageEnabled;
 
   if (
     hasPortalMatrix ||
@@ -282,7 +287,11 @@ export async function PATCH(request: NextRequest) {
 
   await empRef.set(patch, { merge: true });
 
-  if (hasPortalMatrix || typeof body.dashboardAiAssistantEnabled === "boolean") {
+  if (
+    hasPortalMatrix ||
+    typeof body.dashboardAiAssistantEnabled === "boolean" ||
+    typeof body.emailMailboxManageEnabled === "boolean"
+  ) {
     try {
       await db.collection("companies").doc(companyId).collection("activity_log").add({
         actionType: "USER_PERMISSIONS_UPDATED",
@@ -294,6 +303,8 @@ export async function PATCH(request: NextRequest) {
           newPermissions: patch.portalModulePermissions ?? beforePermissions,
           oldDashboardAiAssistant: beforeAi,
           newDashboardAiAssistant: patch.dashboardAiAssistantEnabled ?? beforeAi,
+          oldEmailMailboxManage: beforeMailboxManage,
+          newEmailMailboxManage: patch.emailMailboxManageEnabled ?? beforeMailboxManage,
         }),
         createdBy: callerUid,
         createdAt: FieldValue.serverTimestamp(),
