@@ -12,9 +12,10 @@ import { FleetGpsNotConnectedPanel } from "@/components/fleet/fleet-gps-not-conn
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Loader2 } from "lucide-react";
+import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { movementStatusLabel } from "@/lib/fleet/providers/types";
 import type { FleetVehicleMovementStatus } from "@/lib/fleet/types";
+import { cn } from "@/lib/utils";
 
 type DashData = {
   gpsConnected: boolean;
@@ -27,6 +28,7 @@ type DashData = {
     idle: number;
     offline: number;
     todayKm: number;
+    monthKm?: number;
   };
   vehicles: {
     id: string;
@@ -35,17 +37,20 @@ type DashData = {
     currentDriverName: string | null;
     lastMovementStatus: FleetVehicleMovementStatus;
     lastSpeedKmh: number | null;
+    lastHeadingDeg?: number | null;
     lastLatitude: number | null;
     lastLongitude: number | null;
     lastLocationLabel: string | null;
     lastPositionAt: string | null;
     todayDistanceKm: number | null;
+    externalVehicleId?: string | null;
   }[];
   positions: {
     vehicleId: string;
     lat: number;
     lng: number;
     speedKmh?: number | null;
+    headingDeg?: number | null;
     movementStatus: FleetVehicleMovementStatus;
     recordedAt: string;
     locationLabel?: string | null;
@@ -62,6 +67,7 @@ export function FleetDashboardPage() {
   const [data, setData] = useState<DashData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
 
   const role = String((userProfile as { role?: string } | null)?.role ?? "");
   const globalRoles = (userProfile as { globalRoles?: string[] } | null)?.globalRoles ?? [];
@@ -85,7 +91,14 @@ export function FleetDashboardPage() {
 
   useEffect(() => {
     void load();
+    const t = window.setInterval(() => void load(), 60_000);
+    return () => window.clearInterval(t);
   }, [load]);
+
+  useEffect(() => {
+    const focus = searchParams.get("focus");
+    if (focus) setSelectedId(focus);
+  }, [searchParams]);
 
   useEffect(() => {
     const sat = searchParams.get("satelitni");
@@ -117,6 +130,7 @@ export function FleetDashboardPage() {
           lat: p.lat,
           lng: p.lng,
           speedKmh: p.speedKmh,
+          headingDeg: p.headingDeg ?? v?.lastHeadingDeg,
           driverName: v?.currentDriverName,
           movementStatus: p.movementStatus,
           lastUpdate: p.recordedAt,
@@ -126,12 +140,13 @@ export function FleetDashboardPage() {
   }, [data]);
 
   const selectedVehicle = data?.vehicles.find((v) => v.id === selectedId);
+  const mapHeight = fullscreen ? "calc(100vh - 120px)" : "min(70vh, 680px)";
 
   if (!access.canRead) {
     return <p className="p-6 text-muted-foreground">Nemáte oprávnění k modulu Vozový park.</p>;
   }
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -139,88 +154,166 @@ export function FleetDashboardPage() {
     );
   }
 
-  const stats = data?.stats ?? { total: 0, online: 0, moving: 0, idle: 0, offline: 0, todayKm: 0 };
+  const stats = data?.stats ?? {
+    total: 0,
+    online: 0,
+    moving: 0,
+    idle: 0,
+    offline: 0,
+    todayKm: 0,
+    monthKm: 0,
+  };
+
+  const mapBlock = (
+    <div className="relative">
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        className="absolute z-[1001] top-3 left-3 gap-1 shadow"
+        onClick={() => setFullscreen((f) => !f)}
+      >
+        {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        {fullscreen ? "Ukončit celou obrazovku" : "Celá obrazovka"}
+      </Button>
+      <FleetMap
+        markers={markers}
+        selectedVehicleId={selectedId}
+        onSelectVehicle={setSelectedId}
+        height={mapHeight}
+      />
+      {data && data.vehicles.length > 0 && markers.length === 0 ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          Máte {data.vehicles.length} vozidel v seznamu, ale žádné nemá platnou GPS polohu. Spusťte synchronizaci v
+          Nastavení → Integrace.
+        </p>
+      ) : null}
+    </div>
+  );
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 max-w-7xl mx-auto">
-      <FleetSubnav />
+    <div
+      className={cn(
+        fullscreen ? "fixed inset-0 z-50 bg-background p-4 overflow-auto" : "p-4 sm:p-6 space-y-4 max-w-[1600px] mx-auto"
+      )}
+    >
+      {!fullscreen ? <FleetSubnav /> : null}
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-2xl font-semibold">Vozový park</h1>
         {data?.demoMode ? <Badge variant="secondary">DEMO DATA</Badge> : null}
+        {loading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
       </div>
-      {data && !data.gpsConnected && companyId ? (
-        <FleetGpsNotConnectedPanel
-          companyId={companyId}
-          canManageIntegration={canManageIntegration}
-        />
-      ) : data?.message ? (
+      {!fullscreen && data && !data.gpsConnected && companyId ? (
+        <FleetGpsNotConnectedPanel companyId={companyId} canManageIntegration={canManageIntegration} />
+      ) : !fullscreen && data?.message ? (
         <Card className="border-dashed">
           <CardContent className="pt-6 text-sm text-muted-foreground">{data.message}</CardContent>
         </Card>
       ) : null}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {[
-          ["Vozidla celkem", stats.total],
-          ["Online", stats.online],
-          ["V pohybu", stats.moving],
-          ["Stojí", stats.idle],
-          ["Offline", stats.offline],
-          ["Dnes ujeto km", Math.round(stats.todayKm)],
-        ].map(([label, val]) => (
-          <Card key={String(label)}>
-            <CardHeader className="pb-1 pt-4 px-4">
-              <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4 text-2xl font-semibold">{val}</CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-        <div className="relative">
-          <FleetMap markers={markers} selectedVehicleId={selectedId} onSelectVehicle={setSelectedId} height="min(55vh, 520px)" />
-          {data && data.vehicles.length > 0 && markers.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              Máte {data.vehicles.length} vozidel v seznamu, ale žádné nemá platnou GPS polohu. Spusťte synchronizaci
-              v Nastavení → Integrace.
-            </p>
-          ) : data && data.vehicles.length === 0 && data.gpsConnected ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              GPS je připojeno, ale vozidla nejsou importovaná. Použijte „Synchronizovat nyní“ v integraci.
-            </p>
-          ) : null}
+      {!fullscreen ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+          {[
+            ["Vozidel celkem", stats.total],
+            ["Právě jede", stats.moving],
+            ["Stojí", stats.idle],
+            ["Offline / bez signálu", stats.offline],
+            ["Bez GPS polohy", Math.max(0, stats.total - markers.length)],
+            ["Dnes ujeto km", Math.round(stats.todayKm)],
+            ["Tento měsíc km", Math.round(stats.monthKm ?? 0)],
+          ].map(([label, val]) => (
+            <Card key={String(label)}>
+              <CardHeader className="pb-1 pt-4 px-4">
+                <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 pb-4 text-2xl font-semibold">{val}</CardContent>
+            </Card>
+          ))}
         </div>
+      ) : null}
+
+      {mapBlock}
+
+      {selectedVehicle ? (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Detail vozidla</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              {selectedVehicle.name} – {selectedVehicle.licensePlate}
+            </CardTitle>
           </CardHeader>
-          <CardContent className="text-sm space-y-2">
-            {!selectedVehicle ? (
-              <p className="text-muted-foreground">Klikněte na vozidlo na mapě.</p>
-            ) : (
-              <>
-                <p className="font-semibold">{selectedVehicle.licensePlate}</p>
-                <p>{selectedVehicle.name}</p>
-                <p>Řidič: {selectedVehicle.currentDriverName ?? "—"}</p>
-                <p>Stav: {movementStatusLabel(selectedVehicle.lastMovementStatus)}</p>
-                <p>Rychlost: {selectedVehicle.lastSpeedKmh != null ? `${Math.round(selectedVehicle.lastSpeedKmh)} km/h` : "—"}</p>
-                <p>Poloha: {selectedVehicle.lastLocationLabel ?? "—"}</p>
-                <p className="text-xs text-muted-foreground">
-                  GPS:{" "}
-                  {selectedVehicle.lastPositionAt
-                    ? new Date(selectedVehicle.lastPositionAt).toLocaleString("cs-CZ")
-                    : "—"}
-                </p>
-                <p>Dnes: {selectedVehicle.todayDistanceKm ?? 0} km</p>
-                <Button size="sm" className="w-full mt-2" asChild>
-                  <Link href={`/portal/fleet/vehicles/${selectedVehicle.id}`}>Detail vozidla</Link>
-                </Button>
-              </>
-            )}
+          <CardContent className="text-sm space-y-2 flex flex-wrap gap-4 items-start justify-between">
+            <div className="space-y-1">
+              <p>
+                Stav: <strong>{movementStatusLabel(selectedVehicle.lastMovementStatus)}</strong>
+              </p>
+              <p>Řidič: {selectedVehicle.currentDriverName ?? "—"}</p>
+              <p>
+                Rychlost:{" "}
+                {selectedVehicle.lastSpeedKmh != null ? `${Math.round(selectedVehicle.lastSpeedKmh)} km/h` : "—"}
+              </p>
+              <p>Poslední poloha: {selectedVehicle.lastLocationLabel ?? "—"}</p>
+              <p className="text-xs text-muted-foreground">
+                {selectedVehicle.lastPositionAt
+                  ? new Date(selectedVehicle.lastPositionAt).toLocaleString("cs-CZ")
+                  : "GPS poloha zatím neznámá"}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" asChild>
+                <Link href={`/portal/fleet/vehicles/${selectedVehicle.id}`}>Detail vozidla</Link>
+              </Button>
+              <Button size="sm" variant="outline" asChild>
+                <Link href={`/portal/fleet/trips?vehicleId=${encodeURIComponent(selectedVehicle.id)}`}>
+                  Historie tras
+                </Link>
+              </Button>
+              <Button size="sm" variant="outline" asChild>
+                <Link href={`/portal/fleet/trips?vehicleId=${encodeURIComponent(selectedVehicle.id)}&logbook=1`}>
+                  Kniha jízd
+                </Link>
+              </Button>
+            </div>
           </CardContent>
         </Card>
-      </div>
+      ) : null}
+
+      {!fullscreen ? (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full text-sm min-w-[900px]">
+            <thead className="bg-muted/50">
+              <tr className="text-left">
+                {["Vozidlo", "SPZ", "Stav", "Řidič", "Rychlost", "Poloha", "Poslední GPS", "Dnes km"].map((h) => (
+                  <th key={h} className="p-3 font-medium">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(data?.vehicles ?? []).map((v) => (
+                <tr
+                  key={v.id}
+                  className={cn("border-t cursor-pointer hover:bg-muted/30", selectedId === v.id && "bg-muted/40")}
+                  onClick={() => setSelectedId(v.id)}
+                >
+                  <td className="p-3 font-medium">{v.name}</td>
+                  <td className="p-3">{v.licensePlate}</td>
+                  <td className="p-3">{movementStatusLabel(v.lastMovementStatus)}</td>
+                  <td className="p-3">{v.currentDriverName ?? "—"}</td>
+                  <td className="p-3">
+                    {v.lastSpeedKmh != null ? `${Math.round(v.lastSpeedKmh)} km/h` : "—"}
+                  </td>
+                  <td className="p-3 max-w-[200px] truncate">{v.lastLocationLabel ?? "—"}</td>
+                  <td className="p-3 text-xs whitespace-nowrap">
+                    {v.lastPositionAt ? new Date(v.lastPositionAt).toLocaleString("cs-CZ") : "—"}
+                  </td>
+                  <td className="p-3">{v.todayDistanceKm ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 const LINKS = [
   { href: "/portal/fleet", label: "Přehled" },
   { href: "/portal/fleet/vehicles", label: "Vozidla" },
-  { href: "/portal/fleet/trips", label: "Jízdy" },
+  { href: "/portal/fleet/trips", label: "Historie jízd" },
   { href: "/portal/fleet/statistics", label: "Statistiky" },
 ];
 

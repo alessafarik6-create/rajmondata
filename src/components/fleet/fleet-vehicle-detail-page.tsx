@@ -13,7 +13,35 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { movementStatusLabel } from "@/lib/fleet/providers/types";
+
+function reminderRows(vehicle: Record<string, unknown>) {
+  const daysBefore = Number(vehicle.reminderDaysBefore ?? 14) || 14;
+  const items: { label: string; date: string | null }[] = [
+    { label: "STK", date: (vehicle.stkExpiresAt as string) ?? null },
+    { label: "Pojištění", date: (vehicle.insuranceExpiresAt as string) ?? null },
+    { label: "Servis", date: (vehicle.serviceDueAt as string) ?? null },
+    { label: "Výměna oleje", date: (vehicle.oilChangeDueAt as string) ?? null },
+    { label: "Pneumatiky", date: (vehicle.tiresChangeDueAt as string) ?? null },
+  ];
+  if (vehicle.customReminderAt) {
+    items.push({
+      label: String(vehicle.customReminderLabel ?? "Vlastní termín"),
+      date: String(vehicle.customReminderAt),
+    });
+  }
+  const now = Date.now();
+  return items
+    .filter((i) => i.date)
+    .map((i) => {
+      const due = Date.parse(String(i.date).slice(0, 10));
+      const daysLeft = Number.isFinite(due) ? Math.ceil((due - now) / 86400000) : null;
+      const warn = daysLeft != null && daysLeft <= daysBefore;
+      const overdue = daysLeft != null && daysLeft < 0;
+      return { ...i, daysLeft, warn, overdue };
+    });
+}
 
 export function FleetVehicleDetailPage({ vehicleId }: { vehicleId: string }) {
   const { user } = useUser();
@@ -183,7 +211,8 @@ export function FleetVehicleDetailPage({ vehicleId }: { vehicleId: string }) {
                 </p>
                 <p>Řidič: {String(vehicle.currentDriverName ?? "—")}</p>
                 <p>GPS zařízení: {String(vehicle.externalDeviceId ?? "Nepřipojeno")}</p>
-                <p>Ecofleet ID: {String(vehicle.externalVehicleId ?? "—")}</p>
+                <p>GPS ID vozidla: {String(vehicle.externalVehicleId ?? "—")}</p>
+                <p>Tachometr: {vehicle.odometerKm != null ? `${vehicle.odometerKm} km` : "—"}</p>
               </CardContent>
             </Card>
             <Card>
@@ -203,6 +232,32 @@ export function FleetVehicleDetailPage({ vehicleId }: { vehicleId: string }) {
               </CardContent>
             </Card>
           </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Servisní termíny</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm space-y-2">
+              {reminderRows(vehicle).length === 0 ? (
+                <p className="text-muted-foreground">Termíny nastavíte v úpravě vozidla.</p>
+              ) : (
+                reminderRows(vehicle).map((r) => (
+                  <div key={r.label} className="flex flex-wrap items-center gap-2">
+                    <span>
+                      {r.label}: {r.date ? new Date(r.date.slice(0, 10)).toLocaleDateString("cs-CZ") : "—"}
+                    </span>
+                    {r.overdue ? <Badge variant="destructive">Po termínu</Badge> : null}
+                    {!r.overdue && r.warn ? <Badge variant="secondary">Blíží se termín</Badge> : null}
+                    {r.daysLeft != null && !r.overdue ? (
+                      <span className="text-xs text-muted-foreground">({r.daysLeft} dní)</span>
+                    ) : null}
+                  </div>
+                ))
+              )}
+              <p className="text-xs text-muted-foreground pt-2">
+                Upozornění ve zvoněčku pro celou organizaci lze doplnit cronem — termíny jsou uložené u vozidla.
+              </p>
+            </CardContent>
+          </Card>
           {access.canWrite ? (
             <Card>
               <CardHeader>
@@ -247,7 +302,9 @@ export function FleetVehicleDetailPage({ vehicleId }: { vehicleId: string }) {
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-2">
               {trips.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Žádné jízdy v období (GPS historie po napojení Ecofleet).</p>
+                <p className="text-sm text-muted-foreground">
+                  Žádné jízdy v období (data ze SatelitníSledování.cz po synchronizaci).
+                </p>
               ) : (
                 trips.map((t) => (
                   <button

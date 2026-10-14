@@ -25,6 +25,22 @@ export type FleetVehicleDoc = {
   model?: string | null;
   year?: number | null;
   notes?: string | null;
+  vehicleType?: string | null;
+  fuelType?: string | null;
+  avgConsumptionL100?: number | null;
+  odometerKm?: number | null;
+  gpsDevicePhone?: string | null;
+  stkExpiresAt?: string | null;
+  insuranceExpiresAt?: string | null;
+  serviceDueAt?: string | null;
+  oilChangeDueAt?: string | null;
+  tiresChangeDueAt?: string | null;
+  customReminderAt?: string | null;
+  customReminderLabel?: string | null;
+  reminderDaysBefore?: number | null;
+  /** false = archivované (skryté z běžného seznamu, historie zachována). */
+  archived?: boolean;
+  archivedAt?: Timestamp | null;
   /** Aktuální přiřazený řidič (employees.authUserId nebo uid). */
   currentDriverUserId?: string | null;
   currentDriverEmployeeId?: string | null;
@@ -35,6 +51,8 @@ export type FleetVehicleDoc = {
   /** Poslední známý stav z providera (cache pro UI, ne historie bodů). */
   lastMovementStatus?: FleetVehicleMovementStatus | null;
   lastSpeedKmh?: number | null;
+  /** Směr jízdy ve stupních (0 = sever), z poslední GPS polohy. */
+  lastHeadingDeg?: number | null;
   lastLatitude?: number | null;
   lastLongitude?: number | null;
   lastLocationLabel?: string | null;
@@ -68,6 +86,12 @@ export type FleetTripDoc = {
   driverName?: string | null;
   jobId?: string | null;
   jobLabel?: string | null;
+  tripType?: "business" | "private" | null;
+  purpose?: string | null;
+  note?: string | null;
+  odometerStartKm?: number | null;
+  odometerEndKm?: number | null;
+  driverConfirmed?: boolean | null;
   startedAt: Timestamp;
   endedAt?: Timestamp | null;
   startAddress?: string | null;
@@ -120,6 +144,7 @@ export type FleetPositionSnapshot = {
   recordedAt: string;
   locationLabel?: string | null;
   ignitionOn?: boolean | null;
+  headingDeg?: number | null;
 };
 
 export type FleetIntegrationDoc = {

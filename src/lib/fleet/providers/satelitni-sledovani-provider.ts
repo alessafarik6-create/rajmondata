@@ -93,6 +93,7 @@ export class SatelitniSledovaniProvider implements FleetTrackingProvider {
           lat: v.lastLatitude,
           lng: v.lastLongitude,
           speedKmh: v.lastSpeedKmh ?? null,
+          headingDeg: v.lastHeadingDeg ?? null,
           movementStatus: v.lastMovementStatus ?? "unknown",
           recordedAt: v.lastPositionAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString(),
           locationLabel: v.lastLocationLabel ?? null,

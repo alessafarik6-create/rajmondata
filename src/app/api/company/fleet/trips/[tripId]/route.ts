@@ -6,6 +6,7 @@ import { serializeTrip } from "@/lib/fleet/serialize";
 import { demoTripRoute, isFleetDemoModeEnabled } from "@/lib/fleet/demo-data";
 import { resolveFleetProviderForOrg } from "@/lib/fleet/providers";
 import type { FleetTripDoc } from "@/lib/fleet/types";
+import { writeFleetAuditLog } from "@/lib/fleet/fleet-audit";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +78,20 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
   const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (body.jobId !== undefined) patch.jobId = body.jobId;
   if (body.jobLabel !== undefined) patch.jobLabel = body.jobLabel;
+  if (body.tripType !== undefined) patch.tripType = body.tripType;
+  if (body.purpose !== undefined) patch.purpose = body.purpose;
+  if (body.note !== undefined) patch.note = body.note;
+  if (body.driverName !== undefined) patch.driverName = body.driverName;
+  if (body.driverUserId !== undefined) patch.driverUserId = body.driverUserId;
+  if (body.driverConfirmed !== undefined) patch.driverConfirmed = body.driverConfirmed;
   await fleetTripsCol(perm.db, companyId).doc(tripId).update(patch);
+  await writeFleetAuditLog(perm.db, {
+    organizationId: companyId,
+    userId: perm.caller.uid,
+    action: "FLEET_TRIP_LOGBOOK_UPDATED",
+    entityType: "fleet_trip",
+    entityId: tripId,
+    metadata: { fields: Object.keys(patch).filter((k) => k !== "updatedAt") },
+  });
   return NextResponse.json({ ok: true });
 }

@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
   const vehicleId = request.nextUrl.searchParams.get("vehicleId") ?? undefined;
   const driverUserId = request.nextUrl.searchParams.get("driverUserId") ?? undefined;
   const jobId = request.nextUrl.searchParams.get("jobId") ?? undefined;
+  const tripType = request.nextUrl.searchParams.get("tripType") ?? undefined;
   const fromParam = request.nextUrl.searchParams.get("from");
   const toParam = request.nextUrl.searchParams.get("to");
   const from = fromParam ? new Date(fromParam) : undefined;
@@ -56,6 +57,9 @@ export async function GET(request: NextRequest) {
   }
   if (jobId) {
     trips = trips.filter((t) => t.jobId === jobId);
+  }
+  if (tripType === "business" || tripType === "private") {
+    trips = trips.filter((t) => (t.tripType ?? "business") === tripType);
   }
 
   return NextResponse.json({

@@ -17,7 +17,11 @@ export async function GET(request: NextRequest) {
   if (!fleetTenantOk(perm.caller, companyId)) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
-  const vehicles = await listFleetVehicles(perm.db, companyId);
+  const includeArchived = request.nextUrl.searchParams.get("includeArchived") === "1";
+  let vehicles = await listFleetVehicles(perm.db, companyId);
+  if (!includeArchived) {
+    vehicles = vehicles.filter((v) => v.archived !== true && v.active !== false);
+  }
   return NextResponse.json({ ok: true, vehicles: vehicles.map(serializeVehicle) });
 }
 
@@ -51,10 +55,20 @@ export async function POST(request: NextRequest) {
     model: String(body.model ?? "").trim() || null,
     year: body.year != null ? Number(body.year) : null,
     notes: String(body.notes ?? "").trim() || null,
+    vehicleType: String(body.vehicleType ?? "").trim() || null,
+    fuelType: String(body.fuelType ?? "").trim() || null,
+    avgConsumptionL100: body.avgConsumptionL100 != null ? Number(body.avgConsumptionL100) : null,
+    odometerKm: body.odometerKm != null ? Number(body.odometerKm) : null,
+    gpsDevicePhone: String(body.gpsDevicePhone ?? "").trim() || null,
+    stkExpiresAt: String(body.stkExpiresAt ?? "").trim() || null,
+    insuranceExpiresAt: String(body.insuranceExpiresAt ?? "").trim() || null,
+    serviceDueAt: String(body.serviceDueAt ?? "").trim() || null,
+    oilChangeDueAt: String(body.oilChangeDueAt ?? "").trim() || null,
+    tiresChangeDueAt: String(body.tiresChangeDueAt ?? "").trim() || null,
     currentDriverUserId: String(body.currentDriverUserId ?? "").trim() || null,
     currentDriverEmployeeId: String(body.currentDriverEmployeeId ?? "").trim() || null,
     currentDriverName: String(body.currentDriverName ?? "").trim() || null,
-    externalProvider: null,
+    externalProvider: String(body.externalVehicleId ?? "").trim() ? "SATELITNI_SLEDOVANI" : null,
     externalVehicleId: String(body.externalVehicleId ?? "").trim() || null,
     externalDeviceId: String(body.externalDeviceId ?? "").trim() || null,
     lastMovementStatus: "unknown",

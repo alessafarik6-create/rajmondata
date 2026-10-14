@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireFleetRead, fleetTenantOk } from "@/lib/fleet/api-auth";
-import { listFleetVehicles, loadFleetIntegration } from "@/lib/fleet/stores";
+import { listFleetTrips, listFleetVehicles, loadFleetIntegration } from "@/lib/fleet/stores";
 import { resolveFleetProviderForOrg } from "@/lib/fleet/providers";
 import { demoDashboardStats, demoPositionsForVehicles, isFleetDemoModeEnabled } from "@/lib/fleet/demo-data";
 import { serializeVehicle } from "@/lib/fleet/serialize";
@@ -18,7 +18,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
-  const vehicles = await listFleetVehicles(perm.db, companyId);
+  const allVehicles = await listFleetVehicles(perm.db, companyId);
+  const vehicles = allVehicles.filter((v) => v.archived !== true && v.active !== false);
   const integration = await loadFleetIntegration(perm.db, companyId);
   const { configured } = await resolveFleetProviderForOrg(perm.db, companyId);
   const demo = isFleetDemoModeEnabled();
@@ -45,7 +46,18 @@ export async function GET(request: NextRequest) {
           speedKmh: v.lastSpeedKmh ?? null,
         }))
   );
-  stats.total = vehicles.filter((v) => v.active !== false).length;
+  stats.total = vehicles.length;
+
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const monthTrips = await listFleetTrips(perm.db, companyId, {
+    from: monthStart,
+    to: new Date(),
+    limit: 3000,
+  });
+  const monthKm = monthTrips.reduce((s, t) => s + Number(t.distanceKm ?? 0), 0);
+  (stats as { monthKm?: number }).monthKm = Math.round(monthKm * 10) / 10;
 
   return NextResponse.json({
     ok: true,

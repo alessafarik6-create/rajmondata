@@ -113,6 +113,7 @@ export async function syncSatelitniVehiclePositionsForOrganization(
           lastLatitude: pos.lat,
           lastLongitude: pos.lng,
           lastSpeedKmh: pos.speedKmh,
+          lastHeadingDeg: pos.heading,
           lastMovementStatus: pos.movementStatus,
           lastPositionAt: pos.receivedAt
             ? Timestamp.fromDate(new Date(pos.receivedAt))
@@ -216,6 +217,12 @@ export async function syncSatelitniFleetForOrganization(
     const pos = await syncSatelitniVehiclePositionsForOrganization(db, organizationId, externalIds);
     vehiclesWithGps = pos.vehiclesWithGps;
     errors.push(...pos.errors);
+    try {
+      const { syncRecentFleetTripsForOrganization } = await import("@/lib/fleet/trip-sync-service");
+      await syncRecentFleetTripsForOrganization(db, organizationId, 2);
+    } catch (tripErr) {
+      console.warn("[fleet] trip sync", tripErr instanceof Error ? tripErr.message : tripErr);
+    }
   }
 
   const { storedVehicleCount } = await countStoredSatelitniFleet(db, organizationId);

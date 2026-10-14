@@ -2,14 +2,33 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useUser, useCompany } from "@/firebase";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { useToast } from "@/hooks/use-toast";
 import { FleetSubnav } from "@/components/fleet/fleet-subnav";
 import { FleetVehicleFormDialog } from "@/components/fleet/fleet-vehicle-form-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { movementStatusLabel } from "@/lib/fleet/providers/types";
 import type { FleetVehicleMovementStatus } from "@/lib/fleet/types";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, MoreHorizontal, Plus } from "lucide-react";
 
 type Row = {
   id: string;
@@ -27,11 +46,20 @@ type Row = {
 
 export function FleetVehiclesPage() {
   const { user } = useUser();
-  const { companyId } = useCompany();
+  const { companyId, userProfile } = useCompany();
   const access = usePortalModuleAccess("fleet");
+  const router = useRouter();
+  const { toast } = useToast();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [wizard, setWizard] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [confirmArchive, setConfirmArchive] = useState<Row | null>(null);
+  const [confirmHardDelete, setConfirmHardDelete] = useState<Row | null>(null);
+
+  const role = String((userProfile as { role?: string } | null)?.role ?? "");
+  const globalRoles = (userProfile as { globalRoles?: string[] } | null)?.globalRoles ?? [];
+  const isAdmin = role === "owner" || role === "admin" || globalRoles.includes("super_admin");
 
   const load = useCallback(async () => {
     if (!user || !companyId || !access.canRead) return;
@@ -52,6 +80,38 @@ export function FleetVehiclesPage() {
     void load();
   }, [load]);
 
+  async function archiveVehicle(row: Row) {
+    if (!user || !companyId) return;
+    const token = await user.getIdToken();
+    const res = await fetch(
+      `/api/company/fleet/vehicles/${encodeURIComponent(row.id)}?companyId=${encodeURIComponent(companyId)}`,
+      { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await res.json();
+    if (!data.ok) {
+      toast({ variant: "destructive", title: "Archivace selhala", description: data.error });
+      return;
+    }
+    toast({ title: "Vozidlo archivováno", description: "Historie jízd a účetní záznamy zůstávají zachovány." });
+    void load();
+  }
+
+  async function hardDeleteVehicle(row: Row) {
+    if (!user || !companyId || !isAdmin) return;
+    const token = await user.getIdToken();
+    const res = await fetch(
+      `/api/company/fleet/vehicles/${encodeURIComponent(row.id)}?companyId=${encodeURIComponent(companyId)}&hard=1`,
+      { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await res.json();
+    if (!data.ok) {
+      toast({ variant: "destructive", title: "Smazání selhalo", description: data.error });
+      return;
+    }
+    toast({ title: "Vozidlo trvale odstraněno z evidence vozového parku." });
+    void load();
+  }
+
   if (!access.canRead) {
     return <p className="p-6 text-muted-foreground">Nemáte oprávnění.</p>;
   }
@@ -62,7 +122,13 @@ export function FleetVehiclesPage() {
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <h1 className="text-2xl font-semibold">Vozidla</h1>
         {access.canWrite ? (
-          <Button className="gap-2 min-h-[44px]" onClick={() => setWizard(true)}>
+          <Button
+            className="gap-2 min-h-[44px]"
+            onClick={() => {
+              setEditId(null);
+              setWizard(true);
+            }}
+          >
             <Plus className="h-4 w-4" /> Přidat vozidlo
           </Button>
         ) : null}
@@ -83,7 +149,7 @@ export function FleetVehiclesPage() {
                 <th className="p-3">Rychlost</th>
                 <th className="p-3">Dnes km</th>
                 <th className="p-3">Poslední GPS</th>
-                <th className="p-3">Akce</th>
+                <th className="p-3 w-12">Akce</th>
               </tr>
             </thead>
             <tbody>
@@ -114,9 +180,55 @@ export function FleetVehiclesPage() {
                       {r.lastPositionAt ? new Date(r.lastPositionAt).toLocaleString("cs-CZ") : "—"}
                     </td>
                     <td className="p-3">
-                      <Button size="sm" variant="outline" asChild>
-                        <Link href={`/portal/fleet/vehicles/${r.id}`}>Detail</Link>
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button size="icon" variant="ghost" aria-label="Akce vozidla">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {access.canWrite ? (
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEditId(r.id);
+                                setWizard(true);
+                              }}
+                            >
+                              Upravit vozidlo
+                            </DropdownMenuItem>
+                          ) : null}
+                          <DropdownMenuItem asChild>
+                            <Link href={`/portal/fleet/vehicles/${r.id}`}>Detail vozidla</Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem asChild>
+                            <Link href={`/portal/fleet/trips?vehicleId=${encodeURIComponent(r.id)}`}>
+                              Historie jízd
+                            </Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem asChild>
+                            <Link href={`/portal/fleet/trips?vehicleId=${encodeURIComponent(r.id)}&logbook=1`}>
+                              Kniha jízd
+                            </Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => router.push(`/portal/fleet?focus=${r.id}`)}>
+                            Zobrazit na mapě
+                          </DropdownMenuItem>
+                          {access.canWrite ? (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => setConfirmArchive(r)}>Archivovat vozidlo</DropdownMenuItem>
+                              {isAdmin ? (
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => setConfirmHardDelete(r)}
+                                >
+                                  Smazat vozidlo (trvale)
+                                </DropdownMenuItem>
+                              ) : null}
+                            </>
+                          ) : null}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </td>
                   </tr>
                 ))
@@ -128,12 +240,63 @@ export function FleetVehiclesPage() {
       {companyId && user && access.canWrite ? (
         <FleetVehicleFormDialog
           open={wizard}
-          onOpenChange={setWizard}
+          onOpenChange={(o) => {
+            setWizard(o);
+            if (!o) setEditId(null);
+          }}
           companyId={companyId}
+          vehicleId={editId}
           getToken={() => user.getIdToken()}
           onSaved={() => void load()}
         />
       ) : null}
+
+      <AlertDialog open={!!confirmArchive} onOpenChange={(o) => !o && setConfirmArchive(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archivovat vozidlo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vozidlo {confirmArchive?.licensePlate} bude skryto z přehledu. Historie jízd, kniha jízd a související
+              záznamy zůstanou zachovány.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Zrušit</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmArchive) void archiveVehicle(confirmArchive);
+                setConfirmArchive(null);
+              }}
+            >
+              Archivovat
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!confirmHardDelete} onOpenChange={(o) => !o && setConfirmHardDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Trvale smazat vozidlo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tato akce odstraní dokument vozidla {confirmHardDelete?.licensePlate}. Jízdy a historické účetní záznamy
+              se automaticky nemažou — ověřte související data před pokračováním.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Zrušit</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (confirmHardDelete) void hardDeleteVehicle(confirmHardDelete);
+                setConfirmHardDelete(null);
+              }}
+            >
+              Trvale smazat
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

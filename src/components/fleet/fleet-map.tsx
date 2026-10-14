@@ -7,8 +7,10 @@ export type FleetMapProps = {
   markers: FleetMapVehicleMarker[];
   route?: FleetMapRoute | null;
   height?: string;
+  className?: string;
   onSelectVehicle?: (id: string) => void;
   selectedVehicleId?: string | null;
+  playheadIndex?: number | null;
 };
 
 const FleetMapInner = dynamic(

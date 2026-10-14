@@ -31,7 +31,7 @@ export function demoDashboardStats(positions: FleetPositionSnapshot[]) {
   const idle = positions.filter((p) => p.movementStatus === "idle" || p.movementStatus === "parked").length;
   const offline = total - online;
   const todayKm = positions.reduce((s, p) => s + (p.movementStatus === "moving" ? 48 : 12), 0);
-  return { total, online, moving, idle, offline, todayKm };
+  return { total, online, moving, idle, offline, todayKm, monthKm: todayKm * 12 };
 }
 
 /** Ukázková jízda pro UI mapy/timeline v demo režimu. */

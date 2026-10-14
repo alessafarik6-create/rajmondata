@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { requireFleetRead, requireFleetWrite, fleetTenantOk } from "@/lib/fleet/api-auth";
+import { writeFleetAuditLog } from "@/lib/fleet/fleet-audit";
+import { normalizeCompanyRole } from "@/lib/company-privilege";
 import { fleetVehiclesCol, loadFleetVehicle, listDriverAssignmentsForVehicle } from "@/lib/fleet/stores";
 import { serializeAssignment, serializeVehicle } from "@/lib/fleet/serialize";
 
@@ -61,6 +63,19 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     "model",
     "year",
     "notes",
+    "vehicleType",
+    "fuelType",
+    "avgConsumptionL100",
+    "odometerKm",
+    "gpsDevicePhone",
+    "stkExpiresAt",
+    "insuranceExpiresAt",
+    "serviceDueAt",
+    "oilChangeDueAt",
+    "tiresChangeDueAt",
+    "customReminderAt",
+    "customReminderLabel",
+    "reminderDaysBefore",
     "currentDriverUserId",
     "currentDriverEmployeeId",
     "currentDriverName",
@@ -75,6 +90,13 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     patch.licensePlate = body.licensePlate.trim().toUpperCase();
   }
   await ref.update(patch);
+  await writeFleetAuditLog(perm.db, {
+    organizationId: companyId,
+    userId: perm.caller.uid,
+    action: "FLEET_VEHICLE_UPDATED",
+    entityType: "fleet_vehicle",
+    entityId: vehicleId,
+  });
   return NextResponse.json({ ok: true });
 }
 
@@ -84,10 +106,47 @@ export async function DELETE(request: NextRequest, ctx: Ctx) {
     return NextResponse.json({ ok: false, error: perm.error }, { status: perm.status });
   }
   const companyId = String(request.nextUrl.searchParams.get("companyId") ?? "").trim();
+  const hard = request.nextUrl.searchParams.get("hard") === "1";
   const { vehicleId } = await ctx.params;
   if (!fleetTenantOk(perm.caller, companyId)) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
-  await fleetVehiclesCol(perm.db, companyId).doc(vehicleId).delete();
-  return NextResponse.json({ ok: true });
+  const ref = fleetVehiclesCol(perm.db, companyId).doc(vehicleId);
+  if (hard) {
+    const role = normalizeCompanyRole(perm.caller.role);
+    const isAdmin =
+      perm.caller.globalRoles.includes("super_admin") || role === "owner" || role === "admin";
+    if (!isAdmin) {
+      return NextResponse.json(
+        { ok: false, error: "Trvalé smazání smí pouze administrátor organizace." },
+        { status: 403 }
+      );
+    }
+    await ref.delete();
+    await writeFleetAuditLog(perm.db, {
+      organizationId: companyId,
+      userId: perm.caller.uid,
+      action: "FLEET_VEHICLE_DELETED_HARD",
+      entityType: "fleet_vehicle",
+      entityId: vehicleId,
+    });
+  } else {
+    await ref.set(
+      {
+        archived: true,
+        active: false,
+        archivedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    await writeFleetAuditLog(perm.db, {
+      organizationId: companyId,
+      userId: perm.caller.uid,
+      action: "FLEET_VEHICLE_ARCHIVED",
+      entityType: "fleet_vehicle",
+      entityId: vehicleId,
+    });
+  }
+  return NextResponse.json({ ok: true, archived: !hard, hardDeleted: hard });
 }
