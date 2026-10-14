@@ -1080,7 +1080,7 @@ service cloud.firestore {
        */
       match /product_catalogs/{catalogId} {
         allow read: if signedIn() && sameCompany(companyId) && (
-          isPrivileged() ||
+          portalModuleReadOk(companyId, 'productCatalogs') ||
           (
             userRole() == 'customer' &&
             ('customerVisible' in resource.data) && resource.data.customerVisible == true &&
@@ -1092,7 +1092,8 @@ service cloud.firestore {
             resource.data.assignedJobIds.hasAny(userDoc().linkedJobIds)
           )
         );
-        allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow create, update, delete: if signedIn() && sameCompany(companyId) &&
+          companyModuleWriteOk(companyId, 'productCatalogs');
       }
 
       match /inventoryMovements/{movId} {

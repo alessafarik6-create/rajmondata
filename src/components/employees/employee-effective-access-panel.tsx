@@ -75,32 +75,40 @@ export function EmployeeEffectiveAccessPanel(props: {
         </p>
       </div>
 
-      <ul className="max-h-48 space-y-1 overflow-y-auto text-xs">
-        <li className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-1">
+      <div className="hidden sm:grid grid-cols-[1fr_auto_auto] gap-2 text-[10px] font-semibold uppercase tracking-wide text-indigo-800/80 pb-1 border-b border-indigo-100">
+        <span>Modul</span>
+        <span className="text-right">Nastaveno</span>
+        <span className="text-right">Skutečně</span>
+      </div>
+      <ul className="max-h-56 space-y-1 overflow-y-auto text-xs">
+        <li className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-1 sm:grid sm:grid-cols-[1fr_auto_auto]">
           <span className="font-medium text-indigo-950">Kalendář — Schůzky</span>
-          <LevelBadge level={snapshot.calendar.meetings.effective} />
+          <LevelBadge level={snapshot.calendar.meetings.stored} className="sm:justify-self-end" />
+          <LevelBadge level={snapshot.calendar.meetings.effective} className="sm:justify-self-end" />
         </li>
-        <li className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-1">
+        <li className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-1 sm:grid sm:grid-cols-[1fr_auto_auto]">
           <span className="font-medium text-indigo-950">Kalendář — Montáže</span>
-          <LevelBadge level={snapshot.calendar.installations.effective} />
+          <LevelBadge level={snapshot.calendar.installations.stored} className="sm:justify-self-end" />
+          <LevelBadge level={snapshot.calendar.installations.effective} className="sm:justify-self-end" />
         </li>
         {enabledModules.map((row) => (
           <li
             key={row.moduleId}
-            className="flex flex-col gap-0.5 border-b border-indigo-100/80 pb-1 last:border-0 sm:flex-row sm:items-center sm:justify-between"
+            className="flex flex-col gap-0.5 border-b border-indigo-100/80 pb-1 last:border-0 sm:grid sm:grid-cols-[1fr_auto_auto] sm:items-center sm:gap-2"
           >
             <span className="text-indigo-950">{row.label}</span>
-            <div className="flex flex-wrap items-center gap-2">
-              {row.storedLevel !== row.effectiveLevel ? (
-                <span className="text-[10px] text-indigo-800">
-                  nastaveno {ACCESS_LABELS[row.storedLevel]} →
-                </span>
-              ) : null}
+            <LevelBadge level={row.storedLevel} className="sm:justify-self-end" />
+            <div className="flex flex-wrap items-center gap-1 sm:justify-self-end">
               <LevelBadge level={row.effectiveLevel} />
               {row.limitReason ? (
-                <span className="text-[10px] text-indigo-700/90">
-                  ({REASON_LABELS[row.limitReason]})
+                <span className="text-[10px] text-indigo-700/90 w-full sm:w-auto text-right">
+                  {REASON_LABELS[row.limitReason]}
+                  {row.storedLevel === "write" && row.effectiveLevel !== "write"
+                    ? " — zápis v UI/API je omezen"
+                    : ""}
                 </span>
+              ) : row.storedLevel === "write" && row.effectiveLevel === "write" ? (
+                <span className="text-[10px] text-indigo-700/90">Individuální matice</span>
               ) : null}
             </div>
           </li>

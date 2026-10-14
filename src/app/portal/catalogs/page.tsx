@@ -36,6 +36,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { JobProductSelectionDoc, ProductCatalogDoc, ProductCatalogProduct } from "@/lib/product-catalogs";
 import {
   buildProductGalleryUrls,
@@ -63,6 +65,7 @@ export default function ProductCatalogsPage() {
   const firestore = useFirestore();
   const { companyId } = useCompany();
   const { toast } = useToast();
+  const access = usePortalModuleAccess("productCatalogs");
   const [saving, setSaving] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
@@ -607,8 +610,28 @@ export default function ProductCatalogsPage() {
     }
   };
 
+  if (!access.canRead) {
+    return (
+      <div className="mx-auto max-w-lg p-6">
+        <Alert variant="destructive">
+          <AlertTitle>Bez oprávnění</AlertTitle>
+          <AlertDescription>K modulu Produktové katalogy nemáte přístup.</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-4">
+      {!access.canWrite ? (
+        <Alert>
+          <AlertTitle>Režim náhledu</AlertTitle>
+          <AlertDescription>
+            Můžete prohlížet katalogy a produkty. Úpravy, nahrávání obrázků a mazání vyžadují oprávnění Zápis.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {access.canWrite ? (
       <Card>
         <CardHeader>
           <CardTitle>Produktové katalogy</CardTitle>
@@ -644,6 +667,7 @@ export default function ProductCatalogsPage() {
           </div>
         </CardContent>
       </Card>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[360px,1fr]">
         <Card>
@@ -657,6 +681,7 @@ export default function ProductCatalogsPage() {
                   <p className="font-medium">{c.name || "Bez názvu"}</p>
                   <p className="text-xs text-muted-foreground">{c.category || "Bez kategorie"}</p>
                 </button>
+                {access.canWrite ? (
                 <div className="mt-2 flex flex-wrap gap-1">
                   <Button size="sm" variant="secondary" onClick={() => openCatalogDialog(c)}>
                     Upravit katalog
@@ -665,6 +690,7 @@ export default function ProductCatalogsPage() {
                   <Button size="sm" variant="outline" onClick={() => void reorderCatalog(c.id, 1)}>Dolů</Button>
                   <Button size="sm" variant="destructive" onClick={() => void safeDeleteCatalog(c)}>Smazat</Button>
                 </div>
+                ) : null}
               </div>
             ))}
           </CardContent>
@@ -674,9 +700,11 @@ export default function ProductCatalogsPage() {
           <Card>
             <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
               <CardTitle>Detail katalogu</CardTitle>
+              {access.canWrite ? (
               <Button type="button" size="sm" onClick={() => openCatalogDialog()}>
                 Upravit katalog
               </Button>
+              ) : null}
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4 sm:flex-row">
@@ -720,6 +748,8 @@ export default function ProductCatalogsPage() {
                 </div>
               </div>
 
+              {access.canWrite ? (
+              <>
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="rounded border p-3">
                   <p className="mb-2 text-sm font-medium">Přiřazení k zakázce</p>
@@ -775,6 +805,8 @@ export default function ProductCatalogsPage() {
                   Přidat produkt
                 </Button>
               </div>
+              </>
+              ) : null}
 
               <div className="space-y-2">
                 <p className="text-sm font-medium">Produkty v katalogu</p>
@@ -816,6 +848,7 @@ export default function ProductCatalogsPage() {
                           <span>{p.active !== false ? "Aktivní" : "Skrytý"}</span>
                         </div>
                       </div>
+                      {access.canWrite ? (
                       <div className="flex shrink-0 flex-wrap gap-1 sm:flex-col">
                         <Button
                           size="sm"
@@ -836,6 +869,7 @@ export default function ProductCatalogsPage() {
                           </Button>
                         </div>
                       </div>
+                      ) : null}
                     </div>
                     );
                   })}

@@ -77,7 +77,8 @@ test("sanitizePortalPermissionsForOrgRole only affects manager", () => {
     >,
     "employee"
   );
-  assert.equal(levels.settings, "write");
+  assert.equal(levels.settings, "none");
+  assert.equal(levels.customers, "write");
   const mgr = sanitizePortalPermissionsForOrgRole(levels, "manager");
   assert.equal(mgr.settings, "none");
 });

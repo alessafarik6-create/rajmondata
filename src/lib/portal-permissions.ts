@@ -41,6 +41,7 @@ export const EMPLOYEE_PERSONAL_MONEY_MODULE_ID = "employeeMoney" as PortalModule
 
 const EMPLOYEE_ORG_ROLE_ADMIN_ONLY_MODULES: readonly PortalModuleId[] = [
   "employees",
+  "settings",
   "finance",
   "bank",
   "invoices",
@@ -267,6 +268,38 @@ export function canAccessPortalModule(
   required: "read" | "write"
 ): boolean {
   return portalAccessLevelSatisfies(permissions[moduleId] ?? "none", required);
+}
+
+/** Centrální aliasy — stejná pravidla pro UI i server. */
+export function canAccessModule(
+  permissions: Record<PortalModuleId, PortalAccessLevel>,
+  moduleId: PortalModuleId
+): boolean {
+  return canAccessPortalModule(permissions, moduleId, "read");
+}
+
+export function canReadModule(
+  permissions: Record<PortalModuleId, PortalAccessLevel>,
+  moduleId: PortalModuleId
+): boolean {
+  return canAccessPortalModule(permissions, moduleId, "read");
+}
+
+export function canWriteModule(
+  permissions: Record<PortalModuleId, PortalAccessLevel>,
+  moduleId: PortalModuleId,
+  role?: string
+): boolean {
+  if (role && roleIsReadOnlyPortal(role)) return false;
+  return portalPermissionsAllowMutation(permissions, moduleId, role ?? "");
+}
+
+export function canDeleteModule(
+  permissions: Record<PortalModuleId, PortalAccessLevel>,
+  moduleId: PortalModuleId,
+  role?: string
+): boolean {
+  return canWriteModule(permissions, moduleId, role);
 }
 
 export type ResolvePortalPermissionsInput = {

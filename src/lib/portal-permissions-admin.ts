@@ -147,10 +147,11 @@ export function buildEmployeePortalAccessSnapshot(
     } else if (materialized) {
       limitReason = "stored";
     }
+    const configuredLevel = materialized ? stored[id] ?? "none" : editorLevels[id] ?? "none";
     return {
       moduleId: id,
       label: mod.label,
-      storedLevel: editorLevels[id] ?? "none",
+      storedLevel: configuredLevel,
       effectiveLevel,
       limitReason,
     };

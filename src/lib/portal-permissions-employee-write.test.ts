@@ -1,0 +1,62 @@
+import assert from "node:assert/strict";
+import {
+  canAccessPortalModule,
+  canWriteModule,
+  resolveEffectivePortalPermissions,
+} from "./portal-permissions";
+import { buildEmployeePortalAccessSnapshot } from "./portal-permissions-admin";
+
+function test(name: string, fn: () => void) {
+  try {
+    fn();
+    console.log(`ok ${name}`);
+  } catch (e) {
+    console.error(`fail ${name}`, e);
+    process.exitCode = 1;
+  }
+}
+
+test("employee with productCatalogs write gets effective write in portal resolver", () => {
+  const perms = resolveEffectivePortalPermissions({
+    role: "employee",
+    employeeDoc: {
+      portalModulePermissionsMaterialized: true,
+      portalModulePermissions: {
+        productCatalogs: "write",
+        overview: "read",
+        settings: "write",
+      },
+    },
+  });
+  assert.equal(perms.productCatalogs, "write");
+  assert.equal(perms.settings, "none");
+  assert.equal(canAccessPortalModule(perms, "productCatalogs", "write"), true);
+  assert.equal(canWriteModule(perms, "productCatalogs", "employee"), true);
+});
+
+test("employee productCatalogs read cannot write", () => {
+  const perms = resolveEffectivePortalPermissions({
+    role: "employee",
+    employeeDoc: {
+      portalModulePermissionsMaterialized: true,
+      portalModulePermissions: { productCatalogs: "read" },
+    },
+  });
+  assert.equal(canAccessPortalModule(perms, "productCatalogs", "read"), true);
+  assert.equal(canAccessPortalModule(perms, "productCatalogs", "write"), false);
+});
+
+test("access snapshot shows mismatch when org role caps write", () => {
+  const snap = buildEmployeePortalAccessSnapshot(
+    {
+      portalModulePermissionsMaterialized: true,
+      portalModulePermissions: { finance: "write", productCatalogs: "write" },
+    },
+    "employee"
+  );
+  const finance = snap.moduleRows.find((r) => r.moduleId === "finance");
+  const catalogs = snap.moduleRows.find((r) => r.moduleId === "productCatalogs");
+  assert.equal(finance?.effectiveLevel, "none");
+  assert.equal(finance?.limitReason, "org_role_cap");
+  assert.equal(catalogs?.effectiveLevel, "write");
+});
