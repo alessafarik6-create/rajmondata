@@ -17,7 +17,6 @@ import {
   collection,
   deleteField,
   doc,
-  getDocFromServer,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -71,6 +70,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  employeePortalRoleLabel,
   parseEmployeePortalRole,
   type EmployeePortalRoleId,
 } from "@/lib/employee-portal-role";
@@ -588,6 +588,8 @@ export default function EmployeeDetailPage() {
   const [orgSaving, setOrgSaving] = useState(false);
   /** Po uložení — ignorovat starší Firestore snapshot, dokud nepřijde shodná revize. */
   const pendingPermissionsRevisionRef = useRef<number | null>(null);
+  /** Uživatel upravil formulář — nesmí se přepsat starým snapshotem (getDocFromServer / listener). */
+  const permissionsDraftTouchedRef = useRef(false);
   const [portalRole, setPortalRole] = useState<EmployeePortalRoleId>("employee");
   const [moduleLevels, setModuleLevels] = useState<Record<PortalModuleId, PortalAccessLevel>>(() =>
     portalPermissionLevelsForAdminEditor(null, "employee")
@@ -646,9 +648,14 @@ export default function EmployeeDetailPage() {
     cameraFlags,
   ]);
 
+  const savedOrgRole = useMemo(
+    () => parseEmployeePortalRole((employeeDoc as Record<string, unknown> | null | undefined)?.role),
+    [employeeDoc]
+  );
+
   const applyOrgPermissionsFromEmployeeRow = useCallback(
     (row: Record<string, unknown>) => {
-      if (orgPermissionsDirty) return;
+      if (permissionsDraftTouchedRef.current) return;
       const docRevision =
         typeof row.portalPermissionsRevision === "number" ? row.portalPermissionsRevision : null;
       if (pendingPermissionsRevisionRef.current != null) {
@@ -673,7 +680,7 @@ export default function EmployeeDetailPage() {
       setEmailMailboxManageEnabled(parseEmailMailboxManageEnabled(row));
       setCameraFlags(parseEmployeeCameraFlagsFromDoc(row));
     },
-    [orgPermissionsDirty]
+    []
   );
 
   useEffect(() => {
@@ -681,18 +688,72 @@ export default function EmployeeDetailPage() {
     applyOrgPermissionsFromEmployeeRow(employeeDoc as Record<string, unknown>);
   }, [employeeDoc, applyOrgPermissionsFromEmployeeRow]);
 
-  /** Po F5 může onSnapshot krátce vrátit starou cache — vždy potvrdit stav ze serveru. */
   useEffect(() => {
-    if (!employeeRef) return;
+    permissionsDraftTouchedRef.current = false;
+    pendingPermissionsRevisionRef.current = null;
+  }, [employeeId]);
+
+  const applyDraftFromPermissionsStateApi = useCallback(
+    (data: Record<string, unknown>) => {
+      if (permissionsDraftTouchedRef.current) return;
+      const role = parseEmployeePortalRole(data.orgRole);
+      setPortalRole(role);
+      const perms = data.portalModulePermissions;
+      if (perms && typeof perms === "object") {
+        const savedLevels = portalModuleLevelsFromFirestoreRecord(
+          perms as Record<string, string>
+        );
+        setModuleLevels(
+          role === "manager" ? applyManagerPermissionCaps(savedLevels) : savedLevels
+        );
+        setCalendarLevels(
+          calendarLevelsForAdminEditor(
+            {
+              ...(employeeDoc as Record<string, unknown>),
+              role,
+              portalModulePermissions: perms,
+              portalModulePermissionsMaterialized: data.materialized === true,
+            },
+            role,
+            savedLevels
+          )
+        );
+      }
+      if (typeof data.portalPermissionsRevision === "number") {
+        pendingPermissionsRevisionRef.current = data.portalPermissionsRevision;
+      }
+    },
+    [employeeDoc]
+  );
+
+  useEffect(() => {
+    if (!canManageOrgRoles || !user || !employeeId || tab !== "roles") return;
+    if (permissionsDraftTouchedRef.current) return;
     let cancelled = false;
-    void getDocFromServer(employeeRef).then((snap) => {
-      if (cancelled || !snap.exists()) return;
-      applyOrgPermissionsFromEmployeeRow(snap.data() as Record<string, unknown>);
-    });
+    void (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/employees/permissions-state?employeeId=${encodeURIComponent(employeeId)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (cancelled || !res.ok || data.ok !== true) return;
+        applyDraftFromPermissionsStateApi(data);
+      } catch {
+        /* Firestore listener jako záloha */
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, [employeeRef, employeeId, applyOrgPermissionsFromEmployeeRow]);
+  }, [
+    canManageOrgRoles,
+    user,
+    employeeId,
+    tab,
+    applyDraftFromPermissionsStateApi,
+  ]);
 
   useEffect(() => {
     if (!orgPermissionsDirty || tab !== "roles") return;
@@ -758,6 +819,34 @@ export default function EmployeeDetailPage() {
     return null;
   }, [employeeDoc]);
 
+  const markPermissionsDraftTouched = useCallback(() => {
+    permissionsDraftTouchedRef.current = true;
+  }, []);
+
+  const handlePortalRoleChange = useCallback(
+    (role: EmployeePortalRoleId) => {
+      markPermissionsDraftTouched();
+      setPortalRole(role);
+    },
+    [markPermissionsDraftTouched]
+  );
+
+  const handleModuleLevelsChange = useCallback(
+    (levels: Record<PortalModuleId, PortalAccessLevel>) => {
+      markPermissionsDraftTouched();
+      setModuleLevels(levels);
+    },
+    [markPermissionsDraftTouched]
+  );
+
+  const handleCalendarLevelsChange = useCallback(
+    (levels: Record<CalendarSubPermissionKey, PortalAccessLevel>) => {
+      markPermissionsDraftTouched();
+      setCalendarLevels(levels);
+    },
+    [markPermissionsDraftTouched]
+  );
+
   const confirmPortalRoleChange = useCallback(
     ({
       nextRole,
@@ -816,7 +905,7 @@ export default function EmployeeDetailPage() {
         calendarPermissions?: Record<string, string> | null;
         portalPermissionsRevision?: number | null;
       };
-      if (!res.ok) {
+      if (!res.ok || data.ok !== true) {
         throw new Error(typeof data.error === "string" ? data.error : "Uložení se nezdařilo.");
       }
       const verifyError = verifyEmployeeOrgPermissionsSaveResponse({
@@ -854,9 +943,16 @@ export default function EmployeeDetailPage() {
       if (typeof data.portalPermissionsRevision === "number") {
         pendingPermissionsRevisionRef.current = data.portalPermissionsRevision;
       }
+      permissionsDraftTouchedRef.current = false;
+      const syncWarn =
+        typeof (data as { userProfileSyncError?: string }).userProfileSyncError === "string"
+          ? (data as { userProfileSyncError?: string }).userProfileSyncError
+          : null;
       toast({
-        title: "Oprávnění byla úspěšně uložena",
-        description: "Změny jsou trvale uloženy v databázi.",
+        title: syncWarn ? "Oprávnění uložena s upozorněním" : "Oprávnění byla úspěšně uložena",
+        description:
+          syncWarn ??
+          "Změny jsou trvale uloženy v databázi a ověřeny proti odpovědi serveru.",
       });
     } catch (e: any) {
       toast({ variant: "destructive", title: "Chyba", description: e?.message || "Zkuste to znovu." });
@@ -1707,6 +1803,17 @@ export default function EmployeeDetailPage() {
           <Card className={cardCls}>
             <CardHeader>
               <CardTitle className={cardTitleCls}>Role a oprávnění</CardTitle>
+              <p className="text-xs text-slate-600 mt-1">
+                Uložená role v databázi:{" "}
+                <strong>{employeePortalRoleLabel(savedOrgRole)}</strong>
+                {orgPermissionsDirty ? (
+                  <span className="text-amber-800">
+                    {" "}
+                    · v editoru máte neuložené změny (role v editoru:{" "}
+                    {employeePortalRoleLabel(portalRole)})
+                  </span>
+                ) : null}
+              </p>
             </CardHeader>
             <CardContent className="space-y-6">
               {employeeAuthLinkWarning ? (
@@ -1729,7 +1836,10 @@ export default function EmployeeDetailPage() {
                   <Switch
                     checked={visibleInTerminal}
                     disabled={!canManageOrgRoles}
-                    onCheckedChange={(v) => setVisibleInTerminal(v)}
+                    onCheckedChange={(v) => {
+                      markPermissionsDraftTouched();
+                      setVisibleInTerminal(v);
+                    }}
                   />
                 </div>
               </div>
@@ -1752,16 +1862,22 @@ export default function EmployeeDetailPage() {
                 <EmployeePortalRolePermissionsEditor
                   disabled={!canManageOrgRoles}
                   portalRole={portalRole}
-                  onPortalRoleChange={setPortalRole}
+                  onPortalRoleChange={handlePortalRoleChange}
                   confirmRoleChange={confirmPortalRoleChange}
                   levels={moduleLevels}
-                  onLevelsChange={setModuleLevels}
+                  onLevelsChange={handleModuleLevelsChange}
                   calendarLevels={calendarLevels}
-                  onCalendarLevelsChange={setCalendarLevels}
+                  onCalendarLevelsChange={handleCalendarLevelsChange}
                   dashboardAiAssistantEnabled={dashboardAiAssistantEnabled}
-                  onDashboardAiAssistantEnabledChange={setDashboardAiAssistantEnabled}
+                  onDashboardAiAssistantEnabledChange={(v) => {
+                    markPermissionsDraftTouched();
+                    setDashboardAiAssistantEnabled(v);
+                  }}
                   emailMailboxManageEnabled={emailMailboxManageEnabled}
-                  onEmailMailboxManageEnabledChange={setEmailMailboxManageEnabled}
+                  onEmailMailboxManageEnabledChange={(v) => {
+                    markPermissionsDraftTouched();
+                    setEmailMailboxManageEnabled(v);
+                  }}
                   roleSelectClassName={selectCls}
                 />
                 </>
@@ -1770,7 +1886,10 @@ export default function EmployeeDetailPage() {
               {canManageOrgRoles ? (
                 <EmployeeCameraPermissionsBlock
                   flags={cameraFlags}
-                  onChange={setCameraFlags}
+                  onChange={(f) => {
+                    markPermissionsDraftTouched();
+                    setCameraFlags(f);
+                  }}
                   disabled={!canManageOrgRoles}
                 />
               ) : null}

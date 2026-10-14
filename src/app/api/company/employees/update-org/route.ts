@@ -66,11 +66,12 @@ type Body = {
  * Aktualizuje companies/.../employees a users/{authUserId}.role (Admin SDK).
  */
 export async function PATCH(request: NextRequest) {
+  try {
   const db = getAdminFirestore();
   const auth = getAdminAuth();
   if (!db || !auth) {
     return NextResponse.json(
-      { error: "Firebase Admin není nakonfigurován." },
+      { ok: false, error: "Firebase Admin není nakonfigurován." },
       { status: 503 }
     );
   }
@@ -78,7 +79,7 @@ export async function PATCH(request: NextRequest) {
   const authHeader = request.headers.get("authorization") || "";
   const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
   if (!idToken) {
-    return NextResponse.json({ error: "Chybí Authorization Bearer token." }, { status: 401 });
+    return NextResponse.json({ ok: false, error: "Chybí Authorization Bearer token." }, { status: 401 });
   }
 
   let callerUid: string;
@@ -86,19 +87,19 @@ export async function PATCH(request: NextRequest) {
     const decoded = await auth.verifyIdToken(idToken);
     callerUid = decoded.uid;
   } catch {
-    return NextResponse.json({ error: "Neplatný token." }, { status: 401 });
+    return NextResponse.json({ ok: false, error: "Neplatný token." }, { status: 401 });
   }
 
   const callerSnap = await db.collection("users").doc(callerUid).get();
   const caller = callerSnap.data() as Record<string, unknown> | undefined;
   if (!caller) {
-    return NextResponse.json({ error: "Profil volajícího neexistuje." }, { status: 403 });
+    return NextResponse.json({ ok: false, error: "Profil volajícího neexistuje." }, { status: 403 });
   }
 
   const globalRoles = caller.globalRoles as string[] | undefined;
   if (Array.isArray(globalRoles) && globalRoles.includes("super_admin")) {
     return NextResponse.json(
-      { error: "Superadministrátor použije jiné nástroje — tato akce je jen pro správu firmy." },
+      { ok: false, error: "Superadministrátor použije jiné nástroje — tato akce je jen pro správu firmy." },
       { status: 403 }
     );
   }
@@ -107,13 +108,13 @@ export async function PATCH(request: NextRequest) {
   const callerRole = String(caller.role || "");
   if (portalPreviewSessionFromFirestore(caller.portalPreviewSession)) {
     return NextResponse.json(
-      { error: "V režimu náhledu nelze měnit oprávnění." },
+      { ok: false, error: "V režimu náhledu nelze měnit oprávnění." },
       { status: 403 }
     );
   }
   if (!companyId || !["owner", "admin"].includes(callerRole)) {
     return NextResponse.json(
-      { error: "Pouze vlastník nebo administrátor organizace může měnit tyto údaje." },
+      { ok: false, error: "Pouze vlastník nebo administrátor organizace může měnit tyto údaje." },
       { status: 403 }
     );
   }
@@ -122,12 +123,12 @@ export async function PATCH(request: NextRequest) {
   try {
     body = (await request.json()) as Body;
   } catch {
-    return NextResponse.json({ error: "Neplatné JSON tělo." }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Neplatné JSON tělo." }, { status: 400 });
   }
 
   const employeeId = String(body.employeeId || "").trim();
   if (!employeeId) {
-    return NextResponse.json({ error: "Chybí employeeId." }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Chybí employeeId." }, { status: 400 });
   }
 
   const empRef = db
@@ -137,11 +138,11 @@ export async function PATCH(request: NextRequest) {
     .doc(employeeId);
   const empSnap = await empRef.get();
   if (!empSnap.exists) {
-    return NextResponse.json({ error: "Zaměstnanec neexistuje." }, { status: 404 });
+    return NextResponse.json({ ok: false, error: "Zaměstnanec neexistuje." }, { status: 404 });
   }
   const emp = empSnap.data() as Record<string, unknown>;
   if (!employeeRecordBelongsToCompany(emp, companyId)) {
-    return NextResponse.json({ error: "Neplatná firma." }, { status: 403 });
+    return NextResponse.json({ ok: false, error: "Neplatná firma." }, { status: 403 });
   }
 
   const hasOrgRole = typeof body.role === "string";
@@ -172,6 +173,7 @@ export async function PATCH(request: NextRequest) {
   ) {
     return NextResponse.json(
       {
+        ok: false,
         error:
           "Pošlete role, visibleInAttendanceTerminal, canAccessWarehouse / canAccessProduction, canAccessMeetingNotes, employeePortalModules a/nebo portalModulePermissions.",
       },
@@ -184,7 +186,7 @@ export async function PATCH(request: NextRequest) {
     const parsed = parseEmployeePortalRoleFromRequest(body.role);
     if (!parsed) {
       return NextResponse.json(
-        { error: "role musí být employee, accountant, manager nebo orgAdmin." },
+        { ok: false, error: "role musí být employee, accountant, manager nebo orgAdmin." },
         { status: 400 }
       );
     }
@@ -319,13 +321,20 @@ export async function PATCH(request: NextRequest) {
 
   const authUserId = String(emp.authUserId || "").trim();
   const effectiveOrgRole = hasOrgRole ? orgRole : parseEmployeeOrgRole(emp as { role?: unknown });
+  let userProfileSyncError: string | null = null;
   if (authUserId && (hasOrgRole || hasPortalMatrix)) {
-    await syncUserProfileAfterEmployeePermissionsSave(db, {
-      companyId,
-      employeeId,
-      authUserId,
-      orgRole: effectiveOrgRole,
-    });
+    try {
+      await syncUserProfileAfterEmployeePermissionsSave(db, {
+        companyId,
+        employeeId,
+        authUserId,
+        orgRole: effectiveOrgRole,
+      });
+    } catch (syncErr) {
+      console.error("[update-org] sync users profile", syncErr);
+      userProfileSyncError =
+        "Oprávnění v dokumentu zaměstnance byla uložena, ale synchronizace přihlášeného účtu (users) selhala.";
+    }
   }
 
   const savedSnap = await empRef.get();
@@ -343,5 +352,17 @@ export async function PATCH(request: NextRequest) {
     dashboardAiAssistantEnabled: saved?.dashboardAiAssistantEnabled ?? null,
     emailMailboxManageEnabled: saved?.emailMailboxManageEnabled ?? null,
     visibleInAttendanceTerminal: saved?.visibleInAttendanceTerminal ?? null,
+    userProfileSyncError,
   });
+  } catch (e) {
+    console.error("[update-org PATCH]", e);
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Uložení oprávnění selhalo kvůli chybě serveru. Zkontrolujte konzoli serveru (update-org).",
+      },
+      { status: 500 }
+    );
+  }
 }

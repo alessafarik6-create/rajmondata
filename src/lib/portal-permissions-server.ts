@@ -9,6 +9,7 @@ import {
 } from "@/lib/portal-permissions";
 import { effectivePortalRoleForCaller } from "@/lib/portal-caller-role";
 import { resolveEmployeeRecordForCaller } from "@/lib/portal-employee-doc-resolve";
+import { computeEffectivePortalAccessForCaller } from "@/lib/portal-effective-access-server";
 
 export async function loadEmployeeDocForCaller(
   db: Firestore,
@@ -30,14 +31,8 @@ export async function resolveCallerPortalPermissions(
   db: Firestore,
   caller: VerifiedCompanyCaller
 ): Promise<ReturnType<typeof resolveEffectivePortalPermissions>> {
-  const resolved = await resolveEmployeeRecordForCaller(db, caller);
-  const employeeDoc = resolved?.employeeDoc ?? null;
-  const portalRole = effectivePortalRoleForCaller(caller, employeeDoc);
-  return resolveEffectivePortalPermissions({
-    role: portalRole,
-    globalRoles: caller.globalRoles,
-    employeeDoc,
-  });
+  const { permissions } = await computeEffectivePortalAccessForCaller(db, caller);
+  return permissions;
 }
 
 export type PortalPermissionCheckResult =

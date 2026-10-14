@@ -65,25 +65,51 @@ service cloud.firestore {
       return false;
     }
 
-    /** WRITE k modulu portálu z employees.portalModulePermissions (zaměstnanec). */
+    function employeePortalModuleWriteFromMatrix(companyId, moduleId) {
+      if (ownEmployeeId() == null) {
+        return false;
+      }
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+      if (!exists(empRef)) {
+        return false;
+      }
+      let data = get(empRef).data;
+      return 'portalModulePermissions' in data &&
+        data.portalModulePermissions is map &&
+        moduleId in data.portalModulePermissions &&
+        data.portalModulePermissions[moduleId] == 'write';
+    }
+
+    function employeePortalMatrixMaterialized(companyId) {
+      if (ownEmployeeId() == null) {
+        return false;
+      }
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+      if (!exists(empRef)) {
+        return false;
+      }
+      let data = get(empRef).data;
+      return ('portalModulePermissionsMaterialized' in data) &&
+        data.portalModulePermissionsMaterialized == true;
+    }
+
+    /** WRITE k modulu portálu — stejná logika jako API (materializovaná matice má prioritu). */
     function portalModuleWriteOk(companyId, moduleId) {
       let eff = effectivePortalRoleForRules(companyId);
-      if (eff in ['owner', 'admin', 'manager']) {
+      if (eff in ['owner', 'admin']) {
         return canPrivilegedWrite();
       }
       if (eff == 'accountant') {
         return false;
       }
-      if (eff == 'employee' && ownEmployeeId() != null) {
-        let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
-        if (!exists(empRef)) {
-          return false;
+      if (eff == 'manager') {
+        if (employeePortalMatrixMaterialized(companyId)) {
+          return employeePortalModuleWriteFromMatrix(companyId, moduleId);
         }
-        let data = get(empRef).data;
-        return 'portalModulePermissions' in data &&
-          data.portalModulePermissions is map &&
-          moduleId in data.portalModulePermissions &&
-          data.portalModulePermissions[moduleId] == 'write';
+        return canPrivilegedWrite();
+      }
+      if (eff == 'employee' && ownEmployeeId() != null) {
+        return employeePortalModuleWriteFromMatrix(companyId, moduleId);
       }
       return false;
     }
