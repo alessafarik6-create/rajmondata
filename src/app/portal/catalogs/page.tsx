@@ -42,6 +42,10 @@ import {
 } from "@/lib/product-catalogs";
 import { catalogAuthUserMessage } from "@/lib/product-catalogs/catalog-auth-diagnostics";
 import type { CatalogAuthDiagnostic } from "@/lib/product-catalogs/catalog-auth-diagnostics";
+import {
+  collectProductImageStoragePaths,
+  planCatalogProductDeletion,
+} from "@/lib/product-catalogs/product-delete";
 
 type CatalogRow = { id: string } & Partial<ProductCatalogDoc>;
 
@@ -318,33 +322,48 @@ export default function ProductCatalogsPage() {
   };
 
   const safeDeleteCatalog = async (catalog: CatalogRow) => {
-    if (!firestore || !companyId || !user?.uid) return;
+    if (!companyId || !user?.uid) return;
     if (!window.confirm("Opravdu smazat katalog? Bude archivován (soft delete).")) return;
-    const cg = query(
-      collectionGroup(firestore, "product_catalog_selections"),
-      where("companyId", "==", companyId),
-      where("catalogId", "==", catalog.id)
-    );
-    const selectionsSnap = await getDocs(cg);
-    const hasSelections = !selectionsSnap.empty;
-    await updateCatalog(
-      catalog.id,
-      {
-        archived: true,
-        active: false,
-        customerVisible: false,
-        deletedAt: new Date().toISOString(),
-        assignedCustomerIds: [],
-        assignedJobIds: [],
-      },
-      false
-    );
-    toast({
-      title: hasSelections ? "Katalog byl bezpečně archivován" : "Katalog byl archivován",
-      description: hasSelections
-        ? "Katalog má historické výběry, proto nebyl tvrdě smazán."
-        : "Katalog je skrytý a neaktivní.",
-    });
+    let hasSelections = false;
+    if (firestore) {
+      try {
+        const cg = query(
+          collectionGroup(firestore, "product_catalog_selections"),
+          where("companyId", "==", companyId),
+          where("catalogId", "==", catalog.id)
+        );
+        const selectionsSnap = await getDocs(cg);
+        hasSelections = !selectionsSnap.empty;
+      } catch (e) {
+        console.warn("[ProductCatalogs] catalog selection lookup failed", e);
+      }
+    }
+    try {
+      await updateCatalog(
+        catalog.id,
+        {
+          archived: true,
+          active: false,
+          customerVisible: false,
+          deletedAt: new Date().toISOString(),
+          assignedCustomerIds: [],
+          assignedJobIds: [],
+        },
+        false
+      );
+      toast({
+        title: hasSelections ? "Katalog byl bezpečně archivován" : "Katalog byl archivován",
+        description: hasSelections
+          ? "Katalog má historické výběry, proto nebyl tvrdě smazán."
+          : "Katalog je skrytý a neaktivní.",
+      });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Katalog se nepodařilo smazat",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
   };
 
   const toggleAssignment = async (
@@ -402,11 +421,60 @@ export default function ProductCatalogsPage() {
     }
   };
 
-  const updateProduct = async (catalogId: string, productId: string, patch: Partial<ProductCatalogProduct>) => {
+  const updateProduct = async (
+    catalogId: string,
+    productId: string,
+    patch: Partial<ProductCatalogProduct>,
+    successToastTitle?: string | false
+  ) => {
     const cat = catalogs.find((c) => c.id === catalogId);
     if (!cat) return;
     const next = [...(cat.products ?? [])].map((p) => (p.id === productId ? { ...p, ...patch } : p));
-    await updateCatalog(catalogId, { products: next }, "Produkt byl uložen");
+    await updateCatalog(catalogId, { products: next }, successToastTitle ?? "Produkt byl uložen");
+  };
+
+  const bestEffortDeleteProductStorage = async (product: ProductCatalogProduct) => {
+    const paths = collectProductImageStoragePaths(product);
+    if (!paths.length) return;
+    try {
+      const storage = getFirebaseStorage();
+      for (const path of paths) {
+        try {
+          await deleteObject(ref(storage, path));
+        } catch (e) {
+          const code =
+            e && typeof e === "object" && "code" in e ? String((e as { code: string }).code) : "";
+          if (code === "storage/object-not-found") continue;
+          console.warn("[ProductCatalogs] storage delete skipped", { path, code });
+        }
+      }
+    } catch (e) {
+      console.warn("[ProductCatalogs] bestEffortDeleteProductStorage", e);
+    }
+  };
+
+  const lookupProductHasHistoricalSelection = async (
+    catalogId: string,
+    productId: string
+  ): Promise<boolean> => {
+    if (!firestore || !companyId) return false;
+    try {
+      const cg = query(
+        collectionGroup(firestore, "product_catalog_selections"),
+        where("companyId", "==", companyId),
+        where("catalogId", "==", catalogId)
+      );
+      const snap = await getDocs(cg);
+      let found = false;
+      snap.forEach((d) => {
+        const data = d.data() as Partial<JobProductSelectionDoc>;
+        if ((data.selectedProductIds ?? []).includes(productId)) found = true;
+      });
+      return found;
+    } catch (e) {
+      console.warn("[ProductCatalogs] selection lookup failed — delete continues", e);
+      return false;
+    }
   };
 
   const reorderProduct = async (catalogId: string, productId: string, dir: -1 | 1) => {
@@ -425,30 +493,50 @@ export default function ProductCatalogsPage() {
   };
 
   const deleteProductSafely = async (catalogId: string, product: ProductCatalogProduct) => {
-    if (!firestore || !companyId) return;
-    if (!window.confirm("Opravdu smazat produkt? Bude bezpečně archivován.")) return;
-    const cg = query(
-      collectionGroup(firestore, "product_catalog_selections"),
-      where("companyId", "==", companyId),
-      where("catalogId", "==", catalogId)
-    );
-    const snap = await getDocs(cg);
-    let isSelected = false;
-    snap.forEach((d) => {
-      const data = d.data() as Partial<JobProductSelectionDoc>;
-      if ((data.selectedProductIds ?? []).includes(product.id)) isSelected = true;
-    });
-    await updateProduct(catalogId, product.id, {
-      active: false,
-      archived: true,
-      archivedAt: new Date().toISOString(),
-    });
-    toast({
-      title: "Produkt byl smazán",
-      description: isSelected
-        ? "Produkt byl archivován, historické výběry zůstaly zachované."
-        : "Produkt je nyní archivovaný.",
-    });
+    if (!companyId || !user?.uid) {
+      toast({
+        variant: "destructive",
+        title: "Produkt nelze smazat",
+        description: "Nejste přihlášeni nebo chybí organizace.",
+      });
+      return;
+    }
+    if (!access.canWrite) return;
+    if (!window.confirm("Opravdu smazat produkt? Tuto akci lze u historických výběrů zákazníka zrušit jen archivací.")) {
+      return;
+    }
+    const cat = catalogs.find((c) => c.id === catalogId);
+    if (!cat) {
+      toast({
+        variant: "destructive",
+        title: "Produkt nelze smazat",
+        description: "Katalog nebyl nalezen. Obnovte stránku.",
+      });
+      return;
+    }
+    setSaving(true);
+    try {
+      const hasHistoricalSelection = await lookupProductHasHistoricalSelection(catalogId, product.id);
+      const plan = planCatalogProductDeletion(cat.products ?? [], product.id, hasHistoricalSelection);
+      await updateCatalog(catalogId, { products: plan.products }, false);
+      void bestEffortDeleteProductStorage(product);
+      toast({
+        title: "Produkt byl úspěšně smazán",
+        description:
+          plan.mode === "archive"
+            ? "Produkt byl archivován kvůli historickým výběrům zákazníka."
+            : "Produkt byl odstraněn z katalogu.",
+      });
+    } catch (e) {
+      console.error("[ProductCatalogs] deleteProductSafely", e);
+      toast({
+        variant: "destructive",
+        title: "Produkt se nepodařilo smazat",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const openCatalogDialog = (cat?: CatalogRow) => {
