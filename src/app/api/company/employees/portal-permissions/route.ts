@@ -144,13 +144,16 @@ export async function PATCH(request: NextRequest) {
   const authUserId = String(empData?.authUserId ?? "").trim();
   if (authUserId) {
     const portalRole = userPortalRoleForEmployeeDocRole(orgRole);
-    await db.collection("users").doc(authUserId).set(
-      {
-        role: portalRole,
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    await db
+      .collection("users")
+      .doc(authUserId)
+      .set(
+        {
+          role: portalRole,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
   }
 
   try {
@@ -174,5 +177,13 @@ export async function PATCH(request: NextRequest) {
     /* audit volitelný */
   }
 
-  return NextResponse.json({ ok: true, portalModulePermissions: sanitizedMerged });
+  const savedSnap = await empRef.get();
+  const saved = savedSnap.data() as Record<string, unknown> | undefined;
+
+  return NextResponse.json({
+    ok: true,
+    portalModulePermissions: saved?.portalModulePermissions ?? sanitizedMerged,
+    calendarPermissions: saved?.calendarPermissions ?? null,
+    portalPermissionsRevision: saved?.portalPermissionsRevision ?? null,
+  });
 }

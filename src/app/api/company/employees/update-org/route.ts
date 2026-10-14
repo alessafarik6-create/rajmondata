@@ -230,9 +230,7 @@ export async function PATCH(request: NextRequest) {
         typeof fromBody === "string"
           ? fromBody.trim().toLowerCase()
           : String(existing[id] ?? "none").trim().toLowerCase();
-      if (v === "read" || v === "write" || v === "none") {
-        merged[id] = v;
-      }
+      merged[id] = v === "read" || v === "write" || v === "none" ? v : "none";
     }
     const levelMapRaw = portalModuleLevelsFromFirestoreRecord(merged);
     const effectiveOrgRole = hasOrgRole ? orgRole : parseEmployeeOrgRole(emp as { role?: unknown });
@@ -247,12 +245,13 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (body.calendarPermissions !== undefined) {
-    patch.portalModulePermissionsMaterialized = true;
     const normalized = normalizeCalendarPermissionsForFirestore(body.calendarPermissions ?? {});
     if (normalized) patch.calendarPermissions = normalized;
     else patch.calendarPermissions = FieldValue.delete();
     const scheduleLevel = aggregateScheduleModuleLevel(body.calendarPermissions ?? {});
     if (patch.portalModulePermissions) {
+      (patch.portalModulePermissions as Record<string, string>).schedule = scheduleLevel;
+    } else if (hasPortalMatrix) {
       (patch.portalModulePermissions as Record<string, string>).schedule = scheduleLevel;
     } else {
       const existing = (emp.portalModulePermissions ?? {}) as Record<string, string>;
@@ -315,8 +314,9 @@ export async function PATCH(request: NextRequest) {
   }
 
   const authUserId = String(emp.authUserId || "").trim();
-  if (authUserId && hasOrgRole) {
-    const portalRole = userPortalRoleForEmployeeDocRole(orgRole);
+  const effectiveOrgRole = hasOrgRole ? orgRole : parseEmployeeOrgRole(emp as { role?: unknown });
+  if (authUserId && (hasOrgRole || hasPortalMatrix)) {
+    const portalRole = userPortalRoleForEmployeeDocRole(effectiveOrgRole);
     await db.collection("users").doc(authUserId).set(
       {
         role: portalRole,

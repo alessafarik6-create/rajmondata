@@ -11,6 +11,7 @@ import type { EmployeePortalRoleId } from "@/lib/employee-portal-role";
 import { userPortalRoleForEmployeeDocRole } from "@/lib/employee-organization";
 import {
   ALL_PORTAL_MODULE_IDS,
+  applyManagerPermissionCaps,
   emptyPermissionMap,
   initialPortalPermissionLevelsForEmployee,
   isPortalModulePermissionsMaterialized,
@@ -31,7 +32,21 @@ export function defaultCalendarLevelsForNewEmployee(): Record<
   return { meetings: "none", installations: "none" };
 }
 
-/** Úroveň pro editor — u nematerializovaných účtů odpovídá efektivnímu přístupu (legacy). */
+/** Přesně uložená matice z Firestore (chybějící klíče = none). */
+export function storedPortalPermissionLevelsFromEmployeeDoc(
+  employeeDoc: Record<string, unknown> | null | undefined
+): Record<PortalModuleId, PortalAccessLevel> {
+  const out = emptyPermissionMap();
+  const raw = employeeDoc?.portalModulePermissions;
+  if (!raw || typeof raw !== "object") return out;
+  for (const id of ALL_PORTAL_MODULE_IDS) {
+    const v = String((raw as Record<string, unknown>)[id] ?? "none").trim().toLowerCase();
+    out[id] = v === "read" || v === "write" || v === "none" ? v : "none";
+  }
+  return out;
+}
+
+/** Úroveň pro editor — materializovaná matice = uložené hodnoty; jinak legacy + dílčí override. */
 export function portalPermissionLevelsForAdminEditor(
   employeeDoc: Record<string, unknown> | null | undefined,
   portalRole: EmployeePortalRoleId
@@ -39,14 +54,33 @@ export function portalPermissionLevelsForAdminEditor(
   if (portalRole === "orgAdmin") {
     return initialPortalPermissionLevelsForEmployee(employeeDoc, portalRole);
   }
+
+  const stored = storedPortalPermissionLevelsFromEmployeeDoc(employeeDoc);
+  const raw = employeeDoc?.portalModulePermissions;
+  const hasStoredKeys =
+    raw != null && typeof raw === "object" && Object.keys(raw as object).length > 0;
+
   if (isPortalModulePermissionsMaterialized(employeeDoc)) {
-    return initialPortalPermissionLevelsForEmployee(employeeDoc, portalRole);
+    return portalRole === "manager" ? applyManagerPermissionCaps(stored) : stored;
   }
+
   const userRole = userPortalRoleForEmployeeDocRole(portalRole);
-  return resolveEffectivePortalPermissions({
+  const effective = resolveEffectivePortalPermissions({
     role: userRole,
     employeeDoc,
   });
+
+  if (!hasStoredKeys) {
+    return effective;
+  }
+
+  const merged = { ...effective };
+  for (const id of ALL_PORTAL_MODULE_IDS) {
+    if (Object.prototype.hasOwnProperty.call(raw as object, id)) {
+      merged[id] = stored[id] ?? "none";
+    }
+  }
+  return portalRole === "manager" ? applyManagerPermissionCaps(merged) : merged;
 }
 
 /** Kalendář v admin UI — stejné podsekce jako u přihlášeného zaměstnance. */
@@ -129,29 +163,39 @@ export function buildEmployeePortalAccessSnapshot(
   const materialized = isPortalModulePermissionsMaterialized(employeeDoc);
   const legacy = !materialized;
 
+  const rawMatrix = employeeDoc?.portalModulePermissions;
   const moduleRows: PortalModuleAccessSnapshotRow[] = PORTAL_PERMISSION_MODULES.filter(
     (m) => m.id !== "schedule"
   ).map((mod) => {
     const id = mod.id as PortalModuleId;
-    let storedLevel = stored[id] ?? "none";
-    if (!materialized && !employeeDoc?.portalModulePermissions) {
-      storedLevel = "none";
-    }
+    const hasExplicitStoredKey =
+      rawMatrix != null &&
+      typeof rawMatrix === "object" &&
+      Object.prototype.hasOwnProperty.call(rawMatrix as object, id);
+    const storedLevel = materialized
+      ? stored[id] ?? "none"
+      : hasExplicitStoredKey
+        ? stored[id] ?? "none"
+        : legacy
+          ? "none"
+          : editorLevels[id] ?? "none";
     const effectiveLevel = effective[id] ?? "none";
     let limitReason: PortalPermissionLimitReason | null = null;
     if (storedLevel !== effectiveLevel) {
-      if (legacy && effectiveLevel !== "none") limitReason = "legacy_preset";
-      else limitReason = "org_role_cap";
-    } else if (legacy && effectiveLevel !== "none") {
+      if (legacy && effectiveLevel !== "none" && !hasExplicitStoredKey && !materialized) {
+        limitReason = "legacy_preset";
+      } else {
+        limitReason = "org_role_cap";
+      }
+    } else if (legacy && effectiveLevel !== "none" && !materialized) {
       limitReason = "legacy_preset";
-    } else if (materialized) {
+    } else if (materialized || hasExplicitStoredKey) {
       limitReason = "stored";
     }
-    const configuredLevel = materialized ? stored[id] ?? "none" : editorLevels[id] ?? "none";
     return {
       moduleId: id,
       label: mod.label,
-      storedLevel: configuredLevel,
+      storedLevel,
       effectiveLevel,
       limitReason,
     };

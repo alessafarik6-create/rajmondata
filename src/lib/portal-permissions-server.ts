@@ -47,7 +47,13 @@ export async function requirePortalModuleAccess(
   moduleId: PortalModuleId,
   required: "read" | "write"
 ): Promise<PortalPermissionCheckResult> {
-  const permissions = await resolveCallerPortalPermissions(db, caller);
+  const employeeDoc = await loadEmployeeDocForCaller(db, caller);
+  const portalRole = effectivePortalRoleForCaller(caller, employeeDoc);
+  const permissions = resolveEffectivePortalPermissions({
+    role: portalRole,
+    globalRoles: caller.globalRoles,
+    employeeDoc,
+  });
   if (!canAccessPortalModule(permissions, moduleId, required)) {
     return {
       ok: false,
@@ -58,7 +64,7 @@ export async function requirePortalModuleAccess(
           : "K této sekci nemáte oprávnění.",
     };
   }
-  if (required === "write" && !portalPermissionsAllowMutation(permissions, moduleId, caller.role)) {
+  if (required === "write" && !portalPermissionsAllowMutation(permissions, moduleId, portalRole)) {
     return {
       ok: false,
       status: 403,

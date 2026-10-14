@@ -74,9 +74,11 @@ import {
 } from "@/lib/employee-portal-role";
 import {
   ALL_PORTAL_MODULE_IDS,
+  applyManagerPermissionCaps,
   canAccessPortalModule,
   canManagePortalPermissions,
   employeeHasExplicitPortalModuleMatrix,
+  portalModuleLevelsFromFirestoreRecord,
   type PortalAccessLevel,
   type PortalModuleId,
   parseDashboardAiAssistantEnabled,
@@ -761,11 +763,38 @@ export default function EmployeeDetailPage() {
           emailMailboxManageEnabled,
         }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        portalModulePermissions?: Record<string, string> | null;
+        calendarPermissions?: Record<string, string> | null;
+      };
       if (!res.ok) {
         throw new Error(typeof data.error === "string" ? data.error : "Uložení se nezdařilo.");
       }
-      toast({ title: "Uloženo", description: "Role a oprávnění byly aktualizovány." });
+      if (data.portalModulePermissions && typeof data.portalModulePermissions === "object") {
+        const savedLevels = portalModuleLevelsFromFirestoreRecord(data.portalModulePermissions);
+        setModuleLevels(
+          portalRole === "manager"
+            ? applyManagerPermissionCaps(savedLevels)
+            : savedLevels
+        );
+        setCalendarLevels(
+          calendarLevelsForAdminEditor(
+            {
+              ...(employeeDoc as Record<string, unknown>),
+              portalModulePermissions: data.portalModulePermissions,
+              portalModulePermissionsMaterialized: true,
+              calendarPermissions: data.calendarPermissions ?? undefined,
+            },
+            portalRole,
+            savedLevels
+          )
+        );
+      }
+      toast({
+        title: "Oprávnění byla úspěšně uložena",
+        description: "Změny jsou trvale uloženy v databázi.",
+      });
     } catch (e: any) {
       toast({ variant: "destructive", title: "Chyba", description: e?.message || "Zkuste to znovu." });
     } finally {

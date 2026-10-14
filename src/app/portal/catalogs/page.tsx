@@ -597,16 +597,12 @@ export default function ProductCatalogsPage() {
           order: visible.length,
         };
         toProducts.push(moved);
-        await updateDoc(doc(firestore, "companies", companyId, "product_catalogs", productFormSourceCatalogId), {
+        await patchCatalogApi(productFormSourceCatalogId, {
           products: fromProducts.map((p) => serializeProductForFirestore(p)),
-          updatedBy: user.uid,
-          updatedAt: serverTimestamp(),
-        } as any);
-        await updateDoc(doc(firestore, "companies", companyId, "product_catalogs", tgtId), {
+        });
+        await patchCatalogApi(tgtId, {
           products: toProducts.map((p) => serializeProductForFirestore(p)),
-          updatedBy: user.uid,
-          updatedAt: serverTimestamp(),
-        } as any);
+        });
         toast({ title: "Produkt byl přesunut a uložen" });
         const prevSourceCatalogId = productFormSourceCatalogId;
         setProductDialogOpen(false);

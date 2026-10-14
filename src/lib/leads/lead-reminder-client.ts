@@ -84,12 +84,30 @@ export async function deleteLeadReminder(
   return { ok: true };
 }
 
+let leadReminderProcessBackoffUntil = 0;
+let leadReminderProcessFailures = 0;
+
 export async function processDueLeadReminders(user: User): Promise<void> {
+  if (Date.now() < leadReminderProcessBackoffUntil) return;
   const token = await bearer(user);
-  await fetch("/api/company/lead-reminders/process-due", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-  }).catch(() => undefined);
+  try {
+    const res = await fetch("/api/company/lead-reminders/process-due", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      leadReminderProcessFailures += 1;
+      const delayMs = Math.min(300_000, 15_000 * leadReminderProcessFailures);
+      leadReminderProcessBackoffUntil = Date.now() + delayMs;
+      return;
+    }
+    leadReminderProcessFailures = 0;
+    leadReminderProcessBackoffUntil = 0;
+  } catch {
+    leadReminderProcessFailures += 1;
+    const delayMs = Math.min(300_000, 15_000 * leadReminderProcessFailures);
+    leadReminderProcessBackoffUntil = Date.now() + delayMs;
+  }
 }
 
 export function parseLeadReminderRow(
