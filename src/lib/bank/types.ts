@@ -25,8 +25,46 @@ export type BankConnectionDoc = {
     imported?: number;
     updated?: number;
   } | null;
+  /** Nastavení automatické synchronizace, párování a potvrzovacích e-mailů. */
+  automation?: BankAutomationSettings | null;
+  /** Statistiky posledních automatických běhů (cron / sync). */
+  automationStats?: BankAutomationStats | null;
   createdAt?: unknown;
   updatedAt?: unknown;
+};
+
+export type BankAutomationSettings = {
+  /** Výchozí: true — cron každých 5 hodin. */
+  autoSyncEnabled?: boolean;
+  /** Výchozí: true — jednoznačné shody bez AI skóre. */
+  autoMatchEnabled?: boolean;
+  /** Výchozí: false — potvrzení platby e-mailem zákazníkovi. */
+  autoPaymentConfirmationEnabled?: boolean;
+  /** Účet v modulu E-mail pro odesílání potvrzení. */
+  paymentConfirmationEmailAccountId?: string | null;
+  /** Výchozí: false — automat u částečných úhrad. */
+  autoPartialPaymentConfirmation?: boolean;
+};
+
+export type BankAutomationStats = {
+  lastAutoSyncAt?: string | null;
+  nextScheduledSyncAt?: string | null;
+  lastAutoMatchAt?: string | null;
+  lastRunImported?: number;
+  lastRunAutoMatched?: number;
+  pendingReviewCount?: number;
+  confirmationsSentTotal?: number;
+  lastConfirmationSentAt?: string | null;
+  lastAutoSyncError?: string | null;
+};
+
+export type BankAutomationLogDoc = {
+  organizationId: string;
+  kind: "sync" | "auto_match" | "payment_confirmation";
+  success: boolean;
+  message?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt?: unknown;
 };
 
 export type BankAccountDoc = {
@@ -124,6 +162,10 @@ export type BankTransactionMatchDoc = {
   matchType: BankMatchType;
   confidence?: number | null;
   invoicePaymentId?: string | null;
+  paymentConfirmationSentAt?: string | null;
+  paymentConfirmationEmailAccountId?: string | null;
+  paymentConfirmationRecipient?: string | null;
+  paymentConfirmationError?: string | null;
   createdAt?: unknown;
 };
 

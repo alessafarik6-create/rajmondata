@@ -144,6 +144,7 @@ export async function GET(
       suggestedMatchesAt: t.suggestedMatchesAt,
       matches: matches.map((m) => ({
         ...m,
+        paymentConfirmationSentAt: m.paymentConfirmationSentAt ?? null,
         targetLabel:
           m.invoiceId
             ? labels.get(`inv:${String(m.invoiceId)}`) ?? String(m.invoiceId)

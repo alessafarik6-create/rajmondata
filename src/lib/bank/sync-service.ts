@@ -39,6 +39,9 @@ export type BankSyncResult = {
   lastSyncAt: string;
   accountsSuccess?: boolean;
   transactionsSuccess?: boolean;
+  importedTransactionIds?: string[];
+  autoMatched?: number;
+  confirmationsSent?: number;
 };
 
 let syncLocks = new Map<string, Promise<BankSyncResult>>();
@@ -71,6 +74,7 @@ export async function syncBankForOrganization(
     let updated = 0;
     let accountsSaved = 0;
     let transactionsSuccess = true;
+    const importedTransactionIds: string[] = [];
 
     try {
       console.info("[RB SYNC] accounts start");
@@ -226,6 +230,7 @@ export async function syncBankForOrganization(
               createdAt: FieldValue.serverTimestamp(),
             });
             imported += 1;
+            importedTransactionIds.push(ids.externalTransactionId);
           } else {
             const prevHash = String(exists.data()?.rawHash ?? "");
             if (prevHash !== ids.rawHash) {
@@ -238,6 +243,34 @@ export async function syncBankForOrganization(
 
       await refreshSuggestedMatchesForOrganization(db, organizationId, 80);
 
+      let autoMatched = 0;
+      let confirmationsSent = 0;
+      try {
+        const { runDeterministicAutoMatchForOrganization } = await import(
+          "@/lib/bank/auto-match-service"
+        );
+        const { automationSettingsFromConnection, computeNextScheduledSyncAt } = await import(
+          "@/lib/bank/automation-settings"
+        );
+        const connSnap = await connRef.get();
+        const connData = connSnap.data() as import("@/lib/bank/types").BankConnectionDoc | undefined;
+        const autoResult = await runDeterministicAutoMatchForOrganization(
+          db,
+          organizationId,
+          userId,
+          {
+            transactionIds:
+              importedTransactionIds.length > 0 ? importedTransactionIds : undefined,
+            settings: automationSettingsFromConnection(connData ?? null),
+            importedCount: imported,
+          }
+        );
+        autoMatched = autoResult.autoMatched;
+        confirmationsSent = autoResult.confirmationsSent;
+      } catch (autoErr) {
+        console.warn("[RB SYNC] auto-match failed", autoErr instanceof Error ? autoErr.message : autoErr);
+      }
+
       const lastSyncAt = new Date().toISOString();
       await connRef.set(
         {
@@ -245,6 +278,13 @@ export async function syncBankForOrganization(
           lastSyncAt,
           lastSyncError: null,
           lastSyncStats: { accounts: accountsSaved, imported, updated },
+          automationStats: {
+            lastAutoSyncAt: lastSyncAt,
+            nextScheduledSyncAt: (await import("@/lib/bank/automation-settings")).computeNextScheduledSyncAt(),
+            lastRunImported: imported,
+            lastRunAutoMatched: autoMatched,
+            lastAutoSyncError: null,
+          },
           updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -254,7 +294,7 @@ export async function syncBankForOrganization(
         organizationId,
         userId,
         action: "BANK_SYNC_FINISHED",
-        metadata: { accounts: accountsSaved, imported, updated },
+        metadata: { accounts: accountsSaved, imported, updated, autoMatched, confirmationsSent },
       });
 
       return {
@@ -264,6 +304,9 @@ export async function syncBankForOrganization(
         lastSyncAt,
         accountsSuccess: accountsSaved > 0,
         transactionsSuccess,
+        importedTransactionIds,
+        autoMatched,
+        confirmationsSent,
       };
     } catch (e) {
       if (e instanceof BankSyncPartialError) throw e;

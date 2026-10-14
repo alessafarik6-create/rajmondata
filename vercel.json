@@ -28,6 +28,10 @@
     {
       "path": "/api/cron/fleet-gps-sync?mode=catalog",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/bank-sync",
+      "schedule": "0 */5 * * *"
     }
   ],
   "functions": {
@@ -55,6 +59,9 @@
       "maxDuration": 300
     },
     "src/app/api/cron/sync-email-mailboxes/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/bank-sync/route.ts": {
       "maxDuration": 300
     },
     "src/app/api/company/email-mailbox/accounts/[accountId]/sync/route.ts": {

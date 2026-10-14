@@ -56,6 +56,8 @@ export async function POST(request: NextRequest) {
       accounts: result.accounts,
       imported: result.imported,
       updated: result.updated,
+      autoMatched: result.autoMatched ?? 0,
+      confirmationsSent: result.confirmationsSent ?? 0,
     });
   } catch (e) {
     if (e instanceof BankSyncPartialError) {

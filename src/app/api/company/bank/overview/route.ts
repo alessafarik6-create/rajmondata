@@ -5,6 +5,7 @@ import {
   loadBankConnection,
   listActiveBankAccounts,
 } from "@/lib/bank/connection-store";
+import { bankAutomationPublicView } from "@/lib/bank/automation-settings";
 import { bankTransactionsCol } from "@/lib/bank/collections";
 import { roundMoney2 } from "@/lib/vat-calculations";
 
@@ -54,6 +55,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     ok: true,
     connection: bankConnectionPublicView(conn),
+    automation: bankAutomationPublicView(conn),
     accounts: accounts.map((a) => ({
       id: a.id,
       name: a.name,

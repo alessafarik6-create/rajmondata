@@ -6,6 +6,7 @@ import {
 } from "../portal-permissions";
 import { bankTransactionRawHash, resolveBankTransactionDocId } from "./transaction-id";
 import { pickAutoMatch, suggestBankTransactionMatches } from "./matching";
+import { findDeterministicIssuedInvoiceMatch } from "./deterministic-auto-match";
 import { buildRbPremiumRequestUrl, resolveRaiffeisenApiOrigin } from "./rb-premium-url";
 
 function test(name: string, fn: () => void) {
@@ -90,4 +91,50 @@ test("matching VS + amount", () => {
   );
   assert.ok(suggestions.length > 0);
   assert.equal(pickAutoMatch(suggestions)?.targetId, "inv1");
+});
+
+test("deterministic match unique VS and amount", () => {
+  const todayIso = "2026-10-14";
+  const m = findDeterministicIssuedInvoiceMatch(
+    {
+      direction: "incoming",
+      amount: 266_638,
+      currency: "CZK",
+      variableSymbol: "20260036",
+      bookingDate: todayIso,
+    },
+    [
+      {
+        id: "inv53",
+        invoiceNumber: "ZF-2026-053",
+        variableSymbol: "20260036",
+        amountGross: 266_638,
+        currency: "CZK",
+        status: "sent",
+      },
+    ],
+    todayIso
+  );
+  assert.ok(m);
+  assert.equal(m?.invoiceId, "inv53");
+  assert.equal(m?.isFullPayment, true);
+});
+
+test("deterministic match ambiguous — two invoices same VS", () => {
+  const todayIso = "2026-10-14";
+  const m = findDeterministicIssuedInvoiceMatch(
+    {
+      direction: "incoming",
+      amount: 1000,
+      currency: "CZK",
+      variableSymbol: "999",
+      bookingDate: todayIso,
+    },
+    [
+      { id: "a", invoiceNumber: "A", variableSymbol: "999", amountGross: 1000, currency: "CZK" },
+      { id: "b", invoiceNumber: "B", variableSymbol: "999", amountGross: 1000, currency: "CZK" },
+    ],
+    todayIso
+  );
+  assert.equal(m, null);
 });

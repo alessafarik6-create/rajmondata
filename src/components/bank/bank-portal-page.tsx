@@ -16,7 +16,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2, RefreshCw, Landmark, ChevronRight } from "lucide-react";
+import { Loader2, RefreshCw, Landmark, ChevronRight, Zap } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { downloadCsvFromRows } from "@/lib/csv-download";
 import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 import { useToast } from "@/hooks/use-toast";
@@ -46,6 +47,26 @@ type OverviewData = {
     unmatchedCount: number;
     matchedCount: number;
   };
+  automation?: {
+    settings: {
+      autoSyncEnabled: boolean;
+      autoMatchEnabled: boolean;
+      autoPaymentConfirmationEnabled: boolean;
+      paymentConfirmationEmailAccountId: string | null;
+      autoPartialPaymentConfirmation: boolean;
+    };
+    stats: {
+      lastAutoSyncAt: string | null;
+      nextScheduledSyncAt: string | null;
+      lastAutoMatchAt: string | null;
+      lastRunImported: number;
+      lastRunAutoMatched: number;
+      pendingReviewCount: number;
+      confirmationsSentTotal: number;
+      lastConfirmationSentAt: string | null;
+      lastAutoSyncError: string | null;
+    };
+  };
 };
 
 export function BankPortalPage() {
@@ -68,6 +89,12 @@ export function BankPortalPage() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [drawerTxn, setDrawerTxn] = useState<string | null>(null);
   const [drawerMatchMode, setDrawerMatchMode] = useState(false);
+  const [autoSettings, setAutoSettings] = useState<OverviewData["automation"] | null>(null);
+  const [automationLogs, setAutomationLogs] = useState<
+    Array<{ id: string; kind: string; success: boolean; message: string | null; createdAt: string | null }>
+  >([]);
+  const [emailAccounts, setEmailAccounts] = useState<Array<{ id: string; email: string }>>([]);
+  const [savingAutomation, setSavingAutomation] = useState(false);
 
   const authHeaders = useCallback(async () => {
     const token = await user!.getIdToken();
@@ -82,7 +109,38 @@ export function BankPortalPage() {
       { headers }
     );
     const json = await res.json();
-    if (json.ok) setOverview(json);
+    if (json.ok) {
+      setOverview(json);
+      if (json.automation) setAutoSettings(json.automation);
+    }
+  }, [user, companyId, access.canRead, authHeaders]);
+
+  const loadAutomationDetails = useCallback(async () => {
+    if (!user || !companyId || !access.canRead) return;
+    const headers = await authHeaders();
+    const res = await fetch(
+      `/api/company/bank/automation?companyId=${encodeURIComponent(companyId)}`,
+      { headers }
+    );
+    const json = await res.json();
+    if (json.ok) {
+      setAutoSettings(json.automation);
+      setAutomationLogs(json.logs ?? []);
+    }
+    const emailRes = await fetch(
+      `/api/company/email-mailbox/accounts?companyId=${encodeURIComponent(companyId)}`,
+      { headers }
+    );
+    const emailJson = await emailRes.json();
+    const accList = emailJson.accounts ?? emailJson.data?.accounts;
+    if (emailJson.ok && Array.isArray(accList)) {
+      setEmailAccounts(
+        accList.map((a: { id: string; email: string }) => ({
+          id: a.id,
+          email: a.email,
+        }))
+      );
+    }
   }, [user, companyId, access.canRead, authHeaders]);
 
   const loadTransactions = useCallback(async () => {
@@ -110,6 +168,10 @@ export function BankPortalPage() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    if (tab === "settings" && access.canWrite) void loadAutomationDetails();
+  }, [tab, access.canWrite, loadAutomationDetails]);
 
   useEffect(() => {
     if (!loading) void loadTransactions();
@@ -151,9 +213,10 @@ export function BankPortalPage() {
       }
       const imported = json.transactionsImported ?? json.imported ?? 0;
       const accounts = json.accountsImported ?? json.accounts ?? 0;
+      const autoMatched = json.autoMatched ?? 0;
       toast({
         title: "Synchronizace dokončena",
-        description: `Účty: ${accounts}, nové transakce: ${imported}`,
+        description: `Účty: ${accounts}, nové transakce: ${imported}${autoMatched ? `, auto spárováno: ${autoMatched}` : ""}`,
       });
       await reload();
     } catch (e) {
@@ -234,6 +297,32 @@ export function BankPortalPage() {
       description: json.message ?? json.error ?? "Hotovo.",
       variant: json.ok ? "default" : "destructive",
     });
+  };
+
+  const saveAutomation = async () => {
+    if (!access.canWrite || !companyId || !user || !autoSettings) return;
+    setSavingAutomation(true);
+    try {
+      const headers = { ...(await authHeaders()), "Content-Type": "application/json" };
+      const res = await fetch("/api/company/bank/automation", {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ companyId, settings: autoSettings.settings }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      setAutoSettings(json.automation);
+      toast({ title: "Automatizace uložena" });
+      await loadAutomationDetails();
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Automatizace",
+        description: e instanceof Error ? e.message : "Chyba",
+      });
+    } finally {
+      setSavingAutomation(false);
+    }
   };
 
   const testConnection = async () => {
@@ -370,12 +459,53 @@ export function BankPortalPage() {
                 <CardTitle className="text-sm font-medium">Poslední synchronizace</CardTitle>
               </CardHeader>
               <CardContent className="text-sm">
-                {overview?.connection.lastSyncAt
-                  ? new Date(overview.connection.lastSyncAt).toLocaleString("cs-CZ")
+                {overview?.automation?.stats.lastAutoSyncAt ?? overview?.connection.lastSyncAt
+                  ? new Date(
+                      overview?.automation?.stats.lastAutoSyncAt ??
+                        overview!.connection.lastSyncAt!
+                    ).toLocaleString("cs-CZ")
                   : "—"}
               </CardContent>
             </Card>
           </div>
+          <Card className="border-primary/25">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Zap className="h-5 w-5 text-primary" /> Automatizace banky
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 text-sm">
+              <div>
+                <p className="text-muted-foreground">Příští plánovaná sync</p>
+                <p className="font-medium">
+                  {overview?.automation?.stats.nextScheduledSyncAt
+                    ? new Date(overview.automation.stats.nextScheduledSyncAt).toLocaleString("cs-CZ")
+                    : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Nové transakce (poslední běh)</p>
+                <p className="font-medium">{overview?.automation?.stats.lastRunImported ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Auto spárováno</p>
+                <p className="font-medium">{overview?.automation?.stats.lastRunAutoMatched ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Ke kontrole</p>
+                <p className="font-medium">{overview?.automation?.stats.pendingReviewCount ?? overview?.summary.unmatchedCount ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Odeslaná potvrzení</p>
+                <p className="font-medium">{overview?.automation?.stats.confirmationsSentTotal ?? 0}</p>
+              </div>
+              {overview?.automation?.stats.lastAutoSyncError ? (
+                <div className="sm:col-span-2 lg:col-span-3 text-destructive">
+                  Poslední chyba: {overview.automation.stats.lastAutoSyncError}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader>
               <CardTitle>Bankovní účty</CardTitle>
@@ -489,8 +619,109 @@ export function BankPortalPage() {
           />
         </TabsContent>
 
-        <TabsContent value="settings">
+        <TabsContent value="settings" className="space-y-4">
           {access.canWrite ? (
+            <>
+            <Card>
+              <CardHeader>
+                <CardTitle>Automatizace</CardTitle>
+              </CardHeader>
+              <CardContent className="max-w-2xl space-y-4">
+                {autoSettings ? (
+                  <>
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <Label>Automatická synchronizace každých 5 hodin</Label>
+                        <p className="text-xs text-muted-foreground">Cron na serveru, nezávisle na prohlížeči.</p>
+                      </div>
+                      <Switch
+                        checked={autoSettings.settings.autoSyncEnabled}
+                        onCheckedChange={(v) =>
+                          setAutoSettings({
+                            ...autoSettings,
+                            settings: { ...autoSettings.settings, autoSyncEnabled: v },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <Label>Automatické párování jednoznačných plateb</Label>
+                        <p className="text-xs text-muted-foreground">Bez AI skóre — VS/číslo faktury + přesná částka.</p>
+                      </div>
+                      <Switch
+                        checked={autoSettings.settings.autoMatchEnabled}
+                        onCheckedChange={(v) =>
+                          setAutoSettings({
+                            ...autoSettings,
+                            settings: { ...autoSettings.settings, autoMatchEnabled: v },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <Label>Automaticky odesílat potvrzení o platbě</Label>
+                        <p className="text-xs text-muted-foreground">Výchozí vypnuto. Jen ověřený e-mail z faktury.</p>
+                      </div>
+                      <Switch
+                        checked={autoSettings.settings.autoPaymentConfirmationEnabled}
+                        onCheckedChange={(v) =>
+                          setAutoSettings({
+                            ...autoSettings,
+                            settings: {
+                              ...autoSettings.settings,
+                              autoPaymentConfirmationEnabled: v,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label>Odesílací e-mailová schránka</Label>
+                      <select
+                        className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                        value={autoSettings.settings.paymentConfirmationEmailAccountId ?? ""}
+                        onChange={(e) =>
+                          setAutoSettings({
+                            ...autoSettings,
+                            settings: {
+                              ...autoSettings.settings,
+                              paymentConfirmationEmailAccountId: e.target.value || null,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">— vyberte schránku —</option>
+                        {emailAccounts.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.email}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <Button disabled={savingAutomation} onClick={() => void saveAutomation()}>
+                      {savingAutomation ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit automatizaci"}
+                    </Button>
+                    {automationLogs.length > 0 ? (
+                      <div className="rounded-md border p-3 space-y-2">
+                        <p className="text-sm font-medium">Historie automatických operací</p>
+                        <ul className="max-h-48 overflow-y-auto text-xs text-muted-foreground space-y-1">
+                          {automationLogs.map((l) => (
+                            <li key={l.id}>
+                              {l.createdAt ? new Date(l.createdAt).toLocaleString("cs-CZ") : "—"} · {l.kind}{" "}
+                              {l.success ? "OK" : "CHYBA"} — {l.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Načítám nastavení…</p>
+                )}
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader>
                 <CardTitle>Raiffeisenbank Premium API</CardTitle>
@@ -534,6 +765,7 @@ export function BankPortalPage() {
                 </div>
               </CardContent>
             </Card>
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">Nastavení integrace smí měnit pouze administrátor.</p>
           )}

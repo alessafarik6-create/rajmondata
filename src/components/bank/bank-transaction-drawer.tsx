@@ -32,6 +32,7 @@ type MatchRow = {
   documentId?: string | null;
   matchedAmount: number;
   targetLabel?: string | null;
+  paymentConfirmationSentAt?: string | null;
 };
 
 type TxDetail = {
@@ -102,6 +103,17 @@ export function BankTransactionDrawer({
     amount: number;
   } | null>(null);
   const [unmatchId, setUnmatchId] = useState<string | null>(null);
+  const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
+  const [confirmEmailMatchId, setConfirmEmailMatchId] = useState<string | null>(null);
+  const [confirmDraft, setConfirmDraft] = useState<{
+    to: string;
+    subject: string;
+    textBody: string;
+    htmlBody?: string;
+  } | null>(null);
+  const [confirmEmailAccountId, setConfirmEmailAccountId] = useState("");
+  const [emailAccounts, setEmailAccounts] = useState<Array<{ id: string; email: string }>>([]);
+  const [sendingConfirm, setSendingConfirm] = useState(false);
 
   const remaining = useMemo(() => {
     if (!detail) return 0;
@@ -234,6 +246,87 @@ export function BankTransactionDrawer({
     onChanged();
   };
 
+  const openPaymentConfirmation = async (matchId: string) => {
+    if (!canWrite || !transactionId) return;
+    try {
+      const headers = {
+        ...(await getAuthHeaders()),
+        "Content-Type": "application/json",
+      };
+      const res = await fetch("/api/company/bank/payment-confirmation/preview", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ companyId, transactionId, matchId }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error ?? "Náhled selhal.");
+      if (json.alreadySent) {
+        toast({ title: "Potvrzení už bylo odesláno" });
+        return;
+      }
+      setConfirmEmailMatchId(json.matchId ?? matchId);
+      setConfirmDraft(json.draft);
+      setConfirmEmailOpen(true);
+      const accRes = await fetch(
+        `/api/company/email-mailbox/accounts?companyId=${encodeURIComponent(companyId)}`,
+        { headers: await getAuthHeaders() }
+      );
+      const accJson = await accRes.json();
+      const list = (accJson.accounts ?? accJson.data?.accounts ?? []) as Array<{
+        id: string;
+        email: string;
+      }>;
+      if (Array.isArray(list)) {
+        setEmailAccounts(list.map((a) => ({ id: a.id, email: a.email })));
+        if (list[0]) setConfirmEmailAccountId(list[0].id);
+      }
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Potvrzení platby",
+        description: e instanceof Error ? e.message : "Chyba",
+      });
+    }
+  };
+
+  const sendPaymentConfirmation = async () => {
+    if (!confirmDraft || !confirmEmailMatchId || !confirmEmailAccountId) return;
+    setSendingConfirm(true);
+    try {
+      const headers = {
+        ...(await getAuthHeaders()),
+        "Content-Type": "application/json",
+      };
+      const res = await fetch("/api/company/bank/payment-confirmation/send", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          companyId,
+          matchId: confirmEmailMatchId,
+          emailAccountId: confirmEmailAccountId,
+          to: confirmDraft.to,
+          subject: confirmDraft.subject,
+          textBody: confirmDraft.textBody,
+          htmlBody: confirmDraft.htmlBody,
+        }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+      toast({ title: "Potvrzení odesláno", description: confirmDraft.to });
+      setConfirmEmailOpen(false);
+      await loadDetail();
+      onChanged();
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Odeslání",
+        description: e instanceof Error ? e.message : "Chyba",
+      });
+    } finally {
+      setSendingConfirm(false);
+    }
+  };
+
   const doUnmatch = async () => {
     if (!unmatchId || !canWrite) return;
     const headers = await getAuthHeaders();
@@ -307,6 +400,18 @@ export function BankTransactionDrawer({
                         {m.invoiceId ? (
                           <Button size="sm" variant="outline" asChild>
                             <Link href={`/portal/invoices/${m.invoiceId}`}>Otevřít fakturu</Link>
+                          </Button>
+                        ) : null}
+                        {m.invoiceId && canWrite ? (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={Boolean(m.paymentConfirmationSentAt)}
+                            onClick={() => void openPaymentConfirmation(m.id)}
+                          >
+                            {m.paymentConfirmationSentAt
+                              ? "Potvrzení odesláno"
+                              : "Odeslat potvrzení platby"}
                           </Button>
                         ) : null}
                         {m.documentId ? (
@@ -457,6 +562,59 @@ export function BankTransactionDrawer({
               Zrušit
             </Button>
             <Button onClick={() => void submitMatch()}>Potvrdit spárování</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmEmailOpen} onOpenChange={setConfirmEmailOpen}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Odeslat potvrzení platby</DialogTitle>
+          </DialogHeader>
+          {confirmDraft ? (
+            <div className="space-y-3 text-sm">
+              <div>
+                <Label>Příjemce</Label>
+                <Input value={confirmDraft.to} readOnly />
+              </div>
+              <div>
+                <Label>Odesílací schránka</Label>
+                <select
+                  className="w-full rounded-md border px-2 py-2"
+                  value={confirmEmailAccountId}
+                  onChange={(e) => setConfirmEmailAccountId(e.target.value)}
+                >
+                  {emailAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label>Předmět</Label>
+                <Input
+                  value={confirmDraft.subject}
+                  onChange={(e) => setConfirmDraft({ ...confirmDraft, subject: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label>Text e-mailu</Label>
+                <Textarea
+                  rows={12}
+                  value={confirmDraft.textBody}
+                  onChange={(e) => setConfirmDraft({ ...confirmDraft, textBody: e.target.value })}
+                />
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmEmailOpen(false)}>
+              Zrušit
+            </Button>
+            <Button disabled={sendingConfirm} onClick={() => void sendPaymentConfirmation()}>
+              {sendingConfirm ? <Loader2 className="h-4 w-4 animate-spin" /> : "Odeslat"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

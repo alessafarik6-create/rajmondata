@@ -37,6 +37,8 @@ export type BankTxnMatchInput = {
   variableSymbol?: string | null;
   counterpartyName?: string | null;
   counterpartyAccount?: string | null;
+  message?: string | null;
+  reference?: string | null;
   bookingDate: string;
 };
 
