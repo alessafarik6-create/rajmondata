@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { verifyCompanyBearerWithPortalAccess } from "@/lib/api-company-auth";
-import { sanitizePreliminaryDealInput } from "@/lib/leads/preliminary-deal-server";
+import {
+  resolvePreliminaryDealEmployeeName,
+  sanitizePreliminaryDealInput,
+} from "@/lib/leads/preliminary-deal-server";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +41,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Předběžná cena musí být platné číslo." }, { status: 400 });
   }
 
+  const responsibleEmployeeId =
+    patch.responsibleEmployeeId !== undefined
+      ? patch.responsibleEmployeeId
+      : v.caller.employeeId ?? null;
+  const responsibleEmployeeName = responsibleEmployeeId
+    ? await resolvePreliminaryDealEmployeeName(v.db, companyId, responsibleEmployeeId)
+    : null;
+
   const ref = v.db.collection("companies").doc(companyId).collection("preliminary_deals").doc();
   const doc = {
     companyId,
@@ -53,8 +64,8 @@ export async function POST(request: NextRequest) {
     expectedCompletionDate: patch.expectedCompletionDate ?? null,
     expectedConfirmationDate: patch.expectedConfirmationDate ?? null,
     note: patch.note ?? null,
-    responsibleEmployeeId: patch.responsibleEmployeeId ?? v.caller.employeeId ?? null,
-    responsibleEmployeeName: patch.responsibleEmployeeName ?? null,
+    responsibleEmployeeId,
+    responsibleEmployeeName,
     sourceLeadId: patch.sourceLeadId ?? null,
     convertedJobId: null,
     attachments: patch.attachments ?? [],

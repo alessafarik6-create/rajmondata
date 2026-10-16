@@ -46,6 +46,10 @@ import {
   preliminaryDealMatchesFilters,
 } from "@/lib/leads/preliminary-deal-summary";
 import { parsePreliminaryDealDoc } from "@/lib/leads/preliminary-deal-server";
+import {
+  buildEmployeeNameMap,
+  resolvePreliminaryDealResponsibleName,
+} from "@/lib/leads/preliminary-deal-employees";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 
 export type PreliminaryDealFormPrefill = {
@@ -151,6 +155,8 @@ export const PreliminaryDealsPanel = forwardRef<PreliminaryDealsPanelHandle, Pro
 
     const summary = useMemo(() => computePreliminaryDealsSummary(filtered), [filtered]);
 
+    const employeeNameById = useMemo(() => buildEmployeeNameMap(employees), [employees]);
+
     const [formOpen, setFormOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [form, setForm] = useState(emptyForm);
@@ -221,7 +227,6 @@ export const PreliminaryDealsPanel = forwardRef<PreliminaryDealsPanelHandle, Pro
       setSaving(true);
       try {
         const token = await user.getIdToken();
-        const emp = employees.find((e) => e.id === form.responsibleEmployeeId);
         const payload = {
           companyId,
           title: form.title.trim(),
@@ -236,7 +241,6 @@ export const PreliminaryDealsPanel = forwardRef<PreliminaryDealsPanelHandle, Pro
           expectedConfirmationDate: form.expectedConfirmationDate.trim() || null,
           note: form.note.trim() || null,
           responsibleEmployeeId: form.responsibleEmployeeId.trim() || null,
-          responsibleEmployeeName: emp?.name ?? null,
           sourceLeadId: form.sourceLeadId.trim() || null,
         };
         const url = editingId
@@ -432,49 +436,66 @@ export const PreliminaryDealsPanel = forwardRef<PreliminaryDealsPanelHandle, Pro
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Input
-            placeholder="Vyhledat…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            className="max-w-xs"
-          />
-          <select
-            className={NATIVE_SELECT_CLASS}
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as PreliminaryDealStatus | "all")}
-          >
-            <option value="all">Všechny stavy</option>
-            {PRELIMINARY_DEAL_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {PRELIMINARY_DEAL_STATUS_LABELS[s]}
-              </option>
-            ))}
-          </select>
-          <select
-            className={NATIVE_SELECT_CLASS}
-            value={employeeFilter}
-            onChange={(e) => setEmployeeFilter(e.target.value)}
-          >
-            <option value="all">Všichni zaměstnanci</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-          </select>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-          <Button type="button" variant="outline" onClick={() => void runExport("csv")}>
-            <FileDown className="mr-2 h-4 w-4" />
-            Export CSV
-          </Button>
-          <Button type="button" variant="outline" onClick={() => void runExport("xlsx")}>
-            Excel
-          </Button>
-          <Button type="button" variant="outline" onClick={() => void runExport("pdf")}>
-            PDF seznam
-          </Button>
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="grid gap-2 md:grid-cols-3">
+            <Input
+              placeholder="Vyhledat…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <select
+              className={NATIVE_SELECT_CLASS}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as PreliminaryDealStatus | "all")}
+            >
+              <option value="all">Všechny stavy</option>
+              {PRELIMINARY_DEAL_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {PRELIMINARY_DEAL_STATUS_LABELS[s]}
+                </option>
+              ))}
+            </select>
+            <select
+              className={NATIVE_SELECT_CLASS}
+              value={employeeFilter}
+              onChange={(e) => setEmployeeFilter(e.target.value)}
+            >
+              <option value="all">Všichni zaměstnanci</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="sm:max-w-[11rem]"
+              aria-label="Datum od"
+            />
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="sm:max-w-[11rem]"
+              aria-label="Datum do"
+            />
+            <div className="flex flex-wrap gap-2 sm:ml-auto">
+              <Button type="button" variant="outline" className="min-h-10" onClick={() => void runExport("csv")}>
+                <FileDown className="mr-2 h-4 w-4" />
+                Export CSV
+              </Button>
+              <Button type="button" variant="outline" className="min-h-10" onClick={() => void runExport("xlsx")}>
+                Excel
+              </Button>
+              <Button type="button" variant="outline" className="min-h-10" onClick={() => void runExport("pdf")}>
+                PDF seznam
+              </Button>
+            </div>
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-lg border bg-white">
@@ -530,7 +551,9 @@ export const PreliminaryDealsPanel = forwardRef<PreliminaryDealsPanelHandle, Pro
                         PRELIMINARY_DEAL_STATUS_LABELS[d.status]
                       )}
                     </td>
-                    <td className="p-2">{d.responsibleEmployeeName || "—"}</td>
+                    <td className="p-2">
+                      {resolvePreliminaryDealResponsibleName(d, employeeNameById)}
+                    </td>
                     <td className="p-2 whitespace-nowrap">
                       {created ? format(created, "d. M. yyyy", { locale: cs }) : "—"}
                     </td>
@@ -796,6 +819,10 @@ export const PreliminaryDealsPanel = forwardRef<PreliminaryDealsPanelHandle, Pro
                 <p>
                   <span className="font-medium">Cena:</span>{" "}
                   {preliminaryDealPriceLabel(detailDeal.priceAmount, detailDeal.priceVatMode)}
+                </p>
+                <p>
+                  <span className="font-medium">Odpovědná osoba:</span>{" "}
+                  {resolvePreliminaryDealResponsibleName(detailDeal, employeeNameById)}
                 </p>
                 <p className="whitespace-pre-wrap">{detailDeal.description}</p>
                 {detailDeal.note ? (

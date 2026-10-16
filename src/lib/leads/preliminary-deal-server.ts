@@ -1,8 +1,30 @@
+import type { Firestore } from "firebase-admin/firestore";
+import { formatPortalEmployeeListName } from "@/lib/employee-active";
 import type { PreliminaryDealDoc, PreliminaryDealPriceVatMode } from "@/lib/leads/preliminary-deal-types";
 import {
   isPreliminaryDealStatus,
   normalizePreliminaryDealStatus,
 } from "@/lib/leads/preliminary-deal-types";
+
+export async function resolvePreliminaryDealEmployeeName(
+  db: Firestore,
+  companyId: string,
+  employeeId: string | null | undefined
+): Promise<string | null> {
+  const id = String(employeeId ?? "").trim();
+  if (!id) return null;
+  const snap = await db
+    .collection("companies")
+    .doc(companyId)
+    .collection("employees")
+    .doc(id)
+    .get();
+  if (!snap.exists) return formatPortalEmployeeListName(null, id);
+  return formatPortalEmployeeListName(
+    { id, ...(snap.data() as Record<string, unknown>) },
+    id
+  );
+}
 
 export function parsePreliminaryDealDoc(
   id: string,

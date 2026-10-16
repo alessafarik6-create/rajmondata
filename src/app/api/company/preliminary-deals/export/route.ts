@@ -2,15 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyCompanyBearerWithPortalAccess } from "@/lib/api-company-auth";
 import { parsePreliminaryDealDoc } from "@/lib/leads/preliminary-deal-server";
 import {
+  companyDocToPreliminaryDealProfile,
   exportPreliminaryDealsListPdfBuffer,
   exportPreliminaryDealsToCsvBuffer,
   exportPreliminaryDealsToXlsxBuffer,
   exportSinglePreliminaryDealPdfBuffer,
+  fetchLogoAsDataUrl,
+  formatPreliminaryDealsPeriodLabel,
   type PreliminaryDealExportRow,
 } from "@/lib/leads/preliminary-deal-export";
 import {
-  preliminaryDealMatchesFilters,
-} from "@/lib/leads/preliminary-deal-summary";
+  buildEmployeeNameMap,
+  enrichPreliminaryDealRowResponsibleName,
+  mapEmployeesToPreliminaryDealOptions,
+} from "@/lib/leads/preliminary-deal-employees";
+import { preliminaryDealMatchesFilters } from "@/lib/leads/preliminary-deal-summary";
 import type { PreliminaryDealStatus } from "@/lib/leads/preliminary-deal-types";
 
 export const dynamic = "force-dynamic";
@@ -51,12 +57,26 @@ export async function GET(request: NextRequest) {
   const dealId = String(url.searchParams.get("dealId") ?? "").trim();
   const idsParam = String(url.searchParams.get("ids") ?? "").trim();
   const selectedIds = idsParam ? idsParam.split(",").map((x) => x.trim()).filter(Boolean) : [];
+  const dateFrom = url.searchParams.get("dateFrom") ?? undefined;
+  const dateTo = url.searchParams.get("dateTo") ?? undefined;
 
-  const snap = await v.db.collection("companies").doc(companyId).collection("preliminary_deals").get();
+  const [dealsSnap, companySnap, employeesSnap] = await Promise.all([
+    v.db.collection("companies").doc(companyId).collection("preliminary_deals").get(),
+    v.db.collection("companies").doc(companyId).get(),
+    v.db.collection("companies").doc(companyId).collection("employees").get(),
+  ]);
+
+  const employeeOptions = mapEmployeesToPreliminaryDealOptions(
+    employeesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
+  );
+  const nameByEmployeeId = buildEmployeeNameMap(employeeOptions);
+
   let rows: PreliminaryDealExportRow[] = [];
-  for (const d of snap.docs) {
+  for (const d of dealsSnap.docs) {
     const parsed = parsePreliminaryDealDoc(d.id, d.data() as Record<string, unknown>);
-    if (parsed) rows.push(parsed);
+    if (parsed) {
+      rows.push(enrichPreliminaryDealRowResponsibleName(parsed, nameByEmployeeId));
+    }
   }
 
   if (dealId) {
@@ -69,27 +89,31 @@ export async function GET(request: NextRequest) {
       q: url.searchParams.get("q") ?? undefined,
       status: (url.searchParams.get("status") as PreliminaryDealStatus | "all" | null) ?? "all",
       responsibleEmployeeId: url.searchParams.get("responsibleEmployeeId") ?? "all",
-      dateFrom: url.searchParams.get("dateFrom") ?? undefined,
-      dateTo: url.searchParams.get("dateTo") ?? undefined,
+      dateFrom,
+      dateTo,
     };
     rows = rows.filter((r) =>
       preliminaryDealMatchesFilters(r, filters, parseCreatedAt(r.createdAt))
     );
   }
 
-  const companySnap = await v.db.collection("companies").doc(companyId).get();
-  const orgName = String(companySnap.data()?.name ?? companySnap.data()?.companyName ?? "Organizace");
+  const companyData = (companySnap.data() ?? {}) as Record<string, unknown>;
+  const logoDataUrl = await fetchLogoAsDataUrl(
+    String(companyData.organizationLogoUrl ?? "").trim() || null
+  );
+  const profile = companyDocToPreliminaryDealProfile(companyData, logoDataUrl);
+  const periodLabel = formatPreliminaryDealsPeriodLabel(dateFrom, dateTo);
 
   let buffer: Buffer;
   let contentType: string;
   let filename: string;
 
   if (format === "pdf" && dealId && rows.length === 1) {
-    buffer = exportSinglePreliminaryDealPdfBuffer(rows[0]!, orgName);
+    buffer = await exportSinglePreliminaryDealPdfBuffer(rows[0]!, profile);
     contentType = "application/pdf";
     filename = `predjednana-zakazka-${dealId}.pdf`;
   } else if (format === "pdf") {
-    buffer = exportPreliminaryDealsListPdfBuffer(rows, orgName);
+    buffer = await exportPreliminaryDealsListPdfBuffer(rows, profile, periodLabel);
     contentType = "application/pdf";
     filename = "predjednane-zakazky.pdf";
   } else if (format === "xlsx") {

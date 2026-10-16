@@ -46,6 +46,14 @@ async function loadFontBase64s(fontBasePath: string): Promise<{ normal: string; 
   return { normal: cachedNormalB64, bold: cachedBoldB64 };
 }
 
+function applyFontsToDoc(doc: jsPDF, normal: string, bold: string): void {
+  doc.addFileToVFS(FONT_NORMAL, normal);
+  doc.addFileToVFS(FONT_BOLD, bold);
+  doc.addFont(FONT_NORMAL, PDF_FONT_FAMILY, "normal", "Identity-H");
+  doc.addFont(FONT_BOLD, PDF_FONT_FAMILY, "bold", "Identity-H");
+  doc.setFont(PDF_FONT_FAMILY, "normal");
+}
+
 /**
  * Přidá DejaVu Sans normal + bold do VFS daného dokumentu a zaregistruje rodinu `DejaVuSans`.
  */
@@ -54,10 +62,5 @@ export async function registerDejaVuFontsForPdf(
   fontBasePath = "/fonts"
 ): Promise<void> {
   const { normal, bold } = await loadFontBase64s(fontBasePath);
-  doc.addFileToVFS(FONT_NORMAL, normal);
-  doc.addFileToVFS(FONT_BOLD, bold);
-  /** 4. argument může být u jsPDF přímo kódování (Identity-H pro UTF-8 / diakritiku). */
-  doc.addFont(FONT_NORMAL, PDF_FONT_FAMILY, "normal", "Identity-H");
-  doc.addFont(FONT_BOLD, PDF_FONT_FAMILY, "bold", "Identity-H");
-  doc.setFont(PDF_FONT_FAMILY, "normal");
+  applyFontsToDoc(doc, normal, bold);
 }

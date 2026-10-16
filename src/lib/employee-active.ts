@@ -58,6 +58,31 @@ export function filterEmployeesForAssignment<T extends EmployeeActiveFields>(
   });
 }
 
+/**
+ * Jméno pro výběry v portálu (Předjednané zakázky, přiřazení…) — preferuje jméno + příjmení,
+ * ne pole `companyName` (u fyzických osob bývá prázdné nebo duplicitní).
+ */
+export function formatPortalEmployeeListName(
+  employee: EmployeeActiveFields | null | undefined,
+  fallbackId?: string
+): string {
+  if (!employee) {
+    const id = fallbackId?.trim();
+    return id ? `Nevyplněné jméno (${id.slice(0, 12)})` : "Nevyplněné jméno";
+  }
+  const fromParts = [employee.firstName, employee.lastName]
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean)
+    .join(" ");
+  if (fromParts) return fromParts;
+  const dn = String(employee.displayName ?? employee.name ?? employee.email ?? "").trim();
+  if (dn) return dn;
+  const company = String(employee.companyName ?? "").trim();
+  if (company) return company;
+  const id = String((employee as { id?: string }).id ?? fallbackId ?? "").trim();
+  return id ? `Nevyplněné jméno (${id.slice(0, 12)})` : "Nevyplněné jméno";
+}
+
 export function formatEmployeeDisplayName(
   employee: EmployeeActiveFields | null | undefined,
   fallbackId?: string

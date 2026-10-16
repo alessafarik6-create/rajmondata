@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { verifyCompanyBearerWithPortalAccess } from "@/lib/api-company-auth";
-import { sanitizePreliminaryDealInput } from "@/lib/leads/preliminary-deal-server";
+import {
+  resolvePreliminaryDealEmployeeName,
+  sanitizePreliminaryDealInput,
+} from "@/lib/leads/preliminary-deal-server";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +41,13 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
   const patch = sanitizePreliminaryDealInput(body);
   if (patch.title !== undefined && !patch.title.trim()) {
     return NextResponse.json({ ok: false, error: "Název nesmí být prázdný." }, { status: 400 });
+  }
+
+  if (patch.responsibleEmployeeId !== undefined) {
+    const empId = patch.responsibleEmployeeId;
+    patch.responsibleEmployeeName = empId
+      ? await resolvePreliminaryDealEmployeeName(v.db, companyId, empId)
+      : null;
   }
 
   await ref.set(

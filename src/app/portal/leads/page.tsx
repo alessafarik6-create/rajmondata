@@ -132,6 +132,7 @@ import {
   type PreliminaryDealsPanelHandle,
   type PreliminaryDealFormPrefill,
 } from "@/components/leads/preliminary-deals-panel";
+import { mapEmployeesToPreliminaryDealOptions } from "@/lib/leads/preliminary-deal-employees";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LeadReminderDialog } from "@/components/leads/lead-reminder-dialog";
 import { LeadRemindersSection } from "@/components/leads/lead-reminders-section";
@@ -394,16 +395,9 @@ export default function PortalLeadsPage() {
 
   const preliminaryEmployees = useMemo(() => {
     const list = Array.isArray(employeesRaw) ? employeesRaw : [];
-    return list
-      .map((raw) => {
-        const row = raw as Record<string, unknown> & { id?: string };
-        const id = String(row.id ?? "").trim();
-        if (!id) return null;
-        const name =
-          String(row.displayName ?? row.name ?? row.fullName ?? "").trim() || "Zaměstnanec";
-        return { id, name };
-      })
-      .filter((x): x is { id: string; name: string } => x != null);
+    return mapEmployeesToPreliminaryDealOptions(
+      list as Array<Record<string, unknown> & { id?: string }>
+    );
   }, [employeesRaw]);
 
   const preliminaryCustomers = useMemo(() => {
