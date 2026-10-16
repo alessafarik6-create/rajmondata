@@ -2784,6 +2784,12 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      /** Předjednané zakázky — zápis přes Admin SDK (API). */
+      match /preliminary_deals/{dealId} {
+        allow read: if signedIn() && sameCompany(companyId);
+        allow create, update, delete: if false;
+      }
+
       /**
        * Naplánované schůzky k poptávkám — companies/{companyId}/lead_meetings/{meetingId}
        */

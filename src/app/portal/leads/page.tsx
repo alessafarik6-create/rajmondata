@@ -15,6 +15,7 @@ import {
   Mail,
   Sparkles,
   AlarmClock,
+  Briefcase,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cs } from "date-fns/locale";
@@ -126,6 +127,12 @@ import {
   InquiryAiQuotePreviewDialog,
 } from "@/components/leads/inquiry-ai-quote-dialog";
 import { LeadsFiltersPanel } from "@/components/leads/leads-filters-panel";
+import {
+  PreliminaryDealsPanel,
+  type PreliminaryDealsPanelHandle,
+  type PreliminaryDealFormPrefill,
+} from "@/components/leads/preliminary-deals-panel";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LeadReminderDialog } from "@/components/leads/lead-reminder-dialog";
 import { LeadRemindersSection } from "@/components/leads/lead-reminders-section";
 import { LEAD_REMINDERS_SUBCOLLECTION } from "@/lib/firestore-collections";
@@ -299,6 +306,11 @@ export default function PortalLeadsPage() {
     return collection(firestore, "companies", companyId, "employees");
   }, [firestore, companyId]);
 
+  const customersQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, "companies", companyId, "customers");
+  }, [firestore, companyId]);
+
   const offerTemplatesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     return collection(firestore, "companies", companyId, "inquiry_offer_templates");
@@ -328,6 +340,7 @@ export default function PortalLeadsPage() {
     isIndexPending: leadRemindersIndexPending,
   } = useCollection(leadRemindersQuery);
   const { data: employeesRaw } = useCollection(employeesQuery);
+  const { data: customersRaw } = useCollection(customersQuery);
   const { data: offerTemplatesRaw } = useCollection(offerTemplatesQuery);
   const { data: inquiryOffersRaw } = useCollection(inquiryOffersQuery);
   const { data: inquiryTypeRulesRaw } = useCollection(inquiryTypeRulesQuery);
@@ -378,6 +391,56 @@ export default function PortalLeadsPage() {
     }
     return map;
   }, [leadReminders]);
+
+  const preliminaryEmployees = useMemo(() => {
+    const list = Array.isArray(employeesRaw) ? employeesRaw : [];
+    return list
+      .map((raw) => {
+        const row = raw as Record<string, unknown> & { id?: string };
+        const id = String(row.id ?? "").trim();
+        if (!id) return null;
+        const name =
+          String(row.displayName ?? row.name ?? row.fullName ?? "").trim() || "Zaměstnanec";
+        return { id, name };
+      })
+      .filter((x): x is { id: string; name: string } => x != null);
+  }, [employeesRaw]);
+
+  const preliminaryCustomers = useMemo(() => {
+    const list = Array.isArray(customersRaw) ? customersRaw : [];
+    return list
+      .map((raw) => {
+        const row = raw as Record<string, unknown> & { id?: string };
+        const id = String(row.id ?? "").trim();
+        if (!id) return null;
+        const label =
+          String(row.companyName ?? row.name ?? row.email ?? "").trim() || id;
+        return { id, label };
+      })
+      .filter((x): x is { id: string; label: string } => x != null);
+  }, [customersRaw]);
+
+  const buildPreliminaryPrefillFromLead = useCallback(
+    (lead: LeadImportRow): PreliminaryDealFormPrefill => {
+      const key = stableImportLeadDocumentId(lead);
+      const ov = overlayByDocId.get(key);
+      const price =
+        ov?.estimatedValue ??
+        ov?.orientacniCenaKc ??
+        lead.orientacniCenaKc ??
+        undefined;
+      return {
+        sourceLeadId: key,
+        title: String(lead.jmeno ?? "").trim() || "Poptávka",
+        description: String(lead.zprava ?? "").trim() || String(lead.typ ?? "").trim(),
+        customerName: String(lead.jmeno ?? "").trim(),
+        customerPhone: String(lead.telefon ?? "").trim(),
+        customerEmail: String(lead.email ?? "").trim(),
+        priceAmount: typeof price === "number" && Number.isFinite(price) ? price : undefined,
+      };
+    },
+    [overlayByDocId]
+  );
 
   const reminderAssignees = useMemo(() => {
     const list = Array.isArray(employeesRaw) ? employeesRaw : [];
@@ -450,6 +513,8 @@ export default function PortalLeadsPage() {
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
   const [savingNoteKey, setSavingNoteKey] = useState<string | null>(null);
   const [expandedLeadKeys, setExpandedLeadKeys] = useState<Record<string, boolean>>({});
+  const [leadsMainTab, setLeadsMainTab] = useState<"inquiries" | "preliminary">("inquiries");
+  const preliminaryDealsRef = useRef<PreliminaryDealsPanelHandle>(null);
   const [offerLead, setOfferLead] = useState<LeadImportRow | null>(null);
   const [standaloneOfferOpen, setStandaloneOfferOpen] = useState(false);
   const [offerInitial, setOfferInitial] = useState<InquiryOfferReuseInitial | undefined>(
@@ -1358,23 +1423,49 @@ export default function PortalLeadsPage() {
             obnově importu se nemažou.
           </p>
         </div>
-        {canManageOffers ? (
-          <div className="flex flex-wrap gap-2 shrink-0">
+        <div className="flex flex-wrap gap-2 shrink-0">
+          {canWriteLeads ? (
             <Button
               type="button"
               className="min-h-11 gap-2 bg-orange-600 hover:bg-orange-700"
-              onClick={() => setStandaloneOfferOpen(true)}
+              onClick={() => {
+                setLeadsMainTab("preliminary");
+                preliminaryDealsRef.current?.openCreate();
+              }}
             >
-              <Mail className="h-4 w-4" />
-              Nová nabídka
+              <Briefcase className="h-4 w-4" />
+              Předjednaná zakázka
             </Button>
-            <Button type="button" variant="outline" className="min-h-11" asChild>
-              <Link href="/portal/offers">Historie nabídek</Link>
-            </Button>
-          </div>
-        ) : null}
+          ) : null}
+          {canManageOffers ? (
+            <>
+              <Button
+                type="button"
+                className="min-h-11 gap-2 bg-orange-600 hover:bg-orange-700"
+                onClick={() => setStandaloneOfferOpen(true)}
+              >
+                <Mail className="h-4 w-4" />
+                Nová nabídka
+              </Button>
+              <Button type="button" variant="outline" className="min-h-11" asChild>
+                <Link href="/portal/offers">Historie nabídek</Link>
+              </Button>
+            </>
+          ) : null}
+        </div>
       </div>
 
+      <Tabs
+        value={leadsMainTab}
+        onValueChange={(v) => setLeadsMainTab(v as "inquiries" | "preliminary")}
+        className="space-y-4"
+      >
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="inquiries">Poptávky</TabsTrigger>
+          <TabsTrigger value="preliminary">Předjednané zakázky</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="inquiries" className="mt-0 space-y-6">
       <Card className="border-slate-200 shadow-sm overflow-hidden">
         <CardHeader className="pb-3 space-y-0">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -2060,6 +2151,25 @@ export default function PortalLeadsPage() {
                                 <span className="sm:hidden">Nab.</span>
                               </Button>
                             ) : null}
+                            {canWriteLeads ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8 border-orange-500/50 px-2 text-xs text-orange-950 hover:bg-orange-50 sm:h-9 sm:px-3"
+                                title="Vytvořit předjednanou zakázku"
+                                onClick={() => {
+                                  setLeadsMainTab("preliminary");
+                                  preliminaryDealsRef.current?.openCreate(
+                                    buildPreliminaryPrefillFromLead(r)
+                                  );
+                                }}
+                              >
+                                <Briefcase className="mr-1 inline h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                <span className="hidden lg:inline">Předjednaná zakázka</span>
+                                <span className="lg:hidden">Předj.</span>
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
 
@@ -2347,6 +2457,17 @@ export default function PortalLeadsPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="preliminary" className="mt-0">
+          <PreliminaryDealsPanel
+            ref={preliminaryDealsRef}
+            canWrite={canWriteLeads}
+            employees={preliminaryEmployees}
+            customers={preliminaryCustomers}
+          />
+        </TabsContent>
+      </Tabs>
 
       {reminderLead && companyId && user ? (
         <LeadReminderDialog
