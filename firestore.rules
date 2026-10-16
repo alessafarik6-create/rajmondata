@@ -2790,6 +2790,16 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      match /job_number_counters/{counterId} {
+        allow read: if signedIn() && sameCompany(companyId);
+        allow create, update, delete: if false;
+      }
+
+      match /job_number_index/{indexId} {
+        allow read: if signedIn() && sameCompany(companyId);
+        allow create, update, delete: if false;
+      }
+
       /**
        * Naplánované schůzky k poptávkám — companies/{companyId}/lead_meetings/{meetingId}
        */

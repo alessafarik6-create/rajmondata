@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { verifyCompanyBearerWithPortalAccess } from "@/lib/api-company-auth";
 import { parsePreliminaryDealDoc } from "@/lib/leads/preliminary-deal-server";
 import { buildJobBudgetFirestorePayload } from "@/lib/vat-calculations";
+import { allocateJobNumberAdmin } from "@/lib/jobs/job-numbering-server";
 
 export const dynamic = "force-dynamic";
 
@@ -39,13 +40,13 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   }
 
   const dealRef = v.db.collection("companies").doc(companyId).collection("preliminary_deals").doc(dealId);
+  const jobTagForNumber =
+    body.jobTag != null ? String(body.jobTag).trim() || null : null;
 
   try {
-    const result = await v.db.runTransaction(async (tx) => {
+    const prep = await v.db.runTransaction(async (tx) => {
       const dealSnap = await tx.get(dealRef);
-      if (!dealSnap.exists) {
-        throw new Error("NOT_FOUND");
-      }
+      if (!dealSnap.exists) throw new Error("NOT_FOUND");
       const deal = parsePreliminaryDealDoc(dealSnap.id, dealSnap.data() as Record<string, unknown>);
       if (!deal) throw new Error("INVALID_DOC");
       if (deal.convertedJobId?.trim()) {
@@ -56,7 +57,8 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       }
 
       const titleOverride = String(body.title ?? deal.title).trim() || deal.title;
-      const priceOverride = body.priceAmount !== undefined ? Number(body.priceAmount) : deal.priceAmount;
+      const priceOverride =
+        body.priceAmount !== undefined ? Number(body.priceAmount) : deal.priceAmount;
       const priceAmount = Number.isFinite(priceOverride) ? priceOverride : deal.priceAmount;
 
       const budgetType = deal.priceVatMode === "without_vat" ? "net" : "gross";
@@ -82,11 +84,47 @@ export async function POST(request: NextRequest, ctx: Ctx) {
         assignedEmployeeIds = authUserId ? [responsibleId, authUserId] : [responsibleId];
       }
 
-      const jobRef = v.db.collection("companies").doc(companyId).collection("jobs").doc();
+      return {
+        already: false as const,
+        deal,
+        titleOverride,
+        priceAmount,
+        budgetFields,
+        assignedEmployeeIds,
+      };
+    });
+
+    if (prep.already) {
+      return NextResponse.json({
+        ok: true,
+        jobId: prep.jobId,
+        alreadyConverted: true,
+      });
+    }
+
+    const { jobNumber, typeId } = await allocateJobNumberAdmin(
+      v.db,
+      companyId,
+      jobTagForNumber
+    );
+
+    const jobRef = v.db.collection("companies").doc(companyId).collection("jobs").doc();
+
+    const writeResult = await v.db.runTransaction(async (tx) => {
+      const dealSnap = await tx.get(dealRef);
+      if (!dealSnap.exists) throw new Error("NOT_FOUND");
+      const deal = parsePreliminaryDealDoc(dealSnap.id, dealSnap.data() as Record<string, unknown>);
+      if (!deal) throw new Error("INVALID_DOC");
+      if (deal.convertedJobId?.trim()) {
+        return { already: true as const, jobId: deal.convertedJobId.trim() };
+      }
+
       const jobPayload: Record<string, unknown> = {
-        name: titleOverride,
+        name: prep.titleOverride,
         description: deal.description,
         status: "active",
+        jobNumber,
+        jobNumberTypeId: typeId,
         companyId,
         customerId: deal.customerId ?? null,
         customerName: deal.customerName ?? "",
@@ -96,14 +134,14 @@ export async function POST(request: NextRequest, ctx: Ctx) {
         endDate: "",
         measuring: false,
         measuringDetails: "",
-        assignedEmployeeIds,
+        assignedEmployeeIds: prep.assignedEmployeeIds,
         preliminaryDealId: dealId,
         sourceLeadId: deal.sourceLeadId ?? null,
         internalNotesFromPreliminaryDeal: deal.note ?? "",
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
         createdBy: v.caller.uid,
-        ...(budgetFields ?? {}),
+        ...(prep.budgetFields ?? {}),
       };
 
       tx.set(jobRef, jobPayload);
@@ -115,8 +153,8 @@ export async function POST(request: NextRequest, ctx: Ctx) {
           convertedAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
           updatedBy: v.caller.uid,
-          title: titleOverride,
-          priceAmount,
+          title: prep.titleOverride,
+          priceAmount: prep.priceAmount,
         },
         { merge: true }
       );
@@ -124,14 +162,14 @@ export async function POST(request: NextRequest, ctx: Ctx) {
       return { already: false as const, jobId: jobRef.id };
     });
 
-    if (result.already) {
+    if (writeResult.already) {
       return NextResponse.json({
         ok: true,
-        jobId: result.jobId,
+        jobId: writeResult.jobId,
         alreadyConverted: true,
       });
     }
-    return NextResponse.json({ ok: true, jobId: result.jobId });
+    return NextResponse.json({ ok: true, jobId: writeResult.jobId, jobNumber });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === "NOT_FOUND") {

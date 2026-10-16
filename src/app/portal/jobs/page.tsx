@@ -25,6 +25,9 @@ import {
   Camera,
   FileDown,
   ArrowLeft,
+  LayoutGrid,
+  List,
+  GanttChart,
 } from "lucide-react";
 import {
   useFirestore,
@@ -130,6 +133,10 @@ import {
 } from "@/lib/job-list-filters";
 import { JobsListControls } from "@/components/jobs/jobs-list-controls";
 import { JobsListView } from "@/components/jobs/jobs-list-view";
+import { JobsTableListView } from "@/components/jobs/jobs-table-list-view";
+import { JobsTimelineView } from "@/components/jobs/jobs-timeline-view";
+import { mapEmployeesToPreliminaryDealOptions } from "@/lib/leads/preliminary-deal-employees";
+import { filterJobsForTimelineEmployee } from "@/lib/jobs/job-timeline-utils";
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
 
@@ -184,6 +191,8 @@ type JobRow = {
   startDate?: string;
   endDate?: string;
   assignedEmployeeIds?: string[];
+  jobNumber?: string | null;
+  orderNumber?: string | null;
   /** Typ / štítek zakázky (např. pergola, domy). */
   jobTag?: string | null;
   createdAt?: unknown;
@@ -242,7 +251,13 @@ function JobsPageContent() {
     return collection(firestore, "companies", companyId, "jobTemplates");
   }, [firestore, companyId]);
 
+  const employeesQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, "companies", companyId, "employees");
+  }, [firestore, companyId]);
+
   const { data: allJobs, isLoading } = useCollection(jobsQuery);
+  const { data: employeesRaw } = useCollection(employeesQuery);
   const { data: templatesData } = useCollection(templatesQuery);
 
   const customers = useMemo(
@@ -303,6 +318,20 @@ function JobsPageContent() {
   const deadlineFilter = parseJobDeadlineFilterParam(searchParams.get("deadline"));
   const jobListSearch = searchParams.get("q") ?? "";
   const jobTagFilter = searchParams.get("tag") ?? "";
+  const jobsViewParam = searchParams.get("view") ?? "cards";
+  const jobsViewMode =
+    jobsViewParam === "list" || jobsViewParam === "timeline" ? jobsViewParam : "cards";
+  const assigneeFilter = searchParams.get("assignee") ?? "";
+
+  const jobAssigneeOptions = useMemo(
+    () =>
+      mapEmployeesToPreliminaryDealOptions(
+        (Array.isArray(employeesRaw) ? employeesRaw : []) as Array<
+          Record<string, unknown> & { id?: string }
+        >
+      ),
+    [employeesRaw]
+  );
 
   const syncJobsListUrl = useCallback(
     (patch: {
@@ -311,6 +340,8 @@ function JobsPageContent() {
       search?: string;
       tag?: string;
       deadline?: JobDeadlineFilterKey | null;
+      view?: "cards" | "list" | "timeline";
+      assignee?: string;
     }) => {
       const params = new URLSearchParams(searchParams.toString());
       const nextStatus = patch.status ?? statusFilter;
@@ -320,6 +351,9 @@ function JobsPageContent() {
       const nextTag = patch.tag !== undefined ? patch.tag : jobTagFilter;
       const nextDeadline =
         patch.deadline !== undefined ? patch.deadline : deadlineFilter;
+      const nextView = patch.view ?? jobsViewMode;
+      const nextAssignee =
+        patch.assignee !== undefined ? patch.assignee : assigneeFilter;
 
       if (nextStatus === DEFAULT_JOB_STATUS_FILTER) params.delete("status");
       else params.set("status", nextStatus);
@@ -338,6 +372,12 @@ function JobsPageContent() {
       if (nextDeadline) params.set("deadline", nextDeadline);
       else params.delete("deadline");
 
+      if (nextView === "cards") params.delete("view");
+      else params.set("view", nextView);
+
+      if (nextAssignee.trim()) params.set("assignee", nextAssignee.trim());
+      else params.delete("assignee");
+
       const qs = params.toString();
       router.replace(qs ? `/portal/jobs?${qs}` : "/portal/jobs", { scroll: false });
     },
@@ -349,6 +389,8 @@ function JobsPageContent() {
       jobListSearch,
       jobTagFilter,
       deadlineFilter,
+      jobsViewMode,
+      assigneeFilter,
     ]
   );
 
@@ -433,7 +475,15 @@ function JobsPageContent() {
       deadlineFilter,
       getCustomerName,
     });
-    return sortJobs(filtered, sortKey, getCustomerName);
+    let list = sortJobs(filtered, sortKey, getCustomerName);
+    if (assigneeFilter.trim()) {
+      list = filterJobsForTimelineEmployee(
+        list,
+        assigneeFilter.trim(),
+        user?.uid ?? null
+      );
+    }
+    return list;
   }, [
     jobs,
     jobListSearch,
@@ -442,6 +492,8 @@ function JobsPageContent() {
     deadlineFilter,
     sortKey,
     getCustomerName,
+    assigneeFilter,
+    user?.uid,
   ]);
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
@@ -688,6 +740,32 @@ function JobsPageContent() {
           : newJob.jobTag.trim();
       if (resolvedJobTag) {
         payload.jobTag = resolvedJobTag;
+      }
+      try {
+        const token = await user.getIdToken();
+        const numRes = await fetch("/api/company/jobs/allocate-number", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            companyId,
+            jobTag: resolvedJobTag || null,
+          }),
+        });
+        const numData = (await numRes.json()) as {
+          ok?: boolean;
+          jobNumber?: string;
+          typeId?: string;
+        };
+        if (numRes.ok && numData.ok && numData.jobNumber) {
+          payload.jobNumber = numData.jobNumber;
+          payload.orderNumber = numData.jobNumber;
+          if (numData.typeId) payload.jobNumberTypeId = numData.typeId;
+        }
+      } catch (numErr) {
+        console.warn("[JobsPage] job number allocation", numErr);
       }
       if (selectedTemplateId) {
         payload.templateId = selectedTemplateId;
@@ -1666,6 +1744,47 @@ function JobsPageContent() {
         )}
       >
         <CardContent className={cn(belowLg ? "p-2.5" : "p-4 sm:p-5")}>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-600">Zobrazení:</span>
+            {(
+              [
+                ["cards", "Karty", LayoutGrid],
+                ["list", "Seznam", List],
+                ["timeline", "Časová osa", GanttChart],
+              ] as const
+            ).map(([id, label, Icon]) => (
+              <Button
+                key={id}
+                type="button"
+                size="sm"
+                variant={jobsViewMode === id ? "default" : "outline"}
+                className={
+                  jobsViewMode === id ? "bg-orange-600 hover:bg-orange-700" : ""
+                }
+                onClick={() =>
+                  syncJobsListUrl({ view: id as "cards" | "list" | "timeline" })
+                }
+              >
+                <Icon className="mr-1.5 h-4 w-4" />
+                {label}
+              </Button>
+            ))}
+            {seeAllOrgJobs && jobAssigneeOptions.length ? (
+              <select
+                className={cn(NATIVE_SELECT_CLASS, "ml-auto max-w-[14rem] text-xs h-9")}
+                aria-label="Odpovědný zaměstnanec"
+                value={assigneeFilter}
+                onChange={(e) => syncJobsListUrl({ assignee: e.target.value })}
+              >
+                <option value="">Všichni zaměstnanci</option>
+                {jobAssigneeOptions.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
           {belowLg ? (
             <div className="flex flex-col gap-2">
               <div className="flex min-w-0 flex-row items-center gap-2">
@@ -1711,7 +1830,7 @@ function JobsPageContent() {
                   <Input
                     id="jobs-search"
                     className="pl-9"
-                    placeholder="Název nebo popis zakázky…"
+                    placeholder="Název, číslo nebo popis zakázky…"
                     value={jobListSearch}
                     onChange={(e) =>
                       syncJobsListUrl({ search: e.target.value })
@@ -1832,14 +1951,29 @@ function JobsPageContent() {
               </Button>
             </div>
           ) : displayJobs.length > 0 ? (
-            <JobsListView
-              jobs={displayJobs}
-              getCustomerName={getCustomerName}
-              getCustomerAddress={getCustomerAddress}
-              isPortalEmployee={isPortalEmployee}
-              isAdmin={isAdmin}
-              dark={belowLg}
-            />
+            jobsViewMode === "timeline" ? (
+              <JobsTimelineView
+                jobs={displayJobs}
+                isPortalEmployee={isPortalEmployee}
+                mobile={belowLg}
+              />
+            ) : jobsViewMode === "list" ? (
+              <JobsTableListView
+                jobs={displayJobs}
+                getCustomerName={getCustomerName}
+                isPortalEmployee={isPortalEmployee}
+                dark={belowLg}
+              />
+            ) : (
+              <JobsListView
+                jobs={displayJobs}
+                getCustomerName={getCustomerName}
+                getCustomerAddress={getCustomerAddress}
+                isPortalEmployee={isPortalEmployee}
+                isAdmin={isAdmin}
+                dark={belowLg}
+              />
+            )
           ) : (
             <div
               className={cn(

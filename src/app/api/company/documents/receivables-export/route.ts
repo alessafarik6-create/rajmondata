@@ -3,10 +3,11 @@ import { verifyCompanyBearerWithPortalAccess } from "@/lib/api-company-auth";
 import {
   buildReceivablesPayablesExportRows,
   exportRowsToCsvBuffer,
-  exportRowsToPdfBuffer,
   exportRowsToXlsxBuffer,
   type ReceivablesExportFilters,
 } from "@/lib/documents/receivables-payables-export";
+import { exportReceivablesPayablesPdfBuffer } from "@/lib/documents/receivables-payables-pdf";
+import { fetchLogoAsDataUrl } from "@/lib/leads/preliminary-deal-export";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -92,8 +93,19 @@ export async function GET(request: NextRequest) {
     });
   }
   if (format === "pdf") {
-    const buf = exportRowsToPdfBuffer(rows, orgName, title, periodLabel);
-    return new NextResponse(buf, {
+    const companyData = (companySnap.data() ?? {}) as Record<string, unknown>;
+    const logoDataUrl = await fetchLogoAsDataUrl(
+      String(companyData.organizationLogoUrl ?? "").trim() || null
+    );
+    const buf = await exportReceivablesPayablesPdfBuffer({
+      rows,
+      companyDoc: companyData,
+      logoDataUrl,
+      orgName,
+      title,
+      periodLabel,
+    });
+    return new NextResponse(new Uint8Array(buf), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="${baseName}.pdf"`,

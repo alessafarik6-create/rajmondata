@@ -1,7 +1,4 @@
 import * as XLSX from "xlsx";
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
-import { PDF_FONT_FAMILY, registerDejaVuFontsForPdf } from "@/lib/pdf/register-dejavu-font";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import {
@@ -291,71 +288,3 @@ export function summarizeByCurrency(rows: ReceivablesExportRow[]) {
   }));
 }
 
-export function exportRowsToPdfBuffer(
-  rows: ReceivablesExportRow[],
-  orgName: string,
-  title: string,
-  periodLabel: string
-): Buffer {
-  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-  void registerDejaVuFontsForPdf(doc);
-  doc.setFont(PDF_FONT_FAMILY, "normal");
-  doc.setFontSize(14);
-  doc.text(orgName, 14, 16);
-  doc.setFontSize(12);
-  doc.text(title, 14, 24);
-  doc.setFontSize(10);
-  doc.text(`Období: ${periodLabel}`, 14, 30);
-  doc.text(`Vytvořeno: ${new Date().toLocaleString("cs-CZ")}`, 14, 36);
-
-  autoTable(doc, {
-    startY: 42,
-    head: [
-      [
-        "Typ",
-        "Číslo",
-        "Partner",
-        "Vystaveno",
-        "Splatnost",
-        "Celkem",
-        "Uhrazeno",
-        "Zbývá",
-        "Stav",
-        "Dní",
-        "Měna",
-      ],
-    ],
-    body: rows.map((r) => [
-      r.kind === "receivable" ? "Pohledávka" : "Závazek",
-      r.number,
-      r.partner,
-      r.issuedDate,
-      r.dueDate,
-      r.totalAmount.toLocaleString("cs-CZ"),
-      r.paidAmount.toLocaleString("cs-CZ"),
-      r.remainingAmount.toLocaleString("cs-CZ"),
-      r.statusLabel,
-      String(r.overdueDays),
-      r.currency,
-    ]),
-    styles: { font: PDF_FONT_FAMILY, fontSize: 8 },
-    headStyles: { font: PDF_FONT_FAMILY },
-  });
-
-  const summary = summarizeByCurrency(rows);
-  let y = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 42;
-  y += 8;
-  doc.setFontSize(10);
-  doc.text("Souhrn podle měn (neuhrazené zůstatky)", 14, y);
-  y += 4;
-  for (const s of summary) {
-    y += 6;
-    doc.text(
-      `${s.Měna}: neuhrazeno ${s["Neuhrazeno celkem"]}, po splatnosti ${s["Po splatnosti (neuhrazeno)"]}`,
-      14,
-      y
-    );
-  }
-
-  return Buffer.from(doc.output("arraybuffer"));
-}

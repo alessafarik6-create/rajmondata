@@ -29,6 +29,9 @@ export type JobListRow = {
   startDate?: string;
   endDate?: string;
   jobTag?: string | null;
+  jobNumber?: string | null;
+  orderNumber?: string | null;
+  assignedEmployeeIds?: string[];
   createdAt?: unknown;
   updatedAt?: unknown;
   completedAt?: unknown;
@@ -200,7 +203,13 @@ export function filterJobsBySearch(
     const name = String(j?.name ?? "").toLowerCase();
     const desc = String(j?.description ?? "").toLowerCase();
     const customer = getCustomerName(j.customerId).toLowerCase();
-    return name.includes(q) || desc.includes(q) || customer.includes(q);
+    const num = String(j?.jobNumber ?? j?.orderNumber ?? "").toLowerCase();
+    return (
+      name.includes(q) ||
+      desc.includes(q) ||
+      customer.includes(q) ||
+      (num && num.includes(q))
+    );
   });
 }
 

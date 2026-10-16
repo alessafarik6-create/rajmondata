@@ -25,6 +25,7 @@ import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail, Fi
 import { OrganizationBackupsSettingsCard } from '@/components/settings/organization-backups-settings-card';
 import { EmailNotificationsSettings } from '@/components/settings/email-notifications-settings';
 import { OrganizationSignatureSettingsCard } from "@/components/settings/organization-signature-settings";
+import { JobNumberingSettingsCard } from "@/components/settings/job-numbering-settings-card";
 import { DocumentEmailOutboundSettingsCard } from "@/components/settings/document-email-outbound-settings-card";
 import { InquiryEmailIdentitySettingsCard } from "@/components/settings/inquiry-email-identity-settings-card";
 import { EmailMailboxAccountsSettingsCard } from "@/components/settings/email-mailbox-accounts-settings-card";
@@ -772,6 +773,12 @@ export default function SettingsPage() {
                         companyId={companyId}
                         signatureUrl={String((company as any)?.organizationSignature?.url ?? "").trim() || null}
                       />
+                    </div>
+                  ) : null}
+
+                  {isAdmin && companyId ? (
+                    <div className="pt-4">
+                      <JobNumberingSettingsCard companyId={companyId} canManage={isAdmin} />
                     </div>
                   ) : null}
 

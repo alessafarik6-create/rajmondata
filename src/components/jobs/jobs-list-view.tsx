@@ -31,6 +31,7 @@ import {
   resolveJobDeadlineDisplay,
   type JobListRow,
 } from "@/lib/job-list-filters";
+import { resolveJobDisplayNumber } from "@/lib/jobs/job-timeline-utils";
 import { isCompletedJobStatus } from "@/lib/job-status";
 import {
   JobStatusBadge,
@@ -217,6 +218,11 @@ function JobListCard({
             )
       )}
     >
+      {resolveJobDisplayNumber(job) ? (
+        <p className={cn("font-mono text-[11px] text-slate-500", dark && "text-slate-400")}>
+          {resolveJobDisplayNumber(job)}
+        </p>
+      ) : null}
       <h3
         className={cn(
           "text-sm font-semibold leading-snug text-slate-900 line-clamp-3",
