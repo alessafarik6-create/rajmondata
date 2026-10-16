@@ -35,6 +35,8 @@ import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { FileText } from "lucide-react";
 import type {
   JobProductSelectionDoc,
   ProductCatalogDoc,
@@ -137,6 +139,11 @@ export default function ProductCatalogsPage() {
     pdfAttachments: ProductCatalogPdfAttachment[];
   } | null>(null);
   const [productFormNewFiles, setProductFormNewFiles] = useState<File[]>([]);
+  const [catalogDialogTab, setCatalogDialogTab] = useState<"settings" | "documents">("settings");
+  const [productDocsPreview, setProductDocsPreview] = useState<{
+    catalogId: string;
+    product: ProductCatalogProduct;
+  } | null>(null);
 
   const catalogsRef = useMemoFirebase(
     () => (firestore && companyId ? query(collection(firestore, "companies", companyId, "product_catalogs")) : null),
@@ -565,7 +572,24 @@ export default function ProductCatalogsPage() {
       selectionMode: c.selectionMode === "single" ? "single" : "multi",
     });
     setCatalogCoverFile(null);
+    setCatalogDialogTab("settings");
     setCatalogDialogOpen(true);
+  };
+
+  const persistProductPdfAttachments = async (
+    sourceCatalogId: string,
+    productId: string,
+    pdfAttachments: ProductCatalogPdfAttachment[]
+  ) => {
+    const srcCat = catalogs.find((c) => c.id === sourceCatalogId);
+    const current = srcCat?.products?.find((x) => x.id === productId);
+    if (!srcCat || !current) {
+      throw new Error("Produkt v katalogu nebyl nalezen. Obnovte stránku a zkuste znovu.");
+    }
+    const nextProducts = (srcCat.products ?? []).map((x) =>
+      x.id === productId ? { ...current, pdfAttachments } : x
+    );
+    await updateCatalog(sourceCatalogId, { products: nextProducts }, false);
   };
 
   const saveCatalogDialog = async () => {
@@ -902,6 +926,7 @@ export default function ProductCatalogsPage() {
                 <CatalogPdfAttachmentsSection
                   companyId={companyId}
                   catalogId={activeCatalog.id}
+                  sectionTitle="Dokumenty katalogu"
                   attachments={Array.isArray(activeCatalog.pdfAttachments) ? activeCatalog.pdfAttachments : []}
                   canWrite={access.canWrite}
                   onPersist={
@@ -1013,12 +1038,34 @@ export default function ProductCatalogsPage() {
                           ) : null}
                           <span>{p.active !== false ? "Aktivní" : "Skrytý"}</span>
                           {(p.pdfAttachments?.length ?? 0) > 0 ? (
-                            <span>· {(p.pdfAttachments?.length ?? 0)} PDF</span>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-0.5 text-orange-700 hover:underline dark:text-orange-400"
+                              title="Dokumenty produktu"
+                              onClick={() =>
+                                setProductDocsPreview({ catalogId: activeCatalog.id, product: p })
+                              }
+                            >
+                              <FileText className="h-3.5 w-3.5" aria-hidden />
+                              {p.pdfAttachments?.length ?? 0}
+                            </button>
                           ) : null}
                         </div>
                       </div>
-                      {access.canWrite ? (
                       <div className="flex shrink-0 flex-wrap gap-1 sm:flex-col">
+                        {(p.pdfAttachments?.length ?? 0) > 0 ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setProductDocsPreview({ catalogId: activeCatalog.id, product: p })
+                            }
+                          >
+                            Dokumenty
+                          </Button>
+                        ) : null}
+                      {access.canWrite ? (
+                        <>
                         <Button
                           size="sm"
                           variant="default"
@@ -1037,8 +1084,9 @@ export default function ProductCatalogsPage() {
                             Smazat
                           </Button>
                         </div>
-                      </div>
+                        </>
                       ) : null}
+                      </div>
                     </div>
                     );
                   })}
@@ -1059,11 +1107,20 @@ export default function ProductCatalogsPage() {
           }
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-h-[min(92dvh,720px)] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Upravit katalog</DialogTitle>
           </DialogHeader>
-          {catalogForm ? (
+          {catalogForm && editingCatalogId && companyId ? (
+            <Tabs
+              value={catalogDialogTab}
+              onValueChange={(v) => setCatalogDialogTab(v === "documents" ? "documents" : "settings")}
+            >
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="settings">Nastavení</TabsTrigger>
+                <TabsTrigger value="documents">Dokumenty</TabsTrigger>
+              </TabsList>
+              <TabsContent value="settings" className="mt-3">
             <div className="grid gap-3 py-2">
               <div>
                 <Label>Název</Label>
@@ -1142,6 +1199,31 @@ export default function ProductCatalogsPage() {
                 Více položek (multi)
               </label>
             </div>
+              </TabsContent>
+              <TabsContent value="documents" className="mt-3">
+                <CatalogPdfAttachmentsSection
+                  companyId={companyId}
+                  catalogId={editingCatalogId}
+                  sectionTitle="PDF dokumenty katalogu"
+                  attachments={
+                    Array.isArray(
+                      catalogs.find((c) => c.id === editingCatalogId)?.pdfAttachments
+                    )
+                      ? (catalogs.find((c) => c.id === editingCatalogId)!
+                          .pdfAttachments as ProductCatalogPdfAttachment[])
+                      : []
+                  }
+                  canWrite={access.canWrite}
+                  onPersist={
+                    access.canWrite
+                      ? async (next) => {
+                          await updateCatalog(editingCatalogId, { pdfAttachments: next }, false);
+                        }
+                      : undefined
+                  }
+                />
+              </TabsContent>
+            </Tabs>
           ) : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setCatalogDialogOpen(false)}>
@@ -1266,31 +1348,21 @@ export default function ProductCatalogsPage() {
                   companyId={companyId}
                   catalogId={productForm.targetCatalogId}
                   productId={productForm.id}
+                  sectionTitle="Dokumenty produktu"
                   attachments={productForm.pdfAttachments}
                   canWrite={access.canWrite}
                   onChange={(pdfAttachments) =>
                     setProductForm((prev) => (prev ? { ...prev, pdfAttachments } : prev))
                   }
                   onPersist={
-                    access.canWrite
+                    access.canWrite && productFormSourceCatalogId
                       ? async (pdfAttachments) => {
-                          const sourceId = productFormSourceCatalogId;
-                          const productId = productForm.id;
-                          if (!sourceId) {
-                            throw new Error("Chybí katalog produktu.");
-                          }
-                          const srcCat = catalogs.find((c) => c.id === sourceId);
-                          const current = srcCat?.products?.find((x) => x.id === productId);
-                          if (!srcCat || !current) {
-                            throw new Error(
-                              "Produkt v katalogu nebyl nalezen. Obnovte stránku a zkuste znovu."
-                            );
-                          }
                           setProductForm((prev) => (prev ? { ...prev, pdfAttachments } : prev));
-                          const nextProducts = (srcCat.products ?? []).map((x) =>
-                            x.id === productId ? { ...current, pdfAttachments } : x
+                          await persistProductPdfAttachments(
+                            productFormSourceCatalogId,
+                            productForm.id,
+                            pdfAttachments
                           );
-                          await updateCatalog(sourceId, { products: nextProducts }, false);
                         }
                       : undefined
                   }
@@ -1356,6 +1428,58 @@ export default function ProductCatalogsPage() {
               onClick={() => void saveProductDialog()}
             >
               Uložit produkt
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={productDocsPreview != null}
+        onOpenChange={(open) => {
+          if (!open) setProductDocsPreview(null);
+        }}
+      >
+        <DialogContent className="max-h-[min(88dvh,640px)] max-w-xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {productDocsPreview?.product.name ?? "Produkt"} — dokumenty
+            </DialogTitle>
+          </DialogHeader>
+          {productDocsPreview && companyId ? (
+            <CatalogPdfAttachmentsSection
+              companyId={companyId}
+              catalogId={productDocsPreview.catalogId}
+              productId={productDocsPreview.product.id}
+              sectionTitle="Dokumenty produktu"
+              attachments={(() => {
+                const cat = catalogs.find((c) => c.id === productDocsPreview.catalogId);
+                const live = cat?.products?.find((x) => x.id === productDocsPreview.product.id);
+                return Array.isArray(live?.pdfAttachments)
+                  ? live.pdfAttachments
+                  : Array.isArray(productDocsPreview.product.pdfAttachments)
+                    ? productDocsPreview.product.pdfAttachments
+                    : [];
+              })()}
+              canWrite={access.canWrite}
+              onPersist={
+                access.canWrite
+                  ? async (pdfAttachments) => {
+                      await persistProductPdfAttachments(
+                        productDocsPreview.catalogId,
+                        productDocsPreview.product.id,
+                        pdfAttachments
+                      );
+                      setProductDocsPreview((prev) =>
+                        prev ? { ...prev, product: { ...prev.product, pdfAttachments } } : prev
+                      );
+                    }
+                  : undefined
+              }
+            />
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setProductDocsPreview(null)}>
+              Zavřít
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { DocumentPreviewDialog } from "@/components/documents/document-preview-dialog";
+import { CatalogPdfViewerDialog } from "@/components/catalogs/catalog-pdf-viewer-dialog";
 import type { ProductCatalogPdfAttachment } from "@/lib/product-catalogs";
 import {
   PRODUCT_CATALOG_PDF_MAX_BYTES,
@@ -42,11 +42,9 @@ export type CatalogPdfAttachmentsSectionProps = {
   productId?: string;
   attachments: ProductCatalogPdfAttachment[];
   canWrite: boolean;
-  /** Zákaznický náhled — jen čtení, filtr customerVisible řeší rodič. */
   customerMode?: boolean;
-  /** Po nahrání / úpravě / smazání — trvalé uložení do Firestore. */
+  sectionTitle?: string;
   onPersist?: (next: ProductCatalogPdfAttachment[]) => Promise<void>;
-  /** Lokální stav (dialog produktu před finálním uložením). */
   onChange?: (next: ProductCatalogPdfAttachment[]) => void;
 };
 
@@ -57,6 +55,7 @@ export function CatalogPdfAttachmentsSection({
   attachments,
   canWrite,
   customerMode = false,
+  sectionTitle,
   onPersist,
   onChange,
 }: CatalogPdfAttachmentsSectionProps) {
@@ -67,6 +66,10 @@ export function CatalogPdfAttachmentsSection({
     null
   );
   const [urlById, setUrlById] = useState<Record<string, string>>({});
+
+  const heading =
+    sectionTitle ??
+    (productId ? "Dokumenty produktu" : "Dokumenty katalogu");
 
   useEffect(() => {
     let cancelled = false;
@@ -110,45 +113,68 @@ export function CatalogPdfAttachmentsSection({
     [onChange, onPersist, toast]
   );
 
-  const uploadPdf = async (file: File) => {
-    if (!canWrite || customerMode) return;
+  const uploadSingleFile = async (
+    file: File,
+    currentList: ProductCatalogPdfAttachment[]
+  ): Promise<ProductCatalogPdfAttachment> => {
     if (file.size > PRODUCT_CATALOG_PDF_MAX_BYTES) {
-      toast({ variant: "destructive", title: "PDF je větší než 25 MB." });
-      return;
+      throw new Error(`Soubor „${file.name}" je větší než 25 MB.`);
     }
     if (!(await isPdfFile(file))) {
-      toast({ variant: "destructive", title: "Soubor není platné PDF." });
-      return;
+      throw new Error(`Soubor „${file.name}" není platné PDF.`);
     }
-    const docId = `pdf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const docId = `pdf_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     const storagePath = productId
       ? buildProductLevelPdfStoragePath(companyId, catalogId, productId, docId)
       : buildCatalogLevelPdfStoragePath(companyId, catalogId, docId);
+    const storage = getFirebaseStorage();
+    const uploaded = await uploadBytes(ref(storage, storagePath), file, {
+      contentType: "application/pdf",
+    });
+    const downloadUrl = await getDownloadURL(uploaded.ref);
+    return {
+      id: docId,
+      fileName: file.name,
+      displayName: file.name.replace(/\.pdf$/i, ""),
+      storagePath,
+      downloadUrl,
+      mimeType: "application/pdf",
+      sizeBytes: file.size,
+      uploadedAt: new Date().toISOString(),
+      customerVisible: false,
+    };
+  };
+
+  const uploadFiles = async (files: File[]) => {
+    if (!canWrite || customerMode || !files.length) return;
     setUploading(true);
+    let acc = attachments;
+    let okCount = 0;
+    const errors: string[] = [];
     try {
-      const storage = getFirebaseStorage();
-      const uploaded = await uploadBytes(ref(storage, storagePath), file, {
-        contentType: "application/pdf",
-      });
-      const downloadUrl = await getDownloadURL(uploaded.ref);
-      const row: ProductCatalogPdfAttachment = {
-        id: docId,
-        fileName: file.name,
-        displayName: file.name.replace(/\.pdf$/i, ""),
-        storagePath,
-        downloadUrl,
-        mimeType: "application/pdf",
-        sizeBytes: file.size,
-        uploadedAt: new Date().toISOString(),
-        customerVisible: false,
-      };
-      await applyChange([...attachments, row], "PDF dokument byl nahrán a uložen");
-    } catch (e) {
-      if (!(e instanceof Error && e.message.includes("uložit"))) {
+      for (const file of files) {
+        try {
+          const row = await uploadSingleFile(file, acc);
+          acc = [...acc, row];
+          await applyChange(acc);
+          okCount++;
+        } catch (e) {
+          errors.push(e instanceof Error ? e.message : String(e));
+        }
+      }
+      if (okCount > 0) {
+        toast({
+          title:
+            okCount === 1
+              ? "PDF dokument byl nahrán a uložen"
+              : `${okCount} PDF dokumentů bylo nahráno a uloženo`,
+        });
+      }
+      if (errors.length) {
         toast({
           variant: "destructive",
-          title: "Nahrání PDF selhalo",
-          description: e instanceof Error ? e.message : String(e),
+          title: "Některá PDF se nepodařilo nahrát",
+          description: errors.slice(0, 3).join(" · "),
         });
       }
     } finally {
@@ -180,24 +206,25 @@ export function CatalogPdfAttachmentsSection({
   return (
     <div className="space-y-3 rounded-lg border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Label className="text-base font-semibold">Dokumenty PDF</Label>
+        <Label className="text-base font-semibold">{heading}</Label>
         {showWriteControls ? (
           <>
             <input
               ref={inputRef}
               type="file"
               accept="application/pdf,.pdf"
+              multiple
               className="hidden"
               onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void uploadPdf(f);
+                const list = Array.from(e.target.files ?? []);
+                if (list.length) void uploadFiles(list);
                 e.target.value = "";
               }}
             />
             <Button
               type="button"
               size="sm"
-              variant="outline"
+              variant="default"
               disabled={uploading}
               onClick={() => inputRef.current?.click()}
             >
@@ -220,6 +247,7 @@ export function CatalogPdfAttachmentsSection({
                     <Input
                       key={`${a.id}-${a.displayName}`}
                       defaultValue={a.displayName}
+                      placeholder="Název dokumentu"
                       onBlur={(e) => {
                         const displayName = e.target.value.trim() || a.fileName;
                         const next = attachments.map((x) =>
@@ -290,8 +318,8 @@ export function CatalogPdfAttachmentsSection({
                       variant="destructive"
                       onClick={() => void removeAttachment(a)}
                     >
-                      <Trash2 className="h-4 w-4" />
-                      <span className="sr-only">Smazat</span>
+                      <Trash2 className="h-4 w-4 sm:mr-1" />
+                      <span className="hidden sm:inline">Smazat</span>
                     </Button>
                   ) : null}
                 </div>
@@ -300,14 +328,13 @@ export function CatalogPdfAttachmentsSection({
           })}
         </ul>
       )}
-      <DocumentPreviewDialog
+      <CatalogPdfViewerDialog
         open={preview != null}
         onOpenChange={(open) => {
           if (!open) setPreview(null);
         }}
         title={preview?.title ?? "PDF"}
         fileUrl={preview?.url ?? ""}
-        mimeType="application/pdf"
         fileName={preview?.fileName}
       />
     </div>

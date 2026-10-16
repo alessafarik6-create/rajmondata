@@ -10,6 +10,7 @@ type Props = {
   catalogId: string;
   productId?: string;
   attachments: ProductCatalogPdfAttachment[] | undefined | null;
+  sectionTitle?: string;
 };
 
 /** PDF dokumenty pro zákazníka — pouze s příznakem customerVisible. */
@@ -18,6 +19,7 @@ export function CustomerCatalogPdfSection({
   catalogId,
   productId,
   attachments,
+  sectionTitle,
 }: Props) {
   const visible = useMemo(() => customerVisiblePdfAttachments(attachments), [attachments]);
   if (!visible.length) return null;
@@ -29,6 +31,7 @@ export function CustomerCatalogPdfSection({
       attachments={visible}
       canWrite={false}
       customerMode
+      sectionTitle={sectionTitle}
     />
   );
 }

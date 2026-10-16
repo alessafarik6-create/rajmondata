@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, ZoomIn, ZoomOut } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Download, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,7 @@ type Props = {
 };
 
 export function EmailPdfViewerDialog(props: Props) {
+  const viewerRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(1);
   const [scale, setScale] = useState(1.4);
@@ -99,8 +100,15 @@ export function EmailPdfViewerDialog(props: Props) {
         <DialogHeader>
           <DialogTitle className="truncate pr-8">{props.title}</DialogTitle>
         </DialogHeader>
-        <div className="flex-1 min-h-0 overflow-auto rounded border bg-muted/20 p-2">
-          {loading ? (
+        <div
+          ref={viewerRef}
+          className="flex-1 min-h-0 overflow-auto rounded border bg-muted/20 p-2"
+        >
+          {!props.pdfBlobUrl ? (
+            <p className="py-12 text-center text-sm text-muted-foreground">
+              PDF není k dispozici.
+            </p>
+          ) : loading ? (
             <div className="flex h-[50vh] items-center justify-center">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
@@ -139,6 +147,18 @@ export function EmailPdfViewerDialog(props: Props) {
             </Button>
             <Button type="button" size="sm" variant="outline" onClick={() => setScale((s) => Math.min(3, s + 0.2))}>
               <ZoomIn className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              title="Celá obrazovka"
+              onClick={() => {
+                const el = viewerRef.current;
+                if (el?.requestFullscreen) void el.requestFullscreen();
+              }}
+            >
+              <Maximize2 className="h-4 w-4" />
             </Button>
           </div>
           {props.onDownload ? (

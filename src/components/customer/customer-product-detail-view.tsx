@@ -264,6 +264,7 @@ export function CustomerProductDetailView({
             catalogId={catalog.id}
             productId={product.id}
             attachments={product.pdfAttachments}
+            sectionTitle="Dokumenty produktu"
           />
 
           {jobId && selection ? (

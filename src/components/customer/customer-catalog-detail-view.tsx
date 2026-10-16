@@ -88,6 +88,7 @@ export function CustomerCatalogDetailView({
         companyId={companyId}
         catalogId={catalog.id}
         attachments={catalog.pdfAttachments}
+        sectionTitle="Dokumenty katalogu"
       />
 
       <div>
