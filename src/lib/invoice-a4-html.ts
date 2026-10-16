@@ -508,6 +508,7 @@ export function buildFinalSettlementInvoiceHtml(params: {
   paymentQrUrl?: string | null;
   paymentQrWarning?: string | null;
   totalContractGross: number;
+  contractBreakdownHtml?: string;
   advanceRows: SettlementAdvanceRow[];
   totalAdvancePaid: number;
   items: InvoiceLineRow[];
@@ -515,6 +516,7 @@ export function buildFinalSettlementInvoiceHtml(params: {
   vatAmount: number;
   amountGross: number;
   primaryVatRateLabel?: string;
+  vatRegimeNote?: string;
   note?: string;
 }): string {
   const supplierLines = brJoinEscaped(params.supplierAddressText || params.supplierName);
@@ -603,9 +605,13 @@ export function buildFinalSettlementInvoiceHtml(params: {
     ${bankHtml}
     ${qrHtml}
     ${qrWarn}
-    <table class="totals">
+    ${
+      params.contractBreakdownHtml
+        ? `<h3 style="font-size:10pt;margin:12px 0 6px">Celková hodnota prací</h3>${params.contractBreakdownHtml}`
+        : `<table class="totals">
       <tr><td>Celková cena zakázky (s DPH)</td><td>${fmtKc(params.totalContractGross)}</td></tr>
-    </table>
+    </table>`
+    }
     <h3 style="font-size:10pt;margin:12px 0 6px">Odečtené zálohy</h3>
     ${advanceTable}
     <h3 style="font-size:10pt;margin:12px 0 6px">Položky — doplatek</h3>
@@ -629,6 +635,11 @@ export function buildFinalSettlementInvoiceHtml(params: {
       <tr><td>DPH${params.primaryVatRateLabel ? ` (${escapeHtml(params.primaryVatRateLabel)})` : ""}</td><td>${fmtKc(params.vatAmount)}</td></tr>
       <tr class="grand"><td><strong>Celkem k úhradě (doplatek)</strong></td><td>${fmtKc(params.amountGross)}</td></tr>
     </table>
+    ${
+      params.vatRegimeNote
+        ? `<p class="note"><strong>${escapeHtml(params.vatRegimeNote)}</strong></p>`
+        : ""
+    }
     <p class="note">${escapeHtml(params.note ?? "Doklad dokončuje vyúčtování zakázky po odečtení uhrazených záloh.")}</p>
   </div>
 </div>

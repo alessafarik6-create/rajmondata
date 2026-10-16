@@ -42,6 +42,15 @@ import {
   type InvoiceLineRow,
   type SettlementAdvanceRow,
 } from "@/lib/invoice-a4-html";
+import {
+  assertSettlementCanBeIssued,
+  computeJobSettlement,
+  JOB_VAT_REGIME,
+  REVERSE_CHARGE_INVOICE_NOTE_CS,
+  type JobSettlementComputation,
+} from "@/lib/jobs/job-financial-settlement";
+import type { JobWorkBudgetAdvanceDoc } from "@/lib/work-budget-advances";
+import type { JobWorkBudgetItemDoc } from "@/lib/work-budget-types";
 import { allocateNextDocumentNumber } from "@/lib/invoice-number-series";
 import {
   type OrgBankAccountRow,
@@ -1292,18 +1301,81 @@ export function computeSettlementAmounts(params: {
     invoiceNumber?: string;
     paidGrossReceived?: unknown;
     amountGross?: unknown;
+    amountNet?: unknown;
+    vatAmount?: unknown;
+    vatRate?: unknown;
   }>;
   /** Použije se jen pokud u zakázky není žádná zálohová faktura. */
   contractFallback: WorkContractLike | null;
+  job?: Record<string, unknown> | null;
+  jobBudget?: JobBudgetBreakdown | null;
+  workBudgetItems?: JobWorkBudgetItemDoc[];
+  workBudgetAdvances?: JobWorkBudgetAdvanceDoc[];
+  allJobInvoices?: Array<Record<string, unknown> & { id: string }>;
 }): {
   totalContractGross: number;
   totalAdvancePaid: number;
-  advanceSource: "invoices" | "contract" | "none";
+  advanceSource: "invoices" | "contract" | "mixed" | "none";
   amountToPay: number;
   relatedAdvanceInvoiceIds: string[];
   advanceLines: SettlementAdvanceLine[];
   advanceRowsForHtml: SettlementAdvanceRow[];
+  /** Plný výpočet včetně víceprací a kontrol (pokud k dispozici). */
+  computation?: JobSettlementComputation;
+  validationWarnings: string[];
+  validationErrors: string[];
 } {
+  const jobBudget =
+    params.jobBudget ??
+    (params.budgetGross != null && params.budgetGross > 0
+      ? ({
+          vatRate: 21,
+          budgetNet: 0,
+          budgetVat: 0,
+          budgetGross: params.budgetGross,
+          budgetInput: params.budgetGross,
+          budgetType: "gross",
+        } as JobBudgetBreakdown)
+      : null);
+
+  const useUnified =
+    params.workBudgetItems != null ||
+    params.job != null ||
+    params.jobBudget != null ||
+    (params.allJobInvoices != null && params.allJobInvoices.length > 0);
+
+  if (useUnified && jobBudget) {
+    const computation = computeJobSettlement({
+      job: params.job,
+      jobBudget,
+      workBudgetItems: params.workBudgetItems,
+      workBudgetAdvances: params.workBudgetAdvances,
+      advanceInvoices: params.advanceInvoices,
+      allJobInvoices: params.allJobInvoices,
+      contractFallback: params.contractFallback,
+    });
+    const advanceSource =
+      computation.advanceSource === "mixed"
+        ? "invoices"
+        : computation.advanceSource;
+    return {
+      totalContractGross: computation.totalContractGross,
+      totalAdvancePaid: computation.totalAdvancePaid,
+      advanceSource,
+      amountToPay: computation.amountToPay,
+      relatedAdvanceInvoiceIds: computation.relatedAdvanceInvoiceIds,
+      advanceLines: computation.advanceLines.map((l) => ({
+        invoiceId: l.id,
+        invoiceNumber: l.label,
+        paidGross: l.paidGross,
+      })),
+      advanceRowsForHtml: computation.advanceRowsForHtml,
+      computation,
+      validationWarnings: computation.validationWarnings,
+      validationErrors: computation.validationErrors,
+    };
+  }
+
   const totalContractGross =
     params.budgetGross != null && Number.isFinite(params.budgetGross)
       ? roundMoney2(params.budgetGross)
@@ -1369,6 +1441,8 @@ export function computeSettlementAmounts(params: {
     relatedAdvanceInvoiceIds: advances.map((a) => a.id),
     advanceLines,
     advanceRowsForHtml,
+    validationWarnings: [],
+    validationErrors: [],
   };
 }
 
@@ -1391,11 +1465,32 @@ export async function hasFinalSettlementInvoiceForJob(
   return false;
 }
 
+function buildSettlementBreakdownHtml(
+  computation: JobSettlementComputation
+): string {
+  const cv = computation.currentValue;
+  const row = (label: string, t: { net: number; vat: number; gross: number }) =>
+    `<tr><td>${label}</td><td class="num">${fmtSettlementKc(t.net)}</td><td class="num">${fmtSettlementKc(t.vat)}</td><td class="num">${fmtSettlementKc(t.gross)}</td></tr>`;
+  return `<table class="items">
+  <thead><tr><th>Skladba ceny zakázky</th><th class="num">bez DPH</th><th class="num">DPH</th><th class="num">s DPH</th></tr></thead>
+  <tbody>
+  ${row("Původní rozpočet / smluvní základ", cv.contractBase)}
+  ${cv.extraWorkApproved.gross > 0 ? row("Schválené vícepráce", cv.extraWorkApproved) : ""}
+  ${cv.deductions.gross > 0 ? row("Odpočty a méněpráce", { net: -cv.deductions.net, vat: -cv.deductions.vat, gross: -cv.deductions.gross }) : ""}
+  ${row("Aktuální hodnota zakázky", cv.current)}
+  </tbody></table>`;
+}
+
+function fmtSettlementKc(n: number): string {
+  return `${roundMoney2(n).toLocaleString("cs-CZ", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kč`;
+}
+
 export async function createFinalSettlementInvoice(params: {
   firestore: Firestore;
   companyId: string;
   jobId: string;
   jobName: string;
+  job?: Record<string, unknown> | null;
   customerId: string;
   customerName: string;
   customerAddressLines: string;
@@ -1411,7 +1506,13 @@ export async function createFinalSettlementInvoice(params: {
     invoiceNumber?: string;
     paidGrossReceived?: unknown;
     amountGross?: unknown;
+    amountNet?: unknown;
+    vatAmount?: unknown;
+    vatRate?: unknown;
   }>;
+  workBudgetItems?: JobWorkBudgetItemDoc[];
+  workBudgetAdvances?: JobWorkBudgetAdvanceDoc[];
+  allJobInvoices?: Array<Record<string, unknown> & { id: string }>;
   workContractsForJob: WorkContractLike[];
   /** Účet zakázky (jobs/{id}). */
   jobBank?: JobBankLike | null;
@@ -1444,6 +1545,11 @@ export async function createFinalSettlementInvoice(params: {
 
   const settlement = computeSettlementAmounts({
     budgetGross: params.budget.budgetGross,
+    jobBudget: params.budget,
+    job: params.job,
+    workBudgetItems: params.workBudgetItems,
+    workBudgetAdvances: params.workBudgetAdvances,
+    allJobInvoices: params.allJobInvoices,
     advanceInvoices: params.advanceInvoices,
     contractFallback:
       params.advanceInvoices.some((i) => i.type === JOB_INVOICE_TYPES.ADVANCE)
@@ -1451,28 +1557,52 @@ export async function createFinalSettlementInvoice(params: {
         : primaryContract,
   });
 
-  const vatRate = normalizeVatRate(params.budget.vatRate);
-  const { amountNet, vatAmount, amountGross } = splitGrossToNetVat(
-    settlement.amountToPay,
-    vatRate
-  );
+  if (settlement.computation) {
+    assertSettlementCanBeIssued(settlement.computation);
+  } else if (settlement.validationErrors.length > 0) {
+    throw new Error(settlement.validationErrors.join(" "));
+  }
 
-  const lineRow =
+  const comp = settlement.computation;
+  const vatRegime = comp?.vatRegime ?? JOB_VAT_REGIME.STANDARD;
+  const vatRate =
+    vatRegime === JOB_VAT_REGIME.REVERSE_CHARGE || vatRegime === JOB_VAT_REGIME.EXEMPT
+      ? 0
+      : normalizeVatRate(params.budget.vatRate);
+
+  const amountNet = comp ? comp.amountToPayNet : splitGrossToNetVat(settlement.amountToPay, vatRate).amountNet;
+  const vatAmount = comp ? comp.amountToPayVat : splitGrossToNetVat(settlement.amountToPay, vatRate).vatAmount;
+  const amountGross = roundMoney2(settlement.amountToPay);
+
+  const invoiceItems: InvoiceLineRow[] =
     settlement.amountToPay <= 0
-      ? singleLineFromGross({
-          description: `Vyúčtování zakázky ${params.jobName} — doplatek 0 Kč`,
-          amountNet: 0,
-          vatRate,
-          vatAmount: 0,
-          amountGross: 0,
-        })
-      : singleLineFromGross({
-          description: `Doplatek za zakázku ${params.jobName} (po odečtení záloh)`,
-          amountNet,
-          vatRate,
-          vatAmount,
-          amountGross,
-        });
+      ? [
+          singleLineFromGross({
+            description: `Vyúčtování zakázky ${params.jobName} — doplatek 0 Kč`,
+            amountNet: 0,
+            vatRate,
+            vatAmount: 0,
+            amountGross: 0,
+          }),
+        ]
+      : [
+          singleLineFromGross({
+            description: `Doplatek za zakázku ${params.jobName} (po odečtení záloh)`,
+            amountNet,
+            vatRate,
+            vatAmount,
+            amountGross,
+          }),
+        ];
+
+  const settlementNoteParts = [
+    params.notes?.trim(),
+    vatRegime === JOB_VAT_REGIME.REVERSE_CHARGE ? REVERSE_CHARGE_INVOICE_NOTE_CS : null,
+    comp?.alreadyInvoicedGross
+      ? `Již vyfakturováno z položkového rozpočtu: ${comp.alreadyInvoicedGross.toLocaleString("cs-CZ")} Kč s DPH.`
+      : null,
+  ].filter(Boolean);
+  const settlementNote = settlementNoteParts.join("\n\n") || undefined;
 
   const issueDate = new Date().toISOString().slice(0, 10);
   const due = new Date();
@@ -1554,17 +1684,27 @@ export async function createFinalSettlementInvoice(params: {
     paymentQrUrl: qr?.warning ? null : qr?.qrUrl ?? null,
     paymentQrWarning: qr?.warning ?? null,
     totalContractGross: settlement.totalContractGross,
+    contractBreakdownHtml: comp ? buildSettlementBreakdownHtml(comp) : undefined,
     advanceRows:
       settlement.advanceRowsForHtml.length > 0
         ? settlement.advanceRowsForHtml
         : [{ label: "Žádná uhrazená záloha", amountGross: 0 }],
     totalAdvancePaid: settlement.totalAdvancePaid,
-    items: [lineRow],
+    items: invoiceItems,
     amountNet,
     vatAmount,
     amountGross,
-    primaryVatRateLabel: `${vatRate}`,
-    note: params.notes?.trim() || undefined,
+    primaryVatRateLabel:
+      vatRegime === JOB_VAT_REGIME.REVERSE_CHARGE
+        ? "přenesená daňová povinnost"
+        : vatRegime === JOB_VAT_REGIME.EXEMPT
+          ? "osvobozeno"
+          : `${vatRate}`,
+    vatRegimeNote:
+      vatRegime === JOB_VAT_REGIME.REVERSE_CHARGE
+        ? REVERSE_CHARGE_INVOICE_NOTE_CS
+        : undefined,
+    note: settlementNote,
   });
 
   const invRef = doc(collection(params.firestore, "companies", params.companyId, "invoices"));
@@ -1602,6 +1742,8 @@ export async function createFinalSettlementInvoice(params: {
       totalContractAmount: settlement.totalContractGross,
       totalAdvancePaid: settlement.totalAdvancePaid,
       amountToPay: settlement.amountToPay,
+      settlementValidationWarnings: settlement.validationWarnings,
+      vatRegime,
       advanceSource: settlement.advanceSource,
       relatedAdvanceInvoiceIds: settlement.relatedAdvanceInvoiceIds,
       sourceContractId: params.sourceContractId ?? primaryContract?.id ?? null,
@@ -1618,9 +1760,9 @@ export async function createFinalSettlementInvoice(params: {
       status: settlement.amountToPay <= 0 ? "paid" : "unpaid",
       issueStatus: "issued",
       pdfHtml: html,
-      items: itemsRowsForFirestore([lineRow]),
+      items: itemsRowsForFirestore(invoiceItems),
       totalAmount: amountGross,
-      notes: params.notes ?? "",
+      notes: settlementNote ?? params.notes ?? "",
       createdAt: serverTimestamp(),
       createdBy: params.userId,
     });

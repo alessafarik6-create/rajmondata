@@ -22,6 +22,7 @@
     "test:portal-analytics": "npx --yes tsx src/lib/portal-analytics/portal-analytics.test.ts",
     "test:satelitni-fleet": "npx --yes tsx src/lib/integrations/satelitni-sledovani/satelitni-api-payload.test.ts",
     "test:job-timeline": "npx --yes tsx src/lib/jobs/job-timeline-utils.test.ts",
+    "test:job-settlement": "npx --yes tsx src/lib/jobs/job-financial-settlement.test.ts",
     "postinstall": "node scripts/copy-pdf-fonts.mjs && node scripts/copy-pdf-worker.mjs && node scripts/copy-hikvision-jssdk.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
     "seed-superadmin": "node scripts/seed-superadmin.js"

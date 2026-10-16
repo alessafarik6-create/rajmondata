@@ -91,6 +91,7 @@ import type { User } from "firebase/auth";
 import { cn } from "@/lib/utils";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { printInvoiceHtmlDocument } from "@/lib/print-html";
+import { JobBillingSettlementOverview } from "@/components/jobs/job-billing-settlement-overview";
 
 const VAT_OPTIONS = [0, 12, 21] as const;
 
@@ -433,12 +434,32 @@ export function JobBillingInvoicesSection({
     });
     return computeSettlementAmounts({
       budgetGross: jobBudgetBreakdown.budgetGross,
-      advanceInvoices: rows,
+      jobBudget: jobBudgetBreakdown,
+      job: job ?? undefined,
+      workBudgetItems,
+      workBudgetAdvances,
+      allJobInvoices: jobInvoices as Array<Record<string, unknown> & { id: string }>,
+      advanceInvoices: rows.map((r) => ({
+        ...r,
+        amountNet: (jobInvoices.find((i) => i.id === r.id) as { amountNet?: unknown })
+          ?.amountNet,
+        vatAmount: (jobInvoices.find((i) => i.id === r.id) as { vatAmount?: unknown })
+          ?.vatAmount,
+        vatRate: (jobInvoices.find((i) => i.id === r.id) as { vatRate?: unknown })?.vatRate,
+      })),
       contractFallback: rows.some((x) => x.type === JOB_INVOICE_TYPES.ADVANCE)
         ? null
         : primary,
     });
-  }, [jobBudgetBreakdown, jobInvoices, workContractsForJob, budgetGross]);
+  }, [
+    jobBudgetBreakdown,
+    jobInvoices,
+    workContractsForJob,
+    budgetGross,
+    job,
+    workBudgetItems,
+    workBudgetAdvances,
+  ]);
 
   const hasFinalSettlement = useMemo(
     () =>
@@ -705,6 +726,20 @@ export function JobBillingInvoicesSection({
 
   const handleCreateSettlement = async () => {
     if (!user || !jobBudgetBreakdown || !customerId) return;
+    if (settlementPreview?.validationErrors?.length) {
+      toast({
+        variant: "destructive",
+        title: "Vyúčtování nelze vystavit",
+        description: settlementPreview.validationErrors.join(" "),
+      });
+      return;
+    }
+    if (settlementPreview?.validationWarnings?.length) {
+      const ok = window.confirm(
+        `Upozornění před vyúčtováním:\n\n${settlementPreview.validationWarnings.join("\n\n")}\n\nPokračovat?`
+      );
+      if (!ok) return;
+    }
     setCreatingSettlement(true);
     try {
       const rows = jobInvoices.map((inv) => {
@@ -715,6 +750,9 @@ export function JobBillingInvoicesSection({
           invoiceNumber: r.invoiceNumber as string | undefined,
           paidGrossReceived: r.paidGrossReceived,
           amountGross: r.amountGross,
+          amountNet: r.amountNet,
+          vatAmount: r.vatAmount,
+          vatRate: r.vatRate,
         };
       });
       const primary =
@@ -726,6 +764,7 @@ export function JobBillingInvoicesSection({
         companyId,
         jobId,
         jobName,
+        job: job ?? undefined,
         customerId: String(customerId),
         customerName,
         customerAddressLines: customerAddressLines || customerName,
@@ -737,6 +776,9 @@ export function JobBillingInvoicesSection({
         logoUrl: organizationLogoUrl,
         budget: jobBudgetBreakdown,
         advanceInvoices: rows,
+        workBudgetItems,
+        workBudgetAdvances,
+        allJobInvoices: jobInvoices as Array<Record<string, unknown> & { id: string }>,
         workContractsForJob,
         jobBank,
         sourceContractId: primary?.id ?? null,
@@ -891,38 +933,42 @@ export function JobBillingInvoicesSection({
             Fakturace — záloha a daňové doklady
           </CardTitle>
           <p className="text-sm text-neutral-800">
-            Rozpočet zakázky (s DPH):{" "}
+            Rozpočet v hlavičce (s DPH):{" "}
             <strong>
               {jobBudgetBreakdown
                 ? `${jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč`
                 : "—"}
             </strong>
-            {" · "}Přijaté zálohy celkem:{" "}
-            <strong>{advanceInvoicesTotal.toLocaleString("cs-CZ")} Kč</strong>
-            {" · "}Zbývá doplatit:{" "}
+            {settlementPreview &&
+            Math.abs(
+              settlementPreview.totalContractGross - (jobBudgetBreakdown?.budgetGross ?? 0)
+            ) > 1 ? (
+              <>
+                {" · "}
+                Aktuální hodnota vč. víceprací:{" "}
+                <strong>
+                  {settlementPreview.totalContractGross.toLocaleString("cs-CZ")} Kč
+                </strong>
+              </>
+            ) : null}
+            {" · "}Uhrazené zálohy (k započtení):{" "}
             <strong>
-              {remainingAfterAdvancesGross != null
-                ? `${remainingAfterAdvancesGross.toLocaleString("cs-CZ")} Kč`
-                : "—"}
+              {(settlementPreview?.totalAdvancePaid ?? advanceInvoicesTotal).toLocaleString(
+                "cs-CZ"
+              )}{" "}
+              Kč
+            </strong>
+            {" · "}Doplatek:{" "}
+            <strong>
+              {settlementPreview != null
+                ? `${settlementPreview.amountToPay.toLocaleString("cs-CZ")} Kč`
+                : remainingAfterAdvancesGross != null
+                  ? `${remainingAfterAdvancesGross.toLocaleString("cs-CZ")} Kč`
+                  : "—"}
             </strong>
           </p>
-          {settlementPreview && jobBudgetBreakdown ? (
-            <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-800">
-              <div className="font-semibold text-neutral-950">Vyúčtování (náhled)</div>
-              <div>
-                Celková cena zakázky (s DPH):{" "}
-                <strong>{settlementPreview.totalContractGross.toLocaleString("cs-CZ")} Kč</strong>
-              </div>
-              <div>
-                Odečtené zálohy ({settlementPreview.advanceSource === "contract" ? "smlouva" : settlementPreview.advanceSource === "invoices" ? "zálohové faktury" : "—"}
-                ):{" "}
-                <strong>{settlementPreview.totalAdvancePaid.toLocaleString("cs-CZ")} Kč</strong>
-              </div>
-              <div>
-                Doplatek:{" "}
-                <strong>{settlementPreview.amountToPay.toLocaleString("cs-CZ")} Kč s DPH</strong>
-              </div>
-            </div>
+          {settlementPreview?.computation ? (
+            <JobBillingSettlementOverview computation={settlementPreview.computation} />
           ) : null}
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
