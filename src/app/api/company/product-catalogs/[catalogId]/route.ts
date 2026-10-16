@@ -70,21 +70,33 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
     patch.products = body.products.map((p) => serializeProductForFirestore(p as ProductCatalogProduct));
   }
   if (Array.isArray(body.pdfAttachments)) {
-    patch.pdfAttachments = serializePdfAttachmentsForFirestore(
-      body.pdfAttachments as ProductCatalogPdfAttachment[]
-    );
+    const raw = body.pdfAttachments as ProductCatalogPdfAttachment[];
+    for (const row of raw) {
+      if (!row || typeof row.id !== "string" || !row.id.trim()) {
+        return NextResponse.json({ ok: false, error: "PDF příloha nemá platné ID." }, { status: 400 });
+      }
+      if (typeof row.storagePath !== "string" || !row.storagePath.trim()) {
+        return NextResponse.json(
+          { ok: false, error: "PDF příloha nemá platnou cestu ve Storage." },
+          { status: 400 }
+        );
+      }
+    }
+    patch.pdfAttachments = serializePdfAttachmentsForFirestore(raw);
   }
 
   await ref.set(patch, { merge: true });
   return NextResponse.json({ ok: true, catalogId });
   } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
     console.error("[product-catalogs PATCH]", {
       companyId: companyIdForLog,
-      message: e instanceof Error ? e.message : String(e),
+      message,
     });
-    return NextResponse.json(
-      { ok: false, error: "Úprava katalogu selhala kvůli chybě serveru." },
-      { status: 500 }
-    );
+    const clientHint =
+      message.includes("invalid") || message.includes("Undefined")
+        ? "Neplatná data katalogu (zkontrolujte PDF metadata a produkty)."
+        : "Úprava katalogu selhala kvůli chybě serveru.";
+    return NextResponse.json({ ok: false, error: clientHint, detail: message }, { status: 500 });
   }
 }

@@ -63,7 +63,10 @@ export function serializePdfAttachmentsForFirestore(
     ...(a.downloadUrl ? { downloadUrl: a.downloadUrl } : {}),
     mimeType: a.mimeType?.trim() || "application/pdf",
     sizeBytes: typeof a.sizeBytes === "number" ? a.sizeBytes : 0,
-    uploadedAt: a.uploadedAt,
+    uploadedAt:
+      typeof a.uploadedAt === "string" && a.uploadedAt.trim()
+        ? a.uploadedAt.trim()
+        : new Date().toISOString(),
     customerVisible: a.customerVisible === true,
   }));
 }

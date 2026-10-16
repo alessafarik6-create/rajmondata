@@ -205,6 +205,7 @@ export default function ProductCatalogsPage() {
     const data = (await res.json()) as {
       ok?: boolean;
       error?: string;
+      detail?: string;
       diagnostic?: CatalogAuthDiagnostic;
     };
     if (process.env.NODE_ENV === "development") {
@@ -222,7 +223,8 @@ export default function ProductCatalogsPage() {
             (res.status === 403
               ? "Nemáte oprávnění k úpravě produktových katalogů (vyžadován Zápis)."
               : "Uložení katalogu selhalo.");
-      throw new Error(msg);
+      const detail = typeof data.detail === "string" ? data.detail.trim() : "";
+      throw new Error(detail && process.env.NODE_ENV === "development" ? `${msg} (${detail})` : msg);
     }
   };
 

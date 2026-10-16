@@ -1,11 +1,15 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { CatalogPdfViewerDialog } from "@/components/catalogs/catalog-pdf-viewer-dialog";
+import {
+  CatalogPdfThumbnail,
+  createInstantPdfThumbnailFromFile,
+} from "@/components/catalogs/catalog-pdf-thumbnail";
 import type { ProductCatalogPdfAttachment } from "@/lib/product-catalogs";
 import {
   PRODUCT_CATALOG_PDF_MAX_BYTES,
@@ -13,32 +17,20 @@ import {
   buildProductLevelPdfStoragePath,
   serializePdfAttachmentsForFirestore,
 } from "@/lib/product-catalogs";
-import { FileText, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { deleteObject, getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebaseStorage } from "@/firebase/storage";
 import { useToast } from "@/hooks/use-toast";
+import { CatalogPdfLoadError, loadCatalogPdfBytes } from "@/lib/product-catalog-pdf-client";
 
 async function isPdfFile(file: File): Promise<boolean> {
   const head = new Uint8Array(await file.slice(0, 5).arrayBuffer());
   return head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46;
 }
 
-async function resolveAttachmentUrl(att: ProductCatalogPdfAttachment): Promise<string | null> {
-  const cached = typeof att.downloadUrl === "string" ? att.downloadUrl.trim() : "";
-  if (cached) return cached;
-  const path = typeof att.storagePath === "string" ? att.storagePath.trim() : "";
-  if (!path) return null;
-  try {
-    return await getDownloadURL(ref(getFirebaseStorage(), path));
-  } catch {
-    return null;
-  }
-}
-
 export type CatalogPdfAttachmentsSectionProps = {
   companyId: string;
   catalogId: string;
-  /** Bez productId = dokumenty katalogu; s productId = dokumenty produktu. */
   productId?: string;
   attachments: ProductCatalogPdfAttachment[];
   canWrite: boolean;
@@ -59,38 +51,18 @@ export function CatalogPdfAttachmentsSection({
   onPersist,
   onChange,
 }: CatalogPdfAttachmentsSectionProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const [uploading, setUploading] = useState(false);
-  const [preview, setPreview] = useState<{ url: string; title: string; fileName: string } | null>(
-    null
-  );
-  const [urlById, setUrlById] = useState<Record<string, string>>({});
+  const [previewAtt, setPreviewAtt] = useState<ProductCatalogPdfAttachment | null>(null);
+  const [instantThumbs, setInstantThumbs] = useState<Record<string, string>>({});
 
   const heading =
-    sectionTitle ??
-    (productId ? "Dokumenty produktu" : "Dokumenty katalogu");
+    sectionTitle ?? (productId ? "Dokumenty produktu" : "Dokumenty katalogu");
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const entries = await Promise.all(
-        attachments.map(async (a) => {
-          const url = await resolveAttachmentUrl(a);
-          return [a.id, url] as const;
-        })
-      );
-      if (cancelled) return;
-      const next: Record<string, string> = {};
-      for (const [id, url] of entries) {
-        if (url) next[id] = url;
-      }
-      setUrlById(next);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [attachments]);
+  const openPreview = (att: ProductCatalogPdfAttachment) => {
+    setPreviewAtt(att);
+  };
 
   const applyChange = useCallback(
     async (next: ProductCatalogPdfAttachment[], successMessage?: string) => {
@@ -132,7 +104,7 @@ export function CatalogPdfAttachmentsSection({
       contentType: "application/pdf",
     });
     const downloadUrl = await getDownloadURL(uploaded.ref);
-    return {
+    const row: ProductCatalogPdfAttachment = {
       id: docId,
       fileName: file.name,
       displayName: file.name.replace(/\.pdf$/i, ""),
@@ -143,6 +115,13 @@ export function CatalogPdfAttachmentsSection({
       uploadedAt: new Date().toISOString(),
       customerVisible: false,
     };
+    try {
+      const thumbUrl = await createInstantPdfThumbnailFromFile(file);
+      setInstantThumbs((prev) => ({ ...prev, [docId]: thumbUrl }));
+    } catch (e) {
+      console.warn("[CatalogPdfAttachments] instant thumbnail failed", e);
+    }
+    return row;
   };
 
   const uploadFiles = async (files: File[]) => {
@@ -191,6 +170,11 @@ export function CatalogPdfAttachmentsSection({
     } catch {
       return;
     }
+    setInstantThumbs((prev) => {
+      const copy = { ...prev };
+      delete copy[att.id];
+      return copy;
+    });
     const path = att.storagePath?.trim();
     if (path) {
       try {
@@ -236,107 +220,118 @@ export function CatalogPdfAttachmentsSection({
       {attachments.length === 0 ? (
         <p className="text-sm text-muted-foreground">Zatím žádné PDF dokumenty.</p>
       ) : (
-        <ul className="space-y-2">
-          {attachments.map((a) => {
-            const fileUrl = urlById[a.id] ?? a.downloadUrl ?? "";
-            return (
-              <li key={a.id} className="flex flex-wrap items-start gap-2 rounded-md border p-2">
-                <FileText className="h-5 w-5 shrink-0 text-red-600" aria-hidden />
-                <div className="min-w-0 flex-1 space-y-1">
-                  {showWriteControls ? (
-                    <Input
-                      key={`${a.id}-${a.displayName}`}
-                      defaultValue={a.displayName}
-                      placeholder="Název dokumentu"
-                      onBlur={(e) => {
-                        const displayName = e.target.value.trim() || a.fileName;
-                        const next = attachments.map((x) =>
-                          x.id === a.id ? { ...x, displayName } : x
+        <ul className="space-y-3">
+          {attachments.map((a) => (
+            <li
+              key={a.id}
+              className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-start"
+            >
+              <CatalogPdfThumbnail
+                attachment={a}
+                instantObjectUrl={instantThumbs[a.id] ?? null}
+                onClick={() => openPreview(a)}
+              />
+              <div className="min-w-0 flex-1 space-y-1">
+                {showWriteControls ? (
+                  <Input
+                    key={`${a.id}-${a.displayName}`}
+                    defaultValue={a.displayName}
+                    placeholder="Název dokumentu"
+                    onBlur={(e) => {
+                      const displayName = e.target.value.trim() || a.fileName;
+                      const next = attachments.map((x) =>
+                        x.id === a.id ? { ...x, displayName } : x
+                      );
+                      void applyChange(next).catch(() => undefined);
+                    }}
+                    className="h-8"
+                  />
+                ) : (
+                  <p className="font-medium">{a.displayName || a.fileName}</p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  {a.fileName} · {(a.sizeBytes / 1024).toFixed(0)} KB ·{" "}
+                  {new Date(a.uploadedAt).toLocaleDateString("cs-CZ")}
+                </p>
+                {showWriteControls ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Switch
+                      checked={a.customerVisible}
+                      onCheckedChange={(v) => {
+                        void applyChange(
+                          attachments.map((x) =>
+                            x.id === a.id ? { ...x, customerVisible: v } : x
+                          )
                         );
-                        void applyChange(next).catch(() => undefined);
                       }}
-                      className="h-8"
                     />
-                  ) : (
-                    <p className="font-medium">{a.displayName || a.fileName}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    {a.fileName} · {(a.sizeBytes / 1024).toFixed(0)} KB ·{" "}
-                    {new Date(a.uploadedAt).toLocaleDateString("cs-CZ")}
-                  </p>
-                  {showWriteControls ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Switch
-                        checked={a.customerVisible}
-                        onCheckedChange={(v) => {
-                          void applyChange(
-                            attachments.map((x) =>
-                              x.id === a.id ? { ...x, customerVisible: v } : x
-                            )
-                          );
-                        }}
-                      />
-                      <span className="text-xs">Viditelné pro zákazníka</span>
-                    </div>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap gap-1">
+                    <span className="text-xs">Viditelné pro zákazníka</span>
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-1 sm:flex-col sm:items-stretch">
+                <Button type="button" size="sm" variant="secondary" onClick={() => openPreview(a)}>
+                  Zobrazit PDF
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        const { data } = await loadCatalogPdfBytes(a);
+                        const blob = new Blob([data], { type: "application/pdf" });
+                        const href = URL.createObjectURL(blob);
+                        const link = document.createElement("a");
+                        link.href = href;
+                        link.download = a.fileName;
+                        link.click();
+                        URL.revokeObjectURL(href);
+                      } catch (e) {
+                        toast({
+                          variant: "destructive",
+                          title: "Stažení selhalo",
+                          description:
+                            e instanceof CatalogPdfLoadError
+                              ? e.message
+                              : e instanceof Error
+                                ? e.message
+                                : String(e),
+                        });
+                      }
+                    })();
+                  }}
+                >
+                  Stáhnout
+                </Button>
+                {showWriteControls ? (
                   <Button
                     type="button"
                     size="sm"
-                    variant="secondary"
-                    disabled={!fileUrl}
-                    onClick={() => {
-                      if (!fileUrl) {
-                        toast({
-                          variant: "destructive",
-                          title: "PDF nelze zobrazit",
-                          description: "Odkaz na soubor se nepodařilo načíst.",
-                        });
-                        return;
-                      }
-                      setPreview({
-                        url: fileUrl,
-                        title: a.displayName || a.fileName,
-                        fileName: a.fileName,
-                      });
-                    }}
+                    variant="destructive"
+                    onClick={() => void removeAttachment(a)}
                   >
-                    Zobrazit PDF
+                    <Trash2 className="h-4 w-4 sm:mr-1" />
+                    <span className="hidden sm:inline">Smazat</span>
                   </Button>
-                  {fileUrl ? (
-                    <Button type="button" size="sm" variant="outline" asChild>
-                      <a href={fileUrl} download={a.fileName} target="_blank" rel="noreferrer">
-                        Stáhnout
-                      </a>
-                    </Button>
-                  ) : null}
-                  {showWriteControls ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => void removeAttachment(a)}
-                    >
-                      <Trash2 className="h-4 w-4 sm:mr-1" />
-                      <span className="hidden sm:inline">Smazat</span>
-                    </Button>
-                  ) : null}
-                </div>
-              </li>
-            );
-          })}
+                ) : null}
+              </div>
+            </li>
+          ))}
         </ul>
       )}
-      <CatalogPdfViewerDialog
-        open={preview != null}
-        onOpenChange={(open) => {
-          if (!open) setPreview(null);
-        }}
-        title={preview?.title ?? "PDF"}
-        fileUrl={preview?.url ?? ""}
-        fileName={preview?.fileName}
-      />
+      {previewAtt ? (
+        <CatalogPdfViewerDialog
+          open={previewAtt != null}
+          onOpenChange={(open) => {
+            if (!open) setPreviewAtt(null);
+          }}
+          title={previewAtt.displayName || previewAtt.fileName}
+          attachment={previewAtt}
+          fileName={previewAtt.fileName}
+        />
+      ) : null}
     </div>
   );
 }
