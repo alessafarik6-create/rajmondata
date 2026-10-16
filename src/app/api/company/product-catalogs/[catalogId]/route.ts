@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { requireProductCatalogAccess } from "@/lib/product-catalogs/require-product-catalog-access";
-import { serializeProductForFirestore } from "@/lib/product-catalogs";
-import type { ProductCatalogProduct } from "@/lib/product-catalogs";
+import { serializePdfAttachmentsForFirestore, serializeProductForFirestore } from "@/lib/product-catalogs";
+import type { ProductCatalogPdfAttachment, ProductCatalogProduct } from "@/lib/product-catalogs";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +68,11 @@ export async function PATCH(request: NextRequest, ctx: Ctx) {
   if (Array.isArray(body.assignedCustomerIds)) patch.assignedCustomerIds = body.assignedCustomerIds;
   if (Array.isArray(body.products)) {
     patch.products = body.products.map((p) => serializeProductForFirestore(p as ProductCatalogProduct));
+  }
+  if (Array.isArray(body.pdfAttachments)) {
+    patch.pdfAttachments = serializePdfAttachmentsForFirestore(
+      body.pdfAttachments as ProductCatalogPdfAttachment[]
+    );
   }
 
   await ref.set(patch, { merge: true });

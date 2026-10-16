@@ -10,15 +10,23 @@ import {
   catalogSubtitleForList,
 } from "@/components/customer/customer-catalog-ui";
 import type { ProductCatalogDoc, ProductCatalogProduct } from "@/lib/product-catalogs";
+import { CustomerCatalogPdfSection } from "@/components/customer/customer-catalog-pdf-section";
 
 type Props = {
   catalog: { id: string } & Partial<ProductCatalogDoc>;
+  companyId: string;
   jobId: string | null;
   backHref: string;
   backLabel: string;
 };
 
-export function CustomerCatalogDetailView({ catalog, jobId, backHref, backLabel }: Props) {
+export function CustomerCatalogDetailView({
+  catalog,
+  companyId,
+  jobId,
+  backHref,
+  backLabel,
+}: Props) {
   const basePath = useMemo(
     () =>
       jobId
@@ -75,6 +83,12 @@ export function CustomerCatalogDetailView({ catalog, jobId, backHref, backLabel 
           </p>
         </div>
       </div>
+
+      <CustomerCatalogPdfSection
+        companyId={companyId}
+        catalogId={catalog.id}
+        attachments={catalog.pdfAttachments}
+      />
 
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">

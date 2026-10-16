@@ -107,6 +107,7 @@ export default function CustomerGlobalCatalogDetailPage() {
   return (
     <CustomerCatalogDetailView
       catalog={catalog}
+      companyId={companyId ?? ""}
       jobId={null}
       backHref="/portal/customer/catalogs"
       backLabel="Zpět na katalogy"

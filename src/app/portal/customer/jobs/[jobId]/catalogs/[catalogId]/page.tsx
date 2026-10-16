@@ -146,6 +146,7 @@ export default function CustomerJobCatalogDetailPage() {
   return (
     <CustomerCatalogDetailView
       catalog={catalog}
+      companyId={companyId ?? ""}
       jobId={jobId}
       backHref={`/portal/customer/jobs/${jobId}`}
       backLabel="Zpět na zakázku"

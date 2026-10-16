@@ -23,6 +23,7 @@ import {
   type ProductCatalogDoc,
   type ProductCatalogProduct,
 } from "@/lib/product-catalogs";
+import { CustomerCatalogPdfSection } from "@/components/customer/customer-catalog-pdf-section";
 
 /**
  * Detail produktu pro zákazníka — vždy světlý vzhled (bílé pozadí, černý text),
@@ -257,6 +258,13 @@ export function CustomerProductDetailView({
               <p className="mt-1 whitespace-pre-wrap text-black">{listNote}</p>
             </div>
           ) : null}
+
+          <CustomerCatalogPdfSection
+            companyId={companyId}
+            catalogId={catalog.id}
+            productId={product.id}
+            attachments={product.pdfAttachments}
+          />
 
           {jobId && selection ? (
             <div className="space-y-3 pt-2">

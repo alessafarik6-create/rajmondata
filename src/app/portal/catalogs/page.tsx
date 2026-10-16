@@ -41,9 +41,10 @@ import type {
   ProductCatalogPdfAttachment,
   ProductCatalogProduct,
 } from "@/lib/product-catalogs";
-import { ProductPdfAttachmentsEditor } from "@/components/catalogs/product-pdf-attachments-editor";
+import { CatalogPdfAttachmentsSection } from "@/components/catalogs/catalog-pdf-attachments-section";
 import {
   buildProductGalleryUrls,
+  serializePdfAttachmentsForFirestore,
   serializeProductForFirestore,
 } from "@/lib/product-catalogs";
 import { catalogAuthUserMessage } from "@/lib/product-catalogs/catalog-auth-diagnostics";
@@ -245,6 +246,9 @@ export default function ProductCatalogsPage() {
         }
         return serializeProductForFirestore(row);
       });
+    }
+    if (Array.isArray(patch.pdfAttachments)) {
+      payload.pdfAttachments = serializePdfAttachmentsForFirestore(patch.pdfAttachments);
     }
     const saveData = omitUndefinedKeys(payload);
     if (process.env.NODE_ENV === "development") {
@@ -894,6 +898,22 @@ export default function ProductCatalogsPage() {
                 </div>
               </div>
 
+              {companyId && activeCatalog.id ? (
+                <CatalogPdfAttachmentsSection
+                  companyId={companyId}
+                  catalogId={activeCatalog.id}
+                  attachments={Array.isArray(activeCatalog.pdfAttachments) ? activeCatalog.pdfAttachments : []}
+                  canWrite={access.canWrite}
+                  onPersist={
+                    access.canWrite
+                      ? async (next) => {
+                          await updateCatalog(activeCatalog.id, { pdfAttachments: next }, false);
+                        }
+                      : undefined
+                  }
+                />
+              ) : null}
+
               {access.canWrite ? (
               <>
               <div className="grid gap-4 md:grid-cols-2">
@@ -992,6 +1012,9 @@ export default function ProductCatalogsPage() {
                             </span>
                           ) : null}
                           <span>{p.active !== false ? "Aktivní" : "Skrytý"}</span>
+                          {(p.pdfAttachments?.length ?? 0) > 0 ? (
+                            <span>· {(p.pdfAttachments?.length ?? 0)} PDF</span>
+                          ) : null}
                         </div>
                       </div>
                       {access.canWrite ? (
@@ -1239,13 +1262,38 @@ export default function ProductCatalogsPage() {
                 />
               </div>
               {companyId && productFormSourceCatalogId ? (
-                <ProductPdfAttachmentsEditor
+                <CatalogPdfAttachmentsSection
                   companyId={companyId}
                   catalogId={productForm.targetCatalogId}
                   productId={productForm.id}
                   attachments={productForm.pdfAttachments}
-                  onChange={(pdfAttachments) => setProductForm({ ...productForm, pdfAttachments })}
                   canWrite={access.canWrite}
+                  onChange={(pdfAttachments) =>
+                    setProductForm((prev) => (prev ? { ...prev, pdfAttachments } : prev))
+                  }
+                  onPersist={
+                    access.canWrite
+                      ? async (pdfAttachments) => {
+                          const sourceId = productFormSourceCatalogId;
+                          const productId = productForm.id;
+                          if (!sourceId) {
+                            throw new Error("Chybí katalog produktu.");
+                          }
+                          const srcCat = catalogs.find((c) => c.id === sourceId);
+                          const current = srcCat?.products?.find((x) => x.id === productId);
+                          if (!srcCat || !current) {
+                            throw new Error(
+                              "Produkt v katalogu nebyl nalezen. Obnovte stránku a zkuste znovu."
+                            );
+                          }
+                          setProductForm((prev) => (prev ? { ...prev, pdfAttachments } : prev));
+                          const nextProducts = (srcCat.products ?? []).map((x) =>
+                            x.id === productId ? { ...current, pdfAttachments } : x
+                          );
+                          await updateCatalog(sourceId, { products: nextProducts }, false);
+                        }
+                      : undefined
+                  }
                 />
               ) : null}
               <div>

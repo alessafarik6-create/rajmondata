@@ -259,6 +259,10 @@ service firebase.storage {
       allow read: if request.auth != null;
       allow write: if storagePortalModuleWriteOk(companyId, 'productCatalogs');
     }
+    match /companies/{companyId}/catalogs/{catalogId}/documents/{documentId} {
+      allow read: if request.auth != null;
+      allow write: if storagePortalModuleWriteOk(companyId, 'productCatalogs');
+    }
     match /companies/{companyId}/catalogs/{catalogId}/products/{productId}/documents/{documentId} {
       allow read: if request.auth != null;
       allow write: if storagePortalModuleWriteOk(companyId, 'productCatalogs');

@@ -28,10 +28,52 @@ export type ProductCatalogPdfAttachment = {
   displayName: string;
   storagePath: string;
   downloadUrl?: string;
+  mimeType?: string;
   sizeBytes: number;
   uploadedAt: string;
   customerVisible: boolean;
 };
+
+export function buildCatalogLevelPdfStoragePath(
+  companyId: string,
+  catalogId: string,
+  documentId: string
+): string {
+  return `companies/${companyId}/catalogs/${catalogId}/documents/${documentId}.pdf`;
+}
+
+export function buildProductLevelPdfStoragePath(
+  companyId: string,
+  catalogId: string,
+  productId: string,
+  documentId: string
+): string {
+  return `companies/${companyId}/catalogs/${catalogId}/products/${productId}/documents/${documentId}.pdf`;
+}
+
+export function serializePdfAttachmentsForFirestore(
+  attachments: ProductCatalogPdfAttachment[] | undefined | null
+): ProductCatalogPdfAttachment[] {
+  if (!Array.isArray(attachments) || attachments.length === 0) return [];
+  return attachments.map((a) => ({
+    id: a.id,
+    fileName: a.fileName,
+    displayName: a.displayName || a.fileName,
+    storagePath: a.storagePath,
+    ...(a.downloadUrl ? { downloadUrl: a.downloadUrl } : {}),
+    mimeType: a.mimeType?.trim() || "application/pdf",
+    sizeBytes: typeof a.sizeBytes === "number" ? a.sizeBytes : 0,
+    uploadedAt: a.uploadedAt,
+    customerVisible: a.customerVisible === true,
+  }));
+}
+
+/** PDF přílohy viditelné v zákaznickém portálu. */
+export function customerVisiblePdfAttachments(
+  attachments: ProductCatalogPdfAttachment[] | undefined | null
+): ProductCatalogPdfAttachment[] {
+  return serializePdfAttachmentsForFirestore(attachments).filter((a) => a.customerVisible);
+}
 
 export const PRODUCT_CATALOG_PDF_MAX_BYTES = 25 * 1024 * 1024;
 
@@ -124,17 +166,9 @@ export function serializeProductForFirestore(p: ProductCatalogProduct): Record<s
     out.variants = p.variants;
   }
 
-  if (Array.isArray(p.pdfAttachments) && p.pdfAttachments.length > 0) {
-    out.pdfAttachments = p.pdfAttachments.map((a) => ({
-      id: a.id,
-      fileName: a.fileName,
-      displayName: a.displayName || a.fileName,
-      storagePath: a.storagePath,
-      ...(a.downloadUrl ? { downloadUrl: a.downloadUrl } : {}),
-      sizeBytes: typeof a.sizeBytes === "number" ? a.sizeBytes : 0,
-      uploadedAt: a.uploadedAt,
-      customerVisible: a.customerVisible === true,
-    }));
+  if (Array.isArray(p.pdfAttachments)) {
+    const pdfs = serializePdfAttachmentsForFirestore(p.pdfAttachments);
+    if (pdfs.length > 0) out.pdfAttachments = pdfs;
   }
 
   return out;
@@ -155,6 +189,8 @@ export type ProductCatalogDoc = {
   assignedJobIds: string[];
   assignedCustomerIds: string[];
   products: ProductCatalogProduct[];
+  /** PDF dokumenty celého katalogu (ne produktové). */
+  pdfAttachments?: ProductCatalogPdfAttachment[];
   createdBy: string;
   createdAt?: unknown;
   updatedBy: string;
