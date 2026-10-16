@@ -488,7 +488,7 @@ export default function EmployeeHomePage() {
             <DashboardOpenTasks
               companyId={companyId}
               employeeId={employeeId}
-              isPrivileged={false}
+              todayIso={new Date().toISOString().slice(0, 10)}
             />
           </EmployeePortalSection>
         ) : null}

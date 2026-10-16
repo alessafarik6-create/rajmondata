@@ -54,7 +54,6 @@ import {
   type DailyWorkReportMoney,
 } from "@/lib/employee-money";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
-import { DashboardPersonalTaskAlerts } from "@/components/tasks/dashboard-personal-task-alerts";
 import { DashboardMergedTasksProvider } from "@/contexts/dashboard-merged-tasks-context";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
 import { PortalDashboardCompactGrid } from "@/components/portal/portal-dashboard-compact-grid";
@@ -1189,10 +1188,11 @@ export default function CompanyDashboard() {
         ) : null
       ) : null}
 
-      {!belowLg && !isCustomer && companyId ? (
+      {!isCustomer && companyId && !showAdminDashboard ? (
         <DashboardOpenTasks
           companyId={companyId}
           employeeId={typedProfile?.employeeId}
+          todayIso={todayIso}
         />
       ) : null}
 
@@ -1205,14 +1205,15 @@ export default function CompanyDashboard() {
               jobsLoading={isJobsLoading}
               todayIso={todayIso}
             >
-              {showAiSecretary ? <DashboardAiSecretaryPanel companyId={companyId} /> : null}
-              {!belowLg && !isCustomer ? (
-                <DashboardPersonalTaskAlerts
+              {!isCustomer ? (
+                <DashboardOpenTasks
                   companyId={companyId}
                   employeeId={typedProfile?.employeeId}
                   todayIso={todayIso}
+                  useMergedTasks
                 />
               ) : null}
+              {showAiSecretary ? <DashboardAiSecretaryPanel companyId={companyId} /> : null}
               <PlatformCampaignDashboardSection />
               <PortalDashboardCompactGrid
                 companyId={companyId}

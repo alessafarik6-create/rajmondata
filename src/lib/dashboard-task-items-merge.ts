@@ -161,6 +161,58 @@ const BUCKET_RANK: Record<PersonalTaskDueBucket, number> = {
   none: 3,
 };
 
+/** Odstraní duplicitní položky se stejným {@link DashboardTaskItem.key}. */
+export function dedupeDashboardTasksByKey(
+  rows: readonly DashboardTaskItem[]
+): DashboardTaskItem[] {
+  const seen = new Set<string>();
+  const out: DashboardTaskItem[] = [];
+  for (const row of rows) {
+    const key = String(row.key ?? "").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+/** Otevřené osobní úkoly pro dashboard — filtr, deduplikace, řazení. */
+export function selectMyOpenDashboardTasks(
+  rows: readonly DashboardTaskItem[],
+  userId: string | null | undefined,
+  employeeId: string | null | undefined,
+  todayIso: string
+): DashboardTaskItem[] {
+  const uid = String(userId ?? "").trim();
+  if (!uid) return [];
+  const open = rows.filter((t) => dashboardTaskItemOpenForViewer(t, uid, employeeId));
+  return sortPersonalAssignedTasks(dedupeDashboardTasksByKey(open), todayIso);
+}
+
+function addDaysIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
+export type DashboardTaskDueUrgency = "overdue" | "soon" | "normal";
+
+/** Červená / oranžová / neutrální pro kompaktní dashboard. */
+export function dashboardTaskDueUrgency(
+  dueIso: string | undefined,
+  todayIso: string
+): DashboardTaskDueUrgency {
+  const due = validDue(dueIso);
+  if (!due) return "normal";
+  if (due < todayIso) return "overdue";
+  const soonThrough = addDaysIso(todayIso, 2);
+  if (due <= soonThrough) return "soon";
+  return "normal";
+}
+
 /** Řazení osobních úkolů: po termínu → dnes → ostatní aktivní. */
 export function sortPersonalAssignedTasks(
   rows: DashboardTaskItem[],
