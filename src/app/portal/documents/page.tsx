@@ -115,6 +115,7 @@ import {
   printSelectedDocumentRows,
   type DocumentExportRow,
 } from "@/lib/documents/documents-list-export";
+import { ReceivablesExportDialog } from "@/components/documents/receivables-export-dialog";
 import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 import { canManagePortalInvoices } from "@/lib/portal-invoice-permissions";
 import { MarkInvoicePaidDialog } from "@/components/invoices/mark-invoice-paid-dialog";
@@ -1164,6 +1165,7 @@ function DocumentsPageContent() {
     const r = String((profile as { role?: string } | null | undefined)?.role ?? "employee");
     return canManagePortalInvoices(r);
   }, [documentsReadOnly, profile]);
+  const [receivablesExportOpen, setReceivablesExportOpen] = useState(false);
 
   const companyDocRef = useMemoFirebase(
     () => (firestore && companyId ? doc(firestore, "companies", companyId) : null),
@@ -3230,6 +3232,16 @@ function DocumentsPageContent() {
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
+          {canExportDocuments && companyId ? (
+            <Button
+              type="button"
+              variant="default"
+              className="h-10 gap-2 bg-orange-600 hover:bg-orange-700"
+              onClick={() => setReceivablesExportOpen(true)}
+            >
+              <Download className="h-4 w-4 shrink-0" /> Exportovat
+            </Button>
+          ) : null}
           {!documentsReadOnly ? (
             <Button variant="outlineLight" className="h-10 gap-2" asChild>
               <Link href="/portal/invoices/new">
@@ -5243,6 +5255,13 @@ function DocumentsPageContent() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {companyId ? (
+        <ReceivablesExportDialog
+          open={receivablesExportOpen}
+          onOpenChange={setReceivablesExportOpen}
+          companyId={companyId}
+        />
+      ) : null}
     </div>
     </TooltipProvider>
   );

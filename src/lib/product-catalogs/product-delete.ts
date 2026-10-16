@@ -56,5 +56,13 @@ export function collectProductImageStoragePaths(product: ProductCatalogProduct):
     const path = firebaseStorageObjectPathFromDownloadUrl(url);
     if (path) paths.add(path);
   }
+  for (const att of product.pdfAttachments ?? []) {
+    const p = String(att.storagePath ?? "").trim();
+    if (p) paths.add(p);
+    const fromUrl = att.downloadUrl
+      ? firebaseStorageObjectPathFromDownloadUrl(att.downloadUrl)
+      : null;
+    if (fromUrl) paths.add(fromUrl);
+  }
   return [...paths];
 }

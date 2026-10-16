@@ -11,6 +11,10 @@ import {
 } from "./schema";
 import { buildNotificationHtml, sendTransactionalEmail } from "./resend-send";
 import { defaultSubjectForEvent, moduleLabelCs } from "./subjects";
+import {
+  mergeNotificationPreferences,
+  shouldSendModuleEmailToUser,
+} from "@/lib/notification-service/preferences";
 
 export const MAIL_DISPATCH_QUEUE = "mail_dispatch_queue";
 export const MAIL_NOTIFY_DEDUP = "mail_notify_dedup";
@@ -115,7 +119,8 @@ async function addEmailsFromLists(
     manual: string[];
     authUserIds: string[];
     employeeIds: string[];
-  }
+  },
+  opts?: { emailModule?: EmailModuleKey }
 ): Promise<void> {
   for (const e of lists.manual) {
     const n = normEmail(e);
@@ -124,9 +129,14 @@ async function addEmailsFromLists(
   for (const uid of lists.authUserIds) {
     if (!uid?.trim()) continue;
     const snap = await db.collection("users").doc(uid.trim()).get();
-    const mail = normEmail(
-      String((snap.data() as { email?: string } | undefined)?.email ?? "")
-    );
+    const data = snap.data() as
+      | { email?: string; notificationPreferences?: Record<string, unknown> }
+      | undefined;
+    if (opts?.emailModule) {
+      const prefs = mergeNotificationPreferences(data?.notificationPreferences);
+      if (!shouldSendModuleEmailToUser(prefs, opts.emailModule)) continue;
+    }
+    const mail = normEmail(String(data?.email ?? ""));
     if (mail && isValidEmail(mail)) out.add(mail);
   }
   for (const empId of lists.employeeIds) {
@@ -171,18 +181,31 @@ export async function resolveNotificationEmailsForModule(
 ): Promise<string[]> {
   const out = new Set<string>();
   const mod = settings.modules[module] as ModuleRecipientFields;
+  const emailOpts = { emailModule: module };
   if (mod.useGlobalRecipients) {
-    await addEmailsFromLists(db, companyId, out, {
-      manual: settings.globalRecipients,
-      authUserIds: settings.globalRecipientUserIds,
-      employeeIds: settings.globalRecipientEmployeeIds,
-    });
+    await addEmailsFromLists(
+      db,
+      companyId,
+      out,
+      {
+        manual: settings.globalRecipients,
+        authUserIds: settings.globalRecipientUserIds,
+        employeeIds: settings.globalRecipientEmployeeIds,
+      },
+      emailOpts
+    );
   } else {
-    await addEmailsFromLists(db, companyId, out, {
-      manual: mod.recipients,
-      authUserIds: mod.recipientUserIds,
-      employeeIds: mod.recipientEmployeeIds,
-    });
+    await addEmailsFromLists(
+      db,
+      companyId,
+      out,
+      {
+        manual: mod.recipients,
+        authUserIds: mod.recipientUserIds,
+        employeeIds: mod.recipientEmployeeIds,
+      },
+      emailOpts
+    );
   }
   return [...out];
 }

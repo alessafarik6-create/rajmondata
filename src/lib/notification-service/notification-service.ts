@@ -12,8 +12,8 @@ import {
 } from "@/lib/notification-service/push-delivery";
 import type { PortalNotificationCategory } from "@/lib/portal-notifications-types";
 import {
+  evaluateNotificationDelivery,
   mergeNotificationPreferences,
-  shouldSendPushForNotification,
 } from "@/lib/notification-service/preferences";
 import type { CreateNotificationInput, NotificationPriority } from "@/lib/notification-service/types";
 import { resolveCreateNotificationTarget } from "@/lib/notification-target";
@@ -127,11 +127,23 @@ export async function createNotification(
   }
 
   const prefs = await loadUserPreferences(db, input.recipientUserId);
+  const delivery = evaluateNotificationDelivery(prefs, input);
+  if (!delivery.inApp && !delivery.push) {
+    console.log("[notification-service] skipped user preferences", {
+      userId: input.recipientUserId,
+      organizationId: input.organizationId,
+      type: input.type,
+    });
+    return { inboxId: null, skippedDuplicate: false, pushAttempted: 0, pushOk: 0 };
+  }
+
   const category = input.category ?? defaultCategory(input.type);
   const priority: NotificationPriority = input.priority ?? "NORMAL";
   const targetResolved = resolveCreateNotificationTarget(input);
   const linkUrl = targetResolved.url || "/portal/notifications";
 
+  let inboxId: string | null = null;
+  if (delivery.inApp) {
   const inboxRef = db
     .collection("users")
     .doc(input.recipientUserId)
@@ -160,28 +172,20 @@ export async function createNotification(
     source: input.source ?? null,
     eventId: input.eventId ?? dedupId,
   });
+  inboxId = inboxRef.id;
+  }
 
   let pushAttempted = 0;
   let pushOk = 0;
 
-  if (input.skipPush) {
-    return { inboxId: inboxRef.id, skippedDuplicate: false, pushAttempted: 0, pushOk: 0 };
-  }
-
-  const allowPush = input.forcePush || shouldSendPushForNotification(prefs, input);
-  if (!allowPush) {
-    console.log("[PUSH] skipped preferences", {
-      userId: input.recipientUserId,
-      organizationId: input.organizationId,
-      type: input.type,
-    });
-    return { inboxId: inboxRef.id, skippedDuplicate: false, pushAttempted: 0, pushOk: 0 };
+  if (!delivery.push) {
+    return { inboxId, skippedDuplicate: false, pushAttempted: 0, pushOk: 0 };
   }
 
   const canPush = ensureWebPushVapid();
   if (!canPush) {
     console.warn("[PUSH] skipped VAPID not configured", { userId: input.recipientUserId });
-    return { inboxId: inboxRef.id, skippedDuplicate: false, pushAttempted: 0, pushOk: 0 };
+    return { inboxId, skippedDuplicate: false, pushAttempted: 0, pushOk: 0 };
   }
 
   const batch = await sendPushToSubscriptions({
@@ -192,7 +196,7 @@ export async function createNotification(
       title: input.title,
       body: input.body,
       url: linkUrl,
-      tag: input.eventId ? `evt-${dedupId}` : `inbox-${inboxRef.id}`,
+      tag: input.eventId ? `evt-${dedupId}` : `inbox-${inboxId ?? dedupId}`,
       priority,
       eventType: input.type,
     },
@@ -200,7 +204,7 @@ export async function createNotification(
   pushAttempted = batch.pushAttempted;
   pushOk = batch.pushOk;
 
-  return { inboxId: inboxRef.id, skippedDuplicate: false, pushAttempted, pushOk };
+  return { inboxId, skippedDuplicate: false, pushAttempted, pushOk };
 }
 
 /** Centrální vstup — in-app + push (+ deduplikace). */

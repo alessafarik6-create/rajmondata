@@ -86,6 +86,8 @@ export type CreateNotificationInput = {
   source?: string | null;
   /** Vynutit push i mimo preference (urgent systém). */
   forcePush?: boolean;
+  /** Vynutit záznam ve zvoněčku i mimo kategorii (kritické systémové). */
+  forceInApp?: boolean;
   /** Pouze in-app záznam bez Web Push. */
   skipPush?: boolean;
   targetType?: string | null;

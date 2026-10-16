@@ -22,6 +22,19 @@ export type ProductSelectionSnapshot = {
   customerNote?: string | null;
 };
 
+export type ProductCatalogPdfAttachment = {
+  id: string;
+  fileName: string;
+  displayName: string;
+  storagePath: string;
+  downloadUrl?: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  customerVisible: boolean;
+};
+
+export const PRODUCT_CATALOG_PDF_MAX_BYTES = 25 * 1024 * 1024;
+
 export type ProductCatalogProduct = {
   id: string;
   name: string;
@@ -41,6 +54,7 @@ export type ProductCatalogProduct = {
   archived?: boolean;
   archivedAt?: unknown;
   variants?: string[];
+  pdfAttachments?: ProductCatalogPdfAttachment[];
 };
 
 /**
@@ -108,6 +122,19 @@ export function serializeProductForFirestore(p: ProductCatalogProduct): Record<s
 
   if (Array.isArray(p.variants) && p.variants.length > 0) {
     out.variants = p.variants;
+  }
+
+  if (Array.isArray(p.pdfAttachments) && p.pdfAttachments.length > 0) {
+    out.pdfAttachments = p.pdfAttachments.map((a) => ({
+      id: a.id,
+      fileName: a.fileName,
+      displayName: a.displayName || a.fileName,
+      storagePath: a.storagePath,
+      ...(a.downloadUrl ? { downloadUrl: a.downloadUrl } : {}),
+      sizeBytes: typeof a.sizeBytes === "number" ? a.sizeBytes : 0,
+      uploadedAt: a.uploadedAt,
+      customerVisible: a.customerVisible === true,
+    }));
   }
 
   return out;

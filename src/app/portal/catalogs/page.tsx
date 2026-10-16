@@ -35,7 +35,13 @@ import { useToast } from "@/hooks/use-toast";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import type { JobProductSelectionDoc, ProductCatalogDoc, ProductCatalogProduct } from "@/lib/product-catalogs";
+import type {
+  JobProductSelectionDoc,
+  ProductCatalogDoc,
+  ProductCatalogPdfAttachment,
+  ProductCatalogProduct,
+} from "@/lib/product-catalogs";
+import { ProductPdfAttachmentsEditor } from "@/components/catalogs/product-pdf-attachments-editor";
 import {
   buildProductGalleryUrls,
   serializeProductForFirestore,
@@ -127,6 +133,7 @@ export default function ProductCatalogsPage() {
     active: boolean;
     imageUrl?: string;
     gallery: string[];
+    pdfAttachments: ProductCatalogPdfAttachment[];
   } | null>(null);
   const [productFormNewFiles, setProductFormNewFiles] = useState<File[]>([]);
 
@@ -610,6 +617,7 @@ export default function ProductCatalogsPage() {
       active: p.active !== false,
       imageUrl: galleryUrls[0] ?? p.imageUrl,
       gallery: galleryUrls,
+      pdfAttachments: Array.isArray(p.pdfAttachments) ? [...p.pdfAttachments] : [],
     });
     setProductFormNewFiles([]);
     setProductDialogOpen(true);
@@ -671,6 +679,7 @@ export default function ProductCatalogsPage() {
         active: productForm.active,
         gallery: mergedGallery,
         imageUrl: nextImageUrl,
+        pdfAttachments: productForm.pdfAttachments,
       };
 
       const tgtId = productForm.targetCatalogId;
@@ -1229,6 +1238,16 @@ export default function ProductCatalogsPage() {
                   onChange={(e) => setProductForm({ ...productForm, internalNote: e.target.value })}
                 />
               </div>
+              {companyId && productFormSourceCatalogId ? (
+                <ProductPdfAttachmentsEditor
+                  companyId={companyId}
+                  catalogId={productForm.targetCatalogId}
+                  productId={productForm.id}
+                  attachments={productForm.pdfAttachments}
+                  onChange={(pdfAttachments) => setProductForm({ ...productForm, pdfAttachments })}
+                  canWrite={access.canWrite}
+                />
+              ) : null}
               <div>
                 <Label>Přidat obrázky</Label>
                 <Input

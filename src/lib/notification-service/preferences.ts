@@ -37,7 +37,9 @@ export function mergeNotificationPreferences(
   };
 }
 
-function preferenceGroupForEvent(type: NotificationEventType): keyof NotificationPreferenceGroups | null {
+export function preferenceGroupForEvent(
+  type: NotificationEventType
+): keyof NotificationPreferenceGroups | null {
   switch (type) {
     case "JOB_ASSIGNED":
     case "JOB_UPDATED":
@@ -95,18 +97,108 @@ export function isWithinQuietHours(
   return cur >= start || cur < end;
 }
 
+/** Kritické systémové zprávy — neblokují je kategorie portálu (push/e-mail/in-app politika zvlášť). */
+export function isCriticalSystemNotificationType(type: NotificationEventType): boolean {
+  return type === "SYSTEM_ALERT";
+}
+
+function categoryAllowed(
+  prefs: NotificationPreferenceGroups,
+  input: CreateNotificationInput
+): boolean {
+  if (isCriticalSystemNotificationType(input.type)) return true;
+  const priority = input.priority ?? "NORMAL";
+  if (priority === "URGENT" && !prefs.urgent) return false;
+  const group = preferenceGroupForEvent(input.type);
+  if (group && !prefs[group]) return false;
+  return true;
+}
+
+export type NotificationDeliveryChannels = {
+  inApp: boolean;
+  push: boolean;
+  email: boolean;
+};
+
+/** Jednotné vyhodnocení kanálů před vytvořením oznámení / odesláním e-mailu uživateli. */
+export function evaluateNotificationDelivery(
+  prefs: NotificationPreferenceGroups,
+  input: CreateNotificationInput
+): NotificationDeliveryChannels {
+  const priority = input.priority ?? "NORMAL";
+  if (input.forceInApp || input.forcePush) {
+    return {
+      inApp: input.forceInApp === true || input.forcePush === true,
+      push:
+        input.forcePush === true &&
+        !input.skipPush &&
+        prefs.pushEnabled &&
+        !isWithinQuietHours(prefs, priority),
+      email: false,
+    };
+  }
+  if (!categoryAllowed(prefs, input)) {
+    return { inApp: false, push: false, email: false };
+  }
+  const push =
+    !input.skipPush &&
+    prefs.pushEnabled &&
+    !isWithinQuietHours(prefs, priority);
+  return {
+    inApp: true,
+    push,
+    email: prefs.emailEnabled,
+  };
+}
+
 export function shouldSendPushForNotification(
   prefs: NotificationPreferenceGroups,
   input: CreateNotificationInput
 ): boolean {
   if (input.forcePush) return true;
-  if (!prefs.pushEnabled) return false;
-  const priority = input.priority ?? "NORMAL";
-  if (priority === "URGENT" && !prefs.urgent) return false;
-  const group = preferenceGroupForEvent(input.type);
-  if (group && !prefs[group]) {
-    return false;
+  return evaluateNotificationDelivery(prefs, input).push;
+}
+
+export function shouldCreateInAppNotification(
+  prefs: NotificationPreferenceGroups,
+  input: CreateNotificationInput
+): boolean {
+  if (input.forceInApp) return true;
+  return evaluateNotificationDelivery(prefs, input).inApp;
+}
+
+/** Mapování modulových e-mailů organizace → skupina uživatelských preferencí. */
+export function preferenceGroupForEmailModule(
+  module: import("@/lib/email-notifications/schema").EmailModuleKey
+): keyof NotificationPreferenceGroups | null {
+  switch (module) {
+    case "orders":
+      return "jobs";
+    case "documents":
+    case "invoices":
+      return "documents";
+    case "leads":
+      return "inquiries";
+    case "calendar":
+      return "meetings";
+    case "attendance":
+      return "attendance";
+    case "messages":
+      return "messages";
+    case "warehouse":
+    case "system":
+      return null;
+    default:
+      return null;
   }
-  if (isWithinQuietHours(prefs, priority)) return false;
+}
+
+export function shouldSendModuleEmailToUser(
+  prefs: NotificationPreferenceGroups,
+  module: import("@/lib/email-notifications/schema").EmailModuleKey
+): boolean {
+  if (!prefs.emailEnabled) return false;
+  const group = preferenceGroupForEmailModule(module);
+  if (group && !prefs[group]) return false;
   return true;
 }
