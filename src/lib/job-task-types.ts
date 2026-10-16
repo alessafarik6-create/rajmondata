@@ -9,8 +9,8 @@ export type JobTaskPriority = "low" | "medium" | "high";
 
 export type JobTaskStatus = "active" | "done";
 
-/** Přiřazení: všem zaměstnancům firmy nebo jednomu (employee dokument id). */
-export type TaskAssignedMode = "single" | "all";
+/** Přiřazení: všem, jednomu, nebo více (`assignedTargets` u org. úkolů). */
+export type TaskAssignedMode = "single" | "all" | "multi";
 
 export type JobTaskRow = {
   id: string;

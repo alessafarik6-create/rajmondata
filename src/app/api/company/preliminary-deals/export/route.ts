@@ -17,7 +17,10 @@ import {
   mapEmployeesToPreliminaryDealOptions,
 } from "@/lib/leads/preliminary-deal-employees";
 import { preliminaryDealMatchesFilters } from "@/lib/leads/preliminary-deal-summary";
-import type { PreliminaryDealStatus } from "@/lib/leads/preliminary-deal-types";
+import {
+  PRELIMINARY_DEAL_STATUS_LABELS,
+  type PreliminaryDealStatus,
+} from "@/lib/leads/preliminary-deal-types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -103,6 +106,21 @@ export async function GET(request: NextRequest) {
   );
   const profile = companyDocToPreliminaryDealProfile(companyData, logoDataUrl);
   const periodLabel = formatPreliminaryDealsPeriodLabel(dateFrom, dateTo);
+  const statusFilter = url.searchParams.get("status") ?? "all";
+  const qFilter = String(url.searchParams.get("q") ?? "").trim();
+  const responsibleFilter = url.searchParams.get("responsibleEmployeeId") ?? "all";
+  const filtersLabelParts: string[] = [];
+  if (statusFilter && statusFilter !== "all") {
+    const st = statusFilter as PreliminaryDealStatus;
+    filtersLabelParts.push(
+      `Stav: ${PRELIMINARY_DEAL_STATUS_LABELS[st] ?? statusFilter}`
+    );
+  }
+  if (qFilter) filtersLabelParts.push(`Hledání: ${qFilter}`);
+  if (responsibleFilter && responsibleFilter !== "all") {
+    filtersLabelParts.push(`Odpovědná osoba: ${nameByEmployeeId.get(responsibleFilter) ?? responsibleFilter}`);
+  }
+  const filtersLabel = filtersLabelParts.length ? filtersLabelParts.join(" · ") : null;
 
   let buffer: Buffer;
   let contentType: string;
@@ -113,7 +131,7 @@ export async function GET(request: NextRequest) {
     contentType = "application/pdf";
     filename = `predjednana-zakazka-${dealId}.pdf`;
   } else if (format === "pdf") {
-    buffer = await exportPreliminaryDealsListPdfBuffer(rows, profile, periodLabel);
+    buffer = await exportPreliminaryDealsListPdfBuffer(rows, profile, periodLabel, filtersLabel);
     contentType = "application/pdf";
     filename = "predjednane-zakazky.pdf";
   } else if (format === "xlsx") {

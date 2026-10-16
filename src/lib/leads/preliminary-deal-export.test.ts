@@ -60,6 +60,20 @@ async function runPdfTests() {
   const list = await exportPreliminaryDealsListPdfBuffer([row], profile, "Test období");
   assert(list.length > 8000, "list pdf size");
   assert(list.subarray(0, 4).toString() === "%PDF", "list pdf header");
+
+  const many = Array.from({ length: 25 }, (_, i) => ({
+    ...row,
+    id: `x${i}`,
+    title: `Zakázka ${i} — dlouhý název s diakritikou ščřž`,
+    description: `Popis ${i}`,
+  }));
+  const listMany = await exportPreliminaryDealsListPdfBuffer(
+    many,
+    profile,
+    "Test",
+    "Stav: predjednano"
+  );
+  assert(listMany.length > list.length, "many rows pdf larger");
 }
 
 runPdfTests()

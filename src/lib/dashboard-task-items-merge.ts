@@ -5,7 +5,8 @@ import type {
   TaskAssignedMode,
 } from "@/lib/job-task-types";
 import type { OrganizationTask, OrganizationTaskStatus } from "@/lib/organization-task";
-import { isTaskOpen } from "@/lib/organization-task";
+import { isTaskOpen, organizationTaskIsForAll } from "@/lib/organization-task";
+import { parseOrgTaskAssigneeRef } from "@/lib/tasks/organization-task-assignees";
 
 export type JobTaskWithId = JobTaskRow & { id: string };
 
@@ -25,6 +26,8 @@ export type DashboardTaskItem = {
   assignedMode: TaskAssignedMode;
   /** Firebase Auth uid zadavatele */
   createdBy?: string | null;
+  assignedTargets?: string[];
+  completedByUserIds?: string[];
 };
 
 const PRIORITY_RANK: Record<JobTaskPriority, number> = {
@@ -78,7 +81,57 @@ export function itemForAll(t: DashboardTaskItem): boolean {
   return !t.assignedTo || String(t.assignedTo).trim() === "";
 }
 
-/** Osobní úkol přiřazený konkrétnímu zaměstnanci (ne „Všem“). */
+function refMatchesDashboardViewer(
+  ref: string | null | undefined,
+  userId: string,
+  employeeId: string | null | undefined
+): boolean {
+  const parsed = parseOrgTaskAssigneeRef(ref);
+  const uid = String(userId ?? "").trim();
+  const eid = String(employeeId ?? "").trim();
+  if (parsed.userId && uid && parsed.userId === uid) return true;
+  if (parsed.employeeId && eid && parsed.employeeId === eid) return true;
+  if (parsed.legacyEmployeeId && eid && parsed.legacyEmployeeId === eid) return true;
+  return false;
+}
+
+/** Úkol patří do „Moje úkoly“ (včetně režimu všem a multi). */
+export function dashboardTaskItemForViewer(
+  t: DashboardTaskItem,
+  userId: string | null | undefined,
+  employeeId: string | null | undefined
+): boolean {
+  const uid = String(userId ?? "").trim();
+  if (!uid) return false;
+  if (itemForAll(t)) return true;
+  if (t.assignedMode === "multi") {
+    const targets = Array.isArray(t.assignedTargets) ? t.assignedTargets : [];
+    return targets.some((ref) => refMatchesDashboardViewer(ref, uid, employeeId));
+  }
+  return refMatchesDashboardViewer(t.assignedTo, uid, employeeId);
+}
+
+export function dashboardTaskItemOpenForViewer(
+  t: DashboardTaskItem,
+  userId: string | null | undefined,
+  employeeId: string | null | undefined
+): boolean {
+  if (!dashboardTaskItemForViewer(t, userId, employeeId)) return false;
+  const uid = String(userId ?? "").trim();
+  const perUser =
+    itemForAll(t) ||
+    t.assignedMode === "multi" ||
+    (t.source === "organization" && organizationTaskIsForAll({ assignedMode: t.assignedMode, assignedTo: t.assignedTo } as OrganizationTask));
+  if (perUser && t.source === "organization") {
+    const done = (t.completedByUserIds ?? []).map(String).includes(uid);
+    if (done) return false;
+    return t.orgStatus !== "done";
+  }
+  if (t.source === "job") return t.jobStatus !== "done";
+  return t.orgStatus !== "done";
+}
+
+/** @deprecated Prefer {@link dashboardTaskItemForViewer} */
 export function taskAssignedToEmployee(
   t: DashboardTaskItem,
   employeeId: string | null | undefined
@@ -208,6 +261,12 @@ export function buildMergedDashboardTaskItems(
       assignedTo: at,
       assignedMode: mode,
       createdBy: dStr(t.createdBy),
+      assignedTargets: Array.isArray(t.assignedTargets)
+        ? t.assignedTargets.map(String)
+        : undefined,
+      completedByUserIds: Array.isArray(t.completedByUserIds)
+        ? t.completedByUserIds.map(String)
+        : undefined,
     });
   }
 

@@ -4,7 +4,7 @@ import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Check, Loader2, ExternalLink } from "lucide-react";
 import { collection } from "firebase/firestore";
-import { useCollection, useFirestore, useMemoFirebase } from "@/firebase";
+import { useCollection, useFirestore, useMemoFirebase, useUser } from "@/firebase";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -12,7 +12,7 @@ import { useDashboardMergedTasksContext } from "@/contexts/dashboard-merged-task
 import {
   personalTaskDueBucket,
   sortPersonalAssignedTasks,
-  taskAssignedToEmployee,
+  dashboardTaskItemOpenForViewer,
   type DashboardTaskItem,
 } from "@/lib/dashboard-task-items-merge";
 import { markDashboardTaskDone } from "@/lib/dashboard-task-complete-client";
@@ -154,9 +154,10 @@ export function DashboardPersonalTaskAlerts(props: {
   todayIso: string;
 }) {
   const { companyId, employeeId, todayIso } = props;
+  const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const eid = String(employeeId ?? "").trim();
+  const uid = String(user?.uid ?? "").trim();
   const [completingKey, setCompletingKey] = useState<string | null>(null);
 
   const { mergedTasks, isLoading } = useDashboardMergedTasksContext();
@@ -185,10 +186,12 @@ export function DashboardPersonalTaskAlerts(props: {
   }, [employeesRaw]);
 
   const personalTasks = useMemo(() => {
-    if (!eid) return [];
-    const mine = mergedTasks.filter((t) => taskAssignedToEmployee(t, eid));
+    if (!uid) return [];
+    const mine = mergedTasks.filter((t) =>
+      dashboardTaskItemOpenForViewer(t, uid, employeeId)
+    );
     return sortPersonalAssignedTasks(mine, todayIso);
-  }, [mergedTasks, eid, todayIso]);
+  }, [mergedTasks, uid, employeeId, todayIso]);
 
   const visible = personalTasks.slice(0, MAX_VISIBLE);
   const hasMore = personalTasks.length > MAX_VISIBLE;
@@ -197,7 +200,10 @@ export function DashboardPersonalTaskAlerts(props: {
     if (!firestore || !companyId) return;
     setCompletingKey(item.key);
     try {
-      await markDashboardTaskDone(firestore, companyId, item);
+      await markDashboardTaskDone(firestore, companyId, item, {
+        userId: uid,
+        employeeId,
+      });
       toast({ title: "Úkol označen jako hotový" });
     } catch (e) {
       console.error(e);
@@ -211,7 +217,7 @@ export function DashboardPersonalTaskAlerts(props: {
     }
   };
 
-  if (!eid) return null;
+  if (!uid) return null;
   if (isLoading) return null;
   if (personalTasks.length === 0) return null;
 

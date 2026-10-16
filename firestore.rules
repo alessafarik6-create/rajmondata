@@ -2347,10 +2347,24 @@ service cloud.firestore {
        * Úkoly organizace (task manager): companies/{companyId}/tasks/{taskId}
        */
       match /tasks/{taskId} {
+        function orgTaskAssignedToMe() {
+          return resource.data.assignedMode == 'all' ||
+            (!('assignedMode' in resource.data) && resource.data.assignedTo == null) ||
+            (resource.data.assignedTo is string &&
+              resource.data.assignedTo.size() > 0 &&
+              (resource.data.assignedTo == ownEmployeeId() ||
+                resource.data.assignedTo == ('user:' + request.auth.uid) ||
+                (ownEmployeeId() != null &&
+                  resource.data.assignedTo == ('emp:' + ownEmployeeId())))) ||
+            (resource.data.assignedMode == 'multi' &&
+              'assignedTargets' in resource.data &&
+              resource.data.assignedTargets is list &&
+              (('user:' + request.auth.uid) in resource.data.assignedTargets ||
+                (ownEmployeeId() != null &&
+                  ('emp:' + ownEmployeeId()) in resource.data.assignedTargets)));
+        }
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() ||
-            resource.data.assignedTo == null ||
-            resource.data.assignedTo == ownEmployeeId());
+          (isPrivileged() || orgTaskAssignedToMe());
         allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
           request.resource.data.organizationId == companyId &&
           request.resource.data.createdBy == request.auth.uid &&
@@ -2367,10 +2381,7 @@ service cloud.firestore {
             (request.resource.data.assignedTo is string &&
               request.resource.data.assignedTo.size() > 0));
         allow update: if signedIn() && sameCompany(companyId) && (
-          isPrivileged() ||
-          (ownEmployeeId() != null &&
-            (resource.data.assignedTo == ownEmployeeId() ||
-              resource.data.assignedTo == null))
+          isPrivileged() || orgTaskAssignedToMe()
         );
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }

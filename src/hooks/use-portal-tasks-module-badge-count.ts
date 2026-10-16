@@ -5,10 +5,7 @@ import { collection, query, limit } from "firebase/firestore";
 import { useFirestore, useCollection, useMemoFirebase } from "@/firebase";
 import { useActiveJobTasksFromJobList } from "@/components/jobs/use-active-job-tasks-from-jobs";
 import type { OrganizationTask } from "@/lib/organization-task";
-import {
-  isTaskOpen,
-  organizationTaskIsForAll,
-} from "@/lib/organization-task";
+import { organizationTaskOpenForUser } from "@/lib/tasks/organization-task-visibility";
 import { buildMergedDashboardTaskItems } from "@/lib/dashboard-task-items-merge";
 
 type JobRef = { id: string; name?: string };
@@ -26,6 +23,7 @@ export function usePortalTasksModuleBadgeCount(opts: {
   jobsLoading: boolean;
   todayIso: string;
   employeeId: string | null | undefined;
+  userId?: string | null;
   /** Owner / admin / manager / accountant — u org. režimu vidí všechny otevřené úkoly. */
   isPrivileged: boolean;
 }): { count: number; isLoading: boolean } {
@@ -76,24 +74,23 @@ export function usePortalTasksModuleBadgeCount(opts: {
       ).length;
     }
     const tasksList = Array.isArray(orgRaw) ? orgRaw : [];
-    const tasks = tasksList
-      .map((t) => ({ ...t, id: String(t?.id ?? "") }) as OrganizationTask)
-      .filter((t) => isTaskOpen(t));
-    const eid = String(opts.employeeId || "").trim();
-    const visible = opts.isPrivileged
-      ? tasks
-      : eid
-        ? tasks.filter(
-            (t) =>
-              organizationTaskIsForAll(t) || String(t.assignedTo) === eid
-          )
-        : [];
-    return visible.length;
+    const tasks = tasksList.map(
+      (t) => ({ ...t, id: String(t?.id ?? "") }) as OrganizationTask
+    );
+    const uid = String(opts.userId ?? "").trim();
+    if (!uid) return 0;
+    const ctx = {
+      userId: uid,
+      employeeId: opts.employeeId,
+      canManageAllTasks: false,
+    };
+    return tasks.filter((t) => organizationTaskOpenForUser(t, ctx)).length;
   }, [
     cid,
     opts.mergeJobAndOrgTasks,
     opts.todayIso,
     opts.employeeId,
+    opts.userId,
     opts.isPrivileged,
     jobTasksRows,
     orgRaw,

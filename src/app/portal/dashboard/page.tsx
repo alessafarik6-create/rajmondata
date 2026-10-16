@@ -1027,6 +1027,7 @@ export default function CompanyDashboard() {
         jobsForTaskBadge={typedJobs}
         jobsLoading={isJobsLoading}
         employeeId={typedProfile?.employeeId}
+        authUserId={user?.uid}
         isTaskBadgePrivileged={isManagement || isAccountant}
         quickStats={{
           hoursLabel: "—",
@@ -1188,11 +1189,10 @@ export default function CompanyDashboard() {
         ) : null
       ) : null}
 
-      {!belowLg && !isCustomer && companyId && !showAdminDashboard ? (
+      {!belowLg && !isCustomer && companyId ? (
         <DashboardOpenTasks
           companyId={companyId}
           employeeId={typedProfile?.employeeId}
-          isPrivileged={isManagement || isAccountant}
         />
       ) : null}
 

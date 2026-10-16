@@ -16,6 +16,8 @@ import {
   serverTimestamp,
   query,
   limit,
+  where,
+  getDoc,
 } from "firebase/firestore";
 import {
   Dialog,
@@ -34,13 +36,26 @@ import { Loader2, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import type { OrganizationTask } from "@/lib/organization-task";
-import {
-  isTaskOpen,
-  organizationTaskIsForAll,
-} from "@/lib/organization-task";
+import { isTaskOpen } from "@/lib/organization-task";
 import type { JobTaskPriority, TaskAssignedMode } from "@/lib/job-task-types";
 import { jobTaskPriorityLabel } from "@/lib/job-task-types";
-import { filterEmployeesForAssignment } from "@/lib/employee-active";
+import {
+  buildOrgTaskAssigneeOptions,
+  encodeOrgTaskAssigneeRef,
+  parseOrgTaskAssigneeRef,
+  resolveOrgTaskAssigneeLabel,
+} from "@/lib/tasks/organization-task-assignees";
+import {
+  organizationTaskAssigneeSummaryLabel,
+  organizationTaskOpenForUser,
+  organizationTaskVisibleToUser,
+} from "@/lib/tasks/organization-task-visibility";
+import {
+  organizationTaskDoneForViewer,
+  setOrganizationTaskCompletionForUser,
+} from "@/lib/tasks/organization-task-completion";
+
+type AssignUiMode = TaskAssignedMode | "self";
 
 type Props = {
   open: boolean;
@@ -97,23 +112,58 @@ export function OrganizationTasksDialog({
     return collection(firestore, "companies", companyId, "employees");
   }, [firestore, companyId]);
 
+  const usersQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return query(
+      collection(firestore, "users"),
+      where("companyId", "==", companyId),
+      limit(300)
+    );
+  }, [firestore, companyId]);
+
   const { data: employeesRaw } = useCollection(employeesQuery);
+  const { data: usersRaw } = useCollection(usersQuery, {
+    suppressGlobalPermissionError: true,
+  });
   const employeesList = Array.isArray(employeesRaw) ? employeesRaw : [];
 
-  const employeeNameById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const e of employeesList as {
-      id?: string;
-      firstName?: string;
-      lastName?: string;
-    }[]) {
-      const id = String(e?.id ?? "");
-      if (!id) continue;
-      const nm = `${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() || id;
-      m.set(id, nm);
-    }
-    return m;
-  }, [employeesList]);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [priority, setPriority] = useState<JobTaskPriority>("medium");
+  const [assignMode, setAssignMode] = useState<AssignUiMode>("all");
+  const [assignEmployeeRef, setAssignEmployeeRef] = useState("");
+  const [multiAssignRefs, setMultiAssignRefs] = useState<string[]>([]);
+  const [assigneeSearch, setAssigneeSearch] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const [companyOwnerUid, setCompanyOwnerUid] = useState<string | null>(null);
+  useEffect(() => {
+    if (!firestore || !companyId) return;
+    void getDoc(doc(firestore, "companies", companyId)).then((snap) => {
+      const d = snap.data() as { ownerUserId?: string; ownerId?: string } | undefined;
+      setCompanyOwnerUid(String(d?.ownerUserId ?? d?.ownerId ?? "").trim() || null);
+    });
+  }, [firestore, companyId]);
+
+  const assigneeOptions = useMemo(
+    () =>
+      buildOrgTaskAssigneeOptions({
+        users: Array.isArray(usersRaw) ? usersRaw : [],
+        employees: employeesList,
+        companyOwnerUid,
+        alsoIncludeRefs: [assignEmployeeRef, ...multiAssignRefs],
+      }),
+    [usersRaw, employeesList, companyOwnerUid, assignEmployeeRef, multiAssignRefs]
+  );
+
+  const filteredAssigneeOptions = useMemo(() => {
+    const q = assigneeSearch.trim().toLowerCase();
+    if (!q) return assigneeOptions;
+    return assigneeOptions.filter((o) => o.searchText.includes(q));
+  }, [assigneeOptions, assigneeSearch]);
 
   const tasksQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -142,32 +192,23 @@ export function OrganizationTasksDialog({
     return list;
   }, [tasksRaw]);
 
+  const viewerCtx = useMemo(
+    () => ({
+      userId: String(user?.uid ?? ""),
+      employeeId,
+      canManageAllTasks: canManage,
+    }),
+    [user?.uid, employeeId, canManage]
+  );
+
   const visibleTasks = useMemo(() => {
     if (canManage) return tasks;
-    const eid = String(employeeId || "").trim();
-    if (!eid) return [];
-    return tasks.filter(
-      (t) =>
-        organizationTaskIsForAll(t) || String(t.assignedTo) === eid
-    );
-  }, [tasks, canManage, employeeId]);
+    if (!viewerCtx.userId) return [];
+    return tasks.filter((t) => organizationTaskVisibleToUser(t, viewerCtx));
+  }, [tasks, canManage, viewerCtx]);
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [priority, setPriority] = useState<JobTaskPriority>("medium");
-  const [assignMode, setAssignMode] = useState<TaskAssignedMode>("all");
-  const [assignEmployeeId, setAssignEmployeeId] = useState("");
-  const assignableEmployees = useMemo(
-    () =>
-      filterEmployeesForAssignment(employeesList, {
-        alsoIncludeIds: assignEmployeeId ? [assignEmployeeId] : [],
-      }),
-    [employeesList, assignEmployeeId]
-  );
-  const [saving, setSaving] = useState(false);
+  const formatAssignee = (ref: string) =>
+    resolveOrgTaskAssigneeLabel(ref, assigneeOptions);
 
   useEffect(() => {
     if (!open) {
@@ -184,9 +225,18 @@ export function OrganizationTasksDialog({
     setDueDate("");
     setPriority("medium");
     setAssignMode("all");
-    setAssignEmployeeId("");
+    setAssignEmployeeRef("");
+    setMultiAssignRefs([]);
+    setAssigneeSearch("");
     setIsEditing(true);
   }, [open, startInCreateMode, canManage]);
+
+  const selfAssignRef = useMemo(() => {
+    const uid = String(user?.uid ?? "").trim();
+    if (!uid) return "";
+    const hit = assigneeOptions.find((o) => o.userId === uid);
+    return hit?.ref ?? encodeOrgTaskAssigneeRef({ userId: uid, employeeId });
+  }, [user?.uid, assigneeOptions, employeeId]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -195,7 +245,9 @@ export function OrganizationTasksDialog({
     setDueDate("");
     setPriority("medium");
     setAssignMode("all");
-    setAssignEmployeeId("");
+    setAssignEmployeeRef("");
+    setMultiAssignRefs([]);
+    setAssigneeSearch("");
     setIsEditing(true);
   };
 
@@ -210,13 +262,26 @@ export function OrganizationTasksDialog({
     setPriority(
       pr === "high" || pr === "medium" || pr === "low" ? pr : "medium"
     );
-    if (organizationTaskIsForAll(t)) {
+    if (t.assignedMode === "multi") {
+      setAssignMode("multi");
+      setMultiAssignRefs(Array.isArray(t.assignedTargets) ? [...t.assignedTargets] : []);
+      setAssignEmployeeRef("");
+    } else if (t.assignedMode === "all" || (!t.assignedMode && !t.assignedTo)) {
       setAssignMode("all");
-      setAssignEmployeeId("");
+      setAssignEmployeeRef("");
+      setMultiAssignRefs([]);
     } else {
-      setAssignMode("single");
-      setAssignEmployeeId(t.assignedTo ? String(t.assignedTo) : "");
+      const ref = String(t.assignedTo ?? "").trim();
+      const parsed = parseOrgTaskAssigneeRef(ref);
+      if (parsed.userId && parsed.userId === user?.uid) {
+        setAssignMode("self");
+      } else {
+        setAssignMode("single");
+      }
+      setAssignEmployeeRef(ref);
+      setMultiAssignRefs([]);
     }
+    setAssigneeSearch("");
     setIsEditing(true);
   };
 
@@ -228,7 +293,9 @@ export function OrganizationTasksDialog({
     setDueDate("");
     setPriority("medium");
     setAssignMode("all");
-    setAssignEmployeeId("");
+    setAssignEmployeeRef("");
+    setMultiAssignRefs([]);
+    setAssigneeSearch("");
   };
 
   const saveTask = async () => {
@@ -241,21 +308,42 @@ export function OrganizationTasksDialog({
       return;
     }
     if (!canManage) return;
-    if (
-      assignMode === "single" &&
-      !String(assignEmployeeId || "").trim()
-    ) {
+    const storedMode: TaskAssignedMode =
+      assignMode === "self" ? "single" : (assignMode as TaskAssignedMode);
+    if (assignMode === "single" && !String(assignEmployeeRef || "").trim()) {
       toast({
         variant: "destructive",
         title: "Přiřazení",
-        description: "U režimu „konkrétní zaměstnanec“ vyberte osobu.",
+        description: "Vyberte konkrétní osobu.",
+      });
+      return;
+    }
+    if (assignMode === "self" && !selfAssignRef) {
+      toast({
+        variant: "destructive",
+        title: "Přiřazení",
+        description: "Nelze přiřadit sobě — chybí přihlášený uživatel.",
+      });
+      return;
+    }
+    if (assignMode === "multi" && multiAssignRefs.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Přiřazení",
+        description: "Vyberte alespoň jednu osobu.",
       });
       return;
     }
     setSaving(true);
     try {
       const assignedTo =
-        assignMode === "all" ? null : String(assignEmployeeId).trim();
+        storedMode === "all" || storedMode === "multi"
+          ? null
+          : assignMode === "self"
+            ? selfAssignRef
+            : String(assignEmployeeRef).trim();
+      const assignedTargets =
+        storedMode === "multi" ? multiAssignRefs.map(String).filter(Boolean) : null;
       const duePayload =
         dueDate.trim() && /^\d{4}-\d{2}-\d{2}$/.test(dueDate.trim())
           ? dueDate.trim()
@@ -269,8 +357,9 @@ export function OrganizationTasksDialog({
             description: description.trim() || null,
             dueDate: duePayload,
             priority,
-            assignedMode: assignMode,
+            assignedMode: storedMode,
             assignedTo,
+            assignedTargets,
             updatedAt: serverTimestamp(),
           }
         );
@@ -283,8 +372,10 @@ export function OrganizationTasksDialog({
           priority,
           organizationId: companyId,
           status: "open" as const,
-          assignedMode: assignMode,
+          assignedMode: storedMode,
           assignedTo,
+          assignedTargets,
+          completedByUserIds: [],
           createdBy: user.uid,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -306,20 +397,16 @@ export function OrganizationTasksDialog({
   };
 
   const toggleDone = async (t: OrganizationTask) => {
-    if (!companyId) return;
-    const next = isTaskOpen(t) ? "done" : "open";
-    if (!canManage) {
-      const mine =
-        organizationTaskIsForAll(t) ||
-        String(t.assignedTo) === String(employeeId || "");
-      if (!mine) return;
-    }
+    if (!companyId || !user) return;
+    const markDone = !organizationTaskDoneForViewer(t, viewerCtx);
     try {
-      await updateDoc(doc(firestore, "companies", companyId, "tasks", t.id), {
-        status: next,
-        completedAt: next === "done" ? serverTimestamp() : null,
-        updatedAt: serverTimestamp(),
-      });
+      await setOrganizationTaskCompletionForUser(
+        firestore,
+        companyId,
+        t,
+        viewerCtx,
+        markDone
+      );
     } catch (e) {
       console.error(e);
       toast({
@@ -346,8 +433,12 @@ export function OrganizationTasksDialog({
     }
   };
 
-  const openList = tasks.filter((t) => isTaskOpen(t));
-  const doneList = tasks.filter((t) => !isTaskOpen(t));
+  const openList = tasks.filter((t) =>
+    canManage ? isTaskOpen(t) : organizationTaskOpenForUser(t, viewerCtx)
+  );
+  const doneList = tasks.filter((t) =>
+    canManage ? !isTaskOpen(t) : organizationTaskDoneForViewer(t, viewerCtx)
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -426,44 +517,98 @@ export function OrganizationTasksDialog({
               <Label>Přiřazení</Label>
               <RadioGroup
                 value={assignMode}
-                onValueChange={(v) =>
-                  setAssignMode(v as TaskAssignedMode)
-                }
+                onValueChange={(v) => setAssignMode(v as AssignUiMode)}
                 className="space-y-2"
               >
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="all" id="ot-am-all" />
                   <Label htmlFor="ot-am-all" className="font-normal cursor-pointer">
-                    Všem zaměstnancům
+                    Všem zaměstnancům a administrátorům
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="self" id="ot-am-self" />
+                  <Label htmlFor="ot-am-self" className="font-normal cursor-pointer">
+                    Sobě
                   </Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <RadioGroupItem value="single" id="ot-am-single" />
-                  <Label
-                    htmlFor="ot-am-single"
-                    className="font-normal cursor-pointer"
-                  >
-                    Konkrétnímu zaměstnanci
+                  <Label htmlFor="ot-am-single" className="font-normal cursor-pointer">
+                    Konkrétní osobě
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="multi" id="ot-am-multi" />
+                  <Label htmlFor="ot-am-multi" className="font-normal cursor-pointer">
+                    Více vybraným osobám
                   </Label>
                 </div>
               </RadioGroup>
-              {assignMode === "single" ? (
-                <select
-                  className={NATIVE_SELECT_CLASS}
-                  value={assignEmployeeId}
-                  onChange={(e) => setAssignEmployeeId(e.target.value)}
-                  aria-label="Zaměstnanec"
+              {assignMode === "self" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (selfAssignRef) setAssignEmployeeRef(selfAssignRef);
+                  }}
                 >
-                  <option value="">— vyberte —</option>
-                  {assignableEmployees
-                    .filter((e) => e?.id)
-                    .map((e) => (
-                      <option key={String(e.id)} value={String(e.id)}>
-                        {`${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() ||
-                          e.id}
+                  Přiřadit sobě
+                </Button>
+              ) : null}
+              {assignMode === "single" ? (
+                <div className="space-y-2">
+                  <Input
+                    value={assigneeSearch}
+                    onChange={(e) => setAssigneeSearch(e.target.value)}
+                    placeholder="Hledat jméno nebo roli…"
+                    aria-label="Hledat osobu"
+                  />
+                  <select
+                    className={NATIVE_SELECT_CLASS}
+                    value={assignEmployeeRef}
+                    onChange={(e) => setAssignEmployeeRef(e.target.value)}
+                    aria-label="Osoba"
+                  >
+                    <option value="">— vyberte —</option>
+                    {filteredAssigneeOptions.map((o) => (
+                      <option key={o.ref} value={o.ref}>
+                        {o.label}
                       </option>
                     ))}
-                </select>
+                  </select>
+                </div>
+              ) : null}
+              {assignMode === "multi" ? (
+                <div className="space-y-2 max-h-48 overflow-y-auto rounded-md border border-slate-200 bg-white p-2">
+                  <Input
+                    value={assigneeSearch}
+                    onChange={(e) => setAssigneeSearch(e.target.value)}
+                    placeholder="Hledat jméno nebo roli…"
+                    aria-label="Filtrovat osoby"
+                  />
+                  {filteredAssigneeOptions.map((o) => {
+                    const checked = multiAssignRefs.includes(o.ref);
+                    return (
+                      <label
+                        key={o.ref}
+                        className="flex cursor-pointer items-center gap-2 rounded px-1 py-1.5 text-sm hover:bg-slate-50"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(v) => {
+                            setMultiAssignRefs((prev) => {
+                              if (v) return prev.includes(o.ref) ? prev : [...prev, o.ref];
+                              return prev.filter((x) => x !== o.ref);
+                            });
+                          }}
+                        />
+                        <span>{o.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
               ) : null}
             </div>
             <div className="flex gap-2 justify-end">
@@ -486,23 +631,29 @@ export function OrganizationTasksDialog({
             <>
               <section>
                 <h3 className="text-sm font-semibold text-slate-900 mb-2">
-                  Nevyřízené ({openList.filter((t) => visibleTasks.some((v) => v.id === t.id)).length})
+                  Nevyřízené (
+                  {
+                    openList.filter((t) => visibleTasks.some((v) => v.id === t.id))
+                      .length
+                  }
+                  )
                 </h3>
                 <ul className="space-y-2">
-                  {visibleTasks.filter((t) => isTaskOpen(t)).length === 0 ? (
+                  {openList.filter((t) => visibleTasks.some((v) => v.id === t.id))
+                    .length === 0 ? (
                     <li className="text-sm text-muted-foreground">
                       Žádné nevyřízené úkoly.
                     </li>
                   ) : (
-                    visibleTasks
-                      .filter((t) => isTaskOpen(t))
+                    openList
+                      .filter((t) => visibleTasks.some((v) => v.id === t.id))
                       .map((t) => (
                         <li
                           key={t.id}
                           className="flex flex-wrap items-start gap-3 rounded-lg border border-red-200 bg-red-50/80 px-3 py-2 dark:border-red-900/60 dark:bg-red-950/30"
                         >
                           <Checkbox
-                            checked={!isTaskOpen(t)}
+                            checked={organizationTaskDoneForViewer(t, viewerCtx)}
                             onCheckedChange={() => void toggleDone(t)}
                             aria-label="Označit jako vyřízené"
                           />
@@ -525,9 +676,8 @@ export function OrganizationTasksDialog({
                             </p>
                             <p className="text-xs text-slate-800 mt-1">
                               Vytvořeno: {formatTaskDate(t.createdAt)} ·{" "}
-                              {organizationTaskIsForAll(t)
-                                ? "Přiřazeno: Všem"
-                                : `Přiřazeno: ${employeeNameById.get(String(t.assignedTo)) ?? t.assignedTo}`}
+                              Přiřazeno:{" "}
+                              {organizationTaskAssigneeSummaryLabel(t, formatAssignee)}
                             </p>
                           </div>
                           {canManage ? (
@@ -566,15 +716,15 @@ export function OrganizationTasksDialog({
                     Vyřízené (skryté z přehledu)
                   </h3>
                   <ul className="space-y-2">
-                    {visibleTasks
-                      .filter((t) => !isTaskOpen(t))
+                    {doneList
+                      .filter((t) => visibleTasks.some((v) => v.id === t.id))
                       .map((t) => (
                         <li
                           key={t.id}
                           className="flex flex-wrap items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 opacity-90"
                         >
                           <Checkbox
-                            checked={!isTaskOpen(t)}
+                            checked={organizationTaskDoneForViewer(t, viewerCtx)}
                             onCheckedChange={() => void toggleDone(t)}
                             aria-label="Označit jako nevyřízené"
                           />

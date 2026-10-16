@@ -7,7 +7,8 @@ export type OrganizationTaskDraft = {
   title: string;
   description?: string | null;
   assignedTo?: string | null;
-  assignedMode?: "single" | "all";
+  assignedMode?: "single" | "all" | "multi";
+  assignedTargets?: string[] | null;
   dueDate?: string | null;
   priority?: JobTaskPriority;
   jobId?: string | null;
@@ -28,8 +29,15 @@ export function validateOrganizationTaskDraft(
 ): { ok: true } | { ok: false; error: string } {
   const title = String(draft.title ?? "").trim();
   if (!title) return { ok: false, error: "Chybí název úkolu." };
-  if (draft.assignedMode === "single" && !String(draft.assignedTo ?? "").trim()) {
-    return { ok: false, error: "Chybí zaměstnanec pro přiřazení." };
+  const mode = draft.assignedMode ?? (draft.assignedTo ? "single" : "all");
+  if (mode === "single" && !String(draft.assignedTo ?? "").trim()) {
+    return { ok: false, error: "Chybí osoba pro přiřazení." };
+  }
+  if (mode === "multi") {
+    const targets = (draft as { assignedTargets?: string[] }).assignedTargets;
+    if (!Array.isArray(targets) || targets.filter((t) => String(t).trim()).length === 0) {
+      return { ok: false, error: "Vyberte alespoň jednu osobu." };
+    }
   }
   const due = String(draft.dueDate ?? "").trim();
   if (due && !/^\d{4}-\d{2}-\d{2}$/.test(due)) {
@@ -53,7 +61,15 @@ export async function createOrganizationTask(
 
   const assignedMode = input.draft.assignedMode ?? (input.draft.assignedTo ? "single" : "all");
   const assignedTo =
-    assignedMode === "all" ? null : String(input.draft.assignedTo ?? "").trim() || null;
+    assignedMode === "all" || assignedMode === "multi"
+      ? null
+      : String(input.draft.assignedTo ?? "").trim() || null;
+  const assignedTargets =
+    assignedMode === "multi"
+      ? (input.draft.assignedTargets ?? [])
+          .map((t) => String(t).trim())
+          .filter(Boolean)
+      : [];
 
   let description = String(input.draft.description ?? "").trim();
   const jobName = String(input.draft.jobName ?? "").trim();
@@ -82,6 +98,8 @@ export async function createOrganizationTask(
       status: "open",
       assignedMode,
       assignedTo,
+      assignedTargets: assignedTargets?.length ? assignedTargets : null,
+      completedByUserIds: [],
       createdBy: input.createdByUserId,
       createdVia: input.createdVia ?? "ai_voice",
       jobId: jobId || null,
@@ -114,7 +132,15 @@ export async function updateOrganizationTask(
 
   const assignedMode = input.draft.assignedMode ?? (input.draft.assignedTo ? "single" : "all");
   const assignedTo =
-    assignedMode === "all" ? null : String(input.draft.assignedTo ?? "").trim() || null;
+    assignedMode === "all" || assignedMode === "multi"
+      ? null
+      : String(input.draft.assignedTo ?? "").trim() || null;
+  const assignedTargets =
+    assignedMode === "multi"
+      ? (input.draft.assignedTargets ?? [])
+          .map((t) => String(t).trim())
+          .filter(Boolean)
+      : [];
 
   await ref.update({
     title: String(input.draft.title).trim(),
@@ -126,6 +152,7 @@ export async function updateOrganizationTask(
     priority: normalizePriority(input.draft.priority),
     assignedMode,
     assignedTo,
+    assignedTargets: assignedMode === "multi" ? assignedTargets : null,
     updatedAt: FieldValue.serverTimestamp(),
   });
 }

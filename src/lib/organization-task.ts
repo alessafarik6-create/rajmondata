@@ -19,6 +19,10 @@ export type OrganizationTask = {
   createdAt?: Timestamp | { toDate?: () => Date } | null;
   updatedAt?: Timestamp | { toDate?: () => Date } | null;
   completedAt?: Timestamp | { toDate?: () => Date } | null;
+  /** Režim `multi` — encoded refs (`user:`, `emp:`). */
+  assignedTargets?: string[];
+  /** Individuální splnění u úkolů pro všechny / více osob (Firebase Auth uid). */
+  completedByUserIds?: string[];
 };
 
 export function isTaskOpen(t: { status?: string } | null | undefined): boolean {

@@ -58,6 +58,7 @@ export function MobileDashboard(props: {
   jobsForTaskBadge?: { id: string; name?: string }[];
   jobsLoading?: boolean;
   employeeId?: string | null;
+  authUserId?: string | null;
   /** Owner / admin / manager / accountant — u zaměstnaneckého režimu vidí všechny org. úkoly. */
   isTaskBadgePrivileged?: boolean;
   /** Volitelné doplnění badge podle klíče dlaždice (např. `jobs`, `invoices`). */
@@ -86,6 +87,7 @@ export function MobileDashboard(props: {
     jobsLoading: Boolean(props.jobsLoading),
     todayIso,
     employeeId: props.employeeId,
+    userId: props.authUserId,
     isPrivileged: Boolean(props.isTaskBadgePrivileged),
   });
 

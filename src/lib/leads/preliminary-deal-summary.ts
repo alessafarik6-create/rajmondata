@@ -47,6 +47,50 @@ export function computePreliminaryDealsSummary(
   };
 }
 
+export type PreliminaryDealsVatRecap = {
+  countWithVat: number;
+  totalWithVat: number;
+  countWithoutVat: number;
+  totalWithoutVat: number;
+};
+
+/** Finanční rekapitulace bez míchání částek s/bez DPH. */
+export function computePreliminaryDealsVatRecap(
+  deals: Pick<PreliminaryDealDoc, "priceAmount" | "status" | "priceVatMode">[]
+): PreliminaryDealsVatRecap {
+  let countWithVat = 0;
+  let totalWithVat = 0;
+  let countWithoutVat = 0;
+  let totalWithoutVat = 0;
+  for (const d of deals) {
+    if (d.status === "zruseno" || d.status === "prevedeno_do_zakazky") continue;
+    const amt = dealAmount(d);
+    if (d.priceVatMode === "with_vat") {
+      countWithVat += 1;
+      totalWithVat += amt;
+    } else {
+      countWithoutVat += 1;
+      totalWithoutVat += amt;
+    }
+  }
+  return { countWithVat, totalWithVat, countWithoutVat, totalWithoutVat };
+}
+
+export function computePreliminaryDealsStatusBreakdown(
+  deals: Pick<PreliminaryDealDoc, "priceAmount" | "status">[]
+): { status: PreliminaryDealStatus; count: number; value: number }[] {
+  const map = new Map<PreliminaryDealStatus, { count: number; value: number }>();
+  for (const d of deals) {
+    const st = d.status as PreliminaryDealStatus;
+    if (st === "zruseno") continue;
+    const prev = map.get(st) ?? { count: 0, value: 0 };
+    prev.count += 1;
+    prev.value += dealAmount(d);
+    map.set(st, prev);
+  }
+  return [...map.entries()].map(([status, v]) => ({ status, ...v }));
+}
+
 export function preliminaryDealMatchesFilters(
   d: PreliminaryDealDoc & { id?: string },
   filters: {

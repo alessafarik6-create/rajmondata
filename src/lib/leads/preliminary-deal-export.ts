@@ -11,7 +11,11 @@ import {
   type PreliminaryDealDoc,
   type PreliminaryDealStatus,
 } from "@/lib/leads/preliminary-deal-types";
-import { computePreliminaryDealsSummary } from "@/lib/leads/preliminary-deal-summary";
+import {
+  computePreliminaryDealsStatusBreakdown,
+  computePreliminaryDealsSummary,
+  computePreliminaryDealsVatRecap,
+} from "@/lib/leads/preliminary-deal-summary";
 
 export type PreliminaryDealExportRow = PreliminaryDealDoc & { id: string };
 
@@ -215,32 +219,10 @@ function drawLabelValueRows(
   return y;
 }
 
-function drawSummaryCards(doc: jsPDF, y: number, summary: ReturnType<typeof computePreliminaryDealsSummary>): number {
-  const pageW = doc.internal.pageSize.getWidth();
-  const cardW = (pageW - MARGIN_MM * 2 - 9) / 4;
-  const cards: [string, string][] = [
-    ["Počet předjednaných zakázek", String(summary.count)],
-    ["Celková předběžná hodnota", formatCurrency(summary.pipelineValue)],
-    ["Čeká na potvrzení", formatCurrency(summary.waitingConfirmationValue)],
-    ["Potvrzeno", formatCurrency(summary.confirmedValue)],
-  ];
-  let x = MARGIN_MM;
-  for (const [label, value] of cards) {
-    doc.setFillColor(...HEAD_GRAY);
-    doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(x, y, cardW, 18, 2, 2, "FD");
-    doc.setFont(PDF_FONT_FAMILY, "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text(label, x + 3, y + 6, { maxWidth: cardW - 6 });
-    doc.setFont(PDF_FONT_FAMILY, "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(...INK);
-    doc.text(value, x + 3, y + 14, { maxWidth: cardW - 6 });
-    x += cardW + 3;
-  }
-  doc.setTextColor(...INK);
-  return y + 24;
+function compactCellText(text: string, maxLen: number): string {
+  const t = trimStr(text).replace(/\s+/g, " ");
+  if (t.length <= maxLen) return t || "—";
+  return `${t.slice(0, maxLen - 1).trim()}…`;
 }
 
 export function exportPreliminaryDealsToCsvBuffer(rows: PreliminaryDealExportRow[]): Buffer {
@@ -387,7 +369,7 @@ export async function exportSinglePreliminaryDealPdfBuffer(
     y = drawLabelValueRows(doc, y, [["Poznámka", row.note.trim()]]);
   }
 
-  y = Math.min(Math.max(y + 8, 240), 265);
+  y += 6;
   doc.setFillColor(255, 247, 237);
   doc.setDrawColor(...ORANGE_RGB);
   doc.setLineWidth(0.2);
@@ -409,9 +391,12 @@ export async function exportSinglePreliminaryDealPdfBuffer(
 export async function exportPreliminaryDealsListPdfBuffer(
   rows: PreliminaryDealExportRow[],
   profile: PreliminaryDealCompanyProfile,
-  periodLabel: string
+  periodLabel: string,
+  filtersLabel?: string | null
 ): Promise<Buffer> {
   const summary = computePreliminaryDealsSummary(rows);
+  const vatRecap = computePreliminaryDealsVatRecap(rows);
+  const statusBreakdown = computePreliminaryDealsStatusBreakdown(rows);
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   registerDejaVuFontsForPdfSync(doc);
   const generatedAt = new Date();
@@ -423,71 +408,123 @@ export async function exportPreliminaryDealsListPdfBuffer(
 
   let y = drawCompanyLetterhead(doc, profile, docDate);
   doc.setFont(PDF_FONT_FAMILY, "bold");
-  doc.setFontSize(14);
+  doc.setFontSize(13);
   doc.setTextColor(...ORANGE_RGB);
   doc.text("PŘEHLED PŘEDJEDNANÝCH ZAKÁZEK", MARGIN_MM, y);
   doc.setFont(PDF_FONT_FAMILY, "normal");
-  doc.setFontSize(10);
+  doc.setFontSize(8.5);
   doc.setTextColor(71, 85, 105);
-  doc.text(`Období: ${periodLabel}`, MARGIN_MM, y + 6);
+  let metaY = y + 5.5;
+  doc.text(`Období: ${periodLabel}`, MARGIN_MM, metaY);
+  metaY += 4;
+  const filters = trimStr(filtersLabel) || "Bez dalších filtrů";
+  doc.text(`Filtry: ${filters}`, MARGIN_MM, metaY, {
+    maxWidth: doc.internal.pageSize.getWidth() - MARGIN_MM * 2,
+  });
+  metaY += 4;
+  doc.text(
+    `Počet zakázek: ${summary.count} · Celková předběžná hodnota (pipeline): ${formatCurrency(summary.pipelineValue)}`,
+    MARGIN_MM,
+    metaY
+  );
   doc.setTextColor(...INK);
-  y += 12;
+  y = metaY + 6;
 
-  y = drawSummaryCards(doc, y, summary);
-
-  const tableBody = rows.map((r) => [
-    r.title,
-    r.customerName ?? "—",
-    preliminaryDealPriceLabel(Number(r.priceAmount) || 0, r.priceVatMode),
+  const tableBody = rows.map((r, idx) => [
+    String(idx + 1),
+    compactCellText(r.title, 80),
+    compactCellText(r.customerName ?? "—", 48),
+    compactCellText(r.description || "—", 110),
     formatDateCs(r.expectedCompletionDate ?? undefined),
+    preliminaryDealPriceLabel(Number(r.priceAmount) || 0, r.priceVatMode),
     PRELIMINARY_DEAL_STATUS_LABELS[r.status as PreliminaryDealStatus] ?? r.status,
   ]);
 
   const pageW = doc.internal.pageSize.getWidth();
   autoTable(doc, {
     startY: y,
-    head: [["Název", "Zákazník", "Cena", "Termín", "Stav"]],
+    head: [["Č.", "Název zakázky", "Zákazník", "Popis práce", "Termín", "Cena", "Stav"]],
     body: tableBody,
+    showHead: "everyPage",
+    rowPageBreak: "avoid",
     styles: {
       font: PDF_FONT_FAMILY,
-      fontSize: 9,
-      cellPadding: 2.5,
+      fontSize: 7.5,
+      cellPadding: 1.2,
       overflow: "linebreak",
       valign: "top",
       textColor: INK,
       lineColor: [226, 232, 240],
-      lineWidth: 0.15,
+      lineWidth: 0.12,
+      minCellHeight: 5,
     },
     headStyles: {
       font: PDF_FONT_FAMILY,
       fontStyle: "bold",
       fillColor: HEAD_GRAY,
       textColor: INK,
-      fontSize: 9,
+      fontSize: 7.5,
+      cellPadding: 1.4,
     },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
+    alternateRowStyles: { fillColor: [252, 252, 253] },
     columnStyles: {
-      0: { cellWidth: 52 },
-      1: { cellWidth: 38 },
-      2: { halign: "right", cellWidth: 32 },
-      3: { cellWidth: 28 },
-      4: { cellWidth: 32 },
+      0: { cellWidth: 7, halign: "center" },
+      1: { cellWidth: 26 },
+      2: { cellWidth: 22 },
+      3: { cellWidth: 38 },
+      4: { cellWidth: 17 },
+      5: { halign: "right", cellWidth: 20 },
+      6: { cellWidth: 20 },
     },
-    margin: { left: MARGIN_MM, right: MARGIN_MM, bottom: 18 },
+    margin: { left: MARGIN_MM, right: MARGIN_MM, top: MARGIN_MM, bottom: 16 },
     tableWidth: pageW - MARGIN_MM * 2,
   });
 
   let footY =
     (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y + 20;
-  footY += 8;
-  if (footY > 270) {
+  footY += 6;
+  if (footY > 248) {
     doc.addPage();
-    footY = MARGIN_MM + 8;
+    footY = MARGIN_MM + 6;
   }
+
   doc.setFont(PDF_FONT_FAMILY, "bold");
-  doc.setFontSize(10);
+  doc.setFontSize(9);
+  doc.text("Souhrn podle stavu", MARGIN_MM, footY);
+  footY += 4.5;
+  doc.setFont(PDF_FONT_FAMILY, "normal");
+  doc.setFontSize(8);
+  for (const row of statusBreakdown) {
+    const label =
+      PRELIMINARY_DEAL_STATUS_LABELS[row.status as PreliminaryDealStatus] ?? row.status;
+    doc.text(
+      `${label}: ${row.count} ks · ${formatCurrency(row.value)}`,
+      MARGIN_MM,
+      footY
+    );
+    footY += 3.8;
+  }
+  footY += 2;
+  doc.setFont(PDF_FONT_FAMILY, "bold");
+  doc.setFontSize(9);
+  doc.text("Finanční rekapitulace (bez sčítání režimů DPH)", MARGIN_MM, footY);
+  footY += 4.5;
+  doc.setFont(PDF_FONT_FAMILY, "normal");
+  doc.setFontSize(8);
   doc.text(
-    `Celková předběžná hodnota (pipeline): ${formatCurrency(summary.pipelineValue)}`,
+    `Ceny s DPH: ${vatRecap.countWithVat} ks · ${formatCurrency(vatRecap.totalWithVat)}`,
+    MARGIN_MM,
+    footY
+  );
+  footY += 3.8;
+  doc.text(
+    `Ceny bez DPH: ${vatRecap.countWithoutVat} ks · ${formatCurrency(vatRecap.totalWithoutVat)}`,
+    MARGIN_MM,
+    footY
+  );
+  footY += 3.8;
+  doc.text(
+    `Pipeline celkem (smíšené režimy): ${formatCurrency(summary.pipelineValue)}`,
     MARGIN_MM,
     footY
   );
