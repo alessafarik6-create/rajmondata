@@ -57,6 +57,77 @@ export function urgencyColorClass(u: JobTimelineUrgency): string {
   }
 }
 
+/** Třídy pro malý bod na časové ose (8–12 px). */
+export function urgencyDotClass(u: JobTimelineUrgency): string {
+  switch (u) {
+    case "overdue":
+      return "bg-red-500 hover:bg-red-600 ring-2 ring-white shadow-sm";
+    case "soon":
+      return "bg-orange-500 hover:bg-orange-600 ring-2 ring-white shadow-sm";
+    case "future":
+      return "bg-emerald-500 hover:bg-emerald-600 ring-2 ring-white shadow-sm";
+    case "done":
+      return "bg-slate-400 hover:bg-slate-500 ring-2 ring-white shadow-sm";
+    default:
+      return "bg-slate-300 ring-2 ring-white shadow-sm";
+  }
+}
+
+export function jobDaysUntilLabel(
+  job: JobListRow,
+  now = new Date()
+): string {
+  const deadline = jobTimelineDeadlineIso(job);
+  if (!deadline) return "Bez termínu";
+  const days = calendarDaysUntilJobDeadline(deadline, now);
+  if (days == null) return "—";
+  if (days < 0) return `${Math.abs(days)} dní po termínu`;
+  if (days === 0) return "Termín dnes";
+  return `${days} dní do termínu`;
+}
+
+const MONTH_NAMES_CS = [
+  "Leden",
+  "Únor",
+  "Březen",
+  "Duben",
+  "Květen",
+  "Červen",
+  "Červenec",
+  "Srpen",
+  "Září",
+  "Říjen",
+  "Listopad",
+  "Prosinec",
+];
+
+export function formatMonthLabelCs(date: Date): string {
+  return `${MONTH_NAMES_CS[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+export function shouldShowDayNumber(
+  dayOffset: number,
+  scale: JobTimelineScale,
+  pixelsPerDay: number
+): boolean {
+  if (scale === "week") return true;
+  if (scale === "month") return pixelsPerDay >= 8;
+  if (scale === "quarter") return dayOffset % 5 === 0;
+  return pixelsPerDay >= 3 && dayOffset % 7 === 0;
+}
+
+export function shouldShowDayTick(
+  dayOffset: number,
+  scale: JobTimelineScale
+): boolean {
+  if (scale === "year") return dayOffset % 7 === 0;
+  return true;
+}
+
+export function isStrongDayTick(dayOffset: number): boolean {
+  return dayOffset % 5 === 0;
+}
+
 export function pixelsPerDay(scale: JobTimelineScale): number {
   switch (scale) {
     case "week":

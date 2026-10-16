@@ -1954,6 +1954,7 @@ function JobsPageContent() {
             jobsViewMode === "timeline" ? (
               <JobsTimelineView
                 jobs={displayJobs}
+                getCustomerName={getCustomerName}
                 isPortalEmployee={isPortalEmployee}
                 mobile={belowLg}
               />
