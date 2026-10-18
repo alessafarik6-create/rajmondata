@@ -107,7 +107,8 @@ export function resolveExternalModulePortalState(input: {
 }
 
 export function externalModulePortalPath(code: PlatformModuleCode): string {
-  return `/portal/modules/${encodeURIComponent(code)}`;
+  const slug = code === "rajmondata_editor" ? "rajmondata-editor" : code;
+  return `/portal/modules/${encodeURIComponent(slug)}`;
 }
 
 export function isExternalModuleEligibleForPortalNav(

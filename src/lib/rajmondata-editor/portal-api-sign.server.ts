@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHmac, randomBytes } from "crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 
 export const PORTAL_TIMESTAMP_HEADER = "X-Portal-Timestamp";
 export const PORTAL_NONCE_HEADER = "X-Portal-Nonce";
@@ -17,6 +17,32 @@ export function getPortalApiSecret(): string {
 /** Serializace JSON pro podpis — stabilní pořadí klíčů na úrovni volajícího objektu. */
 export function serializePortalJsonBody(payload: Record<string, unknown>): string {
   return JSON.stringify(payload);
+}
+
+/** Ověření HMAC od editoru (server → portál). */
+export function verifyPortalInboundSignature(rawBody: string, signatureHeader: string | null): boolean {
+  const secret = getPortalApiSecret();
+  if (!secret || !signatureHeader?.trim()) return false;
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+  const given = signatureHeader.trim().toLowerCase();
+  if (expected.length !== given.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(expected), Buffer.from(given));
+  } catch {
+    return false;
+  }
+}
+
+export function isEditorIntegrationAuthorized(
+  authorizationHeader: string | null,
+  rawBody: string,
+  signatureHeader: string | null
+): boolean {
+  const secret = getPortalApiSecret();
+  if (!secret) return false;
+  const auth = authorizationHeader ?? "";
+  if (auth === `Bearer ${secret}`) return true;
+  return verifyPortalInboundSignature(rawBody, signatureHeader);
 }
 
 export function signPortalJsonBody(body: string): {

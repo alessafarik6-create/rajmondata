@@ -36,18 +36,6 @@ export async function launchExternalModuleForUser(input: {
     return { ok: false, status: 400, error: "Neplatná organizace." };
   }
 
-  const licSnap = await input.db.collection(COMPANY_LICENSES_COLLECTION).doc(input.organizationId).get();
-  const licPending = licSnap.data() as { editorAccessSyncPending?: boolean; editorAccessSyncLastError?: string } | undefined;
-  if (licPending?.editorAccessSyncPending) {
-    return {
-      ok: false,
-      status: 503,
-      error:
-        licPending.editorAccessSyncLastError ||
-        "Synchronizace oprávnění s editorem neproběhla — spuštění je dočasně blokováno.",
-    };
-  }
-
   const modSnap = await input.db.collection(PLATFORM_MODULES_COLLECTION).doc(input.moduleCode).get();
   const catalog = buildMergedPlatformCatalogMap(
     modSnap.exists ? [{ id: modSnap.id, ...(modSnap.data() as Record<string, unknown>) }] : []
@@ -62,6 +50,22 @@ export async function launchExternalModuleForUser(input: {
   }
 
   const orgDecision = canOrganizationUseModule(license, input.moduleCode);
+
+  const licSnap = await input.db.collection(COMPANY_LICENSES_COLLECTION).doc(input.organizationId).get();
+  const licPending = licSnap.data() as {
+    editorAccessSyncPending?: boolean;
+    editorAccessSyncLastError?: string | null;
+  } | undefined;
+  if (licPending?.editorAccessSyncPending && !orgDecision.ok) {
+    return {
+      ok: false,
+      status: 503,
+      error:
+        licPending.editorAccessSyncLastError ||
+        "Synchronizace oprávnění s editorem neproběhla — spuštění je dočasně blokováno.",
+    };
+  }
+
   const assigned = await listModuleUserAssignmentIds(
     input.db,
     input.organizationId,
@@ -94,7 +98,12 @@ export async function launchExternalModuleForUser(input: {
 
   const { apiUrl, appUrl } = editorUrlsFromCatalog(catalog);
   const moduleActive = orgDecision.ok;
-  const licenseActive = orgDecision.ok && ent?.paymentStatus !== "suspended";
+  const billingRequired = catalog.isPaid === true;
+  const licenseActive = billingRequired
+    ? orgDecision.ok &&
+      ent?.paymentStatus !== "suspended" &&
+      ent?.tenantModuleStatus !== "suspended"
+    : orgDecision.ok;
 
   const editorRes = await requestEditorLaunchTicket({
     apiUrl,

@@ -17,6 +17,9 @@ function parseEditorError(data: EditorErrorBody, status: number): string {
   if (data.code === "PORTAL_AUTH_NOT_CONFIGURED") {
     return "Editor nemá nastavené PORTAL_API_SECRET (Railway).";
   }
+  if (status === 401 || data.code === "UNAUTHORIZED") {
+    return "Editor odmítl požadavek (autentizace portálu nebo Firebase tokenu).";
+  }
   return String(data.message ?? data.error ?? `Editor API HTTP ${status}`);
 }
 
@@ -41,9 +44,11 @@ async function signedPost(
     const res = await fetch(url, { method: "POST", headers, body, cache: "no-store" });
     const data = (await res.json().catch(() => ({}))) as EditorErrorBody & Record<string, unknown>;
     if (!res.ok) {
+      const mappedStatus =
+        res.status === 401 ? 502 : res.status >= 500 ? 503 : res.status;
       return {
         ok: false,
-        status: res.status,
+        status: mappedStatus,
         error: parseEditorError(data, res.status),
         code: data.code,
       };
