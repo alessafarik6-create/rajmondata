@@ -15,7 +15,12 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ moduleCode: string }> }
 ) {
-  const v = await verifyCompanyBearer(request.headers.get("authorization"));
+  const authHeader = request.headers.get("authorization") ?? "";
+  const firebaseIdToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  if (!firebaseIdToken) {
+    return NextResponse.json({ error: "Chybí Firebase token." }, { status: 401 });
+  }
+  const v = await verifyCompanyBearer(authHeader);
   if (!v.ok) return NextResponse.json({ error: v.error }, { status: v.status });
 
   const { moduleCode: raw } = await params;
@@ -48,6 +53,7 @@ export async function POST(
     displayName,
     moduleCode,
     portalRole: v.caller.role,
+    firebaseIdToken,
   });
 
   if (!result.ok) {

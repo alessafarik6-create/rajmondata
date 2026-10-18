@@ -11,6 +11,7 @@ import { listModuleUserAssignmentIds } from "@/lib/platform-module-assignments.s
 import { suspendModuleForOrganization } from "@/lib/platform-module-assignments.server";
 import { effectiveModulePriceCzk } from "@/lib/rajmondata-editor/module-access";
 import { isModuleEntitlementActiveNow } from "@/lib/platform-config";
+import { syncRajmondataEditorAccessWithRetry } from "@/lib/rajmondata-editor/editor-access-sync.server";
 
 export const dynamic = "force-dynamic";
 
@@ -147,6 +148,22 @@ export async function PATCH(
       ? Array.from(new Set([...license.enabledModules.filter((c) => c !== code), code]))
       : license.enabledModules.filter((c) => c !== code),
   };
+
+  if (code === "rajmondata_editor") {
+    const moduleActive = isModuleEntitlementActiveNow(next) && action !== "remove" && action !== "suspend";
+    const sync = await syncRajmondataEditorAccessWithRetry({
+      db,
+      organizationId: id,
+      moduleActive,
+      licenseActive: moduleActive && next.paymentStatus !== "suspended",
+      actor: session.username,
+    });
+    license = {
+      ...license,
+      editorAccessSyncPending: !sync.ok,
+      editorAccessSyncLastError: sync.ok ? null : sync.error,
+    };
+  }
 
   await writeCompanyLicenseAndDenorm(db, id, license, { organizationDenormPatch: {} });
   await db.collection(PLATFORM_SECURITY_AUDIT_COLLECTION).add({

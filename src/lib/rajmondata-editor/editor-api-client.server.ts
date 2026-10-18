@@ -1,69 +1,54 @@
 import "server-only";
 
 import { getRajmondataEditorEnv } from "@/lib/rajmondata-editor/config";
+import {
+  serializePortalJsonBody,
+  signPortalJsonBody,
+} from "@/lib/rajmondata-editor/portal-api-sign.server";
 
 export type EditorLaunchTicketResponse = {
   ticket: string;
   expiresAt?: string;
-  consumeUrl: string;
 };
 
-export async function requestEditorLaunchTicket(input: {
-  apiUrl: string;
-  organizationId: string;
-  organizationName: string;
-  userId: string;
-  email: string;
-  displayName: string;
-  moduleCode: string;
-}): Promise<{ ok: true; data: EditorLaunchTicketResponse } | { ok: false; status: number; error: string }> {
-  const { secret, launchPath } = getRajmondataEditorEnv();
-  if (!secret) {
-    return { ok: false, status: 503, error: "RAJMONDATA_EDITOR_INTEGRATION_SECRET není nastaveno." };
+type EditorErrorBody = { ok?: boolean; code?: string; message?: string; error?: string };
+
+function parseEditorError(data: EditorErrorBody, status: number): string {
+  if (data.code === "PORTAL_AUTH_NOT_CONFIGURED") {
+    return "Editor nemá nastavené PORTAL_API_SECRET (Railway).";
   }
-  const url = `${input.apiUrl.replace(/\/$/, "")}${launchPath.startsWith("/") ? launchPath : `/${launchPath}`}`;
+  return String(data.message ?? data.error ?? `Editor API HTTP ${status}`);
+}
+
+async function signedPost(
+  apiUrl: string,
+  path: string,
+  payload: Record<string, unknown>
+): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; status: number; error: string; code?: string }> {
+  const body = serializePortalJsonBody(payload);
+  let headers: Record<string, string>;
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        organizationId: input.organizationId,
-        organizationName: input.organizationName,
-        userId: input.userId,
-        email: input.email,
-        displayName: input.displayName,
-        moduleCode: input.moduleCode,
-        locale: "cs-CZ",
-      }),
-      cache: "no-store",
-    });
-    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    headers = signPortalJsonBody(body).headers;
+  } catch (e) {
+    return {
+      ok: false,
+      status: 503,
+      error: e instanceof Error ? e.message : "Chybí PORTAL_API_SECRET.",
+    };
+  }
+  const url = `${apiUrl.replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+  try {
+    const res = await fetch(url, { method: "POST", headers, body, cache: "no-store" });
+    const data = (await res.json().catch(() => ({}))) as EditorErrorBody & Record<string, unknown>;
     if (!res.ok) {
       return {
         ok: false,
         status: res.status,
-        error: String(data.error ?? data.message ?? `Editor API HTTP ${res.status}`),
+        error: parseEditorError(data, res.status),
+        code: data.code,
       };
     }
-    const consumeUrl = String(data.consumeUrl ?? "").trim();
-    const ticket = String(data.ticket ?? "").trim();
-    if (!consumeUrl && !ticket) {
-      return { ok: false, status: 502, error: "Editor API nevrátilo consumeUrl ani ticket." };
-    }
-    const appBase = getRajmondataEditorEnv().appUrl.replace(/\/$/, "");
-    return {
-      ok: true,
-      data: {
-        ticket,
-        expiresAt: data.expiresAt ? String(data.expiresAt) : undefined,
-        consumeUrl:
-          consumeUrl ||
-          `${appBase}/auth/portal/launch?ticket=${encodeURIComponent(ticket)}`,
-      },
-    };
+    return { ok: true, data };
   } catch (e) {
     return {
       ok: false,
@@ -73,46 +58,104 @@ export async function requestEditorLaunchTicket(input: {
   }
 }
 
-export async function revokeEditorAccess(input: {
+export async function requestEditorLaunchTicket(input: {
   apiUrl: string;
+  idToken: string;
   organizationId: string;
-  userId?: string | null;
-  reason: string;
-}): Promise<void> {
-  const { secret, revokePath } = getRajmondataEditorEnv();
-  if (!secret) return;
-  const url = `${input.apiUrl.replace(/\/$/, "")}${revokePath.startsWith("/") ? revokePath : `/${revokePath}`}`;
-  try {
-    await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        organizationId: input.organizationId,
-        userId: input.userId ?? null,
-        reason: input.reason,
-      }),
-    });
-  } catch {
-    // best effort
+  organizationName: string;
+  userId: string;
+  email: string;
+  displayName: string;
+  moduleActive: boolean;
+  licenseActive: boolean;
+}): Promise<{ ok: true; data: EditorLaunchTicketResponse } | { ok: false; status: number; error: string; code?: string }> {
+  const res = await signedPost(input.apiUrl, "/api/v1/launch-tickets", {
+    idToken: input.idToken,
+    organizationId: input.organizationId,
+    organizationName: input.organizationName,
+    userId: input.userId,
+    email: input.email,
+    displayName: input.displayName,
+    moduleActive: input.moduleActive,
+    licenseActive: input.licenseActive,
+  });
+  if (!res.ok) return res;
+  const ticket = String(res.data.ticket ?? "").trim();
+  if (!ticket) {
+    return { ok: false, status: 502, error: "Editor nevrátil ticket." };
   }
+  return {
+    ok: true,
+    data: {
+      ticket,
+      expiresAt: res.data.expiresAt ? String(res.data.expiresAt) : undefined,
+    },
+  };
+}
+
+export type EditorAccessSyncPayload = {
+  organizationId: string;
+  moduleActive: boolean;
+  licenseActive: boolean;
+  users: Array<{ userId: string; active: boolean }>;
+};
+
+export async function syncEditorModuleAccess(
+  apiUrl: string,
+  payload: EditorAccessSyncPayload
+): Promise<{ ok: true } | { ok: false; status: number; error: string; code?: string }> {
+  const res = await signedPost(apiUrl, "/api/v1/modules/rajmondata-editor/access", payload);
+  if (!res.ok) return res;
+  return { ok: true };
+}
+
+export async function requestEditorLogout(input: {
+  apiUrl: string;
+  idToken: string;
+  organizationId: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const res = await signedPost(input.apiUrl, "/api/v1/logout", {
+    idToken: input.idToken,
+    organizationId: input.organizationId,
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true };
 }
 
 export async function probeEditorIntegrationHealth(apiUrl: string): Promise<{
   status: "connected" | "degraded" | "error";
   detail: string;
+  portalAuthConfigured?: boolean;
 }> {
-  const healthUrl = `${apiUrl.replace(/\/$/, "")}/api/health`;
+  const healthUrl = `${apiUrl.replace(/\/$/, "")}/api/v1/health`;
   try {
     const res = await fetch(healthUrl, { cache: "no-store" });
     if (!res.ok) return { status: "error", detail: `Health HTTP ${res.status}` };
-    const data = (await res.json()) as { ok?: boolean };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      portalAuthConfigured?: boolean;
+    };
     if (data.ok !== true) return { status: "degraded", detail: "Health bez ok:true" };
-    const { secret } = getRajmondataEditorEnv();
-    if (!secret) return { status: "degraded", detail: "Chybí integrační secret na portálu" };
-    return { status: "connected", detail: "Health OK, secret nastaven" };
+    const secret = getRajmondataEditorEnv().secret;
+    if (!secret) {
+      return {
+        status: "degraded",
+        detail: "Chybí PORTAL_API_SECRET na portálu",
+        portalAuthConfigured: data.portalAuthConfigured,
+      };
+    }
+    if (data.portalAuthConfigured !== true) {
+      return {
+        status: "degraded",
+        detail: "Editor: portalAuthConfigured=false (nastavte PORTAL_API_SECRET na Railway)",
+        portalAuthConfigured: false,
+      };
+    }
+    return {
+      status: "connected",
+      detail: "Health OK, obě strany mají portal auth",
+      portalAuthConfigured: true,
+    };
   } catch (e) {
     return { status: "error", detail: e instanceof Error ? e.message : "Health nedostupné" };
   }

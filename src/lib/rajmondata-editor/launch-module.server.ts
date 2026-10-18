@@ -4,6 +4,7 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import {
   PLATFORM_MODULE_LAUNCH_AUDIT_COLLECTION,
   PLATFORM_MODULES_COLLECTION,
+  COMPANY_LICENSES_COLLECTION,
 } from "@/lib/firestore-collections";
 import { ensureCompanyLicenseDoc } from "@/lib/company-license-admin";
 import { buildMergedPlatformCatalogMap } from "@/lib/platform-module-catalog";
@@ -14,7 +15,6 @@ import {
   canUserUseModuleWithSeats,
 } from "@/lib/rajmondata-editor/module-access";
 import { requestEditorLaunchTicket } from "@/lib/rajmondata-editor/editor-api-client.server";
-import { createPortalLaunchTicket } from "@/lib/rajmondata-editor/launch-tickets.server";
 import { listModuleUserAssignmentIds } from "@/lib/platform-module-assignments.server";
 
 export async function launchExternalModuleForUser(input: {
@@ -26,10 +26,27 @@ export async function launchExternalModuleForUser(input: {
   displayName: string;
   moduleCode: PlatformModuleCode;
   portalRole?: string;
+  firebaseIdToken: string;
 }): Promise<
-  | { ok: true; redirectUrl: string; mode: "editor_api" | "portal_ticket" }
+  | { ok: true; redirectUrl: string; mode: "editor_api" }
   | { ok: false; status: number; error: string }
 > {
+  if (input.organizationId !== input.organizationId.trim()) {
+    return { ok: false, status: 400, error: "Neplatná organizace." };
+  }
+
+  const licSnap = await input.db.collection(COMPANY_LICENSES_COLLECTION).doc(input.organizationId).get();
+  const licPending = licSnap.data() as { editorAccessSyncPending?: boolean; editorAccessSyncLastError?: string } | undefined;
+  if (licPending?.editorAccessSyncPending) {
+    return {
+      ok: false,
+      status: 503,
+      error:
+        licPending.editorAccessSyncLastError ||
+        "Synchronizace oprávnění s editorem neproběhla — spuštění je dočasně blokováno.",
+    };
+  }
+
   const modSnap = await input.db.collection(PLATFORM_MODULES_COLLECTION).doc(input.moduleCode).get();
   const catalog = buildMergedPlatformCatalogMap(
     modSnap.exists ? [{ id: modSnap.id, ...(modSnap.data() as Record<string, unknown>) }] : []
@@ -39,6 +56,10 @@ export async function launchExternalModuleForUser(input: {
   }
 
   const license = await ensureCompanyLicenseDoc(input.db, input.organizationId);
+  if (license.companyId && license.companyId !== input.organizationId) {
+    return { ok: false, status: 403, error: "Neshoda licence organizace." };
+  }
+
   const orgDecision = canOrganizationUseModule(license, input.moduleCode);
   const assigned = await listModuleUserAssignmentIds(
     input.db,
@@ -73,45 +94,34 @@ export async function launchExternalModuleForUser(input: {
   }
 
   const { apiUrl, appUrl } = editorUrlsFromCatalog(catalog);
+  const moduleActive = orgDecision.ok;
+  const licenseActive = orgDecision.ok && ent?.paymentStatus !== "suspended";
 
   const editorRes = await requestEditorLaunchTicket({
     apiUrl,
+    idToken: input.firebaseIdToken,
     organizationId: input.organizationId,
     organizationName: input.organizationName,
     userId: input.userId,
     email: input.email,
     displayName: input.displayName,
-    moduleCode: input.moduleCode,
+    moduleActive,
+    licenseActive,
   });
 
-  let redirectUrl: string;
-  let mode: "editor_api" | "portal_ticket";
-
-  if (editorRes.ok) {
-    redirectUrl = editorRes.data.consumeUrl;
-    mode = "editor_api";
-  } else if (editorRes.status === 404 || editorRes.status === 501) {
-    const portalTicket = await createPortalLaunchTicket(input.db, {
-      organizationId: input.organizationId,
-      organizationName: input.organizationName,
-      userId: input.userId,
-      email: input.email,
-      displayName: input.displayName,
-      moduleCode: input.moduleCode,
-    });
-    redirectUrl = `${appUrl.replace(/\/$/, "")}/auth/portal/launch?ticket=${encodeURIComponent(portalTicket.ticketId)}`;
-    mode = "portal_ticket";
-  } else {
+  if (!editorRes.ok) {
     return { ok: false, status: editorRes.status, error: editorRes.error };
   }
+
+  const redirectUrl = `${appUrl.replace(/\/$/, "")}/launch#ticket=${encodeURIComponent(editorRes.data.ticket)}`;
 
   await input.db.collection(PLATFORM_MODULE_LAUNCH_AUDIT_COLLECTION).add({
     organizationId: input.organizationId,
     userId: input.userId,
     moduleCode: input.moduleCode,
-    mode,
+    mode: "editor_api_v1",
     at: FieldValue.serverTimestamp(),
   });
 
-  return { ok: true, redirectUrl, mode };
+  return { ok: true, redirectUrl, mode: "editor_api" };
 }

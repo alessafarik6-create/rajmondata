@@ -1,4 +1,7 @@
+import "server-only";
+
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
+import { getPortalApiSecret } from "@/lib/rajmondata-editor/portal-api-sign.server";
 
 export function getRajmondataEditorEnv() {
   const appUrl =
@@ -8,14 +11,7 @@ export function getRajmondataEditorEnv() {
     process.env.RAJMONDATA_EDITOR_API_URL?.trim() ||
     process.env.RAJMONDATA_EDITOR_APP_URL?.trim() ||
     "https://rajmondata-editor-production.up.railway.app";
-  const secret = process.env.RAJMONDATA_EDITOR_INTEGRATION_SECRET?.trim() || "";
-  const launchPath =
-    process.env.RAJMONDATA_EDITOR_LAUNCH_TICKETS_PATH?.trim() ||
-    "/api/integrations/rajmondata-portal/v1/launch-tickets";
-  const revokePath =
-    process.env.RAJMONDATA_EDITOR_REVOKE_PATH?.trim() ||
-    "/api/integrations/rajmondata-portal/v1/revoke-access";
-  return { appUrl, apiUrl, secret, launchPath, revokePath };
+  return { appUrl, apiUrl, secret: getPortalApiSecret() };
 }
 
 export function editorUrlsFromCatalog(row: PlatformModuleCatalogRow) {

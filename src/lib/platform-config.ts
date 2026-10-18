@@ -257,6 +257,9 @@ export type CompanyLicenseDoc = {
   };
   updatedAt?: unknown;
   createdAt?: unknown;
+  /** Blokace spuštění editoru při neúspěšné sync s Railway API. */
+  editorAccessSyncPending?: boolean;
+  editorAccessSyncLastError?: string | null;
 };
 
 export type PlatformSettingsDoc = {

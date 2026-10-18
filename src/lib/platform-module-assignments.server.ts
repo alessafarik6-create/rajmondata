@@ -6,11 +6,10 @@ import {
   MODULE_USER_ASSIGNMENTS_SUBCOLLECTION,
   PLATFORM_MODULE_LAUNCH_AUDIT_COLLECTION,
   PLATFORM_SECURITY_AUDIT_COLLECTION,
-  PLATFORM_MODULES_COLLECTION,
 } from "@/lib/firestore-collections";
 import type { PlatformModuleCode } from "@/lib/platform-config";
-import { revokeEditorAccess } from "@/lib/rajmondata-editor/editor-api-client.server";
-import { buildMergedPlatformCatalogMap } from "@/lib/platform-module-catalog";
+import { syncRajmondataEditorAccessWithRetry } from "@/lib/rajmondata-editor/editor-access-sync.server";
+import { ensureCompanyLicenseDoc, writeCompanyLicenseAndDenorm } from "@/lib/company-license-admin";
 
 function assignmentDocId(userId: string, moduleCode: string): string {
   return `${userId}_${moduleCode}`;
@@ -69,6 +68,24 @@ export async function setModuleUserAssignment(input: {
     actor: input.actor,
     at: FieldValue.serverTimestamp(),
   });
+
+  if (input.moduleCode === "rajmondata_editor") {
+    const lic = await ensureCompanyLicenseDoc(input.db, input.organizationId);
+    const ent = lic.modules.rajmondata_editor;
+    const moduleActive = Boolean(ent?.active && ent.tenantModuleStatus !== "suspended");
+    const sync = await syncRajmondataEditorAccessWithRetry({
+      db: input.db,
+      organizationId: input.organizationId,
+      moduleActive,
+      licenseActive: moduleActive,
+      actor: input.actor,
+    });
+    await writeCompanyLicenseAndDenorm(input.db, input.organizationId, {
+      ...lic,
+      editorAccessSyncPending: !sync.ok,
+      editorAccessSyncLastError: sync.ok ? null : sync.error,
+    });
+  }
 }
 
 export async function suspendModuleForOrganization(input: {
@@ -78,16 +95,19 @@ export async function suspendModuleForOrganization(input: {
   actor: string;
   reason: string;
 }): Promise<void> {
-  const modSnap = await input.db.collection(PLATFORM_MODULES_COLLECTION).doc(input.moduleCode).get();
-  const row = buildMergedPlatformCatalogMap(
-    modSnap.exists ? [{ id: modSnap.id, ...(modSnap.data() as Record<string, unknown>) }] : []
-  )[input.moduleCode];
-  if (row?.apiUrl) {
-    await revokeEditorAccess({
-      apiUrl: row.apiUrl,
+  if (input.moduleCode === "rajmondata_editor") {
+    const sync = await syncRajmondataEditorAccessWithRetry({
+      db: input.db,
       organizationId: input.organizationId,
-      userId: null,
-      reason: input.reason,
+      moduleActive: false,
+      licenseActive: false,
+      actor: input.actor,
+    });
+    const lic = await ensureCompanyLicenseDoc(input.db, input.organizationId);
+    await writeCompanyLicenseAndDenorm(input.db, input.organizationId, {
+      ...lic,
+      editorAccessSyncPending: !sync.ok,
+      editorAccessSyncLastError: sync.ok ? null : sync.error,
     });
   }
   await input.db.collection(PLATFORM_MODULE_LAUNCH_AUDIT_COLLECTION).add({

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import { getRajmondataEditorEnv } from "@/lib/rajmondata-editor/config";
+import { getPortalApiSecret } from "@/lib/rajmondata-editor/portal-api-sign.server";
 import { consumePortalLaunchTicket } from "@/lib/rajmondata-editor/launch-tickets.server";
 import { ensureCompanyLicenseDoc } from "@/lib/company-license-admin";
 import { canOrganizationUseModule } from "@/lib/rajmondata-editor/module-access";
@@ -10,7 +10,7 @@ import { PLATFORM_MODULE_CODES } from "@/lib/platform-config";
 export const dynamic = "force-dynamic";
 
 function authorize(request: NextRequest): boolean {
-  const { secret } = getRajmondataEditorEnv();
+  const secret = getPortalApiSecret();
   if (!secret) return false;
   const auth = request.headers.get("authorization") ?? "";
   return auth === `Bearer ${secret}`;
