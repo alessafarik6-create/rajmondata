@@ -64,6 +64,7 @@ import {
 } from "@/lib/license-modules";
 import type { LicenseConfig, ModuleKey } from "@/lib/license-modules";
 import { AdminOrgTrialPanel } from "@/components/admin/admin-org-trial-panel";
+import { OrganizationModulesLicensesPanel } from "@/components/admin/organization-modules-licenses-panel";
 
 type Company = {
   id: string;
@@ -172,6 +173,8 @@ export default function AdminCompaniesPage() {
   const [licenseFromLoading, setLicenseFromLoading] = useState(false);
   const [licenseFromSubmitting, setLicenseFromSubmitting] = useState(false);
   const [licenseFromExtraLines, setLicenseFromExtraLines] = useState<PlatformInvoiceLineForm[]>([]);
+
+  const [modulesLicensesFor, setModulesLicensesFor] = useState<Company | null>(null);
 
   const [automationFor, setAutomationFor] = useState<Company | null>(null);
   const [automationSaving, setAutomationSaving] = useState(false);
@@ -1009,6 +1012,9 @@ export default function AdminCompaniesPage() {
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openPlatformInvoiceDialog(company)}>
                             <Receipt className="w-4 h-4 mr-2" /> Vystavit fakturu (ručně)
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setModulesLicensesFor(company)}>
+                            Moduly a licence
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openLicenseFromDialog(company)}>
                             <Sparkles className="w-4 h-4 mr-2" /> Vystavit fakturu z licence
@@ -1862,6 +1868,23 @@ export default function AdminCompaniesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!modulesLicensesFor} onOpenChange={(open) => !open && setModulesLicensesFor(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Moduly a licence</DialogTitle>
+            <DialogDescription>
+              Aktivace, ceny, zkušební období a uživatelské licence (včetně RAJMONDATA EDITOR).
+            </DialogDescription>
+          </DialogHeader>
+          {modulesLicensesFor ? (
+            <OrganizationModulesLicensesPanel
+              organizationId={modulesLicensesFor.id}
+              organizationName={modulesLicensesFor.name}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

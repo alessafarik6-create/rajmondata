@@ -34,6 +34,10 @@ export default function AdminModulesPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [modules, setModules] = useState<Mod[]>([]);
+  const [stats, setStats] = useState<Array<Record<string, unknown>>>([]);
+  const [editorHealth, setEditorHealth] = useState<{ status?: string; detail?: string } | null>(
+    null
+  );
 
   const load = async () => {
     setLoading(true);
@@ -68,6 +72,14 @@ export default function AdminModulesPage() {
 
   useEffect(() => {
     load();
+    void fetch("/api/superadmin/platform-modules/stats", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) {
+          setStats(d.stats ?? []);
+          setEditorHealth(d.editorIntegration ?? null);
+        }
+      });
   }, []);
 
   const save = async () => {
@@ -95,6 +107,7 @@ export default function AdminModulesPage() {
         return {
           ...rest,
           code,
+          moduleKind: code === "rajmondata_editor" ? "external" : rest.moduleKind ?? "internal",
           name: String(rest.name ?? "").trim() || code,
           basePriceCzk: isAtt ? 0 : priceMonthly,
           priceMonthly,
@@ -148,6 +161,30 @@ export default function AdminModulesPage() {
           <code className="rounded bg-slate-100 px-1 text-sm">platform_modules/&lt;code&gt;</code>).
         </p>
       </div>
+
+      {stats.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Statistiky modulů</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {stats.map((s) => (
+              <div key={String(s.moduleCode)} className="rounded border p-2">
+                <p className="font-medium">{String(s.moduleCode)}</p>
+                <p>Aktivní org: {String(s.organizationsActive)}</p>
+                <p>Platící: {String(s.organizationsPaid)}</p>
+                <p>MRR: {String(s.mrrCzk)} Kč</p>
+                <p>Spuštění: {String(s.launchCount)}</p>
+              </div>
+            ))}
+            {editorHealth ? (
+              <div className="rounded border p-2 sm:col-span-2 lg:col-span-3 bg-slate-50">
+                Integrace editoru: <strong>{editorHealth.status}</strong> — {editorHealth.detail}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
@@ -252,6 +289,50 @@ export default function AdminModulesPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {m.code === "rajmondata_editor" ? (
+                    <>
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label>URL aplikace (Railway)</Label>
+                        <Input
+                          value={String(m.appUrl ?? "")}
+                          onChange={(e) => update(idx, { appUrl: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label>API URL</Label>
+                        <Input
+                          value={String(m.apiUrl ?? "")}
+                          onChange={(e) => update(idx, { apiUrl: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Cena ročně (Kč)</Label>
+                        <Input
+                          type="number"
+                          value={String(m.priceYearly ?? "")}
+                          onChange={(e) => update(idx, { priceYearly: Number(e.target.value) || 0 })}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Zkušební dní</Label>
+                        <Input
+                          type="number"
+                          value={String(m.trialDays ?? "")}
+                          onChange={(e) => update(idx, { trialDays: Number(e.target.value) || 0 })}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Výchozí počet licencí (sedadel)</Label>
+                        <Input
+                          type="number"
+                          value={String(m.defaultSeatCount ?? "")}
+                          onChange={(e) =>
+                            update(idx, { defaultSeatCount: Number(e.target.value) || 1 })
+                          }
+                        />
+                      </div>
+                    </>
+                  ) : null}
                   {m.code === "attendance_payroll" ? (
                     <div className="space-y-1 sm:col-span-2">
                       <Label>Cena / zaměstnanec / měsíc (Kč)</Label>

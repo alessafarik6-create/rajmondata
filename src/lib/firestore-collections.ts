@@ -10,6 +10,16 @@ export const USERS_COLLECTION = "users";
 /** Globální správa platformy (superadmin přes Admin SDK). */
 export const PLATFORM_SETTINGS_COLLECTION = "platform_settings";
 export const PLATFORM_MODULES_COLLECTION = "platform_modules";
+/** Přidělení uživatelské licence k externímu modulu — companies/{orgId}/module_user_assignments/{uid}_{moduleCode}. */
+export const MODULE_USER_ASSIGNMENTS_SUBCOLLECTION = "module_user_assignments";
+/** Jednorázové launch tickety SSO — platform_module_launch_tickets/{ticketId}. */
+export const PLATFORM_MODULE_LAUNCH_TICKETS_COLLECTION = "platform_module_launch_tickets";
+/** Audit spuštění / deaktivace modulů — platform_module_launch_audit/{id}. */
+export const PLATFORM_MODULE_LAUNCH_AUDIT_COLLECTION = "platform_module_launch_audit";
+/** Historie fakturace modulů (doplňuje platform_invoices) — platform_module_billing_history/{id}. */
+export const PLATFORM_MODULE_BILLING_HISTORY_COLLECTION = "platform_module_billing_history";
+/** Předplatné modulu per organizace — platform_module_subscriptions/{orgId}_{moduleCode}. */
+export const PLATFORM_MODULE_SUBSCRIPTIONS_COLLECTION = "platform_module_subscriptions";
 export const PLATFORM_SEO_COLLECTION = "platform_seo";
 /** Faktury provozovatele platformy vůči organizacím (zápis jen Admin SDK). */
 export const PLATFORM_INVOICES_COLLECTION = "platform_invoices";

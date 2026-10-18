@@ -21,6 +21,21 @@ export type PlatformModuleCatalogRow = {
   billingType: "per_company" | "per_employee" | "flat";
   configurableBySuperadmin: boolean;
   employeePriceCzk?: number;
+  moduleKind?: "internal" | "external";
+  externalId?: string;
+  appUrl?: string;
+  apiUrl?: string;
+  iconKey?: string;
+  navOrder?: number;
+  category?: string;
+  licenseModel?: "organization" | "per_user" | "org_seats" | "custom";
+  priceYearly?: number;
+  yearlyDiscountPercent?: number;
+  trialDays?: number;
+  maxUserLicenses?: number;
+  defaultSeatCount?: number;
+  vatRate?: number;
+  integrationStatus?: string;
 };
 
 function defRow(code: PlatformModuleCode): PlatformModuleCatalogRow {
@@ -38,6 +53,21 @@ function defRow(code: PlatformModuleCode): PlatformModuleCatalogRow {
     billingType: def?.billingType ?? "per_company",
     configurableBySuperadmin: def?.configurableBySuperadmin ?? true,
     employeePriceCzk: def?.employeePriceCzk,
+    moduleKind: def?.moduleKind ?? "internal",
+    externalId: def?.externalId,
+    appUrl: def?.appUrl,
+    apiUrl: def?.apiUrl,
+    iconKey: def?.iconKey,
+    navOrder: def?.navOrder,
+    category: def?.category,
+    licenseModel: def?.licenseModel ?? "organization",
+    priceYearly: def?.priceYearly,
+    yearlyDiscountPercent: def?.yearlyDiscountPercent,
+    trialDays: def?.trialDays,
+    maxUserLicenses: def?.maxUserLicenses,
+    defaultSeatCount: def?.defaultSeatCount,
+    vatRate: def?.vatRate,
+    integrationStatus: def?.integrationStatus,
   };
 }
 
@@ -124,6 +154,39 @@ export function buildMergedPlatformCatalogMap(
         doc && doc.employeePriceCzk !== undefined && doc.employeePriceCzk !== null
           ? numOr(doc.employeePriceCzk, base.employeePriceCzk ?? 0)
           : base.employeePriceCzk,
+      moduleKind:
+        doc && (doc.moduleKind === "external" || doc.moduleKind === "internal")
+          ? doc.moduleKind
+          : base.moduleKind,
+      externalId: doc ? strOr(doc.externalId, base.externalId ?? "") || undefined : base.externalId,
+      appUrl: doc ? strOr(doc.appUrl, base.appUrl ?? "") || undefined : base.appUrl,
+      apiUrl: doc ? strOr(doc.apiUrl, base.apiUrl ?? "") || undefined : base.apiUrl,
+      iconKey: doc ? strOr(doc.iconKey, base.iconKey ?? "") || undefined : base.iconKey,
+      navOrder: doc ? numOr(doc.navOrder, base.navOrder ?? 0) : base.navOrder,
+      category: doc ? strOr(doc.category, base.category ?? "") || undefined : base.category,
+      licenseModel:
+        doc &&
+        (doc.licenseModel === "organization" ||
+          doc.licenseModel === "per_user" ||
+          doc.licenseModel === "org_seats" ||
+          doc.licenseModel === "custom")
+          ? doc.licenseModel
+          : base.licenseModel,
+      priceYearly: doc ? numOr(doc.priceYearly, base.priceYearly ?? 0) : base.priceYearly,
+      yearlyDiscountPercent: doc
+        ? numOr(doc.yearlyDiscountPercent, base.yearlyDiscountPercent ?? 0)
+        : base.yearlyDiscountPercent,
+      trialDays: doc ? numOr(doc.trialDays, base.trialDays ?? 0) : base.trialDays,
+      maxUserLicenses: doc
+        ? numOr(doc.maxUserLicenses, base.maxUserLicenses ?? 0)
+        : base.maxUserLicenses,
+      defaultSeatCount: doc
+        ? numOr(doc.defaultSeatCount, base.defaultSeatCount ?? 0)
+        : base.defaultSeatCount,
+      vatRate: doc ? numOr(doc.vatRate, base.vatRate ?? 21) : base.vatRate,
+      integrationStatus: doc
+        ? strOr(doc.integrationStatus, base.integrationStatus ?? "unknown")
+        : base.integrationStatus,
     };
   }
   return out;

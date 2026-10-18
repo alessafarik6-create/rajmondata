@@ -316,6 +316,14 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     platformModuleCode: null,
   },
   {
+    id: "moje-moduly",
+    type: "system",
+    label: "Moje moduly",
+    href: "/portal/moje-moduly",
+    roles: ["owner", "admin", "manager", "accountant", "employee"],
+    platformModuleCode: null,
+  },
+  {
     id: "chat",
     type: "system",
     label: "Zprávy",

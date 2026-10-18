@@ -21,7 +21,22 @@ export const PLATFORM_MODULE_CODES = [
   "sklad",
   "vyroba",
   "cameras",
+  "rajmondata_editor",
 ] as const;
+
+export type PlatformModuleKind = "internal" | "external";
+
+export type PlatformModuleLicenseModel =
+  | "organization"
+  | "per_user"
+  | "org_seats"
+  | "custom";
+
+export type PlatformModuleIntegrationStatus =
+  | "unknown"
+  | "connected"
+  | "degraded"
+  | "error";
 
 export type PlatformModuleCode = (typeof PLATFORM_MODULE_CODES)[number];
 
@@ -57,6 +72,21 @@ export type PlatformModuleDef = {
   configurableBySuperadmin: boolean;
   /** Pouze u attendance_payroll — cena za zaměstnance / měsíc */
   employeePriceCzk?: number;
+  moduleKind?: PlatformModuleKind;
+  externalId?: string;
+  appUrl?: string;
+  apiUrl?: string;
+  iconKey?: string;
+  navOrder?: number;
+  category?: string;
+  licenseModel?: PlatformModuleLicenseModel;
+  priceYearly?: number;
+  yearlyDiscountPercent?: number;
+  trialDays?: number;
+  maxUserLicenses?: number;
+  defaultSeatCount?: number;
+  vatRate?: number;
+  integrationStatus?: PlatformModuleIntegrationStatus;
 };
 
 export const DEFAULT_PLATFORM_MODULES: PlatformModuleDef[] = [
@@ -132,6 +162,36 @@ export const DEFAULT_PLATFORM_MODULES: PlatformModuleDef[] = [
     configurableBySuperadmin: true,
   },
   {
+    code: "rajmondata_editor",
+    name: "RAJMONDATA EDITOR",
+    description:
+      "Externí CAD editor a projektování — samostatná aplikace na Railway s AI podporou.",
+    activeGlobally: true,
+    defaultEnabled: false,
+    basePriceCzk: 990,
+    priceMonthly: 990,
+    priceYearly: 9900,
+    yearlyDiscountPercent: 17,
+    currency: "CZK",
+    billingPeriod: "monthly",
+    isPaid: true,
+    billingType: "per_company",
+    configurableBySuperadmin: true,
+    moduleKind: "external",
+    externalId: "rajmondata-editor",
+    appUrl: "https://rajmondata-editor-production.up.railway.app",
+    apiUrl: "https://rajmondata-editor-production.up.railway.app",
+    iconKey: "pencil-ruler",
+    navOrder: 50,
+    category: "CAD / Projektování",
+    licenseModel: "org_seats",
+    trialDays: 14,
+    maxUserLicenses: 50,
+    defaultSeatCount: 3,
+    vatRate: 21,
+    integrationStatus: "unknown",
+  },
+  {
     code: "cameras",
     name: "Kamery",
     description:
@@ -163,6 +223,13 @@ export type ModuleEntitlement = {
   gracePeriodUntilIso?: string | null;
   /** ISO čas potvrzení platby superadminem. */
   confirmedAtIso?: string | null;
+  licenseModel?: PlatformModuleLicenseModel;
+  maxUserLicenses?: number;
+  seatCount?: number;
+  isTrial?: boolean;
+  paymentStatus?: "free" | "trial" | "unpaid" | "paid" | "suspended";
+  nextBillingAt?: string | null;
+  subscriptionDocId?: string | null;
 };
 
 export type CompanyLicenseDoc = {
@@ -227,9 +294,16 @@ export function portalPathsForModule(code: PlatformModuleCode): string[] {
       return ["/portal/vyroba"];
     case "cameras":
       return ["/portal/cameras"];
+    case "rajmondata_editor":
+      return ["/portal/moje-moduly"];
     default:
       return [];
   }
+}
+
+export function isExternalPlatformModule(code: PlatformModuleCode): boolean {
+  const def = DEFAULT_PLATFORM_MODULES.find((m) => m.code === code);
+  return def?.moduleKind === "external";
 }
 
 export function isModuleEntitlementActiveNow(m: ModuleEntitlement | undefined): boolean {

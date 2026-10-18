@@ -81,6 +81,30 @@ export async function PUT(request: NextRequest) {
       if (isAtt) {
         payload.employeePriceCzk = Number.isFinite(rawEp) ? Math.max(0, rawEp) : 49;
       }
+      if (m.moduleKind === "external" || m.moduleKind === "internal") payload.moduleKind = m.moduleKind;
+      if (typeof m.externalId === "string") payload.externalId = m.externalId.slice(0, 80);
+      if (typeof m.appUrl === "string") payload.appUrl = m.appUrl.slice(0, 500);
+      if (typeof m.apiUrl === "string") payload.apiUrl = m.apiUrl.slice(0, 500);
+      if (typeof m.iconKey === "string") payload.iconKey = m.iconKey.slice(0, 80);
+      if (m.navOrder != null) payload.navOrder = Number(m.navOrder) || 0;
+      if (typeof m.category === "string") payload.category = m.category.slice(0, 120);
+      if (
+        m.licenseModel === "organization" ||
+        m.licenseModel === "per_user" ||
+        m.licenseModel === "org_seats" ||
+        m.licenseModel === "custom"
+      ) {
+        payload.licenseModel = m.licenseModel;
+      }
+      if (m.priceYearly != null) payload.priceYearly = Math.max(0, Number(m.priceYearly) || 0);
+      if (m.yearlyDiscountPercent != null) {
+        payload.yearlyDiscountPercent = Math.max(0, Number(m.yearlyDiscountPercent) || 0);
+      }
+      if (m.trialDays != null) payload.trialDays = Math.max(0, Number(m.trialDays) || 0);
+      if (m.maxUserLicenses != null) payload.maxUserLicenses = Math.max(0, Number(m.maxUserLicenses) || 0);
+      if (m.defaultSeatCount != null) payload.defaultSeatCount = Math.max(1, Number(m.defaultSeatCount) || 1);
+      if (m.vatRate != null) payload.vatRate = Math.max(0, Number(m.vatRate) || 21);
+      if (typeof m.integrationStatus === "string") payload.integrationStatus = m.integrationStatus.slice(0, 32);
       batch.set(ref, payload, { merge: true });
     }
     await batch.commit();
