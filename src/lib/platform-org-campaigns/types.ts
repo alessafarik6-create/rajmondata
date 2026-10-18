@@ -20,7 +20,26 @@ export type OrgCampaignAudienceMode =
   | "selected"
   | "plan"
   | "modules"
-  | "licensed";
+  | "licensed"
+  | "active"
+  | "inactive"
+  | "subscription_ending";
+
+/** Kanál doručení při publikaci / opakovaném odeslání. */
+export type OrgCampaignDeliveryChannel = "both" | "dashboard" | "email";
+
+export type OrgCampaignSendBatchDoc = {
+  batchId: string;
+  createdAt?: Timestamp;
+  actor?: string | null;
+  deliveryChannel: OrgCampaignDeliveryChannel;
+  targeted: number;
+  emailsQueued: number;
+  emailsSent?: number;
+  emailsError?: number;
+  notificationsCreated: number;
+  resend?: boolean;
+};
 
 export type OrgCampaignAudience = {
   mode: OrgCampaignAudienceMode;
@@ -48,12 +67,21 @@ export type OrgCampaignDoc = {
   emailSubject?: string | null;
   emailHtml?: string | null;
   emailMarketing?: boolean;
+  deliveryChannel?: OrgCampaignDeliveryChannel;
+  /** Primární CTA — konzultace RAJMONDATA */
+  consultationEnabled?: boolean;
   stats?: {
     targeted?: number;
     interested?: number;
     declined?: number;
     support?: number;
     opened?: number;
+    emailsSent?: number;
+    emailsError?: number;
+    emailsQueued?: number;
+    linkClicks?: number;
+    consultationsBooked?: number;
+    marketingUnsubscribes?: number;
   };
   createdAt?: Timestamp;
   updatedAt?: Timestamp;

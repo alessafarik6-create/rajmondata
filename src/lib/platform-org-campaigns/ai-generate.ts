@@ -16,6 +16,7 @@ export type CampaignAiDraft = {
   ctaLabel: string;
   emailSubject: string;
   emailIntro: string;
+  recommendedAudience?: string;
   needsTermsClarification?: boolean;
   clarificationNote?: string;
 };
@@ -27,7 +28,7 @@ export async function generateOrgCampaignWithAi(input: {
 }): Promise<CampaignAiDraft> {
   const instructions = `Jsi copywriter platformy RAJMONDATA (CRM pro firmy).
 Piš česky. Nevymýšlej konkrétní ceny, slevy ani smluvní podmínky, pokud nejsou v zadání — místo toho použij zástupný text [doplnit podmínky].
-Vrať POUZE validní JSON objekt s klíči: title, shortDescription, bodyHtml (jednoduché HTML: p, ul, li, strong), ctaLabel, emailSubject, emailIntro, needsTermsClarification (boolean), clarificationNote (string nebo prázdný).
+Vrať POUZE validní JSON objekt s klíči: title, shortDescription, bodyHtml (jednoduché HTML: p, ul, li, strong), ctaLabel, emailSubject, emailIntro, recommendedAudience (krátký popis cílového publika), needsTermsClarification (boolean), clarificationNote (string nebo prázdný).
 ${STYLE_HINT[input.style]}`;
 
   const user = `Typ zprávy: ${input.campaignType}\nZadání administrátora:\n${input.prompt}`;
@@ -51,6 +52,7 @@ ${STYLE_HINT[input.style]}`;
     ctaLabel: String(parsed.ctaLabel ?? "Zjistit více").trim().slice(0, 80),
     emailSubject: String(parsed.emailSubject ?? "").trim().slice(0, 200),
     emailIntro: String(parsed.emailIntro ?? "").trim().slice(0, 2000),
+    recommendedAudience: String(parsed.recommendedAudience ?? "").trim().slice(0, 300) || undefined,
     needsTermsClarification: Boolean(parsed.needsTermsClarification),
     clarificationNote: String(parsed.clarificationNote ?? "").trim().slice(0, 500) || undefined,
   };

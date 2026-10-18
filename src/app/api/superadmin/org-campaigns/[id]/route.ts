@@ -43,6 +43,9 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (body.emailNotify != null) patch.emailNotify = body.emailNotify === true;
   if (body.emailSubject != null) patch.emailSubject = String(body.emailSubject).slice(0, 200);
   if (body.emailHtml != null) patch.emailHtml = body.emailHtml ? sanitizeCampaignHtml(String(body.emailHtml)) : null;
+  if (body.deliveryChannel != null) patch.deliveryChannel = body.deliveryChannel;
+  if (body.consultationEnabled != null) patch.consultationEnabled = body.consultationEnabled === true;
+  if (body.emailMarketing != null) patch.emailMarketing = body.emailMarketing === true;
   if (body.publishAt != null) {
     patch.publishAt = body.publishAt ? Timestamp.fromDate(new Date(String(body.publishAt))) : null;
   }

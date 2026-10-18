@@ -1,5 +1,5 @@
 import type { Firestore } from "firebase-admin/firestore";
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { MAIL_DISPATCH_QUEUE } from "./dispatch";
 import { sendModuleNotification } from "./module-notify";
 import { defaultSubjectForEvent } from "./subjects";
@@ -121,6 +121,22 @@ export async function processDueMailDispatchQueue(
               emailSentAt: sent.ok ? Timestamp.now() : null,
               emailError: sent.ok ? null : sent.error?.slice(0, 300) ?? "Chyba",
             },
+            { merge: true }
+          );
+          const batchId = String(data.batchId ?? "").trim();
+          if (batchId) {
+            const batchRef = campRef.collection("sendBatches").doc(batchId);
+            await batchRef.set(
+              sent.ok
+                ? { emailsSent: FieldValue.increment(1) }
+                : { emailsError: FieldValue.increment(1) },
+              { merge: true }
+            );
+          }
+          await campRef.set(
+            sent.ok
+              ? { "stats.emailsSent": FieldValue.increment(1) }
+              : { "stats.emailsError": FieldValue.increment(1) },
             { merge: true }
           );
         }

@@ -40,10 +40,24 @@ async function companyContactEmail(data: Record<string, unknown>): Promise<strin
   return null;
 }
 
+function parseIsoMs(v: unknown): number | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  const t = Date.parse(s.length === 10 ? `${s}T12:00:00` : s);
+  return Number.isNaN(t) ? null : t;
+}
+
+function daysUntil(iso: string | null | undefined): number | null {
+  const t = parseIsoMs(iso);
+  if (t == null) return null;
+  return Math.ceil((t - Date.now()) / (24 * 60 * 60 * 1000));
+}
+
 export async function resolveOrgCampaignRecipients(
   db: Firestore,
   audience: OrgCampaignAudience,
-  search?: string
+  search?: string,
+  opts?: { requireMarketingConsent?: boolean }
 ): Promise<ResolvedOrgRecipient[]> {
   const q = String(search ?? "").trim().toLowerCase();
   const snap = await db.collection(COMPANIES_COLLECTION).limit(500).get();
@@ -52,6 +66,7 @@ export async function resolveOrgCampaignRecipients(
   for (const doc of snap.docs) {
     const data = (doc.data() ?? {}) as Record<string, unknown>;
     if (data.deletedAt || data.status === "deleted") continue;
+    if (opts?.requireMarketingConsent && data.platformMarketingUnsubscribedAt) continue;
     const name = await companyDisplayName(db, doc.id, data);
     if (q && !name.toLowerCase().includes(q) && !doc.id.toLowerCase().includes(q)) continue;
 
@@ -82,6 +97,21 @@ export async function resolveOrgCampaignRecipients(
       case "licensed":
         include = Boolean(license?.active === true || license?.status === "active");
         break;
+      case "active":
+        include = Boolean(license?.active === true || license?.status === "active");
+        break;
+      case "inactive":
+        include = !(
+          license?.active === true ||
+          license?.status === "active"
+        );
+        break;
+      case "subscription_ending": {
+        const exp = String(license?.expiresAt ?? license?.trialEndsAt ?? "").trim();
+        const days = daysUntil(exp);
+        include = days != null && days >= 0 && days <= 14;
+        break;
+      }
       case "modules": {
         const keys = audience.moduleKeys ?? [];
         include = keys.some((k) => modules[k] === true);

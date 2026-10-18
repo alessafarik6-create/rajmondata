@@ -11,8 +11,18 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getAdminFirestore();
   if (!db) return NextResponse.json({ error: "Server error" }, { status: 503 });
-  const body = (await request.json()) as { audience?: OrgCampaignAudience; search?: string };
-  const recipients = await resolveOrgCampaignRecipients(db, body.audience ?? { mode: "all" }, body.search);
+  const body = (await request.json()) as {
+    audience?: OrgCampaignAudience;
+    search?: string;
+    emailMarketing?: boolean;
+  };
+  const marketing = body.emailMarketing !== false;
+  const recipients = await resolveOrgCampaignRecipients(
+    db,
+    body.audience ?? { mode: "all" },
+    body.search,
+    { requireMarketingConsent: marketing }
+  );
   const emailCount = recipients.filter((r) => r.contactEmail).length;
   return NextResponse.json({
     ok: true,

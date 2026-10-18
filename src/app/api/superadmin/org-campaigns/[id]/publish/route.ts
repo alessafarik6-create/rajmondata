@@ -13,15 +13,23 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   const db = getAdminFirestore();
   if (!db) return NextResponse.json({ error: "Server error" }, { status: 503 });
   let resendEmail = false;
+  let deliveryChannel: "both" | "dashboard" | "email" | undefined;
   try {
-    const body = (await request.json()) as { resendEmail?: boolean };
+    const body = (await request.json()) as {
+      resendEmail?: boolean;
+      deliveryChannel?: "both" | "dashboard" | "email";
+    };
     resendEmail = body.resendEmail === true;
+    if (body.deliveryChannel === "both" || body.deliveryChannel === "dashboard" || body.deliveryChannel === "email") {
+      deliveryChannel = body.deliveryChannel;
+    }
   } catch {
     /* empty */
   }
   try {
     const result = await publishOrgCampaignAdmin(db, id, {
       resendEmail,
+      deliveryChannel,
       actorUsername: session.username,
     });
     return NextResponse.json({ ok: true, ...result });
