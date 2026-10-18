@@ -12,7 +12,8 @@ function mapLaunchError(raw: string, status?: number): string {
     return "Platnost přihlášení vypršela. Obnovte stránku (F5) a zkuste to znovu.";
   }
   if (status === 403) return raw || "Nemáte oprávnění spustit tento modul.";
-  if (status === 503 || m.includes("portal_api_secret") || m.includes("hmac") || m.includes("unauthorized")) {
+  if (raw.trim()) return raw.trim();
+  if (status === 503 || m.includes("portal_api_secret") || m.includes("podpis požadavku")) {
     return "Propojení s editorem selhalo (autentizace serveru). Kontaktujte správce platformy.";
   }
   if (status === 502 || status === 503 || m.includes("nedostup")) {

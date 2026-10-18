@@ -17,7 +17,7 @@ Všechny požadavky portálu na API editoru (kromě `GET /api/v1/health`) musí 
 2. Hlavičky:
    - `X-Portal-Timestamp` — Unix čas v **milisekundách** (string)
    - `X-Portal-Nonce` — náhodný řetězec (min. 16 znaků)
-   - `X-Portal-Signature` — `HMAC-SHA256(PORTAL_API_SECRET, body)` v **hex** (malá písmena)
+   - `X-Portal-Signature` — `HMAC-SHA256(PORTAL_API_SECRET, timestamp + "." + nonce + "." + SHA256(rawBody))` v **hex** (malá písmena); `SHA256(rawBody)` je hex hash UTF-8 těla
 
 `PORTAL_API_SECRET` je pouze na serveru portálu (Vercel) a shodně `PORTAL_API_SECRET` na Railway editoru.
 
@@ -98,8 +98,9 @@ Ukončení session v editoru (volitelně z portálu při odhlášení).
 | Portál (Vercel) | Editor (Railway) |
 |-----------------|------------------|
 | `PORTAL_API_SECRET` | `PORTAL_API_SECRET` (stejná hodnota) |
-| `RAJMONDATA_EDITOR_APP_URL` | — |
+| `RAJMONDATA_EDITOR_APP_URL` nebo `EDITOR_ORIGIN` | — |
 | `RAJMONDATA_EDITOR_API_URL` | — |
+| Firebase Admin (ověření uživatelů portálu) | Firebase Admin pro ověření `idToken` v launch-tickets |
 
 Legacy alias na portálu: `RAJMONDATA_EDITOR_INTEGRATION_SECRET` (= `PORTAL_API_SECRET`).
 

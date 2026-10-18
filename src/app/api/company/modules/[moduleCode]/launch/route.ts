@@ -84,10 +84,18 @@ export async function POST(
         organizationId: v.caller.companyId,
         uid: v.caller.uid,
         status: result.status,
+        editorHttpStatus: result.editorHttpStatus ?? null,
+        editorCode: result.code ?? null,
         error: result.error,
       });
       return NextResponse.json(
-        { ok: false, error: result.error, requestId },
+        {
+          ok: false,
+          error: result.error,
+          requestId,
+          editorCode: result.code ?? undefined,
+          editorHttpStatus: result.editorHttpStatus ?? undefined,
+        },
         { status: httpStatus }
       );
     }

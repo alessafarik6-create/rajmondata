@@ -13,21 +13,59 @@ export type EditorLaunchTicketResponse = {
 
 type EditorErrorBody = { ok?: boolean; code?: string; message?: string; error?: string };
 
-function parseEditorError(data: EditorErrorBody, status: number): string {
-  if (data.code === "PORTAL_AUTH_NOT_CONFIGURED") {
+export function parseEditorApiError(data: EditorErrorBody, httpStatus: number): string {
+  const code = String(data.code ?? "").trim();
+  const msg = String(data.message ?? data.error ?? "").trim();
+
+  if (code === "PORTAL_AUTH_NOT_CONFIGURED") {
     return "Editor nemá nastavené PORTAL_API_SECRET (Railway).";
   }
-  if (status === 401 || data.code === "UNAUTHORIZED") {
-    return "Editor odmítl požadavek (autentizace portálu nebo Firebase tokenu).";
+  if (code === "PORTAL_SIGNATURE") {
+    return "Podpis požadavku na editor neprošel — ověřte shodu PORTAL_API_SECRET na Vercelu a Railway.";
   }
-  return String(data.message ?? data.error ?? `Editor API HTTP ${status}`);
+  if (
+    code === "FIREBASE_NOT_CONFIGURED" ||
+    code === "FIREBASE_ADMIN_NOT_CONFIGURED" ||
+    /firebase.*n(e)?nastav/i.test(msg)
+  ) {
+    return (
+      "Editor na Railway nemá nakonfigurované Firebase Admin credentials. " +
+      "V Railway nastavte proměnné pro service account (např. FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY) " +
+      "podle dokumentace editoru a restartujte službu."
+    );
+  }
+  if (code === "BAD_INPUT") {
+    return msg || "Neplatná data pro editor API.";
+  }
+  if (httpStatus === 401 || code === "UNAUTHORIZED") {
+    return msg || "Editor odmítl požadavek (autentizace portálu nebo Firebase tokenu).";
+  }
+  return msg || `Editor API HTTP ${httpStatus}`;
+}
+
+/** Mapování HTTP odpovědi editoru na status pro klienta portálu. */
+export function mapEditorHttpToPortalStatus(httpStatus: number, code?: string): number {
+  const c = String(code ?? "").trim();
+  if (c === "PORTAL_AUTH_NOT_CONFIGURED" || c === "PORTAL_SIGNATURE" || c === "FIREBASE_NOT_CONFIGURED") {
+    return 503;
+  }
+  if (c === "FIREBASE_ADMIN_NOT_CONFIGURED") return 503;
+  if (httpStatus === 400) return 400;
+  if (httpStatus === 401 || httpStatus === 403) return 503;
+  if (httpStatus === 404) return 502;
+  if (httpStatus >= 500) return 503;
+  if (httpStatus >= 400) return httpStatus;
+  return 502;
 }
 
 async function signedPost(
   apiUrl: string,
   path: string,
   payload: Record<string, unknown>
-): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; status: number; error: string; code?: string }> {
+): Promise<
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; status: number; error: string; code?: string; editorHttpStatus: number }
+> {
   const body = serializePortalJsonBody(payload);
   let headers: Record<string, string>;
   try {
@@ -37,6 +75,8 @@ async function signedPost(
       ok: false,
       status: 503,
       error: e instanceof Error ? e.message : "Chybí PORTAL_API_SECRET.",
+      code: "PORTAL_SECRET_MISSING",
+      editorHttpStatus: 0,
     };
   }
   const url = `${apiUrl.replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
@@ -44,21 +84,35 @@ async function signedPost(
     const res = await fetch(url, { method: "POST", headers, body, cache: "no-store" });
     const data = (await res.json().catch(() => ({}))) as EditorErrorBody & Record<string, unknown>;
     if (!res.ok) {
-      const mappedStatus =
-        res.status === 401 ? 502 : res.status >= 500 ? 503 : res.status;
+      const code = data.code ? String(data.code) : undefined;
+      const mappedStatus = mapEditorHttpToPortalStatus(res.status, code);
+      const error = parseEditorApiError(data, res.status);
+      console.warn("[editor-api] request failed", {
+        path,
+        editorHttpStatus: res.status,
+        editorCode: code ?? null,
+        portalStatus: mappedStatus,
+      });
       return {
         ok: false,
         status: mappedStatus,
-        error: parseEditorError(data, res.status),
-        code: data.code,
+        error,
+        code,
+        editorHttpStatus: res.status,
       };
     }
     return { ok: true, data };
   } catch (e) {
+    console.warn("[editor-api] fetch error", {
+      path,
+      message: e instanceof Error ? e.message : String(e),
+    });
     return {
       ok: false,
       status: 503,
       error: e instanceof Error ? e.message : "Editor API nedostupné.",
+      code: "EDITOR_UNREACHABLE",
+      editorHttpStatus: 0,
     };
   }
 }
@@ -73,7 +127,10 @@ export async function requestEditorLaunchTicket(input: {
   displayName: string;
   moduleActive: boolean;
   licenseActive: boolean;
-}): Promise<{ ok: true; data: EditorLaunchTicketResponse } | { ok: false; status: number; error: string; code?: string }> {
+}): Promise<
+  | { ok: true; data: EditorLaunchTicketResponse }
+  | { ok: false; status: number; error: string; code?: string; editorHttpStatus?: number }
+> {
   const res = await signedPost(input.apiUrl, "/api/v1/launch-tickets", {
     idToken: input.idToken,
     organizationId: input.organizationId,
@@ -87,7 +144,13 @@ export async function requestEditorLaunchTicket(input: {
   if (!res.ok) return res;
   const ticket = String(res.data.ticket ?? "").trim();
   if (!ticket) {
-    return { ok: false, status: 502, error: "Editor nevrátil ticket." };
+    return {
+      ok: false,
+      status: 502,
+      error: "Editor nevrátil ticket.",
+      code: "MISSING_TICKET",
+      editorHttpStatus: 200,
+    };
   }
   return {
     ok: true,
@@ -131,6 +194,7 @@ export async function probeEditorIntegrationHealth(apiUrl: string): Promise<{
   status: "connected" | "degraded" | "error";
   detail: string;
   portalAuthConfigured?: boolean;
+  firebaseConfigured?: boolean;
 }> {
   const healthUrl = `${apiUrl.replace(/\/$/, "")}/api/v1/health`;
   try {
@@ -139,14 +203,16 @@ export async function probeEditorIntegrationHealth(apiUrl: string): Promise<{
     const data = (await res.json()) as {
       ok?: boolean;
       portalAuthConfigured?: boolean;
+      firebaseConfigured?: boolean;
     };
     if (data.ok !== true) return { status: "degraded", detail: "Health bez ok:true" };
     const secret = getRajmondataEditorEnv().secret;
     if (!secret) {
       return {
         status: "degraded",
-        detail: "Chybí PORTAL_API_SECRET na portálu",
+        detail: "Chybí PORTAL_API_SECRET na portálu (Vercel)",
         portalAuthConfigured: data.portalAuthConfigured,
+        firebaseConfigured: data.firebaseConfigured,
       };
     }
     if (data.portalAuthConfigured !== true) {
@@ -154,12 +220,23 @@ export async function probeEditorIntegrationHealth(apiUrl: string): Promise<{
         status: "degraded",
         detail: "Editor: portalAuthConfigured=false (nastavte PORTAL_API_SECRET na Railway)",
         portalAuthConfigured: false,
+        firebaseConfigured: data.firebaseConfigured,
+      };
+    }
+    if (data.firebaseConfigured !== true) {
+      return {
+        status: "degraded",
+        detail:
+          "Editor: firebaseConfigured=false — na Railway nastavte Firebase Admin credentials pro ověření ID tokenů.",
+        portalAuthConfigured: true,
+        firebaseConfigured: false,
       };
     }
     return {
       status: "connected",
-      detail: "Health OK, obě strany mají portal auth",
+      detail: "Health OK, portal auth i Firebase na editoru",
       portalAuthConfigured: true,
+      firebaseConfigured: true,
     };
   } catch (e) {
     return { status: "error", detail: e instanceof Error ? e.message : "Health nedostupné" };

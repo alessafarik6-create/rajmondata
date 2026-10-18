@@ -30,7 +30,7 @@ export async function launchExternalModuleForUser(input: {
   firebaseIdToken: string;
 }): Promise<
   | { ok: true; redirectUrl: string; mode: "editor_api" }
-  | { ok: false; status: number; error: string }
+  | { ok: false; status: number; error: string; code?: string; editorHttpStatus?: number }
 > {
   if (input.organizationId !== input.organizationId.trim()) {
     return { ok: false, status: 400, error: "Neplatná organizace." };
@@ -118,7 +118,13 @@ export async function launchExternalModuleForUser(input: {
   });
 
   if (!editorRes.ok) {
-    return { ok: false, status: editorRes.status, error: editorRes.error };
+    return {
+      ok: false,
+      status: editorRes.status,
+      error: editorRes.error,
+      code: editorRes.code,
+      editorHttpStatus: editorRes.editorHttpStatus,
+    };
   }
 
   const redirectUrl = `${appUrl.replace(/\/$/, "")}/launch#ticket=${encodeURIComponent(editorRes.data.ticket)}`;

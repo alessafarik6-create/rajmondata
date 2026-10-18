@@ -42,7 +42,14 @@ export function ExternalModuleLaunchButton(props: Props) {
       disabled={isLoading || !user}
       onClick={() => void onLaunchClick()}
     >
-      {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : label ?? "Spustit editor"}
+      {isLoading ? (
+        <>
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {moduleCode === "rajmondata_editor" ? "Spouštím editor…" : "Spouštím…"}
+        </>
+      ) : (
+        label ?? "Spustit editor"
+      )}
     </Button>
   );
 }

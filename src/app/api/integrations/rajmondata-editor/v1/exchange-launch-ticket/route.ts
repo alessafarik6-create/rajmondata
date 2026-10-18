@@ -3,7 +3,9 @@ import { randomBytes } from "crypto";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import {
   isEditorIntegrationAuthorized,
+  PORTAL_NONCE_HEADER,
   PORTAL_SIGNATURE_HEADER,
+  PORTAL_TIMESTAMP_HEADER,
 } from "@/lib/rajmondata-editor/portal-api-sign.server";
 import { consumePortalLaunchTicket } from "@/lib/rajmondata-editor/launch-tickets.server";
 import { ensureCompanyLicenseDoc } from "@/lib/company-license-admin";
@@ -22,7 +24,9 @@ export async function POST(request: NextRequest) {
       !isEditorIntegrationAuthorized(
         request.headers.get("authorization"),
         rawBody,
-        request.headers.get(PORTAL_SIGNATURE_HEADER)
+        request.headers.get(PORTAL_SIGNATURE_HEADER),
+        request.headers.get(PORTAL_TIMESTAMP_HEADER),
+        request.headers.get(PORTAL_NONCE_HEADER)
       )
     ) {
       console.warn("[exchange-launch-ticket] unauthorized", { requestId });
