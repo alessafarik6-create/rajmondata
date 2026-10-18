@@ -23,6 +23,7 @@ export type OrgCampaignAudienceMode =
   | "licensed"
   | "active"
   | "inactive"
+  | "trial"
   | "subscription_ending";
 
 /** Kanál doručení při publikaci / opakovaném odeslání. */
@@ -115,7 +116,15 @@ export type OrgCampaignRecipientDoc = {
   organizationName: string;
   deliveredAt?: Timestamp | null;
   openedAt?: Timestamp | null;
-  emailStatus?: "pending" | "queued" | "sent" | "error";
+  emailStatus?:
+    | "pending"
+    | "queued"
+    | "processing"
+    | "provider_accepted"
+    | "delivered"
+    | "error";
+  emailAttempts?: number;
+  targetEmails?: string[];
   emailSentAt?: Timestamp | null;
   emailError?: string | null;
   reaction?: OrgCampaignReactionKind | null;

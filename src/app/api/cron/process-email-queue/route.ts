@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import { processDueMailDispatchQueue } from "@/lib/email-notifications/process-queue";
+import { drainMailDispatchQueue } from "@/lib/email-notifications/process-queue";
+import { isCronRequestAuthorized } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /**
- * Periodické zpracování fronty e-mailů (připomenutí kalendáře).
- * Nastavte CRON_SECRET a volejte např. každých 5–15 minut:
- * GET /api/cron/process-email-queue?secret=...
+ * Vercel Cron: Authorization Bearer CRON_SECRET (viz vercel.json).
+ * Ručně: GET /api/cron/process-email-queue?secret=...
  */
 export async function GET(request: NextRequest) {
   try {
-    const secret = String(process.env.CRON_SECRET ?? "").trim();
-    const q = request.nextUrl.searchParams.get("secret") ?? "";
-    if (!secret || q !== secret) {
+    if (!isCronRequestAuthorized(request)) {
       return NextResponse.json({ ok: false, error: "Nepovolený přístup." }, { status: 401 });
     }
 
@@ -22,7 +21,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Firestore není k dispozici." }, { status: 503 });
     }
 
-    const result = await processDueMailDispatchQueue(db, 40);
+    const result = await drainMailDispatchQueue(db, { maxRounds: 10, batchSize: 30 });
     return NextResponse.json({ ok: true, ...result });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

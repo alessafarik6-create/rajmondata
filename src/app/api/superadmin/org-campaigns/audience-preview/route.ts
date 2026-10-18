@@ -15,19 +15,32 @@ export async function POST(request: NextRequest) {
     audience?: OrgCampaignAudience;
     search?: string;
     emailMarketing?: boolean;
+    licenseFilter?: "all" | "active" | "trial" | "inactive";
   };
   const marketing = body.emailMarketing !== false;
   const recipients = await resolveOrgCampaignRecipients(
     db,
     body.audience ?? { mode: "all" },
     body.search,
-    { requireMarketingConsent: marketing }
+    {
+      requireMarketingConsent: marketing,
+      licenseFilter: body.licenseFilter ?? "all",
+    }
   );
   const emailCount = recipients.filter((r) => r.contactEmail).length;
+  const withoutEmail = recipients.filter((r) => !r.contactEmail).length;
   return NextResponse.json({
     ok: true,
     count: recipients.length,
     emailCount,
+    withoutEmail,
+    recipients: recipients.map((r) => ({
+      id: r.companyId,
+      name: r.name,
+      ico: r.ico,
+      email: r.contactEmail,
+      licenseStatus: r.licenseStatus,
+    })),
     sample: recipients.slice(0, 20),
   });
 }

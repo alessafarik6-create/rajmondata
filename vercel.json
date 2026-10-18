@@ -64,6 +64,12 @@
     "src/app/api/cron/bank-sync/route.ts": {
       "maxDuration": 300
     },
+    "src/app/api/cron/process-email-queue/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/superadmin/org-campaigns/[id]/publish/route.ts": {
+      "maxDuration": 120
+    },
     "src/app/api/company/email-mailbox/accounts/[accountId]/sync/route.ts": {
       "maxDuration": 120
     },

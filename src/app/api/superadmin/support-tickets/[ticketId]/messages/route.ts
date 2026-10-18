@@ -31,8 +31,10 @@ export async function POST(
   const snap = await db.collection(SUPPORT_TICKETS_COLLECTION).doc(id).get();
   if (!snap.exists) return NextResponse.json({ error: "Ticket neexistuje." }, { status: 404 });
   try {
-    await appendSupportMessageAdmin(db, id, { senderRole: "admin", message });
-    return NextResponse.json({ ok: true });
+    const notify = await appendSupportMessageAdmin(db, id, { senderRole: "admin", message });
+    const { drainMailDispatchQueue } = await import("@/lib/email-notifications/process-queue");
+    void drainMailDispatchQueue(db, { maxRounds: 3, batchSize: 5 }).catch(() => undefined);
+    return NextResponse.json({ ok: true, notify });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Odeslání se nezdařilo.";
     const code = msg.includes("uzavřen") ? 409 : 500;

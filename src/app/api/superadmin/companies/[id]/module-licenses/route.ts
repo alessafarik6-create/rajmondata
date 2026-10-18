@@ -38,12 +38,15 @@ export async function GET(
   const rows = [];
   for (const code of PLATFORM_MODULE_CODES) {
     const row = catalog[code];
-    if (!row?.activeGlobally && row?.moduleKind !== "external") continue;
+    if (!row) continue;
     const ent = license.modules[code] ?? emptyModuleEntitlement(code);
     const assigned = await listModuleUserAssignmentIds(db, id, code);
     rows.push({
       code,
       name: row.name,
+      description: row.description ?? "",
+      category: row.category ?? "ostatní",
+      activeGlobally: row.activeGlobally !== false,
       moduleKind: row.moduleKind,
       active: isModuleEntitlementActiveNow(ent),
       entitlement: ent,

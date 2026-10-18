@@ -25,6 +25,7 @@ import {
 } from "@/lib/platform-org-campaigns/types";
 import { ORG_CAMPAIGN_PRESETS } from "@/lib/platform-org-campaigns/campaign-presets";
 import { buildOrgCampaignEmailHtml } from "@/lib/platform-org-campaigns/email-template";
+import { OrgCampaignRecipientPicker } from "@/components/admin/org-campaign-recipient-picker";
 
 type CampaignListItem = {
   id: string;
@@ -37,7 +38,8 @@ type CampaignListItem = {
 const AUDIENCE_MODES: { value: OrgCampaignAudienceMode; label: string }[] = [
   { value: "all", label: "Všechny organizace" },
   { value: "selected", label: "Vybrané organizace" },
-  { value: "active", label: "Aktivní" },
+  { value: "active", label: "Aktivní licence" },
+  { value: "trial", label: "Trial" },
   { value: "inactive", label: "Neaktivní" },
   { value: "subscription_ending", label: "Končící předplatné (14 dní)" },
   { value: "plan", label: "Podle tarifu" },
@@ -71,9 +73,11 @@ export function OrgCommunicationsWorkspace() {
   const [consultationEnabled, setConsultationEnabled] = useState(false);
   const [deliveryChannel, setDeliveryChannel] = useState<OrgCampaignDeliveryChannel>("both");
   const [audienceMode, setAudienceMode] = useState<OrgCampaignAudienceMode>("all");
-  const [selectedCompanyIds, setSelectedCompanyIds] = useState("");
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
   const [audienceSearch, setAudienceSearch] = useState("");
   const [audienceCount, setAudienceCount] = useState<number | null>(null);
+  const [campaignRecipients, setCampaignRecipients] = useState<Array<Record<string, unknown>>>([]);
+  const [campaignStats, setCampaignStats] = useState<Record<string, number | undefined> | null>(null);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiAudienceHint, setAiAudienceHint] = useState("");
   const [publishAt, setPublishAt] = useState("");
@@ -94,11 +98,7 @@ export function OrgCommunicationsWorkspace() {
 
   const audience: OrgCampaignAudience = useMemo(() => {
     if (audienceMode === "selected") {
-      const ids = selectedCompanyIds
-        .split(/[\s,;]+/)
-        .map((x) => x.trim())
-        .filter(Boolean);
-      return { mode: "selected", companyIds: ids };
+      return { mode: "selected", companyIds: [...selectedCompanyIds] };
     }
     return { mode: audienceMode };
   }, [audienceMode, selectedCompanyIds]);
@@ -149,13 +149,19 @@ export function OrgCommunicationsWorkspace() {
     setDeliveryChannel((c.deliveryChannel as OrgCampaignDeliveryChannel) ?? "both");
     const aud = c.audience as OrgCampaignAudience | undefined;
     setAudienceMode(aud?.mode ?? "all");
-    setSelectedCompanyIds((aud?.companyIds ?? []).join(", "));
+    setSelectedCompanyIds(aud?.companyIds ?? []);
     setSendHistory([]);
     const hist = await fetch(`/api/superadmin/org-campaigns/${id}/send-history`, {
       credentials: "include",
     });
     const histData = await hist.json();
     if (histData.ok) setSendHistory(histData.batches ?? []);
+    const rec = await fetch(`/api/superadmin/org-campaigns/${id}/recipients`, { credentials: "include" });
+    const recData = await rec.json();
+    if (recData.ok) {
+      setCampaignRecipients(recData.recipients ?? []);
+      setCampaignStats(recData.stats ?? null);
+    }
   }, []);
 
   useEffect(() => {
@@ -294,7 +300,7 @@ export function OrgCommunicationsWorkspace() {
       if (!data.ok) throw new Error(data.error);
       toast({
         title: resend ? "Odesláno znovu" : "Publikováno",
-        description: `Příjemců: ${data.targeted}, e-mail ve frontě: ${data.emailsQueued}.`,
+        description: `Příjemců: ${data.targeted}, ve frontě: ${data.emailsQueued}, zpracováno: ${data.queueProcessed ?? 0}.`,
       });
       await loadList();
       await loadCampaign(selectedId);
@@ -344,6 +350,55 @@ export function OrgCommunicationsWorkspace() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function requeueFailedEmails() {
+    if (!selectedId) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/superadmin/org-campaigns/${selectedId}/requeue-failed`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      toast({
+        title: "Fronta obnovena",
+        description: `Znovu zařazeno: ${data.requeued}, zpracováno: ${data.processed ?? 0}.`,
+      });
+      await loadCampaign(selectedId);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Chyba", description: e instanceof Error ? e.message : "" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function exportRecipientsCsv() {
+    const rows = campaignRecipients;
+    if (!rows.length) return;
+    const header = ["organizationId", "organizationName", "emailStatus", "targetEmails", "emailError"];
+    const lines = [
+      header.join(";"),
+      ...rows.map((r) =>
+        [
+          r.organizationId,
+          r.organizationName,
+          r.emailStatus,
+          Array.isArray(r.targetEmails) ? (r.targetEmails as string[]).join("|") : "",
+          r.emailError,
+        ]
+          .map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`)
+          .join(";")
+      ),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `kampaň-${selectedId}-prijemci.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function archiveCampaign() {
@@ -441,6 +496,12 @@ export function OrgCommunicationsWorkspace() {
                 <Button size="sm" variant="outline" disabled={busy} onClick={() => void duplicateCampaign()}>
                   Duplikovat
                 </Button>
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => void requeueFailedEmails()}>
+                  Znovu neúspěšné e-maily
+                </Button>
+                <Button size="sm" variant="outline" disabled={!campaignRecipients.length} onClick={exportRecipientsCsv}>
+                  Export CSV
+                </Button>
                 <Button size="sm" variant="outline" disabled={busy} onClick={() => void archiveCampaign()}>
                   Archivovat
                 </Button>
@@ -516,18 +577,19 @@ export function OrgCommunicationsWorkspace() {
                   ))}
                 </select>
                 {audienceMode === "selected" ? (
-                  <Textarea
-                    placeholder="ID organizací oddělená čárkou"
-                    value={selectedCompanyIds}
-                    onChange={(e) => setSelectedCompanyIds(e.target.value)}
-                    rows={2}
+                  <OrgCampaignRecipientPicker
+                    selectedIds={selectedCompanyIds}
+                    onChangeSelectedIds={setSelectedCompanyIds}
+                    emailMarketing={emailMarketing}
+                    disabled={busy}
                   />
-                ) : null}
-                <Input
-                  placeholder="Filtrovat organizace podle názvu…"
-                  value={audienceSearch}
-                  onChange={(e) => setAudienceSearch(e.target.value)}
-                />
+                ) : (
+                  <Input
+                    placeholder="Filtrovat organizace podle názvu, IČO nebo e-mailu…"
+                    value={audienceSearch}
+                    onChange={(e) => setAudienceSearch(e.target.value)}
+                  />
+                )}
               </div>
               <div className="space-y-2">
                 <Label>Nadpis</Label>
@@ -661,18 +723,65 @@ export function OrgCommunicationsWorkspace() {
             </CardContent>
           </Card>
 
-          {selectedId && selectedStats ? (
+          {selectedId && (selectedStats || campaignStats) ? (
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Statistiky</CardTitle>
               </CardHeader>
               <CardContent className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-                <div>Příjemci: {selectedStats.targeted ?? 0}</div>
-                <div>Odeslané e-maily: {selectedStats.emailsSent ?? 0}</div>
-                <div>Chyby e-mailu: {selectedStats.emailsError ?? 0}</div>
-                <div>Zájem: {selectedStats.interested ?? 0}</div>
-                <div>Rezervace: {selectedStats.consultationsBooked ?? 0}</div>
-                <div>Odhlášení: {selectedStats.marketingUnsubscribes ?? 0}</div>
+                {(() => {
+                  const s = campaignStats ?? selectedStats ?? {};
+                  const queued = Number(s.emailsQueued ?? 0);
+                  const sent = Number(s.emailsSent ?? 0);
+                  const err = Number(s.emailsError ?? 0);
+                  const pending = Math.max(0, queued - sent - err);
+                  return (
+                    <>
+                      <div>Příjemci: {s.targeted ?? 0}</div>
+                      <div>Ve frontě / čeká: {pending}</div>
+                      <div>Přijato poskytovatelem: {sent}</div>
+                      <div>Chyby: {err}</div>
+                      <div>Zájem: {s.interested ?? 0}</div>
+                      <div>Rezervace: {s.consultationsBooked ?? 0}</div>
+                      <div>Odhlášení: {s.marketingUnsubscribes ?? 0}</div>
+                      <div>Podpora: {s.support ?? 0}</div>
+                    </>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {campaignRecipients.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Historie příjemců (e-mail)</CardTitle>
+              </CardHeader>
+              <CardContent className="max-h-64 overflow-auto">
+                <table className="w-full text-xs sm:text-sm">
+                  <thead>
+                    <tr className="border-b text-left">
+                      <th className="p-1">Organizace</th>
+                      <th className="p-1 hidden sm:table-cell">E-mail</th>
+                      <th className="p-1">Stav</th>
+                      <th className="p-1 hidden md:table-cell">Pokusy</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {campaignRecipients.slice(0, 200).map((r) => (
+                      <tr key={String(r.organizationId)} className="border-b">
+                        <td className="p-1">{String(r.organizationName ?? r.organizationId)}</td>
+                        <td className="p-1 hidden sm:table-cell truncate max-w-[140px]">
+                          {Array.isArray(r.targetEmails)
+                            ? (r.targetEmails as string[]).join(", ")
+                            : "—"}
+                        </td>
+                        <td className="p-1">{String(r.emailStatus ?? "—")}</td>
+                        <td className="p-1 hidden md:table-cell">{String(r.emailAttempts ?? 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </CardContent>
             </Card>
           ) : null}

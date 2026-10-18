@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,9 @@ import { useToast } from "@/hooks/use-toast";
 type ModuleRow = {
   code: string;
   name: string;
+  description?: string;
+  category?: string;
+  activeGlobally?: boolean;
   moduleKind?: string;
   active: boolean;
   priceMonthlyCzk: number;
@@ -25,6 +28,8 @@ export function OrganizationModulesLicensesPanel(props: { organizationId: string
   const [busy, setBusy] = useState(false);
   const [assignUserId, setAssignUserId] = useState("");
   const [selectedCode, setSelectedCode] = useState("rajmondata_editor");
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("all");
 
   const load = async () => {
     setLoading(true);
@@ -89,34 +94,79 @@ export function OrganizationModulesLicensesPanel(props: { organizationId: string
     }
   }
 
-  const selected = rows.find((r) => r.code === selectedCode) ?? rows[0];
+  const categories = useMemo(() => {
+    const set = new Set(rows.map((r) => r.category || "ostatní"));
+    return ["all", ...Array.from(set).sort((a, b) => a.localeCompare(b, "cs"))];
+  }, [rows]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (category !== "all" && (r.category || "ostatní") !== category) return false;
+      if (!q) return true;
+      const hay = `${r.name} ${r.code} ${r.description ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [rows, search, category]);
+
+  const activeCount = rows.filter((r) => r.active).length;
+
+  const selected = filtered.find((r) => r.code === selectedCode) ?? filtered[0] ?? rows[0];
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-600">
-        Organizace: <strong>{props.organizationName}</strong> — moduly, licence a přidělení uživatelů.
+        Organizace: <strong>{props.organizationName}</strong> — katalog z{" "}
+        <code className="text-xs">platform_modules</code>. Aktivní moduly:{" "}
+        <strong>{activeCount}</strong> / {rows.length}.
       </p>
       {loading ? (
         <Loader2 className="h-6 w-6 animate-spin" />
       ) : (
         <>
-          <div className="flex flex-wrap gap-2">
-            {rows.map((r) => (
+          <div className="flex flex-wrap gap-2 items-end">
+            <div className="space-y-1 flex-1 min-w-[160px]">
+              <Label>Hledat modul</Label>
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="název nebo kód…" />
+            </div>
+            <div className="space-y-1">
+              <Label>Kategorie</Label>
+              <select
+                className="flex h-10 rounded-md border px-3 text-sm bg-white"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+              >
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c === "all" ? "Všechny kategorie" : c}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+            {filtered.map((r) => (
               <Button
                 key={r.code}
                 type="button"
                 size="sm"
                 variant={selectedCode === r.code ? "default" : "outline"}
                 onClick={() => setSelectedCode(r.code)}
+                className={r.active ? "border-orange-400" : ""}
               >
                 {r.name}
+                {!r.activeGlobally ? " (glob. vyp.)" : ""}
               </Button>
             ))}
           </div>
           {selected ? (
             <div className="rounded-md border p-4 space-y-3 text-sm">
+              {selected.description ? (
+                <p className="text-slate-600">{selected.description}</p>
+              ) : null}
               <div className="grid sm:grid-cols-2 gap-2">
-                <div>Stav: {selected.active ? "aktivní" : "neaktivní"}</div>
+                <div>Stav org.: {selected.active ? "aktivní" : "neaktivní"}</div>
+                <div>Globálně: {selected.activeGlobally !== false ? "dostupný" : "vypnutý superadminem"}</div>
                 <div>Cena: {selected.priceMonthlyCzk} Kč / měs.</div>
                 <div>Licence: {selected.assignedUsers} / {selected.seatCount} uživatelů</div>
                 <div>Typ: {selected.moduleKind ?? "internal"}</div>

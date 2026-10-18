@@ -99,9 +99,18 @@ export async function publishOrgCampaignAdmin(
   }
 
   const batchId = randomUUID();
+  if (
+    campaign.audience?.mode === "selected" &&
+    !(campaign.audience.companyIds ?? []).length
+  ) {
+    throw new Error("Vyberte alespoň jednu organizaci pro režim „Vybrané organizace“.");
+  }
   const recipients = await resolveOrgCampaignRecipients(db, campaign.audience, undefined, {
     requireMarketingConsent: sendEmail && marketing,
   });
+  if (!recipients.length) {
+    throw new Error("Pro zvolené publikum nebyl nalezen žádný příjemce.");
+  }
   let emailsQueued = 0;
   let notificationsCreated = 0;
   let dashboardDelivered = 0;
@@ -167,7 +176,7 @@ export async function publishOrgCampaignAdmin(
         opened: prevStats.opened ?? 0,
         emailsSent: prevStats.emailsSent ?? 0,
         emailsError: prevStats.emailsError ?? 0,
-        emailsQueued: (prevStats.emailsQueued ?? 0) + (sendEmail ? 0 : 0),
+        emailsQueued: prevStats.emailsQueued ?? 0,
         linkClicks: prevStats.linkClicks ?? 0,
         consultationsBooked: prevStats.consultationsBooked ?? 0,
         marketingUnsubscribes: prevStats.marketingUnsubscribes ?? 0,
@@ -186,6 +195,12 @@ export async function publishOrgCampaignAdmin(
 
   const base = appBaseUrl();
   const consult = campaign.consultationEnabled ? consultationUrl() : null;
+  const recipientSnapshot: Array<{
+    organizationId: string;
+    organizationName: string;
+    contactEmail: string | null;
+    targetEmails: string[];
+  }> = [];
 
   for (const r of recipients) {
     const uids = adminIdsByOrg.get(r.companyId) ?? [];
@@ -219,8 +234,26 @@ export async function publishOrgCampaignAdmin(
       await dedupRef.set({ createdAt: FieldValue.serverTimestamp() });
 
       const toList = await collectOrgEmails(db, r, uids);
-      if (!toList.length) continue;
+      recipientSnapshot.push({
+        organizationId: r.companyId,
+        organizationName: r.name,
+        contactEmail: r.contactEmail,
+        targetEmails: toList,
+      });
+      if (!toList.length) {
+        await ref.collection("recipients").doc(r.companyId).set(
+          {
+            emailStatus: "error",
+            emailError: "Chybí platná e-mailová adresa.",
+            targetEmails: [],
+            lastBatchId: batchId,
+          },
+          { merge: true }
+        );
+        continue;
+      }
 
+      const mailJobRef = ref.collection("mailJobs").doc();
       const html = buildOrgCampaignEmailForRecipient({
         organizationId: r.companyId,
         organizationName: r.name,
@@ -237,11 +270,23 @@ export async function publishOrgCampaignAdmin(
         emailMarketing: marketing,
       });
 
+      await mailJobRef.set({
+        batchId,
+        organizationId: r.companyId,
+        organizationName: r.name,
+        to: toList,
+        status: "queued",
+        attempts: 0,
+        queuedAt: FieldValue.serverTimestamp(),
+      });
+
       await db.collection(MAIL_DISPATCH_QUEUE).add({
         kind: "platform_campaign_email",
+        status: "pending",
         campaignId,
         organizationId: r.companyId,
         organizationName: r.name,
+        mailJobId: mailJobRef.id,
         to: toList,
         subject:
           campaign.emailSubject?.trim() ||
@@ -249,11 +294,18 @@ export async function publishOrgCampaignAdmin(
         html,
         sendAt: Timestamp.now(),
         batchId,
+        attempts: 0,
         createdAt: FieldValue.serverTimestamp(),
       });
       emailsQueued += 1;
       await ref.collection("recipients").doc(r.companyId).set(
-        { emailStatus: "queued", emailSentAt: null, lastBatchId: batchId },
+        {
+          emailStatus: "queued",
+          emailSentAt: null,
+          targetEmails: toList,
+          lastBatchId: batchId,
+          queuedAt: FieldValue.serverTimestamp(),
+        },
         { merge: true }
       );
     }
@@ -270,6 +322,9 @@ export async function publishOrgCampaignAdmin(
     dashboardDelivered,
     resend: Boolean(opts?.resendEmail),
     actor: opts?.actorUsername ?? null,
+    audienceMode: campaign.audience?.mode ?? "all",
+    audienceCompanyIds: campaign.audience?.companyIds ?? [],
+    recipientSnapshot,
     createdAt: FieldValue.serverTimestamp(),
   });
 

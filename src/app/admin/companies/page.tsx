@@ -1242,9 +1242,15 @@ export default function AdminCompaniesPage() {
                   />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Povolené moduly</Label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border border-slate-200 rounded-lg p-3 bg-slate-50/50">
+              <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/50 p-3 text-sm text-slate-700">
+                <Label>Moduly platformy</Label>
+                <p>
+                  Přepínače menu portálu (zakázky, docházka, …) zůstávají v mapě licence níže. Placené a externí
+                  moduly včetně <strong>RAJMONDATA EDITOR</strong> spravujte v akci{" "}
+                  <strong>Moduly a licence</strong> v tabulce organizací — data se načítají z{" "}
+                  <code className="text-xs">platform_modules</code>.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-200">
                   {AVAILABLE_MODULES.map((mod) => (
                     <label
                       key={mod.key}

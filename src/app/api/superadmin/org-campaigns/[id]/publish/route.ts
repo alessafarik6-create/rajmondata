@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { publishOrgCampaignAdmin } from "@/lib/platform-org-campaigns/publish-service";
+import { drainMailDispatchQueue } from "@/lib/email-notifications/process-queue";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -32,7 +33,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       deliveryChannel,
       actorUsername: session.username,
     });
-    return NextResponse.json({ ok: true, ...result });
+    const drained = await drainMailDispatchQueue(db, { maxRounds: 12, batchSize: 25 });
+    return NextResponse.json({ ok: true, ...result, queueProcessed: drained.processed, queueErrors: drained.errors });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Publikace selhala.";
     return NextResponse.json({ ok: false, error: msg }, { status: 400 });

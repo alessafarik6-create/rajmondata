@@ -178,8 +178,31 @@ export default function AdminModulesPage() {
               </div>
             ))}
             {editorHealth ? (
-              <div className="rounded border p-2 sm:col-span-2 lg:col-span-3 bg-slate-50">
-                Integrace editoru: <strong>{editorHealth.status}</strong> — {editorHealth.detail}
+              <div
+                className={`rounded border p-3 sm:col-span-2 lg:col-span-3 ${
+                  editorHealth.status === "connected"
+                    ? "bg-emerald-50 border-emerald-200"
+                    : editorHealth.status === "degraded"
+                      ? "bg-amber-50 border-amber-200"
+                      : "bg-red-50 border-red-200"
+                }`}
+              >
+                <p className="font-medium">RAJMONDATA EDITOR — integrace</p>
+                <p className="text-sm mt-1">
+                  Stav: <strong>{editorHealth.status}</strong> — {editorHealth.detail}
+                </p>
+                {editorHealth.status !== "connected" ? (
+                  <ul className="text-xs mt-2 list-disc pl-4 space-y-1 text-slate-700">
+                    <li>
+                      Na Vercelu (portál) nastavte env <code>PORTAL_API_SECRET</code> — stejná hodnota jako na Railway
+                      u editoru.
+                    </li>
+                    <li>Secret nikdy nezobrazujeme v UI ani v logách.</li>
+                    <li>Po doplnění redeploy obou služeb a ověřte health endpoint editoru.</li>
+                  </ul>
+                ) : (
+                  <p className="text-xs mt-2 text-emerald-800">Propojení úspěšně otestováno (health + portal auth).</p>
+                )}
               </div>
             ) : null}
           </CardContent>

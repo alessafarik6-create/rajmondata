@@ -1,4 +1,4 @@
-import type { Firestore } from "firebase-admin/firestore";
+import type { Firestore, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import {
   COMPANIES_COLLECTION,
   COMPANY_LICENSES_COLLECTION,
@@ -7,11 +7,16 @@ import {
 import type { OrgCampaignAudience } from "@/lib/platform-org-campaigns/types";
 import { getEffectiveModulesMerged } from "@/lib/platform-access";
 
+export type OrgLicenseFilter = "all" | "active" | "trial" | "inactive";
+
 export type ResolvedOrgRecipient = {
   companyId: string;
   name: string;
+  ico: string | null;
   contactEmail: string | null;
   planKey: string | null;
+  licenseStatus: "active" | "trial" | "inactive";
+  marketingUnsubscribed: boolean;
 };
 
 async function companyDisplayName(
@@ -26,18 +31,18 @@ async function companyDisplayName(
   return String(org?.companyName ?? org?.name ?? companyId).trim() || companyId;
 }
 
-async function companyContactEmail(data: Record<string, unknown>): Promise<string | null> {
-  const candidates = [
-    data.contactEmail,
-    data.email,
-    data.billingEmail,
-    data.ownerEmail,
-  ];
+function companyContactEmail(data: Record<string, unknown>): string | null {
+  const candidates = [data.contactEmail, data.email, data.billingEmail, data.ownerEmail];
   for (const c of candidates) {
     const e = String(c ?? "").trim().toLowerCase();
     if (e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return e;
   }
   return null;
+}
+
+function companyIco(data: Record<string, unknown>): string | null {
+  const ico = String(data.ico ?? data.ic ?? data.companyIco ?? "").trim();
+  return ico || null;
 }
 
 function parseIsoMs(v: unknown): number | null {
@@ -53,26 +58,72 @@ function daysUntil(iso: string | null | undefined): number | null {
   return Math.ceil((t - Date.now()) / (24 * 60 * 60 * 1000));
 }
 
+function licenseStatusFrom(
+  license: Record<string, unknown> | undefined,
+  data: Record<string, unknown>
+): "active" | "trial" | "inactive" {
+  const status = String(license?.status ?? data.licenseStatus ?? "").toLowerCase();
+  if (status === "trial" || license?.isTrial === true) return "trial";
+  if (license?.active === true || status === "active") return "active";
+  return "inactive";
+}
+
+function matchesSearch(
+  q: string,
+  name: string,
+  companyId: string,
+  ico: string | null,
+  email: string | null
+): boolean {
+  if (!q) return true;
+  const hay = [name, companyId, ico ?? "", email ?? ""].join(" ").toLowerCase();
+  return hay.includes(q);
+}
+
+async function loadAllCompanies(db: Firestore): Promise<
+  Array<{ id: string; data: Record<string, unknown> }>
+> {
+  const out: Array<{ id: string; data: Record<string, unknown> }> = [];
+  let last: QueryDocumentSnapshot | undefined;
+  for (;;) {
+    let query = db.collection(COMPANIES_COLLECTION).orderBy("__name__").limit(400);
+    if (last) query = query.startAfter(last);
+    const snap = await query.get();
+    if (snap.empty) break;
+    for (const doc of snap.docs) {
+      out.push({ id: doc.id, data: (doc.data() ?? {}) as Record<string, unknown> });
+    }
+    last = snap.docs[snap.docs.length - 1];
+    if (snap.size < 400) break;
+  }
+  return out;
+}
+
 export async function resolveOrgCampaignRecipients(
   db: Firestore,
   audience: OrgCampaignAudience,
   search?: string,
-  opts?: { requireMarketingConsent?: boolean }
+  opts?: { requireMarketingConsent?: boolean; licenseFilter?: OrgLicenseFilter }
 ): Promise<ResolvedOrgRecipient[]> {
   const q = String(search ?? "").trim().toLowerCase();
-  const snap = await db.collection(COMPANIES_COLLECTION).limit(500).get();
+  const licenseFilter = opts?.licenseFilter ?? "all";
+  const companies = await loadAllCompanies(db);
   const out: ResolvedOrgRecipient[] = [];
 
-  for (const doc of snap.docs) {
-    const data = (doc.data() ?? {}) as Record<string, unknown>;
+  for (const { id: companyId, data } of companies) {
     if (data.deletedAt || data.status === "deleted") continue;
-    if (opts?.requireMarketingConsent && data.platformMarketingUnsubscribedAt) continue;
-    const name = await companyDisplayName(db, doc.id, data);
-    if (q && !name.toLowerCase().includes(q) && !doc.id.toLowerCase().includes(q)) continue;
+    const marketingUnsubscribed = Boolean(data.platformMarketingUnsubscribedAt);
+    if (opts?.requireMarketingConsent && marketingUnsubscribed) continue;
 
-    const licenseSnap = await db.collection(COMPANY_LICENSES_COLLECTION).doc(doc.id).get();
+    const name = await companyDisplayName(db, companyId, data);
+    const ico = companyIco(data);
+    const contactEmail = companyContactEmail(data);
+    if (!matchesSearch(q, name, companyId, ico, contactEmail)) continue;
+
+    const licenseSnap = await db.collection(COMPANY_LICENSES_COLLECTION).doc(companyId).get();
     const license = licenseSnap.data() as Record<string, unknown> | undefined;
     const planKey = String(license?.planKey ?? license?.plan ?? data.planKey ?? "").trim() || null;
+    const licenseStatus = licenseStatusFrom(license, data);
     const modules = getEffectiveModulesMerged({
       modules: data.modules as Record<string, boolean> | undefined,
       license: license
@@ -83,28 +134,28 @@ export async function resolveOrgCampaignRecipients(
         : undefined,
     });
 
+    if (licenseFilter !== "all" && licenseStatus !== licenseFilter) continue;
+
     let include = false;
     switch (audience.mode) {
       case "all":
         include = true;
         break;
       case "selected":
-        include = (audience.companyIds ?? []).includes(doc.id);
+        include = (audience.companyIds ?? []).includes(companyId);
         break;
       case "plan":
         include = Boolean(planKey && (audience.planKeys ?? []).includes(planKey));
         break;
       case "licensed":
-        include = Boolean(license?.active === true || license?.status === "active");
-        break;
       case "active":
-        include = Boolean(license?.active === true || license?.status === "active");
+        include = licenseStatus === "active";
+        break;
+      case "trial":
+        include = licenseStatus === "trial";
         break;
       case "inactive":
-        include = !(
-          license?.active === true ||
-          license?.status === "active"
-        );
+        include = licenseStatus === "inactive";
         break;
       case "subscription_ending": {
         const exp = String(license?.expiresAt ?? license?.trialEndsAt ?? "").trim();
@@ -123,10 +174,13 @@ export async function resolveOrgCampaignRecipients(
     if (!include) continue;
 
     out.push({
-      companyId: doc.id,
+      companyId,
       name,
-      contactEmail: await companyContactEmail(data),
+      ico,
+      contactEmail,
       planKey,
+      licenseStatus,
+      marketingUnsubscribed,
     });
   }
 
