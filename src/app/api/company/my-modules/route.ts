@@ -5,11 +5,9 @@ import { ensureCompanyLicenseDoc } from "@/lib/company-license-admin";
 import { PLATFORM_MODULES_COLLECTION } from "@/lib/firestore-collections";
 import { PLATFORM_MODULE_CODES } from "@/lib/platform-config";
 import { buildMergedPlatformCatalogMap } from "@/lib/platform-module-catalog";
-import {
-  canOrganizationUseModule,
-  effectiveModulePriceCzk,
-} from "@/lib/rajmondata-editor/module-access";
+import { effectiveModulePriceCzk } from "@/lib/rajmondata-editor/module-access";
 import { listModuleUserAssignmentIds } from "@/lib/platform-module-assignments.server";
+import { resolveExternalModulePortalState } from "@/lib/external-module-portal";
 
 export const dynamic = "force-dynamic";
 
@@ -32,12 +30,16 @@ export async function GET(request: Request) {
     if (!row?.activeGlobally) continue;
     if (row.moduleKind !== "external") continue;
     const ent = license.modules[code];
-    const orgAccess = canOrganizationUseModule(license, code);
     const assigned = await listModuleUserAssignmentIds(db, v.caller.companyId, code);
-    const seatCount = ent?.seatCount ?? row.defaultSeatCount ?? 1;
-    const userHasSeat =
-      row.licenseModel === "organization" ||
-      assigned.includes(v.caller.uid);
+    const portal = resolveExternalModulePortalState({
+      moduleCode: code,
+      catalog: row,
+      license,
+      userId: v.caller.uid,
+      portalRole: v.caller.role,
+      assignedUserIds: assigned,
+    });
+
     modules.push({
       code,
       externalId: row.externalId,
@@ -46,18 +48,24 @@ export async function GET(request: Request) {
       iconKey: row.iconKey,
       category: row.category,
       licenseModel: row.licenseModel,
-      active: orgAccess.ok && userHasSeat,
-      orgLicensed: orgAccess.ok,
-      userAssigned: userHasSeat,
+      active: portal.userCanLaunch,
+      userCanLaunch: portal.userCanLaunch,
+      orgLicensed: portal.orgLicensed,
+      billingRequired: portal.billingRequired,
+      statusLabel: portal.statusLabel,
+      showSubscriptionOrder: portal.showSubscriptionOrder,
+      isGloballyFree: !portal.billingRequired,
+      userAssigned: portal.userCanLaunch || assigned.includes(v.caller.uid),
       isTrial: Boolean(ent?.isTrial),
       expiresAt: ent?.expiresAt ?? null,
       paymentStatus: ent?.paymentStatus ?? (row.isPaid ? "unpaid" : "free"),
       priceMonthlyCzk: effectiveModulePriceCzk(ent, row, "monthly"),
       priceYearlyCzk: effectiveModulePriceCzk(ent, row, "yearly"),
-      seatCount,
+      seatCount: ent?.seatCount ?? row.defaultSeatCount ?? 1,
       assignedUsers: assigned.length,
       trialDays: row.trialDays ?? 0,
       integrationStatus: row.integrationStatus ?? "unknown",
+      launchPath: `/portal/modules/${code}`,
     });
   }
 

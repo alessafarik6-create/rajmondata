@@ -30,6 +30,7 @@ import {
   FileStack,
   Car,
   Cctv,
+  PencilRuler,
 } from "lucide-react";
 
 /** Ikony položek portálu — sdílené sidebar + mobilní dlaždice. */
@@ -61,6 +62,7 @@ export const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
   help: CircleHelp,
   settings: Settings,
   aiCenter: Sparkles,
+  rajmondata_editor: PencilRuler,
   /** Mobilní speciály (nejsou v sidebar defs). */
   calendar: CalendarDays,
   tasks: ListChecks,

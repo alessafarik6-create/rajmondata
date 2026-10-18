@@ -14,6 +14,7 @@ import {
   canOrganizationUseModule,
   canUserUseModuleWithSeats,
 } from "@/lib/rajmondata-editor/module-access";
+import { resolveEffectiveModuleAssignedUserIds } from "@/lib/external-module-portal";
 import { requestEditorLaunchTicket } from "@/lib/rajmondata-editor/editor-api-client.server";
 import { listModuleUserAssignmentIds } from "@/lib/platform-module-assignments.server";
 
@@ -68,14 +69,12 @@ export async function launchExternalModuleForUser(input: {
   );
   const ent = license.modules[input.moduleCode];
   const seatCount = ent?.seatCount ?? catalog.defaultSeatCount ?? 1;
-  let assignedEffective = assigned;
-  if (
-    (catalog.licenseModel === "org_seats" || catalog.licenseModel === "per_user") &&
-    assignedEffective.length === 0 &&
-    (input.portalRole === "owner" || input.portalRole === "admin")
-  ) {
-    assignedEffective = [input.userId];
-  }
+  const assignedEffective = resolveEffectiveModuleAssignedUserIds({
+    assignedUserIds: assigned,
+    licenseModel: catalog.licenseModel ?? "organization",
+    portalRole: input.portalRole,
+    userId: input.userId,
+  });
   const userDecision = canUserUseModuleWithSeats({
     orgDecision,
     licenseModel: catalog.licenseModel ?? "organization",

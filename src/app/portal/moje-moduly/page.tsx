@@ -7,22 +7,25 @@ import { Button } from "@/components/ui/button";
 import { Loader2, PencilRuler } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
+import { ExternalModuleLaunchButton } from "@/components/portal/external-module-launch-button";
+import type { PlatformModuleCode } from "@/lib/platform-config";
 
 type ExtModule = {
-  code: string;
+  code: PlatformModuleCode;
   name: string;
   description: string;
-  active: boolean;
+  userCanLaunch: boolean;
   orgLicensed: boolean;
-  isTrial: boolean;
-  expiresAt: string | null;
-  paymentStatus: string;
+  billingRequired: boolean;
+  statusLabel: string;
+  showSubscriptionOrder: boolean;
+  isGloballyFree: boolean;
   priceMonthlyCzk: number;
   priceYearlyCzk: number;
   seatCount: number;
   assignedUsers: number;
-  trialDays: number;
   integrationStatus: string;
+  expiresAt: string | null;
 };
 
 export default function MojeModulyPage() {
@@ -52,29 +55,6 @@ export default function MojeModulyPage() {
     void load();
   }, [load]);
 
-  async function launch(code: string) {
-    if (!user) return;
-    setBusy(code);
-    try {
-      const token = await user.getIdToken();
-      const res = await fetch(`/api/company/modules/${encodeURIComponent(code)}/launch`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Spuštění selhalo");
-      window.location.href = data.redirectUrl;
-    } catch (e) {
-      toast({
-        variant: "destructive",
-        title: "Editor",
-        description: e instanceof Error ? e.message : "Chyba",
-      });
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function orderModule(code: string) {
     if (!user) return;
     setBusy(code);
@@ -99,42 +79,37 @@ export default function MojeModulyPage() {
   }
 
   function cta(m: ExtModule) {
-    if (m.active) {
+    if (m.userCanLaunch) {
       return (
-        <Button
-          className="bg-orange-500 hover:bg-orange-600 text-black"
-          disabled={busy === m.code}
-          onClick={() => void launch(m.code)}
-        >
-          {busy === m.code ? <Loader2 className="h-4 w-4 animate-spin" /> : "Spustit editor"}
-        </Button>
+        <ExternalModuleLaunchButton
+          moduleCode={m.code}
+          label={
+            m.code === "rajmondata_editor"
+              ? "Spustit RAJMONDATA EDITOR"
+              : `Spustit ${m.name}`
+          }
+        />
       );
     }
-    if (m.paymentStatus === "trial" || (!m.orgLicensed && m.trialDays > 0)) {
-      return (
-        <Button variant="secondary" asChild>
-          <Link href="/portal/vyuctovani">Vyzkoušet zdarma / aktivovat</Link>
-        </Button>
-      );
-    }
-    if (m.expiresAt && Date.parse(m.expiresAt) < Date.now()) {
-      return (
-        <Button variant="outline" asChild>
-          <Link href="/portal/vyuctovani">Prodloužit licenci</Link>
-        </Button>
-      );
-    }
-    if (m.paymentStatus === "unpaid" || m.paymentStatus === "free") {
+    if (m.billingRequired && m.showSubscriptionOrder) {
       return (
         <Button disabled={busy === m.code} onClick={() => void orderModule(m.code)}>
           Objednat předplatné
         </Button>
       );
     }
+    if (!m.orgLicensed) {
+      return (
+        <Button variant="secondary" asChild>
+          <Link href="/portal/vyuctovani">Požádat o aktivaci / vyúčtování</Link>
+        </Button>
+      );
+    }
     return (
-      <Button variant="outline" asChild>
-        <Link href="/portal/vyuctovani">Aktivovat modul</Link>
-      </Button>
+      <p className="text-sm text-muted-foreground">
+        Nemáte uživatelské oprávnění k tomuto modulu. Požádejte administrátora organizace o přidělení
+        licence.
+      </p>
     );
   }
 
@@ -161,19 +136,24 @@ export default function MojeModulyPage() {
             <CardContent className="space-y-3">
               <div className="grid gap-2 text-sm sm:grid-cols-2">
                 <div>
-                  Stav licence:{" "}
-                  <strong>{m.active ? (m.isTrial ? "Zkušební" : "Aktivní") : "Neaktivní"}</strong>
+                  Stav: <strong>{m.statusLabel}</strong>
                 </div>
                 <div>
-                  Cena: <strong>{m.priceMonthlyCzk} Kč / měs.</strong>
-                  {m.priceYearlyCzk ? ` · ročně ${m.priceYearlyCzk} Kč` : null}
+                  {m.isGloballyFree ? (
+                    <span className="text-emerald-700">Modul je na platformě zdarma</span>
+                  ) : (
+                    <>
+                      Cena: <strong>{m.priceMonthlyCzk} Kč / měs.</strong>
+                      {m.priceYearlyCzk ? ` · ročně ${m.priceYearlyCzk} Kč` : null}
+                    </>
+                  )}
                 </div>
                 <div>
                   Uživatelské licence: {m.assignedUsers} / {m.seatCount}
                 </div>
                 <div>Platnost: {m.expiresAt ? new Date(m.expiresAt).toLocaleDateString("cs-CZ") : "—"}</div>
                 <div className="sm:col-span-2 text-xs text-muted-foreground">
-                  Integrace editoru: {m.integrationStatus}
+                  Integrace: {m.integrationStatus}
                 </div>
               </div>
               {cta(m)}

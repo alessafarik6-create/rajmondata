@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
@@ -34,6 +34,10 @@ import {
   hiddenBecauseNotSidebarModule,
   PORTAL_SIDEBAR_MENU_DEFS,
 } from '@/lib/portal-menu-config';
+import {
+  buildExternalPortalMenuDefs,
+  mergePortalSidebarMenuDefs,
+} from '@/lib/portal-external-module-menu';
 import { PORTAL_MENU_ICONS } from '@/lib/portal-menu-icons';
 import {
   debugPortalMenuItemHiddenReason,
@@ -112,6 +116,42 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
 
   const effectiveModules = useMemo(() => getEffectiveModulesMerged(company), [company]);
 
+  const [launchableExternalCodes, setLaunchableExternalCodes] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    if (isAdminArea || !user) {
+      setLaunchableExternalCodes(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("/api/company/my-modules", {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (cancelled || !data.ok) return;
+        const set = new Set<string>();
+        for (const m of data.modules ?? []) {
+          if (m.userCanLaunch) set.add(String(m.code));
+        }
+        setLaunchableExternalCodes(set);
+      } catch {
+        if (!cancelled) setLaunchableExternalCodes(new Set());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdminArea, user?.uid]);
+
+  const sidebarMenuDefs = useMemo(
+    () => mergePortalSidebarMenuDefs(PORTAL_SIDEBAR_MENU_DEFS, buildExternalPortalMenuDefs(platformCatalog)),
+    [platformCatalog]
+  );
+
   const portalLinks = useMemo((): PortalNavLink[] => {
     if (isAdminArea) return [];
     const ctx = {
@@ -129,10 +169,16 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
       employeeDoc: (employeeRow as Record<string, unknown> | null) ?? null,
     });
 
-    const filtered = PORTAL_SIDEBAR_MENU_DEFS.filter((def) => {
+    const filtered = sidebarMenuDefs.filter((def) => {
       const modId = def.id as PortalModuleId;
-      const permOk = canAccessPortalModule(portalPermissions, modId, "read");
+      const permOk =
+        def.type === "external"
+          ? true
+          : canAccessPortalModule(portalPermissions, modId, "read");
       const visible = isPortalMenuItemVisible(def, ctx);
+      if (def.type === "external" && launchableExternalCodes && !launchableExternalCodes.has(def.id)) {
+        return false;
+      }
       if (process.env.NODE_ENV === "development" && def.id === FLEET_PORTAL_MODULE_ID) {
         const hiddenReason = debugPortalMenuItemHiddenReason(def, ctx, permOk);
         console.log("NAVIGATION_ITEM_FLEET", {
@@ -162,6 +208,8 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     platformCatalog,
     employeeRow,
     effectiveModules,
+    sidebarMenuDefs,
+    launchableExternalCodes,
   ]);
 
   useEffect(() => {
@@ -185,7 +233,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
       employeeRow: (employeeRow as Record<string, unknown> | null) ?? null,
     };
 
-    const visibleDefs = PORTAL_SIDEBAR_MENU_DEFS.filter((def) =>
+    const visibleDefs = sidebarMenuDefs.filter((def) =>
       isPortalMenuItemVisible(def, ctx)
     );
     const visibleSystemItems = visibleDefs.filter((d) => d.type === 'system').map((d) => d.label);
@@ -217,6 +265,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     userProfile?.globalRoles,
     platformCatalog,
     employeeRow,
+    sidebarMenuDefs,
   ]);
 
   const links = isAdminArea ? adminLinksStatic : portalLinks;

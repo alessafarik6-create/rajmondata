@@ -21,7 +21,7 @@ export const SIDEBAR_LICENSE_MODULE_KEYS = CANONICAL_MODULE_KEYS.filter(
   (k) => !LICENSE_KEYS_EXCLUDED_FROM_SIDEBAR.includes(k)
 ) as Exclude<CanonicalModuleKey, "terminal">[];
 
-export type PortalSidebarMenuItemType = "system" | "module" | "child";
+export type PortalSidebarMenuItemType = "system" | "module" | "child" | "external";
 
 /**
  * Jedna položka menu (bez ikony — ikony mapuje `bizforge-sidebar`).

@@ -298,7 +298,7 @@ export function portalPathsForModule(code: PlatformModuleCode): string[] {
     case "cameras":
       return ["/portal/cameras"];
     case "rajmondata_editor":
-      return ["/portal/moje-moduly"];
+      return ["/portal/moje-moduly", "/portal/modules/rajmondata_editor"];
     default:
       return [];
   }

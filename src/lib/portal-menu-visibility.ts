@@ -127,6 +127,14 @@ export function isPortalMenuItemVisible(
     return true;
   }
 
+  if (def.type === "external") {
+    if (!company) return false;
+    if (isLicenseExplicitlyRevokedForPortal(company)) return false;
+    const code = def.platformModuleCode;
+    if (!code) return false;
+    return canAccessCompanyModule(company, code, platformCatalog ?? undefined);
+  }
+
   if (!portalMenuPermissionReadOk(def, ctx)) return false;
 
   if (!company) return false;

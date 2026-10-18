@@ -30,7 +30,9 @@ import {
   Wallet,
   Package,
   Factory,
+  PencilRuler,
 } from "lucide-react";
+import { ExternalModuleLaunchButton } from "@/components/portal/external-module-launch-button";
 import { useToast } from "@/hooks/use-toast";
 import { computeEffectivePlatformInvoiceStatus } from "@/lib/platform-invoice-status";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
@@ -193,6 +195,8 @@ function moduleIcon(code: PlatformModuleCode) {
       return Package;
     case "vyroba":
       return Factory;
+    case "rajmondata_editor":
+      return PencilRuler;
     default:
       return Package;
   }
@@ -224,6 +228,7 @@ export default function VyuctovaniPage() {
   const [transferBusyId, setTransferBusyId] = useState<string | null>(null);
   const [graceTick, setGraceTick] = useState(0);
   const [moduleBusyCode, setModuleBusyCode] = useState<string | null>(null);
+  const [externalLaunchByCode, setExternalLaunchByCode] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     if (!user || !companyId || !canRead) {
@@ -278,6 +283,28 @@ export default function VyuctovaniPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!user) return;
+    void (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("/api/company/my-modules", {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (!data.ok) return;
+        const map: Record<string, boolean> = {};
+        for (const m of data.modules ?? []) {
+          if (m.userCanLaunch) map[String(m.code)] = true;
+        }
+        setExternalLaunchByCode(map);
+      } catch {
+        setExternalLaunchByCode({});
+      }
+    })();
+  }, [user]);
 
   useEffect(() => {
     if (!billing?.paymentClaimActive) return;
@@ -587,6 +614,8 @@ export default function VyuctovaniPage() {
 
               const pendingConfirmation = ent?.tenantModuleStatus === "pendingConfirmation";
               const suspended = ent?.tenantModuleStatus === "suspended";
+              const billingModule = row.isPaid === true;
+              const freeActive = !billingModule && effectiveActive;
 
               const priceLabel = row.billingType === "per_employee" && code === "attendance_payroll"
                 ? `${formatMoney(row.employeePriceCzk ?? 0, row.currency || "CZK")} / osoba / měsíc`
@@ -610,9 +639,9 @@ export default function VyuctovaniPage() {
                       </div>
                       <div className="text-right shrink-0">
                         <div className="text-lg font-bold tabular-nums text-foreground">{priceLabel}</div>
-                        {!row.isPaid ? (
+                        {!billingModule ? (
                           <Badge variant="secondary" className="mt-2">
-                            Zdarma
+                            {freeActive ? "Aktivní – zdarma" : "Zdarma"}
                           </Badge>
                         ) : effectiveActive ? (
                           <Badge className="mt-2 bg-emerald-600">Aktivní</Badge>
@@ -638,7 +667,7 @@ export default function VyuctovaniPage() {
                       </Alert>
                     ) : null}
 
-                    {pendingConfirmation && claimGraceActive ? (
+                    {billingModule && pendingConfirmation && claimGraceActive ? (
                       <Alert className="border-sky-600 bg-sky-50 text-sky-950 dark:border-sky-500 dark:bg-sky-950/35 dark:text-sky-50">
                         <CalendarClock className="h-4 w-4" />
                         <AlertTitle>Modul je dočasně aktivní</AlertTitle>
@@ -649,7 +678,7 @@ export default function VyuctovaniPage() {
                       </Alert>
                     ) : null}
 
-                    {moduleInvoice && effInv !== "paid" && effInv !== "cancelled" ? (
+                    {billingModule && moduleInvoice && effInv !== "paid" && effInv !== "cancelled" ? (
                       <div className="rounded-lg border border-border bg-muted/20 p-3">
                         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">QR platba</p>
                         <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-start">
@@ -689,7 +718,18 @@ export default function VyuctovaniPage() {
                     ) : null}
 
                     <div className="mt-auto flex flex-col gap-2">
-                      {row.isPaid && !effectiveActive && !moduleInvoice ? (
+                      {row.moduleKind === "external" && externalLaunchByCode[code] ? (
+                        <ExternalModuleLaunchButton
+                          moduleCode={code}
+                          label={
+                            code === "rajmondata_editor"
+                              ? "Spustit RAJMONDATA EDITOR"
+                              : `Spustit ${row.name}`
+                          }
+                        />
+                      ) : null}
+
+                      {billingModule && !effectiveActive && !moduleInvoice ? (
                         <Button
                           type="button"
                           disabled={moduleBusyCode === code}
@@ -699,7 +739,7 @@ export default function VyuctovaniPage() {
                         </Button>
                       ) : null}
 
-                      {row.isPaid && effectiveActive && ent?.tenantModuleStatus === "active" ? (
+                      {billingModule && effectiveActive && ent?.tenantModuleStatus === "active" ? (
                         <Button
                           type="button"
                           variant="outline"
@@ -709,7 +749,7 @@ export default function VyuctovaniPage() {
                         </Button>
                       ) : null}
 
-                      {row.isPaid && effectiveActive && pendingConfirmation ? (
+                      {billingModule && effectiveActive && pendingConfirmation ? (
                         <p className="text-xs text-muted-foreground">
                           Po potvrzení platby superadministrátorem zůstane modul aktivní bez časové lhůty.
                         </p>
