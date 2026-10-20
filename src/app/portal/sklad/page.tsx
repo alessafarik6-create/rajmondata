@@ -27,6 +27,8 @@ import {
   Trash2,
   Search,
   ImageIcon,
+  FileDown,
+  ClipboardList,
 } from "lucide-react";
 import {
   useUser,
@@ -93,6 +95,7 @@ import { LengthStockPiecesPanelGate } from "@/components/warehouse/length-stock-
 import { DEFAULT_STOCK_CATEGORIES } from "@/lib/stock-categories";
 import { millimetersToUnit } from "@/lib/job-production-settings";
 import { isInventoryPiecesLengthRow } from "@/lib/stock-pieces-display";
+import { WarehouseExportPdfDialog, type WarehouseExportScope } from "@/components/warehouse/warehouse-export-pdf-dialog";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -293,6 +296,8 @@ export default function SkladPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewSrc, setImagePreviewSrc] = useState<string | null>(null);
+  const [selectedItemIds, setSelectedItemIds] = useState<Record<string, boolean>>({});
+  const [exportPdfOpen, setExportPdfOpen] = useState(false);
 
   const inboundSelectedItem = useMemo(() => {
     if (inCreateNew || !inItemId) return null;
@@ -331,6 +336,22 @@ export default function SkladPage() {
     }
     return rows;
   }, [activeItemList, categoryFilter, searchQuery]);
+
+  const selectedCount = useMemo(
+    () => Object.keys(selectedItemIds).filter((id) => selectedItemIds[id]).length,
+    [selectedItemIds]
+  );
+
+  const resolveExportItemIds = (scope: WarehouseExportScope): string[] => {
+    if (scope === "all") return activeItemList.map((r) => r.id);
+    if (scope === "selected") {
+      return Object.keys(selectedItemIds).filter((id) => selectedItemIds[id]);
+    }
+    return filteredItems.map((r) => r.id);
+  };
+
+  const allFilteredSelected =
+    filteredItems.length > 0 && filteredItems.every((r) => selectedItemIds[r.id]);
 
   const [catManageOpen, setCatManageOpen] = useState(false);
   const [catBusy, setCatBusy] = useState(false);
@@ -978,6 +999,23 @@ export default function SkladPage() {
           >
             <Upload className="h-4 w-4" /> Import PDF / CSV
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2 border-slate-300 bg-white text-slate-900"
+            asChild
+          >
+            <Link href="/portal/sklad/inventury">
+              <ClipboardList className="h-4 w-4" /> Inventury
+            </Link>
+          </Button>
+          <Button
+            type="button"
+            className="gap-2 bg-orange-500 hover:bg-orange-600 text-black"
+            onClick={() => setExportPdfOpen(true)}
+          >
+            <FileDown className="h-4 w-4" /> Inventura / Export PDF
+          </Button>
         </div>
       </div>
 
@@ -1196,6 +1234,23 @@ export default function SkladPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-slate-200 hover:bg-transparent">
+                    <TableHead className="w-10 text-slate-700">
+                      <Checkbox
+                        checked={allFilteredSelected}
+                        onCheckedChange={(v) => {
+                          const on = v === true;
+                          setSelectedItemIds((prev) => {
+                            const next = { ...prev };
+                            for (const row of filteredItems) {
+                              if (on) next[row.id] = true;
+                              else delete next[row.id];
+                            }
+                            return next;
+                          });
+                        }}
+                        aria-label="Vybrat filtrované"
+                      />
+                    </TableHead>
                     <TableHead className="w-14 text-slate-700">Foto</TableHead>
                     <TableHead className="text-slate-700 min-w-[140px]">Název</TableHead>
                     <TableHead className="text-slate-700">SKU</TableHead>
@@ -1218,6 +1273,18 @@ export default function SkladPage() {
                         : null;
                     return (
                       <TableRow key={row.id} className="border-slate-100">
+                        <TableCell className="align-middle">
+                          <Checkbox
+                            checked={selectedItemIds[row.id] === true}
+                            onCheckedChange={(v) =>
+                              setSelectedItemIds((prev) => ({
+                                ...prev,
+                                [row.id]: v === true,
+                              }))
+                            }
+                            aria-label={`Vybrat ${row.name}`}
+                          />
+                        </TableCell>
                         <TableCell className="align-middle">
                           <button
                             type="button"
@@ -1639,6 +1706,18 @@ export default function SkladPage() {
           companyId={companyId}
           userId={user.uid}
           items={activeItemList}
+        />
+      ) : null}
+
+      {user ? (
+        <WarehouseExportPdfDialog
+          open={exportPdfOpen}
+          onOpenChange={setExportPdfOpen}
+          filteredCount={filteredItems.length}
+          allCount={activeItemList.length}
+          selectedCount={selectedCount}
+          getToken={() => user.getIdToken()}
+          resolveItemIds={resolveExportItemIds}
         />
       ) : null}
 

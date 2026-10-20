@@ -27,6 +27,7 @@
     "test:rajmondata-editor-sign": "npx --yes tsx src/lib/rajmondata-editor/portal-api-sign.test.ts",
     "test:external-module-portal": "npx --yes tsx src/lib/external-module-portal.test.ts",
     "test:platform-module-route": "npx --yes tsx src/lib/platform-module-route.test.ts",
+    "test:warehouse-inventory": "npx --yes tsx src/lib/warehouse-inventory-diff.test.ts",
     "test:editor-railway-api": "node scripts/test-editor-railway-api.mjs",
     "postinstall": "node scripts/copy-pdf-fonts.mjs && node scripts/copy-pdf-worker.mjs && node scripts/copy-hikvision-jssdk.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
