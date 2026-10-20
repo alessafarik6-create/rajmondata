@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { requireBankWrite, bankTenantOk } from "@/lib/bank/api-auth";
 import { bankTransactionsCol } from "@/lib/bank/collections";
-import type { BankExpenseCategory, BankTransactionClassification } from "@/lib/bank/types";
+import type {
+  BankExpenseCategory,
+  BankMarketingSubcategory,
+  BankTransactionClassification,
+} from "@/lib/bank/types";
+import { bankExpenseRulesCol } from "@/lib/bank/collections";
 import { writeBankAuditLog } from "@/lib/bank/audit";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +33,10 @@ export async function POST(
     companyId?: string;
     classification?: BankTransactionClassification;
     expenseCategory?: BankExpenseCategory | null;
+    marketingSubcategory?: BankMarketingSubcategory | null;
     linkedDocumentId?: string | null;
+    createVendorRule?: boolean;
+    ruleMatchValue?: string | null;
   };
   const organizationId = String(body.companyId ?? "").trim() || perm.caller.companyId;
   if (!bankTenantOk(perm.caller, organizationId)) {
@@ -43,11 +51,29 @@ export async function POST(
     {
       classification,
       expenseCategory: body.expenseCategory ?? null,
+      marketingSubcategory: body.marketingSubcategory ?? null,
+      expenseAutoStatus: "confirmed",
+      expenseAutoConfidence: 1,
       linkedDocumentId: body.linkedDocumentId ?? null,
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true }
   );
+
+  if (body.createVendorRule === true && body.expenseCategory) {
+    const matchValue = String(body.ruleMatchValue ?? "").trim();
+    if (matchValue) {
+      await bankExpenseRulesCol(perm.db, organizationId).add({
+        organizationId,
+        matchKind: "counterparty_contains",
+        matchValue,
+        expenseCategory: body.expenseCategory,
+        marketingSubcategory: body.marketingSubcategory ?? null,
+        createdBy: perm.caller.uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
+  }
 
   await writeBankAuditLog(perm.db, {
     organizationId,

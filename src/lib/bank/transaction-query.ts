@@ -136,5 +136,8 @@ export function bankDatePresetRange(
     dt.setUTCDate(dt.getUTCDate() - 30);
     return { dateFrom: iso(dt), dateTo: tzToday };
   }
+  if (preset === "year") {
+    return { dateFrom: `${y}-01-01`, dateTo: tzToday };
+  }
   return null;
 }

@@ -44,6 +44,10 @@ export type BankAutomationSettings = {
   paymentConfirmationEmailAccountId?: string | null;
   /** Výchozí: false — automat u částečných úhrad. */
   autoPartialPaymentConfirmation?: boolean;
+  /** Volitelný měsíční e-mail s marketingovými náklady. */
+  monthlyMarketingReportEnabled?: boolean;
+  /** E-mailové adresy příjemců reportu (oddělené čárkou v UI). */
+  monthlyMarketingReportEmails?: string | null;
 };
 
 export type BankAutomationStats = {
@@ -104,7 +108,14 @@ export type BankExpenseCategory =
   | "accounting"
   | "insurance"
   | "marketing"
+  | "payroll"
+  | "material"
+  | "operations"
   | "other";
+
+export type BankMarketingSubcategory = "google_ads" | "meta_ads" | "other_marketing";
+
+export type BankExpenseAutoStatus = "suggested" | "confirmed" | "needs_review";
 
 export type BankTransactionDoc = {
   organizationId: string;
@@ -125,6 +136,9 @@ export type BankTransactionDoc = {
   reference?: string | null;
   classification: BankTransactionClassification;
   expenseCategory?: BankExpenseCategory | null;
+  marketingSubcategory?: BankMarketingSubcategory | null;
+  expenseAutoStatus?: BankExpenseAutoStatus | null;
+  expenseAutoConfidence?: number | null;
   linkedDocumentId?: string | null;
   matchedAmountTotal?: number;
   matchStatus?: BankTransactionMatchStatus | null;

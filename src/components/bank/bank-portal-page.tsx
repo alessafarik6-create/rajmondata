@@ -25,6 +25,7 @@ import { BankTransactionsTable, BankAccountRowLink } from "@/components/bank/ban
 import { BankTransactionDrawer } from "@/components/bank/bank-transaction-drawer";
 import { formatBankMoney, type BankTxListRow } from "@/components/bank/bank-utils";
 import { resolveBankMatchUiState } from "@/lib/bank/match-display";
+import { BankExpenseAnalyticsPanel } from "@/components/bank/bank-expense-analytics-panel";
 
 type OverviewData = {
   connection: {
@@ -54,6 +55,8 @@ type OverviewData = {
       autoPaymentConfirmationEnabled: boolean;
       paymentConfirmationEmailAccountId: string | null;
       autoPartialPaymentConfirmation: boolean;
+      monthlyMarketingReportEnabled?: boolean;
+      monthlyMarketingReportEmails?: string | null;
     };
     stats: {
       lastAutoSyncAt: string | null;
@@ -427,6 +430,7 @@ export function BankPortalPage() {
           <TabsTrigger value="accounts">Účty</TabsTrigger>
           <TabsTrigger value="transactions">Transakce</TabsTrigger>
           <TabsTrigger value="matching">Párování plateb</TabsTrigger>
+          <TabsTrigger value="expenses">Analýza výdajů</TabsTrigger>
           <TabsTrigger value="settings">Nastavení banky</TabsTrigger>
         </TabsList>
 
@@ -619,6 +623,21 @@ export function BankPortalPage() {
           />
         </TabsContent>
 
+        <TabsContent value="expenses" className="space-y-4">
+          {companyId ? (
+            <BankExpenseAnalyticsPanel
+              companyId={companyId}
+              canWrite={access.canWrite}
+              getAuthHeaders={authHeaders}
+              accounts={(overview?.accounts ?? []).map((a) => ({
+                id: a.id,
+                name: a.name ?? a.accountNumber,
+              }))}
+              onOpenTransaction={(id) => openTransaction(id, false)}
+            />
+          ) : null}
+        </TabsContent>
+
         <TabsContent value="settings" className="space-y-4">
           {access.canWrite ? (
             <>
@@ -699,6 +718,38 @@ export function BankPortalPage() {
                           </option>
                         ))}
                       </select>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 rounded-md border p-3">
+                      <div>
+                        <p className="text-sm font-medium">Měsíční report marketingových nákladů</p>
+                        <p className="text-xs text-muted-foreground">
+                          E-mail za minulý měsíc (volitelné, vyžaduje nastavení cron na Vercel).
+                        </p>
+                      </div>
+                      <Switch
+                        checked={autoSettings.settings.monthlyMarketingReportEnabled === true}
+                        onCheckedChange={(v) =>
+                          setAutoSettings({
+                            ...autoSettings,
+                            settings: { ...autoSettings.settings, monthlyMarketingReportEnabled: v },
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label>Příjemci reportu (e-maily, oddělené čárkou)</Label>
+                      <Input
+                        value={autoSettings.settings.monthlyMarketingReportEmails ?? ""}
+                        onChange={(e) =>
+                          setAutoSettings({
+                            ...autoSettings,
+                            settings: {
+                              ...autoSettings.settings,
+                              monthlyMarketingReportEmails: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
                     </div>
                     <Button disabled={savingAutomation} onClick={() => void saveAutomation()}>
                       {savingAutomation ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit automatizaci"}
