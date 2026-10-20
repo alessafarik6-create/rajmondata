@@ -47,10 +47,20 @@ export function parseAiAssistantSettingsDoc(
     data.knowledge && typeof data.knowledge === "object"
       ? (data.knowledge as Record<string, unknown>)
       : {};
+  const activityRaw =
+    data.activityLog && typeof data.activityLog === "object"
+      ? (data.activityLog as Record<string, unknown>)
+      : null;
   return {
     companyId,
     enabled: data.enabled !== false,
     baseInstructions: String(data.baseInstructions ?? defaults.baseInstructions).trim(),
+    activityLog: activityRaw
+      ? {
+          storeQueryText: activityRaw.storeQueryText === true,
+          retentionDays: clampInt(activityRaw.retentionDays, 7, 365, 90),
+        }
+      : undefined,
     knowledge: {
       useHistoricalQuotes: knowledgeRaw.useHistoricalQuotes !== false,
       historicalQuotesLimit: clampInt(

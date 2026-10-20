@@ -24,6 +24,7 @@ import {
   loadPortalAnalyticsSettings,
 } from "@/lib/portal-analytics/settings";
 import { PLATFORM_PORTAL_ANALYTICS_AUDIT_COLLECTION } from "@/lib/firestore-collections";
+import { loadOrganizationAiUsageStats } from "@/lib/ai/organization-ai-activity-stats-server";
 
 export const dynamic = "force-dynamic";
 
@@ -54,12 +55,14 @@ export async function GET(
 
   const settings = await loadPortalAnalyticsSettings(db);
 
-  const [counts, registeredAt, lastActivity, orgDaily, globalDaily] = await Promise.all([
+  const [counts, registeredAt, lastActivity, orgDaily, globalDaily, aiAssistantUsage] =
+    await Promise.all([
     loadOrganizationEntityCounts(db, organizationId),
     loadOrganizationRegistrationDate(db, organizationId),
     loadLastStaffSessionActivity(db, organizationId),
     loadOrgPortalAnalyticsRange(db, organizationId, dayKeys),
     loadGlobalPortalAnalyticsRange(db, dayKeys),
+    loadOrganizationAiUsageStats(db, organizationId),
   ]);
 
   const metrics = metricsFromOrgDailyRows(orgDaily, dayKeys.length);
@@ -132,5 +135,6 @@ export async function GET(
     globalContext: {
       moduleUsage: mergeDailyMaps(globalDaily, "modules"),
     },
+    aiAssistantUsage,
   });
 }

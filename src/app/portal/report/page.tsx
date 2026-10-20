@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   useUser,
@@ -47,8 +47,47 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isEmployeeActive } from "@/lib/employee-active";
+import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
+import type { OrganizationAiUsageStats } from "@/lib/ai/organization-ai-activity-stats-server";
 
 const PAGE_LIMIT_STEP = 75;
+
+function isAiActivityRow(row: Pick<ActivityRow, "actionType" | "entityType">): boolean {
+  const at = row.actionType ?? "";
+  return at.startsWith("ORG_AI_") || row.entityType === "ai_assistant";
+}
+
+function moduleLabelCs(sourceModule: string | null | undefined): string {
+  const m = String(sourceModule ?? "").trim();
+  if (m === "ai_assistant") return "AI asistentka";
+  return m || "—";
+}
+
+function resolveHistoricalPerson(
+  row: ActivityRow,
+  employeesByUid: Map<string, { name: string; email?: string | null }>
+): { name: string; email: string | null; unknownHistorical: boolean } {
+  if (row.employeeName?.trim()) {
+    return {
+      name: row.employeeName.trim(),
+      email: row.employeeEmail?.trim() || null,
+      unknownHistorical: false,
+    };
+  }
+  const uid = row.userId?.trim();
+  if (uid && employeesByUid.has(uid)) {
+    const hit = employeesByUid.get(uid)!;
+    return { name: hit.name, email: hit.email ?? null, unknownHistorical: false };
+  }
+  if (uid) {
+    return {
+      name: "Neznámý uživatel – historický záznam",
+      email: row.employeeEmail?.trim() || null,
+      unknownHistorical: true,
+    };
+  }
+  return { name: "—", email: null, unknownHistorical: false };
+}
 const MAX_EXPORT = 500;
 
 type ActivityRow = {
@@ -121,6 +160,20 @@ export default function AuditReportPage() {
   const { data: profile, isLoading: profileLoading } = useDoc(userRef);
   const companyId = profile?.companyId as string | undefined;
 
+  const companyRef = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? doc(firestore, COMPANIES_COLLECTION, companyId)
+        : null,
+    [firestore, companyId]
+  );
+  const { data: companyDoc } = useDoc(companyRef);
+  const organizationName =
+    String(companyDoc?.name ?? companyDoc?.companyName ?? "").trim() || null;
+
+  const [aiStats, setAiStats] = useState<OrganizationAiUsageStats | null>(null);
+  const [aiStatsLoading, setAiStatsLoading] = useState(false);
+
   const canAccess =
     profile?.role === "owner" ||
     profile?.role === "admin" ||
@@ -171,8 +224,46 @@ export default function AuditReportPage() {
     id: string;
     displayName?: string;
     name?: string;
+    email?: string;
     authUserId?: string;
   }>(employeesCol);
+
+  const employeesByUid = useMemo(() => {
+    const m = new Map<string, { name: string; email?: string | null }>();
+    for (const e of employees ?? []) {
+      if (!isEmployeeActive(e)) continue;
+      const name =
+        e.displayName?.trim() ||
+        e.name?.trim() ||
+        e.authUserId?.slice(0, 8) ||
+        e.id;
+      const email = e.email?.trim() || null;
+      if (e.authUserId) m.set(e.authUserId, { name, email });
+    }
+    return m;
+  }, [employees]);
+
+  useEffect(() => {
+    if (!user || !companyId || !canAccess) return;
+    let cancelled = false;
+    setAiStatsLoading(true);
+    void (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/ai/activity-stats?companyId=${encodeURIComponent(companyId)}`,
+          { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" }
+        );
+        const json = await res.json();
+        if (!cancelled && res.ok && json.ok) setAiStats(json.stats as OrganizationAiUsageStats);
+      } finally {
+        if (!cancelled) setAiStatsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, companyId, canAccess]);
 
   const employeeFilterOptions = useMemo(() => {
     const m = new Map<string, string>();
@@ -187,13 +278,15 @@ export default function AuditReportPage() {
       if (e.id) m.set(`emp:${e.id}`, label);
     }
     for (const row of logsRaw ?? []) {
-      if (row.userId)
-        m.set(`uid:${row.userId}`, row.employeeName || row.userId);
+      if (row.userId) {
+        const person = resolveHistoricalPerson(row, employeesByUid);
+        m.set(`uid:${row.userId}`, person.name);
+      }
     }
     return [...m.entries()].sort((a, b) =>
       a[1].localeCompare(b[1], "cs", { sensitivity: "base" })
     );
-  }, [employees, logsRaw]);
+  }, [employees, logsRaw, employeesByUid]);
 
   const filteredLogs = useMemo(() => {
     let list = [...(logsRaw ?? [])];
@@ -223,6 +316,7 @@ export default function AuditReportPage() {
         if (!t) return false;
         return t <= new Date(dateTo + "T23:59:59.999");
       });
+    if (preset === "ai") list = list.filter((r) => isAiActivityRow(r));
     if (preset === "auth")
       list = list.filter((r) => (r.actionType ?? "").startsWith("auth."));
     if (preset === "docs") {
@@ -337,6 +431,47 @@ export default function AuditReportPage() {
 
       <Card>
         <CardHeader className="pb-2">
+          <CardTitle className="text-base">Využití AI asistentky</CardTitle>
+          <CardDescription>
+            Souhrn dotazů na firemní AI (respektuje oprávnění a nastavení ochrany soukromí).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {aiStatsLoading && !aiStats ? (
+            <div className="flex justify-center py-6">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : aiStats ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground">Dotazy dnes</p>
+                <p className="text-xl font-semibold">{aiStats.queriesToday}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Dotazy tento měsíc</p>
+                <p className="text-xl font-semibold">{aiStats.queriesThisMonth}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Aktivní uživatelé AI (měsíc)</p>
+                <p className="text-xl font-semibold">{aiStats.activeUsersThisMonth}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Nejčastější funkce</p>
+                <p className="text-xs mt-1">
+                  Dotaz: {aiStats.byActionType.ORG_AI_ASK} · Přehled:{" "}
+                  {aiStats.byActionType.ORG_AI_BRIEFING} · Dnes hot:{" "}
+                  {aiStats.byActionType.ORG_AI_HOT_TODAY}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Statistiky AI nejsou k dispozici.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
           <CardTitle className="text-base">Filtry</CardTitle>
           <CardDescription>Užší výběr se aplikuje na načtené záznamy v záložce.</CardDescription>
         </CardHeader>
@@ -401,6 +536,7 @@ export default function AuditReportPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Vše</SelectItem>
+                <SelectItem value="ai">AI asistentka</SelectItem>
                 <SelectItem value="auth">Přihlášení / odhlášení</SelectItem>
                 <SelectItem value="docs">Doklady / soubory</SelectItem>
                 <SelectItem value="jobs">Zakázky</SelectItem>
@@ -438,14 +574,23 @@ export default function AuditReportPage() {
                       <TableRow>
                         <TableHead className="min-w-[140px]">Čas</TableHead>
                         <TableHead className="min-w-[120px]">Osoba</TableHead>
+                        <TableHead className="min-w-[140px]">E-mail</TableHead>
                         <TableHead className="min-w-[160px]">Akce</TableHead>
                         <TableHead className="min-w-[100px]">Modul</TableHead>
-                        <TableHead className="min-w-[140px]">Záznam</TableHead>
-                        <TableHead className="min-w-[180px]">Detail</TableHead>
+                        <TableHead className="min-w-[120px]">Organizace</TableHead>
+                        <TableHead className="min-w-[140px]">Detail</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredLogs.map((row) => (
+                      {filteredLogs.map((row) => {
+                        const person = resolveHistoricalPerson(row, employeesByUid);
+                        const meta = row.metadata as Record<string, unknown> | null;
+                        const orgFromMeta =
+                          typeof meta?.organizationName === "string"
+                            ? meta.organizationName
+                            : organizationName;
+                        const aiRow = isAiActivityRow(row);
+                        return (
                         <TableRow
                           key={row.id}
                           className="cursor-pointer hover:bg-muted/40"
@@ -455,38 +600,54 @@ export default function AuditReportPage() {
                             {formatDt(row.createdAt)}
                           </TableCell>
                           <TableCell className="align-top text-sm">
-                            <div className="flex flex-col min-w-0 max-w-[10rem]">
-                              <span className="font-medium truncate">
-                                {row.employeeName ?? "—"}
-                              </span>
-                              <span className="text-xs text-muted-foreground truncate">
-                                {row.employeeEmail ?? row.userId?.slice(0, 8) ?? ""}
-                              </span>
+                            <div className="flex flex-col min-w-0 max-w-[12rem]">
+                              <span className="font-medium truncate">{person.name}</span>
                             </div>
                           </TableCell>
+                          <TableCell className="align-top text-sm text-muted-foreground max-w-[10rem] truncate">
+                            {person.email ?? "—"}
+                          </TableCell>
                           <TableCell className="align-top">
-                            <Badge variant="outline" className="text-[10px] font-normal max-w-[14rem] truncate">
-                              {row.actionType ?? "—"}
-                            </Badge>
-                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                              {row.actionLabel}
-                            </p>
+                            {aiRow ? (
+                              <p className="text-sm font-medium">{row.actionLabel ?? "Dotaz na AI asistentku"}</p>
+                            ) : (
+                              <>
+                                <Badge variant="outline" className="text-[10px] font-normal max-w-[14rem] truncate">
+                                  {row.actionType ?? "—"}
+                                </Badge>
+                                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                                  {row.actionLabel}
+                                </p>
+                              </>
+                            )}
                           </TableCell>
                           <TableCell className="align-top text-sm text-muted-foreground">
-                            {row.sourceModule ?? "—"}
+                            {moduleLabelCs(row.sourceModule)}
                           </TableCell>
-                          <TableCell className="align-top text-sm max-w-[12rem]">
-                            <span className="line-clamp-2 font-medium">
-                              {row.entityName || row.entityId || "—"}
-                            </span>
+                          <TableCell className="align-top text-sm max-w-[10rem] truncate">
+                            {orgFromMeta ?? "—"}
                           </TableCell>
                           <TableCell className="align-top text-sm max-w-[16rem]">
-                            <p className="line-clamp-2 text-muted-foreground">
-                              {row.details ?? "—"}
-                            </p>
+                            {aiRow ? (
+                              <Button
+                                type="button"
+                                variant="link"
+                                className="h-auto p-0 text-sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDetailRow(row);
+                                }}
+                              >
+                                Otevřít detail AI dotazu
+                              </Button>
+                            ) : (
+                              <p className="line-clamp-2 text-muted-foreground">
+                                {row.details ?? row.entityName ?? "—"}
+                              </p>
+                            )}
                           </TableCell>
                         </TableRow>
-                      ))}
+                      );})}
                     </TableBody>
                   </Table>
                 </div>
@@ -588,10 +749,71 @@ export default function AuditReportPage() {
           </DialogHeader>
           {detailRow ? (
             <div className="space-y-3 text-sm">
+              {(() => {
+                const person = resolveHistoricalPerson(detailRow, employeesByUid);
+                const meta = (detailRow.metadata ?? {}) as Record<string, unknown>;
+                const ai = isAiActivityRow(detailRow);
+                return (
+                  <>
+              <p>
+                <span className="text-muted-foreground">Kdo: </span>
+                {person.name}
+                {typeof meta.roleLabelCs === "string" && meta.roleLabelCs
+                  ? ` (${meta.roleLabelCs})`
+                  : ""}
+              </p>
+              <p>
+                <span className="text-muted-foreground">E-mail: </span>
+                {person.email ?? "—"}
+              </p>
               <p>
                 <span className="text-muted-foreground">Čas: </span>
                 {formatDt(detailRow.createdAt)}
               </p>
+              {ai ? (
+                <>
+                  <p>
+                    <span className="text-muted-foreground">Organizace: </span>
+                    {String(meta.organizationName ?? organizationName ?? "—")}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Typ dotazu: </span>
+                    {String(meta.aiActionType ?? detailRow.actionType ?? "—")}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Stav: </span>
+                    {String(meta.status ?? "ok")}
+                    {meta.processingMs != null ? ` · ${meta.processingMs} ms` : ""}
+                  </p>
+                  {typeof meta.errorMessage === "string" && meta.errorMessage ? (
+                    <p className="text-destructive">{meta.errorMessage}</p>
+                  ) : null}
+                  {typeof meta.queryText === "string" && meta.queryText.trim() ? (
+                    <div>
+                      <p className="text-muted-foreground mb-1">Text dotazu:</p>
+                      <p className="whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
+                        {meta.queryText}
+                      </p>
+                    </div>
+                  ) : typeof meta.queryLength === "number" ? (
+                    <p className="text-xs text-muted-foreground">
+                      Text dotazu není uložen (délka {meta.queryLength} znaků). Zapněte ukládání v nastavení AI.
+                    </p>
+                  ) : null}
+                  <p className="text-xs text-muted-foreground pt-2 border-t">
+                    Technické UID (admin): {detailRow.userId ?? "—"}
+                    {typeof meta.requestId === "string" && meta.requestId
+                      ? ` · požadavek ${meta.requestId}`
+                      : ""}
+                    {typeof meta.sessionId === "string" && meta.sessionId
+                      ? ` · relace ${meta.sessionId}`
+                      : ""}
+                  </p>
+                </>
+              ) : null}
+                  </>
+                );
+              })()}
               <p>
                 <span className="text-muted-foreground">Akce: </span>
                 {detailRow.actionType} — {detailRow.actionLabel}

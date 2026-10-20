@@ -98,6 +98,17 @@ export function AdminOrgAnalyticsDetail({ organizationId }: { organizationId: st
       .map(([name, count]) => ({ name, count }));
   }, [data]);
   const series = (data?.series ?? []) as { date: string; events: number; logins: number }[];
+  const aiUsage = data?.aiAssistantUsage as
+    | {
+        queriesToday?: number;
+        queriesThisMonth?: number;
+        activeUsersThisMonth?: number;
+        byEmployee?: { userId: string; employeeName: string | null; count: number }[];
+        byActionType?: Record<string, number>;
+        seriesLast30Days?: { date: string; count: number }[];
+      }
+    | undefined;
+  const aiSeries = aiUsage?.seriesLast30Days ?? [];
 
   if (loading && !data) {
     return (
@@ -223,6 +234,66 @@ export function AdminOrgAnalyticsDetail({ organizationId }: { organizationId: st
             <p className="mt-2 text-xs text-slate-500">
               Uživatelé s více zařízeními/záložkami mají více relací; v součtu online se počítají jednou.
             </p>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Využití AI asistentky</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+            <div>
+              <p className="text-xs text-slate-500">Dotazy dnes</p>
+              <p className="text-2xl font-bold">{aiUsage?.queriesToday ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Dotazy tento měsíc</p>
+              <p className="text-2xl font-bold">{aiUsage?.queriesThisMonth ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Aktivní uživatelé AI</p>
+              <p className="text-2xl font-bold">{aiUsage?.activeUsersThisMonth ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Typy akcí (vzorek logů)</p>
+              <p className="text-xs mt-1">
+                Dotaz {aiUsage?.byActionType?.ORG_AI_ASK ?? 0} · Přehled{" "}
+                {aiUsage?.byActionType?.ORG_AI_BRIEFING ?? 0}
+              </p>
+            </div>
+          </div>
+          {aiSeries.length ? (
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={aiSeries}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="count" name="AI dotazy" stroke="#8b5cf6" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : null}
+          {(aiUsage?.byEmployee?.length ?? 0) > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Zaměstnanec</TableHead>
+                  <TableHead className="text-right">Počet dotazů</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(aiUsage?.byEmployee ?? []).slice(0, 10).map((row) => (
+                  <TableRow key={row.userId}>
+                    <TableCell>{row.employeeName ?? row.userId.slice(0, 8)}</TableCell>
+                    <TableCell className="text-right">{row.count}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           ) : null}
         </CardContent>
       </Card>

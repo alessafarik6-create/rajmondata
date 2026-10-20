@@ -83,6 +83,8 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
   const [preferSentQuotes, setPreferSentQuotes] = useState(true);
   const [preferApprovedAiGenerations, setPreferApprovedAiGenerations] = useState(true);
   const [preferWonJobs, setPreferWonJobs] = useState(true);
+  const [storeAiQueryText, setStoreAiQueryText] = useState(false);
+  const [aiQueryRetentionDays, setAiQueryRetentionDays] = useState(90);
   const [savingSettings, setSavingSettings] = useState(false);
 
   const [editorOpen, setEditorOpen] = useState(false);
@@ -117,6 +119,8 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
       setPreferSentQuotes(defaults.knowledge.preferSentQuotes);
       setPreferApprovedAiGenerations(defaults.knowledge.preferApprovedAiGenerations);
       setPreferWonJobs(defaults.knowledge.preferWonJobs);
+      setStoreAiQueryText(false);
+      setAiQueryRetentionDays(90);
       return;
     }
     const k =
@@ -130,6 +134,16 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
     setPreferSentQuotes(k.preferSentQuotes !== false);
     setPreferApprovedAiGenerations(k.preferApprovedAiGenerations !== false);
     setPreferWonJobs(k.preferWonJobs !== false);
+    const al =
+      data.activityLog && typeof data.activityLog === "object"
+        ? (data.activityLog as Record<string, unknown>)
+        : null;
+    setStoreAiQueryText(al?.storeQueryText === true);
+    setAiQueryRetentionDays(
+      typeof al?.retentionDays === "number" && al.retentionDays > 0
+        ? Math.min(365, Math.round(al.retentionDays))
+        : 90
+    );
   }, [settingsRaw, companyId]);
 
   const rules = useMemo(() => {
@@ -191,6 +205,10 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
             preferSentQuotes,
             preferApprovedAiGenerations,
             preferWonJobs,
+          },
+          activityLog: {
+            storeQueryText: storeAiQueryText,
+            retentionDays: Math.min(365, Math.max(7, aiQueryRetentionDays)),
           },
           updatedAt: serverTimestamp(),
           updatedByUid: user.uid,
@@ -432,6 +450,36 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
                     value={historicalQuotesLimit}
                     onChange={(e) =>
                       setHistoricalQuotesLimit(Number(e.target.value) || 8)
+                    }
+                    className="max-w-[120px]"
+                  />
+                </div>
+              </div>
+              <div className="space-y-3 rounded-lg border p-3">
+                <h4 className="text-sm font-semibold">Audit dotazů na AI asistentku</h4>
+                <p className="text-xs text-muted-foreground">
+                  Ve výchozím stavu se ukládají pouze metadata (kdo, kdy, typ akce). Text dotazu může
+                  obsahovat citlivé údaje.
+                </p>
+                <div className="flex items-center justify-between gap-4">
+                  <Label htmlFor="ai-store-query">Ukládat text dotazů do reportu aktivit</Label>
+                  <Switch
+                    id="ai-store-query"
+                    checked={storeAiQueryText}
+                    onCheckedChange={setStoreAiQueryText}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ai-query-retention">Uchovávání textu dotazu (dny)</Label>
+                  <Input
+                    id="ai-query-retention"
+                    type="number"
+                    min={7}
+                    max={365}
+                    value={aiQueryRetentionDays}
+                    disabled={!storeAiQueryText}
+                    onChange={(e) =>
+                      setAiQueryRetentionDays(Number(e.target.value) || 90)
                     }
                     className="max-w-[120px]"
                   />

@@ -19,6 +19,11 @@ export type AiInstructionCategories = {
   communication: string;
 };
 
+export type AiActivityLogSettingsDoc = {
+  storeQueryText: boolean;
+  retentionDays: number;
+};
+
 export type AiAssistantSettingsDoc = {
   companyId: string;
   enabled: boolean;
@@ -26,6 +31,8 @@ export type AiAssistantSettingsDoc = {
   /** Kategorizované instrukce pro AI (spravuje admin v AI centru). */
   instructionCategories?: AiInstructionCategories;
   knowledge: AiKnowledgeSourceSettings;
+  /** Audit dotazů na firemní AI asistentku (metadata vs. text dotazu). */
+  activityLog?: AiActivityLogSettingsDoc;
   updatedAt?: unknown;
   updatedByUid?: string | null;
 };

@@ -14,6 +14,7 @@ import type { OrganizationAiBriefingItem } from "@/lib/ai/organization-ai-types"
 import type { OrganizationAiEntityRef } from "@/lib/ai/organization-ai-entity-links";
 import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
 import { usePortalUserPreferences } from "@/hooks/use-portal-user-preferences";
+import { staffSessionStorageKey } from "@/lib/activity-log";
 
 type BriefingState = {
   greeting: string;
@@ -56,9 +57,23 @@ export function DashboardAiSecretaryPanel({ companyId }: { companyId: string }) 
     setError(null);
     try {
       const token = await user.getIdToken();
+      const requestId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `req_${Date.now()}`;
+      const sessionId =
+        typeof sessionStorage !== "undefined"
+          ? sessionStorage.getItem(staffSessionStorageKey(companyId, user.uid))
+          : null;
       const res = await fetch(
         `/api/company/ai/dashboard/briefing?companyId=${encodeURIComponent(companyId)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Request-Id": requestId,
+            ...(sessionId ? { "X-Portal-Session-Id": sessionId } : {}),
+          },
+        }
       );
       const data = await res.json();
       if (!res.ok || !data.ok) {
@@ -90,13 +105,23 @@ export function DashboardAiSecretaryPanel({ companyId }: { companyId: string }) 
       setRefs([]);
       try {
         const token = await user.getIdToken();
+        const requestId =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `req_${Date.now()}`;
+        const sessionId =
+          typeof sessionStorage !== "undefined"
+            ? sessionStorage.getItem(staffSessionStorageKey(companyId, user.uid))
+            : null;
         const res = await fetch("/api/company/ai/dashboard/ask", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
+            "X-Request-Id": requestId,
+            ...(sessionId ? { "X-Portal-Session-Id": sessionId } : {}),
           },
-          body: JSON.stringify({ companyId, question: q.trim() }),
+          body: JSON.stringify({ companyId, question: q.trim(), requestId }),
         });
         const data = await res.json();
         if (data.ok) {
