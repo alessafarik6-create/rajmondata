@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore, getAdminStorageBucket } from "@/lib/firebase-admin";
-import {
-  callerCanAccessCompany,
-  callerCanTriggerOrgNotifications,
-  verifyBearerAndLoadCaller,
-} from "@/lib/api-verify-company-user";
+import { callerCanAccessCompany } from "@/lib/api-verify-company-user";
+import { verifyCompanyBearer } from "@/lib/api-company-auth";
+import { requireDocumentEmailSendAccess } from "@/lib/document-email-send-access-server";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import {
   DOCUMENT_EMAIL_TYPES,
@@ -129,23 +127,12 @@ export async function POST(request: NextRequest) {
     }
 
     const authHeader = request.headers.get("authorization") || "";
-    const { verifyCompanyBearerWithPortalAccess } = await import("@/lib/api-company-auth");
-    const portalAuth = await verifyCompanyBearerWithPortalAccess(authHeader, {
-      moduleId: "documents",
+    const portalAuth = await verifyCompanyBearer(authHeader, {
       method: "POST",
+      pathname: "/api/company/document-email/send",
     });
     if (!portalAuth.ok) {
-      return jsonFail(portalAuth.status, portalAuth.error, null, { step: "portal_write" });
-    }
-    const caller = {
-      uid: portalAuth.caller.uid,
-      companyId: portalAuth.caller.companyId,
-      role: portalAuth.caller.role,
-      globalRoles: portalAuth.caller.globalRoles,
-      isSuperAdmin: portalAuth.caller.globalRoles.includes("super_admin"),
-    };
-    if (!callerCanTriggerOrgNotifications(caller)) {
-      return jsonFail(403, "Nemáte oprávnění.", null, { step: "permission", uid: caller.uid });
+      return jsonFail(portalAuth.status, portalAuth.error, null, { step: "auth" });
     }
 
     let body: Body;
@@ -209,7 +196,15 @@ export async function POST(request: NextRequest) {
         console.warn(ROUTE_LOG, "invoice lookup for jobId failed", serializeUnknownForLog(e));
       }
     }
-    if (!callerCanAccessCompany(caller, companyId)) {
+    const caller = portalAuth.caller;
+    const legacyCaller = {
+      uid: caller.uid,
+      companyId: caller.companyId,
+      role: caller.role,
+      globalRoles: caller.globalRoles,
+      isSuperAdmin: caller.globalRoles.includes("super_admin"),
+    };
+    if (!callerCanAccessCompany(legacyCaller, companyId)) {
       return jsonFail(403, "Nemáte přístup k organizaci.", `companyId=${companyId}`, {
         step: "companyAccess",
         requestId,
@@ -225,6 +220,24 @@ export async function POST(request: NextRequest) {
         requestId,
       });
     }
+
+    const sendAccess = await requireDocumentEmailSendAccess(db, caller, {
+      companyId,
+      type,
+      jobId: resolvedJobId || null,
+      invoiceId,
+      contractId,
+      documentId: docId,
+    });
+    if (!sendAccess.ok) {
+      return jsonFail(sendAccess.status, sendAccess.error, null, {
+        step: "documentEmailSendAccess",
+        requestId,
+        uid: caller.uid,
+        type,
+      });
+    }
+
     const plainFromHtml = stripHtmlToPlain(html);
     if (!hasNonEmptyTextSubjectAndBody({ subject, bodyPlain: plainFromHtml })) {
       return jsonFail(400, "Vyplňte předmět i text zprávy.", null, { step: "validateBody", requestId });

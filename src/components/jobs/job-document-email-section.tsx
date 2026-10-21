@@ -634,7 +634,9 @@ export function JobDocumentEmailSection({
             </Button>
           </div>
           {!canManage ? (
-            <p className="text-xs text-muted-foreground">Změny smí provádět vedení zakázky.</p>
+            <p className="text-xs text-muted-foreground">
+              Odesílání vyžaduje oprávnění Zakázky = Zápis (u faktur stačí přístup k modulu Fakturace).
+            </p>
           ) : null}
 
           <div className="border-t border-gray-200 pt-3">
