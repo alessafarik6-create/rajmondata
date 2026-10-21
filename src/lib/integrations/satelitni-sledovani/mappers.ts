@@ -3,9 +3,24 @@ import { satelitniOfflineThresholdMinutes } from "@/lib/integrations/satelitni-s
 
 export type SatelitniVehicleApi = Record<string, unknown>;
 
-/** Stabilní externí ID pro upsert — preferuje vehicle id, jinak device id. */
+export function isValidFleetCoordinates(lat: number, lng: number): boolean {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (lat === 0 && lng === 0) return false;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return false;
+  return true;
+}
+
+/** Stabilní externí ID vozidla pro REST `/vehicles/{id}` — nikoli device id, pokud existuje vehicle id. */
 export function pickSatelitniExternalVehicleId(v: SatelitniVehicleApi): string | null {
-  const candidates = [v.id, v.vehicle_id, v.vehicleId];
+  const candidates = [
+    v.id,
+    v.vehicle_id,
+    v.vehicleId,
+    v.code,
+    v.vehicle_code,
+    v.number,
+    v.vehicle_number,
+  ];
   for (const c of candidates) {
     if (c == null || c === "") continue;
     const s = String(c).trim();
@@ -63,8 +78,12 @@ export function mapSatelitniLatestPosition(
   const lat = pickNumber(p, ["latitude", "lat"]);
   const lng = pickNumber(p, ["longitude", "lng", "lon"]);
   if (lat == null || lng == null) return null;
+  if (!isValidFleetCoordinates(lat, lng)) return null;
 
-  const speed = pickNumber(p, ["speed", "speed_kmh"]);
+  let speed = pickNumber(p, ["speed", "speed_kmh", "speedKmh"]);
+  if (speed != null && speed > 250) {
+    speed = Math.round((speed * 3.6 + Number.EPSILON) * 10) / 10;
+  }
   const receivedRaw = String(p.received ?? p.received_at ?? "").trim();
   const createdRaw = String(p.created ?? p.created_at ?? "").trim();
   const receivedAt = receivedRaw || createdRaw || null;
@@ -81,7 +100,9 @@ export function mapSatelitniLatestPosition(
     if (typeof ign === "boolean") ignitionOn = ign;
   }
 
-  const movementStatus = deriveMovementStatus(speed ?? 0, receivedAt);
+  const movementStatus = deriveMovementStatus(speed ?? 0, receivedAt, ignitionOn);
+
+  const odometerKm = pickNumber(p, ["odometer", "odometer_km", "mileage", "mileage_km"]);
 
   return {
     lat,
@@ -91,7 +112,14 @@ export function mapSatelitniLatestPosition(
     receivedAt,
     createdAt: createdRaw || null,
     deviceId: p.device_id != null ? String(p.device_id) : null,
-    telemetry,
+    telemetry: telemetry
+      ? {
+          ...telemetry,
+          ...(odometerKm != null ? { odometerKm } : {}),
+        }
+      : odometerKm != null
+        ? { odometerKm }
+        : null,
     movementStatus,
     ignitionOn,
   };
@@ -99,14 +127,18 @@ export function mapSatelitniLatestPosition(
 
 export function deriveMovementStatus(
   speedKmh: number,
-  receivedAtIso: string | null
+  receivedAtIso: string | null,
+  ignitionOn?: boolean | null
 ): FleetVehicleMovementStatus {
   const offlineMs = satelitniOfflineThresholdMinutes() * 60 * 1000;
   if (receivedAtIso) {
     const t = Date.parse(receivedAtIso);
     if (Number.isFinite(t) && Date.now() - t > offlineMs) return "offline";
+  } else {
+    return "unknown";
   }
   if (speedKmh > 3) return "moving";
+  if (ignitionOn === false && speedKmh <= 3) return "parked";
   if (speedKmh >= 0) return "idle";
   return "unknown";
 }

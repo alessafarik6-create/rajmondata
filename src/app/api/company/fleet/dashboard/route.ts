@@ -2,10 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireFleetRead, fleetTenantOk } from "@/lib/fleet/api-auth";
 import { listFleetTrips, listFleetVehicles, loadFleetIntegration } from "@/lib/fleet/stores";
 import { resolveFleetProviderForOrg } from "@/lib/fleet/providers";
-import { demoDashboardStats, demoPositionsForVehicles, isFleetDemoModeEnabled } from "@/lib/fleet/demo-data";
+import { demoPositionsForVehicles, isFleetDemoModeEnabled } from "@/lib/fleet/demo-data";
+import {
+  computeFleetDashboardStats,
+  snapshotsFromFleetVehicles,
+} from "@/lib/fleet/fleet-dashboard-stats";
 import { serializeVehicle } from "@/lib/fleet/serialize";
+import { refreshSatelitniLivePositionsIfDue } from "@/lib/integrations/satelitni-sledovani/sync-service";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
   const perm = await requireFleetRead(request);
@@ -18,35 +24,37 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 403 });
   }
 
-  const allVehicles = await listFleetVehicles(perm.db, companyId);
-  const vehicles = allVehicles.filter((v) => v.archived !== true && v.active !== false);
+  const refreshLive =
+    request.nextUrl.searchParams.get("live") === "1" ||
+    request.nextUrl.searchParams.get("refreshPositions") === "1";
+
   const integration = await loadFleetIntegration(perm.db, companyId);
-  const { configured } = await resolveFleetProviderForOrg(perm.db, companyId);
+  const { configured, providerKind } = await resolveFleetProviderForOrg(perm.db, companyId);
   const demo = isFleetDemoModeEnabled();
 
-  let positions: ReturnType<typeof demoPositionsForVehicles> = [];
-  if (configured) {
+  let liveRefresh: { refreshed: boolean; vehiclesWithGps?: number } | null = null;
+  if (configured && providerKind === "SATELITNI_SLEDOVANI" && refreshLive) {
+    try {
+      liveRefresh = await refreshSatelitniLivePositionsIfDue(perm.db, companyId, false);
+    } catch (e) {
+      console.warn("[fleet/dashboard] live position refresh", e instanceof Error ? e.message : e);
+    }
+  }
+
+  const allVehicles = await listFleetVehicles(perm.db, companyId);
+  const vehicles = allVehicles.filter((v) => v.archived !== true && v.active !== false);
+
+  let positions = snapshotsFromFleetVehicles(vehicles);
+  if (configured && positions.length === 0) {
     const { provider } = await resolveFleetProviderForOrg(perm.db, companyId);
     positions = await provider.getVehiclePositions();
-  } else if (demo && vehicles.length > 0) {
+  } else if (demo && vehicles.length > 0 && !configured) {
     positions = demoPositionsForVehicles(
       vehicles.map((v) => ({ id: v.id, licensePlate: v.licensePlate, name: v.name }))
     );
   }
 
-  const stats = demoDashboardStats(
-    positions.length
-      ? positions
-      : vehicles.map((v) => ({
-          vehicleId: v.id,
-          lat: v.lastLatitude ?? 0,
-          lng: v.lastLongitude ?? 0,
-          movementStatus: v.lastMovementStatus ?? "unknown",
-          recordedAt: v.lastPositionAt?.toDate?.()?.toISOString?.() ?? "",
-          speedKmh: v.lastSpeedKmh ?? null,
-        }))
-  );
-  stats.total = vehicles.length;
+  const stats = computeFleetDashboardStats(vehicles.length, positions);
 
   const monthStart = new Date();
   monthStart.setDate(1);
@@ -57,13 +65,22 @@ export async function GET(request: NextRequest) {
     limit: 3000,
   });
   const monthKm = monthTrips.reduce((s, t) => s + Number(t.distanceKm ?? 0), 0);
-  (stats as { monthKm?: number }).monthKm = Math.round(monthKm * 10) / 10;
+  stats.monthKm = Math.round(monthKm * 10) / 10;
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayTrips = monthTrips.filter((t) => {
+    const started = t.startedAt?.toDate?.()?.getTime?.() ?? 0;
+    return started >= todayStart.getTime();
+  });
+  stats.todayKm = Math.round(todayTrips.reduce((s, t) => s + Number(t.distanceKm ?? 0), 0) * 10) / 10;
 
   return NextResponse.json({
     ok: true,
     gpsConnected: configured,
     demoMode: demo && !configured,
     integrationStatus: integration?.status ?? "not_connected",
+    liveRefresh,
     message: configured
       ? null
       : demo

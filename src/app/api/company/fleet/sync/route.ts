@@ -9,7 +9,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function POST(request: NextRequest) {
-  const body = (await request.json().catch(() => ({}))) as { companyId?: string };
+  const body = (await request.json().catch(() => ({}))) as {
+    companyId?: string;
+    mode?: "full" | "catalog" | "positions";
+  };
 
   const fleetWrite = await requireFleetWrite(request);
   let db: Firestore;
@@ -50,7 +53,8 @@ export async function POST(request: NextRequest) {
   });
 
   try {
-    const result = await syncSatelitniFleetForOrganization(db, organizationId);
+    const mode = body.mode === "catalog" || body.mode === "positions" ? body.mode : "full";
+    const result = await syncSatelitniFleetForOrganization(db, organizationId, mode);
     await writeSatelitniFleetAudit(db, {
       organizationId,
       userId,

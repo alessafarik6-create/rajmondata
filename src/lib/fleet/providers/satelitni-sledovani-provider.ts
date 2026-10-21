@@ -15,6 +15,7 @@ import {
   unwrapSatelitniResource,
 } from "@/lib/integrations/satelitni-sledovani/client";
 import {
+  isValidFleetCoordinates,
   mapSatelitniLatestPosition,
   mapSatelitniVehicle,
   tripDocId,
@@ -87,7 +88,11 @@ export class SatelitniSledovaniProvider implements FleetTrackingProvider {
     for (const v of vehicles) {
       const ext = v.externalVehicleId;
       if (!ext) continue;
-      if (v.lastLatitude != null && v.lastLongitude != null) {
+      if (
+        v.lastLatitude != null &&
+        v.lastLongitude != null &&
+        isValidFleetCoordinates(v.lastLatitude, v.lastLongitude)
+      ) {
         out.push({
           vehicleId: v.id,
           lat: v.lastLatitude,

@@ -10,12 +10,14 @@ import {
   syncSatelitniFleetForOrganization,
 } from "@/lib/integrations/satelitni-sledovani/sync-service";
 import {
-  mapSatelitniLatestPosition,
   mapSatelitniVehicle,
   pickSatelitniExternalVehicleId,
-  type SatelitniPositionApi,
   type SatelitniVehicleApi,
 } from "@/lib/integrations/satelitni-sledovani/mappers";
+import {
+  fetchSatelitniLatestPosition,
+  satelitniPositionUrlIdCandidates,
+} from "@/lib/integrations/satelitni-sledovani/position-fetch";
 import { loadSatelitniOAuthTokens } from "@/lib/integrations/satelitni-sledovani/store";
 import { loadFleetIntegration } from "@/lib/fleet/stores";
 import { SatelitniApiError } from "@/lib/integrations/satelitni-sledovani/problem-json";
@@ -38,6 +40,13 @@ export type SatelitniFleetDiagnostics = {
     asDeviceId: boolean;
     note: string;
   };
+  lookupV6031: {
+    inApiList: boolean;
+    externalVehicleId: string | null;
+    externalDeviceId: string | null;
+    positionTest: string | null;
+  };
+  rateLimitRemaining: string | null;
   message: string;
   apiError: string | null;
 };
@@ -68,6 +77,13 @@ export async function runSatelitniFleetDiagnostics(
       asDeviceId: false,
       note: "Test API vozidel nebyl spuštěn.",
     },
+    lookupV6031: {
+      inApiList: false,
+      externalVehicleId: null,
+      externalDeviceId: null,
+      positionTest: null,
+    },
+    rateLimitRemaining: null,
     message: "",
     apiError: null,
   };
@@ -78,9 +94,10 @@ export async function runSatelitniFleetDiagnostics(
   }
 
   try {
-    const { data } = await satelitniRequest<unknown>(db, organizationId, "/vehicles", {
+    const { data, headers } = await satelitniRequest<unknown>(db, organizationId, "/vehicles", {
       query: { limit: 500 },
     });
+    base.rateLimitRemaining = headers.get("RateLimit-Remaining");
     base.responseShape = describePayloadShape(data);
     const list = extractListItems<SatelitniVehicleApi>(data);
     base.apiVehicleCount = list.length;
@@ -105,10 +122,35 @@ export async function runSatelitniFleetDiagnostics(
     if (base.apiVehicleCount === 0) {
       base.lookup43081.note =
         "API vrátilo prázdný seznam. OAuth funguje, ale účet nemusí mít oprávnění k vozidlům nebo odpověď má jiný formát.";
-    } else if (base.lookup43081.inApiList) {
+    } else     if (base.lookup43081.inApiList) {
       base.lookup43081.note = `Vozidlo / zařízení ${target} je v odpovědi API.`;
     } else {
       base.lookup43081.note = `ID ${target} v odpovědi API nebylo nalezeno (zkontrolujte připojený účet).`;
+    }
+
+    const v6031Row = list.find((v) => {
+      const id = String(v.id ?? v.vehicle_id ?? v.code ?? "").trim();
+      const code = String(v.code ?? v.vehicle_code ?? "").trim();
+      return id === "V6031" || id === "6031" || code === "V6031";
+    });
+    if (v6031Row) {
+      const mapped = mapSatelitniVehicle(v6031Row);
+      base.lookupV6031.inApiList = true;
+      base.lookupV6031.externalVehicleId = mapped.externalVehicleId;
+      base.lookupV6031.externalDeviceId = mapped.externalDeviceId;
+      const candidates = satelitniPositionUrlIdCandidates(
+        {
+          externalVehicleId: mapped.externalVehicleId,
+          externalDeviceId: mapped.externalDeviceId,
+        },
+        v6031Row
+      );
+      const pos = await fetchSatelitniLatestPosition(db, organizationId, candidates);
+      base.lookupV6031.positionTest = pos
+        ? `Poloha OK (${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}), rychlost ${pos.speedKmh ?? "—"} km/h`
+        : "Bez platných souřadnic z API.";
+    } else {
+      base.lookupV6031.positionTest = "V6031 v seznamu API nenalezeno.";
     }
 
     base.message =
@@ -130,12 +172,7 @@ export async function testSatelitniLatestPositionForVehicle(
   externalVehicleId: string
 ): Promise<{ ok: boolean; hasCoordinates: boolean; message: string }> {
   try {
-    const { data } = await satelitniRequest<SatelitniPositionApi>(
-      db,
-      organizationId,
-      `/vehicles/${encodeURIComponent(externalVehicleId)}/positions/latest`
-    );
-    const pos = mapSatelitniLatestPosition(unwrapSatelitniResource(data));
+    const pos = await fetchSatelitniLatestPosition(db, organizationId, [externalVehicleId]);
     if (!pos) {
       return { ok: true, hasCoordinates: false, message: "Odpověď bez platných souřadnic." };
     }

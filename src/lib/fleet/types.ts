@@ -156,6 +156,8 @@ export type FleetIntegrationDoc = {
   connectedAt?: Timestamp | null;
   connectedByUserId?: string | null;
   lastSyncAt?: Timestamp | null;
+  /** Poslední live refresh poloh pro mapu (bez celého importu katalogu). */
+  lastPositionSyncAt?: Timestamp | null;
   lastSyncVehicleCount?: number | null;
   lastSyncImportedCount?: number | null;
   lastSyncStoredCount?: number | null;

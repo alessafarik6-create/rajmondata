@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useUser, useCompany } from "@/firebase";
@@ -27,6 +27,7 @@ type DashData = {
     moving: number;
     idle: number;
     offline: number;
+    withoutGps?: number;
     todayKm: number;
     monthKm?: number;
   };
@@ -44,6 +45,9 @@ type DashData = {
     lastPositionAt: string | null;
     todayDistanceKm: number | null;
     externalVehicleId?: string | null;
+    ignitionOn?: boolean | null;
+    odometerKm?: number | null;
+    lastTelemetry?: Record<string, unknown> | null;
   }[];
   positions: {
     vehicleId: string;
@@ -68,6 +72,7 @@ export function FleetDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const hasLoadedOnce = useRef(false);
 
   const role = String((userProfile as { role?: string } | null)?.role ?? "");
   const globalRoles = (userProfile as { globalRoles?: string[] } | null)?.globalRoles ?? [];
@@ -76,14 +81,18 @@ export function FleetDashboardPage() {
 
   const load = useCallback(async () => {
     if (!user || !companyId || !access.canRead) return;
-    setLoading(true);
+    if (!hasLoadedOnce.current) setLoading(true);
     try {
       const token = await user.getIdToken();
-      const res = await fetch(`/api/company/fleet/dashboard?companyId=${encodeURIComponent(companyId)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(
+        `/api/company/fleet/dashboard?companyId=${encodeURIComponent(companyId)}&live=1`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       const json = await res.json();
-      if (json.ok) setData(json);
+      if (json.ok) {
+        setData(json);
+        hasLoadedOnce.current = true;
+      }
     } finally {
       setLoading(false);
     }
@@ -91,7 +100,11 @@ export function FleetDashboardPage() {
 
   useEffect(() => {
     void load();
-    const t = window.setInterval(() => void load(), 60_000);
+    const tick = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void load();
+    };
+    const t = window.setInterval(tick, 12_000);
     return () => window.clearInterval(t);
   }, [load]);
 
@@ -218,7 +231,7 @@ export function FleetDashboardPage() {
             ["Právě jede", stats.moving],
             ["Stojí", stats.idle],
             ["Offline / bez signálu", stats.offline],
-            ["Bez GPS polohy", Math.max(0, stats.total - markers.length)],
+            ["Bez GPS polohy", stats.withoutGps ?? Math.max(0, stats.total - markers.length)],
             ["Dnes ujeto km", Math.round(stats.todayKm)],
             ["Tento měsíc km", Math.round(stats.monthKm ?? 0)],
           ].map(([label, val]) => (
@@ -250,6 +263,22 @@ export function FleetDashboardPage() {
               <p>
                 Rychlost:{" "}
                 {selectedVehicle.lastSpeedKmh != null ? `${Math.round(selectedVehicle.lastSpeedKmh)} km/h` : "—"}
+              </p>
+              <p>
+                Zapalování:{" "}
+                {selectedVehicle.ignitionOn === true
+                  ? "Zapnuto"
+                  : selectedVehicle.ignitionOn === false
+                    ? "Vypnuto"
+                    : "—"}
+              </p>
+              <p>
+                Tachometr:{" "}
+                {selectedVehicle.odometerKm != null
+                  ? `${Math.round(selectedVehicle.odometerKm)} km`
+                  : selectedVehicle.lastTelemetry?.odometerKm != null
+                    ? `${Math.round(Number(selectedVehicle.lastTelemetry.odometerKm))} km`
+                    : "—"}
               </p>
               <p>Poslední poloha: {selectedVehicle.lastLocationLabel ?? "—"}</p>
               <p className="text-xs text-muted-foreground">

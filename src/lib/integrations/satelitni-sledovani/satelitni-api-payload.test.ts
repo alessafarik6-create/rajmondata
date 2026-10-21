@@ -1,5 +1,10 @@
 import { extractListItems, normalizeSatelitniRecord, unwrapSatelitniResource } from "@/lib/integrations/satelitni-sledovani/api-payload";
-import { mapSatelitniVehicle, pickSatelitniExternalVehicleId } from "@/lib/integrations/satelitni-sledovani/mappers";
+import {
+  isValidFleetCoordinates,
+  mapSatelitniLatestPosition,
+  mapSatelitniVehicle,
+  pickSatelitniExternalVehicleId,
+} from "@/lib/integrations/satelitni-sledovani/mappers";
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
@@ -52,10 +57,26 @@ function testNormalizeRecord() {
   assert(n.id === 1 && n.label === "A", "normalize");
 }
 
+function testVehicleCodeV6031() {
+  const v = { id: 6031, code: "V6031", label: "kovokan s.r.o.", device_id: 43081 };
+  assert(pickSatelitniExternalVehicleId(v) === "6031", "numeric id preferred over code");
+  const onlyCode = { code: "V6031", device_id: 43081, label: "kovokan" };
+  assert(pickSatelitniExternalVehicleId(onlyCode) === "V6031", "code as vehicle id");
+}
+
+function testInvalidCoordinates() {
+  assert(!isValidFleetCoordinates(0, 0), "reject null island");
+  assert(!isValidFleetCoordinates(Number.NaN, 15), "reject nan");
+  const pos = mapSatelitniLatestPosition({ latitude: 0, longitude: 0, speed: 0 });
+  assert(pos === null, "mapper rejects 0,0");
+}
+
 testExtractVehiclesKey();
 testJsonApiAttributes();
 testDeviceIdFallback();
 testUnwrapPosition();
 testNormalizeRecord();
+testVehicleCodeV6031();
+testInvalidCoordinates();
 
 console.log("satelitni-api-payload.test.ts OK");

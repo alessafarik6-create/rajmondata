@@ -32,6 +32,14 @@ type DiagnosticsPayload = {
   message: string;
   responseShape: string | null;
   lookup43081?: { inApiList: boolean; note: string };
+  lookupV6031?: {
+    inApiList: boolean;
+    externalVehicleId: string | null;
+    externalDeviceId: string | null;
+    positionTest: string | null;
+  };
+  rateLimitRemaining?: string | null;
+  lastSyncError?: string | null;
   sampleVehicles?: { externalVehicleId: string; name: string; externalDeviceId: string | null }[];
 };
 
@@ -91,6 +99,28 @@ export function FleetIntegrationSettingsCard({ companyId }: { companyId: string 
     },
     [user, companyId, load, toast]
   );
+
+  const syncPositionsOnly = useCallback(async () => {
+    if (!user || !companyId) return;
+    setBusy(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/fleet/sync", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId, mode: "positions" }),
+      });
+      const data = await res.json();
+      toast({
+        variant: data.ok ? "default" : "destructive",
+        title: "GPS polohy",
+        description: data.message ?? data.error,
+      });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }, [user, companyId, load, toast]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !user || !companyId) return;
@@ -322,6 +352,17 @@ export function FleetIntegrationSettingsCard({ companyId }: { companyId: string 
                 <p>{diagnostics.message}</p>
                 {diagnostics.responseShape ? <p>Tvar odpovědi: {diagnostics.responseShape}</p> : null}
                 {diagnostics.lookup43081 ? <p>{diagnostics.lookup43081.note}</p> : null}
+                {diagnostics.lookupV6031?.positionTest ? (
+                  <p>
+                    V6031: {diagnostics.lookupV6031.positionTest}
+                    {diagnostics.lookupV6031.externalDeviceId
+                      ? ` (zařízení ${diagnostics.lookupV6031.externalDeviceId})`
+                      : ""}
+                  </p>
+                ) : null}
+                {diagnostics.rateLimitRemaining != null ? (
+                  <p>Rate limit zbývá: {diagnostics.rateLimitRemaining}</p>
+                ) : null}
                 {diagnostics.sampleVehicles?.length ? (
                   <ul className="list-disc pl-4">
                     {diagnostics.sampleVehicles.map((v) => (
@@ -347,6 +388,9 @@ export function FleetIntegrationSettingsCard({ companyId }: { companyId: string 
             <>
               <Button variant="outline" disabled={busy} onClick={() => void syncNow()}>
                 Synchronizovat nyní
+              </Button>
+              <Button variant="outline" disabled={busy} onClick={() => void syncPositionsOnly()}>
+                Obnovit GPS polohy
               </Button>
               <Button variant="outline" disabled={busy} onClick={() => void testVehiclesApi()}>
                 Otestovat API vozidel

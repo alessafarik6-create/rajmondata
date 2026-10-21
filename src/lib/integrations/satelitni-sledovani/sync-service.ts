@@ -1,18 +1,17 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { fleetIntegrationRef, fleetVehiclesCol, listFleetVehicles } from "@/lib/fleet/stores";
-import {
-  fetchAllSatelitniPages,
-  satelitniRequest,
-  unwrapSatelitniResource,
-} from "@/lib/integrations/satelitni-sledovani/client";
+import { fetchAllSatelitniPages } from "@/lib/integrations/satelitni-sledovani/client";
 import {
   fleetVehicleDocIdForExternal,
-  mapSatelitniLatestPosition,
+  isValidFleetCoordinates,
   mapSatelitniVehicle,
-  type SatelitniPositionApi,
   type SatelitniVehicleApi,
 } from "@/lib/integrations/satelitni-sledovani/mappers";
+import {
+  fetchSatelitniLatestPosition,
+  satelitniPositionUrlIdCandidates,
+} from "@/lib/integrations/satelitni-sledovani/position-fetch";
 import { satelitniSyncConcurrency } from "@/lib/integrations/satelitni-sledovani/config";
 import type { FleetVehicleDoc } from "@/lib/fleet/types";
 
@@ -58,13 +57,28 @@ export async function syncSatelitniVehicleCatalogForOrganization(
   let vehiclesImported = 0;
   let vehiclesSkipped = 0;
 
+  const existing = await listFleetVehicles(db, organizationId);
+  const byDevice = new Map(
+    existing
+      .filter((r) => r.externalDeviceId)
+      .map((r) => [String(r.externalDeviceId), r] as const)
+  );
+  const byExt = new Map(
+    existing
+      .filter((r) => r.externalVehicleId)
+      .map((r) => [String(r.externalVehicleId), r] as const)
+  );
+
   for (const v of vehicles) {
     const mapped = mapSatelitniVehicle(v);
     if (!mapped.externalVehicleId || mapped.externalVehicleId === "0") {
       vehiclesSkipped += 1;
       continue;
     }
-    const docId = fleetVehicleDocIdForExternal(mapped.externalVehicleId);
+    const matched =
+      (mapped.externalDeviceId ? byDevice.get(mapped.externalDeviceId) : undefined) ??
+      byExt.get(mapped.externalVehicleId);
+    const docId = matched?.id ?? fleetVehicleDocIdForExternal(mapped.externalVehicleId);
     const patch: Partial<FleetVehicleDoc> = {
       organizationId,
       name: mapped.name,
@@ -83,32 +97,66 @@ export async function syncSatelitniVehicleCatalogForOrganization(
   return { vehiclesFromApi: vehicles, vehiclesImported, vehiclesSkipped };
 }
 
+function buildSatelitniApiVehicleIndex(list: SatelitniVehicleApi[]) {
+  const byDevice = new Map<string, SatelitniVehicleApi>();
+  const byExt = new Map<string, SatelitniVehicleApi>();
+  for (const row of list) {
+    const mapped = mapSatelitniVehicle(row);
+    if (mapped.externalDeviceId) byDevice.set(mapped.externalDeviceId, row);
+    if (mapped.externalVehicleId && mapped.externalVehicleId !== "0") {
+      byExt.set(mapped.externalVehicleId, row);
+    }
+  }
+  return { byDevice, byExt };
+}
+
 export async function syncSatelitniVehiclePositionsForOrganization(
   db: Firestore,
   organizationId: string,
-  externalIds?: string[]
+  externalIds?: string[],
+  apiCatalog?: SatelitniVehicleApi[]
 ): Promise<{ vehiclesWithGps: number; errors: SatelitniSyncResult["errors"] }> {
-  const ids =
-    externalIds ??
-    (await listFleetVehicles(db, organizationId))
-      .filter((v) => v.externalProvider === "SATELITNI_SLEDOVANI" && v.externalVehicleId)
-      .map((v) => String(v.externalVehicleId));
+  const stored = (await listFleetVehicles(db, organizationId)).filter(
+    (v) => v.externalProvider === "SATELITNI_SLEDOVANI" && v.externalVehicleId
+  );
+
+  let apiIndex = apiCatalog ? buildSatelitniApiVehicleIndex(apiCatalog) : null;
+  if (!apiIndex) {
+    try {
+      const list = await fetchAllSatelitniPages<SatelitniVehicleApi>(db, organizationId, "/vehicles", {
+        pageLimit: 500,
+      });
+      apiIndex = buildSatelitniApiVehicleIndex(list);
+    } catch {
+      apiIndex = { byDevice: new Map(), byExt: new Map() };
+    }
+  }
+
+  const targets = externalIds?.length
+    ? stored.filter((v) => externalIds.includes(String(v.externalVehicleId)))
+    : stored;
 
   const errors: SatelitniSyncResult["errors"] = [];
   let vehiclesWithGps = 0;
 
-  await runLimited(ids, satelitniSyncConcurrency(), async (externalVehicleId) => {
+  await runLimited(targets, satelitniSyncConcurrency(), async (vehicle) => {
+    const ext = String(vehicle.externalVehicleId ?? "").trim();
+    if (!ext) return;
     try {
-      const { data } = await satelitniRequest<SatelitniPositionApi>(
-        db,
-        organizationId,
-        `/vehicles/${encodeURIComponent(externalVehicleId)}/positions/latest`
-      );
-      const pos = mapSatelitniLatestPosition(unwrapSatelitniResource<SatelitniPositionApi>(data));
-      if (!pos) return;
+      const apiRow =
+        apiIndex!.byExt.get(ext) ??
+        (vehicle.externalDeviceId ? apiIndex!.byDevice.get(String(vehicle.externalDeviceId)) : undefined);
+      const candidates = satelitniPositionUrlIdCandidates(vehicle, apiRow);
+      const pos = await fetchSatelitniLatestPosition(db, organizationId, candidates);
+      if (!pos) {
+        errors.push({ vehicleId: ext, message: "API nevrátilo platné souřadnice." });
+        return;
+      }
       vehiclesWithGps += 1;
-      const docId = fleetVehicleDocIdForExternal(externalVehicleId);
-      await fleetVehiclesCol(db, organizationId).doc(docId).set(
+      const odometerRaw = pos.telemetry?.odometerKm;
+      const odometerKm =
+        typeof odometerRaw === "number" && Number.isFinite(odometerRaw) ? odometerRaw : undefined;
+      await fleetVehiclesCol(db, organizationId).doc(vehicle.id).set(
         {
           lastLatitude: pos.lat,
           lastLongitude: pos.lng,
@@ -119,15 +167,17 @@ export async function syncSatelitniVehiclePositionsForOrganization(
             ? Timestamp.fromDate(new Date(pos.receivedAt))
             : FieldValue.serverTimestamp(),
           ignitionOn: pos.ignitionOn,
-          externalDeviceId: pos.deviceId ?? undefined,
+          externalDeviceId: pos.deviceId ?? vehicle.externalDeviceId ?? undefined,
+          externalVehicleId: apiRow ? mapSatelitniVehicle(apiRow).externalVehicleId : ext,
           lastTelemetry: pos.telemetry ?? null,
+          ...(odometerKm != null ? { odometerKm } : {}),
           updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
     } catch (e) {
       errors.push({
-        vehicleId: externalVehicleId,
+        vehicleId: ext,
         message: e instanceof Error ? e.message : "Chyba polohy",
       });
     }
@@ -158,7 +208,10 @@ export async function countStoredSatelitniFleet(db: Firestore, organizationId: s
   const vehicles = await listFleetVehicles(db, organizationId);
   const satelitni = vehicles.filter((v) => v.externalProvider === "SATELITNI_SLEDOVANI");
   const withGps = satelitni.filter(
-    (v) => v.lastLatitude != null && v.lastLongitude != null && Number.isFinite(v.lastLatitude)
+    (v) =>
+      v.lastLatitude != null &&
+      v.lastLongitude != null &&
+      isValidFleetCoordinates(v.lastLatitude, v.lastLongitude)
   );
   return {
     storedVehicleCount: satelitni.length,
@@ -191,6 +244,40 @@ async function persistSyncMeta(
   return lastSyncAt;
 }
 
+const LIVE_POSITION_MIN_INTERVAL_MS = 12_000;
+
+/** Obnoví GPS polohy z API, pokud od posledního běhu uplynulo ≥12 s (pro mapu vozového parku). */
+export async function refreshSatelitniLivePositionsIfDue(
+  db: Firestore,
+  organizationId: string,
+  force = false
+): Promise<{ refreshed: boolean; vehiclesWithGps?: number }> {
+  const integration = await fleetIntegrationRef(db, organizationId).get();
+  const data = integration.data() as Record<string, unknown> | undefined;
+  const last = data?.lastPositionSyncAt;
+  const lastMs =
+    last && typeof (last as { toDate?: () => Date }).toDate === "function"
+      ? (last as { toDate: () => Date }).toDate().getTime()
+      : 0;
+  if (!force && lastMs && Date.now() - lastMs < LIVE_POSITION_MIN_INTERVAL_MS) {
+    return { refreshed: false };
+  }
+  const { vehiclesWithGps, errors } = await syncSatelitniVehiclePositionsForOrganization(
+    db,
+    organizationId
+  );
+  await fleetIntegrationRef(db, organizationId).set(
+    {
+      lastPositionSyncAt: FieldValue.serverTimestamp(),
+      lastSyncGpsCount: vehiclesWithGps,
+      lastSyncError: errors.length ? errors[0]?.message?.slice(0, 500) ?? null : null,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+  return { refreshed: true, vehiclesWithGps };
+}
+
 export async function syncSatelitniFleetForOrganization(
   db: Firestore,
   organizationId: string,
@@ -200,6 +287,7 @@ export async function syncSatelitniFleetForOrganization(
   let vehiclesUpdated = 0;
   let vehiclesSkipped = 0;
   let externalIds: string[] | undefined;
+  let apiCatalogForPositions: SatelitniVehicleApi[] | undefined;
   const errors: SatelitniSyncResult["errors"] = [];
 
   if (mode === "full" || mode === "catalog") {
@@ -207,6 +295,7 @@ export async function syncSatelitniFleetForOrganization(
     vehiclesTotal = catalog.vehiclesFromApi.length;
     vehiclesUpdated = catalog.vehiclesImported;
     vehiclesSkipped = catalog.vehiclesSkipped;
+    apiCatalogForPositions = catalog.vehiclesFromApi;
     externalIds = catalog.vehiclesFromApi
       .map((v) => mapSatelitniVehicle(v).externalVehicleId)
       .filter((id) => id && id !== "0");
@@ -214,7 +303,12 @@ export async function syncSatelitniFleetForOrganization(
 
   let vehiclesWithGps = 0;
   if (mode === "full" || mode === "positions") {
-    const pos = await syncSatelitniVehiclePositionsForOrganization(db, organizationId, externalIds);
+    const pos = await syncSatelitniVehiclePositionsForOrganization(
+      db,
+      organizationId,
+      externalIds,
+      apiCatalogForPositions
+    );
     vehiclesWithGps = pos.vehiclesWithGps;
     errors.push(...pos.errors);
     try {
