@@ -43,6 +43,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { usePortalModuleAccess } from '@/hooks/use-portal-module-access';
 
 export default function CustomersPage() {
   const { user } = useUser();
@@ -52,6 +53,7 @@ export default function CustomersPage() {
   const userRef = useMemoFirebase(() => user && firestore ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
   const companyId = profile?.companyId;
+  const { canWrite: canWriteCustomers } = usePortalModuleAccess("customers");
 
   const customersQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -77,6 +79,14 @@ export default function CustomersPage() {
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyId) return;
+    if (!canWriteCustomers) {
+      toast({
+        variant: 'destructive',
+        title: 'Nedostatečná oprávnění',
+        description: 'Vytvoření zákazníka vyžaduje oprávnění Zákazníci = Zápis.',
+      });
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -145,6 +155,7 @@ export default function CustomersPage() {
           <h1 className="portal-page-title text-2xl sm:text-3xl">Adresář zákazníků</h1>
           <p className="portal-page-description">Spravujte vztahy s klienty a kontaktní informace vaší firmy.</p>
         </div>
+        {canWriteCustomers ? (
         <Dialog open={isNewCustomerOpen} onOpenChange={setIsNewCustomerOpen}>
           <DialogTrigger asChild>
             <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
@@ -243,6 +254,7 @@ export default function CustomersPage() {
             </form>
           </DialogContent>
         </Dialog>
+        ) : null}
       </div>
 
       <Card className="bg-surface border-border overflow-hidden">

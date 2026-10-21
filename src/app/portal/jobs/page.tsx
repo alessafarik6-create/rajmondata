@@ -74,6 +74,7 @@ import {
   seeAllOrganizationRecordsForModule,
 } from "@/lib/portal-data-scope";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
+import { isCompanyOrgOwnerOrAdmin } from "@/lib/company-privilege";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
 import { MeasurementPhotoCaptureDialog } from "@/components/jobs/measurement-photo-capture-dialog";
@@ -213,15 +214,19 @@ function JobsPageContent() {
     [firestore, user]
   );
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
-  const { canRead: canReadJobs, canExport: canExportJobs } = usePortalModuleAccess("jobs");
+  const {
+    canRead: canReadJobs,
+    canWrite: canWriteJobs,
+    canExport: canExportJobs,
+  } = usePortalModuleAccess("jobs");
   const { canExport: canExportFinance } = usePortalModuleAccess("finance");
   const canExportContracted = canExportJobs && canExportFinance;
 
   const companyId = profile?.companyId;
-  const isAdmin =
-    profile?.role === "owner" ||
-    profile?.role === "admin" ||
-    profile?.globalRoles?.includes("super_admin");
+  const canManageJobTemplates = isCompanyOrgOwnerOrAdmin(
+    String(profile?.role ?? ""),
+    profile?.globalRoles
+  );
 
   const canManageTasks =
     profile?.role === "owner" ||
@@ -518,10 +523,10 @@ function JobsPageContent() {
 
   const jobsForExport = displayJobs;
   useEffect(() => {
-    if (!isAdmin && workContractTemplatesManagerOpen) {
+    if (!canManageJobTemplates && workContractTemplatesManagerOpen) {
       setWorkContractTemplatesManagerOpen(false);
     }
-  }, [isAdmin, workContractTemplatesManagerOpen]);
+  }, [canManageJobTemplates, workContractTemplatesManagerOpen]);
 
   const selectedTemplate = selectedTemplateId
     ? (templatesList.find((t) => t?.id === selectedTemplateId) as
@@ -547,6 +552,14 @@ function JobsPageContent() {
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyId || !user) return;
+    if (!canWriteJobs) {
+      toast({
+        variant: "destructive",
+        title: "Nedostatečná oprávnění",
+        description: "Vytvoření zakázky vyžaduje oprávnění Zakázky = Zápis.",
+      });
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -1165,7 +1178,7 @@ function JobsPageContent() {
                 </div>
               );
             }
-            if (isAdmin) {
+            if (canManageJobTemplates) {
               row1.push(
                 <Link key="sablony" href="/portal/jobs/templates" className="min-w-0">
                   <div className={tileClass}>
@@ -1178,28 +1191,39 @@ function JobsPageContent() {
             return (
               <div className="space-y-1.5 pb-2">
                 <div className="grid grid-cols-4 gap-1.5">{row1}</div>
-                {isAdmin ? (
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      className="min-w-0 text-left"
-                      onClick={() => setWorkContractTemplatesManagerOpen(true)}
-                    >
-                      <div className={tileClass}>
-                        <FileText className="h-5 w-5 shrink-0 text-orange-400" />
-                        <span className={labelClass}>Šablony SOD</span>
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      className="min-w-0 text-left"
-                      onClick={() => setIsNewJobOpen(true)}
-                    >
-                      <div className={tileClass}>
-                        <Plus className="h-5 w-5 shrink-0 text-orange-400" />
-                        <span className={labelClass}>Nová zakázka</span>
-                      </div>
-                    </button>
+                {canManageJobTemplates || canWriteJobs ? (
+                  <div
+                    className={cn(
+                      "grid gap-1.5",
+                      canManageJobTemplates && canWriteJobs
+                        ? "grid-cols-2"
+                        : "grid-cols-1"
+                    )}
+                  >
+                    {canManageJobTemplates ? (
+                      <button
+                        type="button"
+                        className="min-w-0 text-left"
+                        onClick={() => setWorkContractTemplatesManagerOpen(true)}
+                      >
+                        <div className={tileClass}>
+                          <FileText className="h-5 w-5 shrink-0 text-orange-400" />
+                          <span className={labelClass}>Šablony SOD</span>
+                        </div>
+                      </button>
+                    ) : null}
+                    {canWriteJobs ? (
+                      <button
+                        type="button"
+                        className="min-w-0 text-left"
+                        onClick={() => setIsNewJobOpen(true)}
+                      >
+                        <div className={tileClass}>
+                          <Plus className="h-5 w-5 shrink-0 text-orange-400" />
+                          <span className={labelClass}>Nová zakázka</span>
+                        </div>
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -1254,40 +1278,14 @@ function JobsPageContent() {
               onExportContractedCsv={() => void handleExportContractedJobs("csv")}
             />
           ) : null}
-          {isAdmin && (
-            <>
-              <Link href="/portal/jobs/templates">
-                <Button variant="outlineLight" className="gap-2 min-h-[44px]">
-                  <FileStack className="w-4 h-4" /> Šablony
-                </Button>
-              </Link>
-              {showTasksButton && (
-                <Button
-                  type="button"
-                  variant="outlineLight"
-                  className="gap-2 min-h-[44px]"
-                  onClick={() => setTasksDialogOpen(true)}
-                >
-                  <ListTodo className="w-4 h-4" /> Úkoly
-                </Button>
-              )}
-              <Button
-                type="button"
-                className="gap-2 min-h-[44px] bg-orange-500 hover:bg-orange-600 text-white border-0 shadow-md shadow-orange-500/25"
-                onClick={() => setWorkContractTemplatesManagerOpen(true)}
-              >
-                <FileText className="w-4 h-4" /> Šablony SOD
+          {canManageJobTemplates ? (
+            <Link href="/portal/jobs/templates">
+              <Button variant="outlineLight" className="gap-2 min-h-[44px]">
+                <FileStack className="w-4 h-4" /> Šablony
               </Button>
-              <Button
-                type="button"
-                className="gap-2 min-h-[44px]"
-                onClick={() => setIsNewJobOpen(true)}
-              >
-                <Plus className="w-4 h-4" /> Nová zakázka
-              </Button>
-            </>
-          )}
-          {!isAdmin && showTasksButton && (
+            </Link>
+          ) : null}
+          {showTasksButton ? (
             <Button
               type="button"
               variant="outlineLight"
@@ -1296,7 +1294,25 @@ function JobsPageContent() {
             >
               <ListTodo className="w-4 h-4" /> Úkoly
             </Button>
-          )}
+          ) : null}
+          {canManageJobTemplates ? (
+            <Button
+              type="button"
+              className="gap-2 min-h-[44px] bg-orange-500 hover:bg-orange-600 text-white border-0 shadow-md shadow-orange-500/25"
+              onClick={() => setWorkContractTemplatesManagerOpen(true)}
+            >
+              <FileText className="w-4 h-4" /> Šablony SOD
+            </Button>
+          ) : null}
+          {canWriteJobs ? (
+            <Button
+              type="button"
+              className="gap-2 min-h-[44px]"
+              onClick={() => setIsNewJobOpen(true)}
+            >
+              <Plus className="w-4 h-4" /> Nová zakázka
+            </Button>
+          ) : null}
         </div>
       </div>
       ) : null}
@@ -1322,7 +1338,7 @@ function JobsPageContent() {
         />
       ) : null}
 
-      {isAdmin ? (
+      {canWriteJobs ? (
         <Dialog open={isNewJobOpen} onOpenChange={setIsNewJobOpen}>
                 <DialogContent
                   className="bg-white border-slate-200 text-slate-900 max-w-3xl w-[95vw] sm:w-full max-h-[90vh] flex flex-col"
@@ -1971,7 +1987,7 @@ function JobsPageContent() {
                 getCustomerName={getCustomerName}
                 getCustomerAddress={getCustomerAddress}
                 isPortalEmployee={isPortalEmployee}
-                isAdmin={isAdmin}
+                isAdmin={canWriteJobs}
                 dark={belowLg}
               />
             )
@@ -1991,7 +2007,7 @@ function JobsPageContent() {
               <p className={belowLg ? "text-slate-200" : undefined}>
                 Zatím nemáte žádné zakázky.
               </p>
-              {isAdmin && (
+              {canWriteJobs ? (
                 <Button
                   variant="link"
                   className={cn(
@@ -2003,7 +2019,7 @@ function JobsPageContent() {
                 >
                   Vytvořit první projekt
                 </Button>
-              )}
+              ) : null}
             </div>
           )}
         </CardContent>

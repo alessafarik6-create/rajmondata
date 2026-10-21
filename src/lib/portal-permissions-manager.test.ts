@@ -3,6 +3,9 @@ import {
   applyManagerPermissionCaps,
   buildManagerPermissionPreset,
   canAccessPortalModule,
+  canCreateModule,
+  canReadModule,
+  canWriteModule,
   resolveEffectivePortalPermissions,
   sanitizePortalPermissionsForOrgRole,
 } from "./portal-permissions";
@@ -67,6 +70,37 @@ test("resolveEffectivePortalPermissions manager default preset", () => {
   });
   assert.equal(p.settings, "none");
   assert.equal(canAccessPortalModule(p, "jobs", "write"), true);
+});
+
+test("manager with jobs write can create/update via canWriteModule", () => {
+  const p = resolveEffectivePortalPermissions({
+    role: "manager",
+    employeeDoc: {
+      portalModulePermissionsMaterialized: true,
+      portalModulePermissions: {
+        jobs: "write",
+        customers: "write",
+        offers: "write",
+        leads: "read",
+      },
+    },
+  });
+  assert.equal(canWriteModule(p, "jobs", "manager"), true);
+  assert.equal(canCreateModule(p, "jobs", "manager"), true);
+  assert.equal(canReadModule(p, "leads"), true);
+  assert.equal(canWriteModule(p, "leads", "manager"), false);
+});
+
+test("employee read cannot write jobs", () => {
+  const p = resolveEffectivePortalPermissions({
+    role: "employee",
+    employeeDoc: {
+      portalModulePermissionsMaterialized: true,
+      portalModulePermissions: { jobs: "read" },
+    },
+  });
+  assert.equal(canReadModule(p, "jobs"), true);
+  assert.equal(canWriteModule(p, "jobs", "employee"), false);
 });
 
 test("sanitizePortalPermissionsForOrgRole only affects manager", () => {

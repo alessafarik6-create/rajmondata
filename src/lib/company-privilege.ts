@@ -15,3 +15,14 @@ export function isCompanyPrivileged(role: string, globalRoles: string[]): boolea
   const r = normalizeCompanyRole(role);
   return ["owner", "admin", "manager"].includes(r);
 }
+
+/** Správa organizace (šablony, mazání, nastavení) — ne zaměstnanecká matice modulů. */
+export function isCompanyOrgOwnerOrAdmin(
+  role: string,
+  globalRoles?: string[] | null
+): boolean {
+  const globals = Array.isArray(globalRoles) ? globalRoles : [];
+  if (globals.includes("super_admin")) return true;
+  const r = normalizeCompanyRole(role);
+  return r === "owner" || r === "admin";
+}

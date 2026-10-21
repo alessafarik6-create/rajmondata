@@ -294,6 +294,30 @@ export function canWriteModule(
   return portalPermissionsAllowMutation(permissions, moduleId, role ?? "");
 }
 
+/** Vytvoření záznamu v modulu — stejné jako WRITE (export má READ). */
+export function canCreateModule(
+  permissions: Record<PortalModuleId, PortalAccessLevel>,
+  moduleId: PortalModuleId,
+  role?: string
+): boolean {
+  return canWriteModule(permissions, moduleId, role);
+}
+
+export function canUpdateModule(
+  permissions: Record<PortalModuleId, PortalAccessLevel>,
+  moduleId: PortalModuleId,
+  role?: string
+): boolean {
+  return canWriteModule(permissions, moduleId, role);
+}
+
+export function canExportModule(
+  permissions: Record<PortalModuleId, PortalAccessLevel>,
+  moduleId: PortalModuleId
+): boolean {
+  return canReadModule(permissions, moduleId);
+}
+
 export function canDeleteModule(
   permissions: Record<PortalModuleId, PortalAccessLevel>,
   moduleId: PortalModuleId,

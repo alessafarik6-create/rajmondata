@@ -95,7 +95,7 @@ import type { JobDetailCollapsibleSectionId } from "@/lib/job-detail-collapsible
 import { readJobQuestionnaireSnapshot } from "@/lib/customer-job-tasks";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { canAccessCompanyModule } from "@/lib/platform-access";
-import { isCompanyPrivileged } from "@/lib/company-privilege";
+import { isCompanyOrgOwnerOrAdmin, isCompanyPrivileged } from "@/lib/company-privilege";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
 import {
   JobDetailExportPrintMenu,
@@ -1273,13 +1273,16 @@ export function JobDetailPageContent({
   );
   const { data: template } = useDoc(templateRef);
 
-  const isAdmin =
-    profile?.role === "owner" ||
-    profile?.role === "admin" ||
-    profile?.globalRoles?.includes("super_admin");
+  const isOrgOwnerAdmin = isCompanyOrgOwnerOrAdmin(
+    String(profile?.role ?? ""),
+    profile?.globalRoles
+  );
 
-  const { canWrite: canWriteJobsModule, canExport: canExportJobsModule } =
-    usePortalModuleAccess("jobs");
+  const {
+    canRead: canReadJobsModule,
+    canWrite: canWriteJobsModule,
+    canExport: canExportJobsModule,
+  } = usePortalModuleAccess("jobs");
   const { canExport: canExportFinanceModule } = usePortalModuleAccess("finance");
   const { canExport: canExportInvoicesModule } = usePortalModuleAccess("invoices");
   const { canExport: canExportDocumentsModule } = usePortalModuleAccess("documents");
@@ -1287,13 +1290,8 @@ export function JobDetailPageContent({
   const { canExport: canExportScheduleModule } = usePortalModuleAccess("schedule");
   const [jobExportBusy, setJobExportBusy] = useState(false);
 
-  const canManageFolders =
-    canWriteJobsModule &&
-    (profile?.role === "owner" ||
-      profile?.role === "admin" ||
-      profile?.role === "manager" ||
-      profile?.role === "accountant" ||
-      profile?.globalRoles?.includes("super_admin"));
+  /** Zápis v modulu Zakázky — materiál, složky, smlouvy, úkoly (nezávisle na roli owner/admin). */
+  const canManageFolders = canWriteJobsModule;
 
   const employeeSelfRef = useMemoFirebase(
     () =>
@@ -1785,7 +1783,7 @@ export function JobDetailPageContent({
   })();
 
   const sendCustomerAccessEmailFromJob = async () => {
-    if (!user || !isAdmin || !customerId) return;
+    if (!user || !isOrgOwnerAdmin || !customerId) return;
     setCustomerAccessEmailSending(true);
     try {
       const idToken = await user.getIdToken();
@@ -2020,8 +2018,8 @@ export function JobDetailPageContent({
               jobId={String(jobFirestoreId)}
               user={user}
               authorName={cuttingPlanAuthorName}
-              canManage={isAdmin}
-              canView={isAdmin || canManageFolders || profile?.role === "employee"}
+              canManage={canManageFolders}
+              canView={canReadJobsModule || canManageFolders}
             />
           ) : null,
       },
@@ -2395,7 +2393,7 @@ export function JobDetailPageContent({
           companyId &&
             jobFirestoreId &&
             profile?.role !== "customer" &&
-            (isAdmin || canManageFolders)
+            canManageFolders
         ),
         summary: contractCount > 0 ? `${contractCount} smluv` : "Smlouva a zálohy",
         children:
@@ -2403,12 +2401,12 @@ export function JobDetailPageContent({
           jobFirestoreId &&
           job &&
           profile?.role !== "customer" &&
-          (isAdmin || canManageFolders) ? (
+          canManageFolders ? (
             <JobContractDepositSection
               jobRef={jobRef}
               job={jobRecord}
-              canEdit={isAdmin}
-              canView={isAdmin || canManageFolders}
+              canEdit={canWriteJobsModule}
+              canView={canReadJobsModule || canWriteJobsModule}
               defaultTotalPriceGross={jobBudgetBreakdown?.budgetGross ?? null}
               workContractsForJob={workContractsForJob}
               jobInvoices={jobInvoicesForDeposit}
@@ -2463,7 +2461,7 @@ export function JobDetailPageContent({
     profile,
     canEditMeetingRecords,
     canManageFolders,
-    isAdmin,
+    isOrgOwnerAdmin,
     jobBudgetBreakdown,
     jobExpenseTotals,
     remainingBudgetAfterExpensesGrossKc,
@@ -9060,7 +9058,7 @@ export function JobDetailPageContent({
 
     setJobEditTemplateValues((j.templateValues as JobTemplateValues) || {});
     setEditJobDialogOpen(true);
-  }, [isAdmin, job, toast]);
+  }, [canWriteJobsModule, job, toast]);
 
   const saveJobEdit = useCallback(
     async (e: React.FormEvent) => {
@@ -9068,11 +9066,11 @@ export function JobDetailPageContent({
 
       if (!jobRef) return;
       if (!firestore || !companyId) return;
-      if (!isAdmin) {
+      if (!canWriteJobsModule) {
         toast({
           variant: "destructive",
           title: "Nedostatečná oprávnění",
-          description: "Nemáte oprávnění upravit zakázku.",
+          description: "Úpravu zakázky povoluje oprávnění Zakázky = Zápis.",
         });
         return;
       }
@@ -9339,7 +9337,7 @@ export function JobDetailPageContent({
       jobRef,
       firestore,
       companyId,
-      isAdmin,
+      canWriteJobsModule,
       jobEditForm,
       customers,
       job,
@@ -10672,7 +10670,7 @@ export function JobDetailPageContent({
         </div>
 
         <div className={JD.headerActionsRow}>
-          {isAdmin && (
+          {canWriteJobsModule ? (
             <Select value={job?.status ?? "nová"} onValueChange={handleStatusChange}>
               <SelectTrigger
                 className={cn(
@@ -10690,7 +10688,7 @@ export function JobDetailPageContent({
                 ))}
               </SelectContent>
             </Select>
-          )}
+          ) : null}
 
           {canExportJobsModule ? (
             <>
@@ -10744,7 +10742,7 @@ export function JobDetailPageContent({
             <FileText className="h-4 w-4" /> Smlouva
           </Button>
 
-          {isAdmin ? (
+          {isOrgOwnerAdmin ? (
             <>
               <Button
                 variant="destructive"
@@ -10815,7 +10813,7 @@ export function JobDetailPageContent({
                         : ""}
                     </p>
                   ) : null}
-                  {isAdmin && customerId ? (
+                  {isOrgOwnerAdmin && customerId ? (
                     <Button
                       type="button"
                       variant="outline"
@@ -10830,7 +10828,7 @@ export function JobDetailPageContent({
                       Odeslat přístup e-mailem
                     </Button>
                   ) : null}
-                  {isAdmin && jobFirestoreId && customerPortalPreviewGate.show ? (
+                  {isOrgOwnerAdmin && jobFirestoreId && customerPortalPreviewGate.show ? (
                     customerPortalPreviewGate.disabled ? (
                       <Button
                         type="button"
@@ -11179,7 +11177,7 @@ export function JobDetailPageContent({
             onOpen={() => openDeepSection("measurement-photos")}
             openLabel="Otevřít"
           />
-          {(isAdmin || canManageFolders) && companyId && jobFirestoreId ? (
+          {canManageFolders && companyId && jobFirestoreId ? (
             <JobDetailSummaryCard
               title="Položkový rozpočet"
               icon={<FileText aria-hidden />}
@@ -11831,7 +11829,7 @@ export function JobDetailPageContent({
               }
               user={user}
               canManage={canManageFolders}
-              canSoftDeleteInvoices={isAdmin}
+              canSoftDeleteInvoices={isOrgOwnerAdmin}
               jobStatus={
                 job && typeof (job as { status?: string }).status === "string"
                   ? String((job as { status: string }).status)
@@ -12143,7 +12141,7 @@ export function JobDetailPageContent({
         </DialogContent>
       </Dialog>
 
-      {user && companyId && jobFirestoreId && (isAdmin || canManageFolders) ? (
+      {user && companyId && jobFirestoreId && canManageFolders ? (
         <section
           className={JD.sectionBand}
           aria-labelledby="job-work-budget-heading"
