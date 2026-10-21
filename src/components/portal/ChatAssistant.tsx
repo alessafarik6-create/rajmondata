@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { collection, getDocs, limit, query, where } from "firebase/firestore";
 import { BookOpen, Loader2, MapPin, Mic, Send, Sparkles, Square, User } from "lucide-react";
@@ -91,8 +92,14 @@ export function ChatAssistant({ tutorEnabled = true }: ChatAssistantProps) {
   const onChatRoute = pathname.startsWith("/portal/chat") || pathname.includes("/messages");
   const fabDrag = useDraggableFabPosition({
     enabled: true,
+    isMobile: isMobileLayout,
     avoidBottomInset: onChatRoute ? 72 : 0,
   });
+  const [fabPortalHost, setFabPortalHost] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setFabPortalHost(document.body);
+  }, []);
 
   const [open, setOpen] = useState(false);
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("help");
@@ -305,14 +312,58 @@ export function ChatAssistant({ tutorEnabled = true }: ChatAssistantProps) {
     }
   };
 
-  const fabStyle = {
+  const fabStyle: React.CSSProperties = {
+    position: "fixed",
     left: fabDrag.pos.left,
     top: fabDrag.pos.top,
-    touchAction: "none" as const,
+    width: fabDrag.fabSize,
+    height: fabDrag.fabSize,
+    touchAction: "none",
+    zIndex: 70,
   };
+
+  const fabButton =
+    fabDrag.ready && !open && !welcomeOpen ? (
+      <button
+        type="button"
+        aria-label="Otevřít RAJMONDATA AI asistenta"
+        onPointerDown={fabDrag.onPointerDown}
+        onPointerMove={fabDrag.onPointerMove}
+        onPointerUp={fabDrag.onPointerUp}
+        onClick={() => {
+          if (fabDrag.wasDragged()) {
+            fabDrag.resetDragFlag();
+            return;
+          }
+          setOpen(true);
+        }}
+        style={fabStyle}
+        className={cn(
+          "flex items-center justify-center rounded-full shadow-xl print:hidden",
+          "bg-orange-500 text-white hover:bg-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2",
+          "transition-transform hover:scale-105 active:scale-95",
+          isMobileLayout ? "min-h-[56px] min-w-[56px]" : "min-h-[60px] min-w-[60px]"
+        )}
+      >
+        <Sparkles className={cn(isMobileLayout ? "h-7 w-7" : "h-8 w-8")} aria-hidden />
+      </button>
+    ) : null;
 
   return (
     <>
+      {fabPortalHost
+        ? createPortal(
+            <>
+              <div
+                id="rajmondata-safe-area-probe"
+                className="pointer-events-none fixed bottom-0 right-0 w-px h-[env(safe-area-inset-bottom,0px)]"
+                aria-hidden
+              />
+              {fabButton}
+            </>,
+            fabPortalHost
+          )
+        : null}
       {showTutor ? (
         <Dialog open={welcomeOpen} onOpenChange={setWelcomeOpen}>
           <DialogContent className="sm:max-w-lg">
@@ -335,31 +386,6 @@ export function ChatAssistant({ tutorEnabled = true }: ChatAssistantProps) {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      ) : null}
-
-      {!open ? (
-        <button
-          type="button"
-          aria-label="Otevřít RAJMONDATA AI asistenta"
-          onPointerDown={fabDrag.onPointerDown}
-          onPointerMove={fabDrag.onPointerMove}
-          onPointerUp={fabDrag.onPointerUp}
-          onClick={() => {
-            if (fabDrag.wasDragged()) {
-              fabDrag.resetDragFlag();
-              return;
-            }
-            setOpen(true);
-          }}
-          style={fabStyle}
-          className={cn(
-            "fixed z-[80] flex h-14 w-14 min-h-[56px] min-w-[56px] items-center justify-center rounded-full shadow-lg print:hidden",
-            "bg-orange-500 text-white hover:bg-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2",
-            "transition-transform hover:scale-105 active:scale-95 animate-in fade-in zoom-in duration-500"
-          )}
-        >
-          <Sparkles className="h-7 w-7" aria-hidden />
-        </button>
       ) : null}
 
       <Sheet open={open} onOpenChange={setOpen}>
