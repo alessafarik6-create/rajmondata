@@ -6,7 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { PublicMarketingHeader } from "@/components/marketing/public-marketing-header";
 import { ProductDemoPortalShell } from "@/components/ai-tutor/product-demo-portal-shell";
+import { ProductTourGuidePanel } from "@/components/ai-tutor/product-tour-guide-panel";
+import { useProductTourDemo } from "@/contexts/product-tour-demo-context";
 import { buildDetailedDemoSteps, detailedChapterLabels } from "@/lib/ai-tutor/product-demo-detailed";
+import { buildCompleteDemoSteps } from "@/lib/product-tour/complete-tour-script";
+import {
+  COMPANY_TYPE_LABELS,
+  type CompanyType,
+} from "@/lib/product-tour/company-type";
 import {
   quickDemoSteps,
   type ProductDemoInterest,
@@ -29,6 +36,8 @@ import { Slider } from "@/components/ui/slider";
 
 const VISITOR_KEY = "rajmondata_vid_v1";
 const MODE_KEY = "rajmondata_demo_mode";
+const SESSION_KEY = "rajmondata_demo_session_v2";
+const COMPANY_KEY = "rajmondata_demo_company_type";
 
 function visitorId(): string {
   try {
@@ -62,19 +71,21 @@ export function ProductDemoPage() {
   const [muted, setMuted] = useState(false);
   const [started, setStarted] = useState(false);
   const [completed, setCompleted] = useState(false);
-  const [ask, setAsk] = useState("");
-  const [askReply, setAskReply] = useState<string | null>(null);
+  const [companyType, setCompanyType] = useState<CompanyType | null>(null);
   const [needsSoundGesture, setNeedsSoundGesture] = useState(false);
+  const [offerContinue, setOfferContinue] = useState(false);
 
+  const { demo, tourPausedByUser, setTourPausedByUser, applyDemoActions } = useProductTourDemo();
   const narration = useProductTourNarration();
   const skipNextPlayRef = useRef(false);
   const startedRef = useRef(false);
   const pausedRef = useRef(false);
-  pausedRef.current = paused;
+  pausedRef.current = paused || tourPausedByUser;
   startedRef.current = started;
 
   const steps = useMemo((): ProductDemoStep[] => {
     if (mode === "detailed") return buildDetailedDemoSteps();
+    if (mode === "complete") return buildCompleteDemoSteps();
     if (mode === "quick") return quickDemoSteps(interest);
     return [];
   }, [mode, interest]);
@@ -82,8 +93,10 @@ export function ProductDemoPage() {
   const step = steps[stepIndex];
   const chapters = useMemo(() => (mode === "detailed" ? detailedChapterLabels() : []), [mode]);
 
+  const tourPaused = paused || tourPausedByUser;
+
   const advanceStep = useCallback(() => {
-    if (pausedRef.current) return;
+    if (pausedRef.current || tourPausedByUser) return;
     setStepIndex((i) => {
       if (i >= steps.length - 1) {
         setCompleted(true);
@@ -94,7 +107,19 @@ export function ProductDemoPage() {
       trackDemo("demo_step_viewed", { stepId: steps[next]?.id ?? "", mode: mode ?? "" });
       return next;
     });
-  }, [steps, mode]);
+  }, [steps, mode, tourPausedByUser]);
+
+  useEffect(() => {
+    if (!mode) return;
+    try {
+      sessionStorage.setItem(
+        SESSION_KEY,
+        JSON.stringify({ mode, stepIndex, started, companyType })
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [mode, stepIndex, started, companyType]);
 
   const playCurrentStep = useCallback(
     (index: number) => {
@@ -129,7 +154,15 @@ export function ProductDemoPage() {
     trackDemo("demo_opened");
     try {
       const saved = sessionStorage.getItem(MODE_KEY) as ProductDemoMode | null;
-      if (saved === "quick" || saved === "detailed") setMode(saved);
+      if (saved === "quick" || saved === "detailed" || saved === "complete") setMode(saved);
+      const ct = sessionStorage.getItem(COMPANY_KEY) as CompanyType | null;
+      if (ct && COMPANY_TYPE_LABELS[ct]) setCompanyType(ct);
+      const sess = sessionStorage.getItem(SESSION_KEY);
+      if (sess) {
+        const p = JSON.parse(sess) as { stepIndex?: number; started?: boolean };
+        if (typeof p.stepIndex === "number") setStepIndex(p.stepIndex);
+        if (p.started) setStarted(true);
+      }
     } catch {
       /* ignore */
     }
@@ -141,7 +174,7 @@ export function ProductDemoPage() {
       skipNextPlayRef.current = false;
       return;
     }
-    if (paused) {
+    if (tourPaused) {
       narration.pause();
       return;
     }
@@ -150,7 +183,7 @@ export function ProductDemoPage() {
     void narration.preloadSteps(preload);
     return () => narration.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [started, stepIndex, step?.id, muted, paused]);
+  }, [started, stepIndex, step?.id, muted, tourPaused]);
 
   useEffect(() => {
     if (!mode || !steps.length) return;
@@ -169,7 +202,13 @@ export function ProductDemoPage() {
     } catch {
       /* ignore */
     }
-    trackDemo(m === "quick" ? "demo_quick_started" : "demo_detailed_started");
+    trackDemo(
+      m === "quick"
+        ? "demo_quick_started"
+        : m === "complete"
+          ? "demo_complete_started"
+          : "demo_detailed_started"
+    );
   };
 
   const beginWithVoice = async () => {
@@ -265,19 +304,40 @@ export function ProductDemoPage() {
     }
   };
 
-  const registerHref = `/register?demoMode=${encodeURIComponent(mode ?? "quick")}`;
+  const registerHref = `/register?demoMode=${encodeURIComponent(mode ?? "quick")}${
+    companyType ? `&companyType=${encodeURIComponent(companyType)}` : ""
+  }`;
 
-  const submitAsk = useCallback(async () => {
-    if (!ask.trim()) return;
-    const res = await fetch("/api/public/product-tour/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: ask.trim() }),
-    });
-    const json = await res.json();
-    if (json.ok) setAskReply(json.answer);
-    trackDemo("demo_ask");
-  }, [ask]);
+  const handleInterrupt = useCallback(() => {
+    narration.stop();
+    setPaused(true);
+    setTourPausedByUser(true);
+  }, [narration, setTourPausedByUser]);
+
+  const handleAssistantReply = useCallback(
+    (result: {
+      answer: string;
+      demoActions: import("@/lib/product-tour/demo-actions").DemoAction[];
+      offerContinueTour: boolean;
+    }) => {
+      trackDemo("demo_chat_message", { mode: mode ?? "" });
+      applyDemoActions(result.demoActions);
+      setOfferContinue(result.offerContinueTour);
+      if (!muted && typeof window !== "undefined" && window.speechSynthesis) {
+        const u = new SpeechSynthesisUtterance(result.answer.slice(0, 400));
+        u.lang = "cs-CZ";
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+      }
+    },
+    [applyDemoActions, mode, muted]
+  );
+
+  const effectiveView = tourPausedByUser ? demo.view : step?.demoView;
+  const effectiveHighlight = tourPausedByUser ? demo.highlight : step?.highlight;
+  const demoStepForShell: ProductDemoStep | undefined = step
+    ? { ...step, demoView: effectiveView ?? step.demoView, highlight: effectiveHighlight }
+    : undefined;
 
   const statusLine =
     narration.playState === "loading"
@@ -295,7 +355,7 @@ export function ProductDemoPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
       <PublicMarketingHeader />
-      <div className="mx-auto max-w-6xl px-4 py-8 grid lg:grid-cols-2 gap-8">
+      <div className="mx-auto max-w-6xl px-4 py-8 flex flex-col gap-6 lg:grid lg:grid-cols-2 lg:gap-8">
         <div className="space-y-4">
           {!mode ? (
             <Card className="bg-slate-900/80 border-slate-700 text-slate-100">
@@ -306,7 +366,10 @@ export function ProductDemoPage() {
                   ▶ Rychlá prohlídka — cca 2 minuty
                 </Button>
                 <Button variant="outline" className="w-full justify-start border-slate-600" onClick={() => pickMode("detailed")}>
-                  Podrobná prohlídka — všechny moduly
+                  Podrobná prohlídka — moduly portálu
+                </Button>
+                <Button variant="outline" className="w-full justify-start border-slate-600" onClick={() => pickMode("complete")}>
+                  Kompletní prohlídka — proces 5–10 min
                 </Button>
                 <Button asChild variant="ghost" className="w-full">
                   <Link href="/register">Vyzkoušet 30 dní zdarma</Link>
@@ -335,15 +398,49 @@ export function ProductDemoPage() {
             </Card>
           ) : (
             <>
+              {!companyType ? (
+                <Card className="bg-slate-900/80 border-slate-700">
+                  <CardContent className="pt-4 space-y-2">
+                    <p className="text-sm text-slate-200">Jaký typ firmy provozujete?</p>
+                    {(Object.keys(COMPANY_TYPE_LABELS) as CompanyType[]).map((id) => (
+                      <Button
+                        key={id}
+                        variant="outline"
+                        className="w-full justify-start border-slate-600"
+                        onClick={() => {
+                          setCompanyType(id);
+                          try {
+                            sessionStorage.setItem(COMPANY_KEY, id);
+                          } catch {
+                            /* ignore */
+                          }
+                          trackDemo("demo_company_type", { interest: id });
+                        }}
+                      >
+                        {COMPANY_TYPE_LABELS[id]}
+                      </Button>
+                    ))}
+                    <Button variant="ghost" size="sm" onClick={() => setCompanyType("other")}>
+                      Přeskočit
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : null}
               <p className="text-xs text-slate-400">
-                Režim: {mode === "quick" ? "Rychlá (~2 min)" : "Podrobná"} ·{" "}
+                Režim:{" "}
+                {mode === "quick" ? "Rychlá (~2 min)" : mode === "complete" ? "Kompletní" : "Podrobná"}
+                {companyType ? ` · ${COMPANY_TYPE_LABELS[companyType]}` : ""} ·{" "}
                 <button type="button" className="underline" onClick={() => setMode(null)}>
                   Změnit
                 </button>
               </p>
               <div className="flex flex-wrap gap-2 items-center">
                 {!started ? (
-                  <Button className="bg-orange-500 hover:bg-orange-600 text-base px-5 py-6 h-auto" onClick={() => void beginWithVoice()}>
+                  <Button
+                    className="bg-orange-500 hover:bg-orange-600 text-base px-5 py-6 h-auto"
+                    disabled={!companyType}
+                    onClick={() => void beginWithVoice()}
+                  >
                     ▶ Spustit prohlídku s českým hlasovým průvodcem
                   </Button>
                 ) : (
@@ -377,6 +474,28 @@ export function ProductDemoPage() {
                   Pokračovat se zvukem
                 </Button>
               ) : null}
+              {offerContinue && tourPausedByUser ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setTourPausedByUser(false);
+                    setPaused(false);
+                    setOfferContinue(false);
+                    trackDemo("demo_resume_tour", { mode: mode ?? "" });
+                    playCurrentStep(stepIndex);
+                  }}
+                >
+                  Pokračovat v prohlídce
+                </Button>
+              ) : null}
+              <ProductTourGuidePanel
+                companyType={companyType}
+                tourMode={mode}
+                onBeforeSend={handleInterrupt}
+                onUserSpeakingStart={handleInterrupt}
+                onAssistantReply={handleAssistantReply}
+                disabled={!companyType}
+              />
               {!muted && started ? (
                 <div className="flex items-center gap-3 max-w-xs">
                   <span className="text-xs text-slate-400 shrink-0">Hlasitost</span>
@@ -435,23 +554,17 @@ export function ProductDemoPage() {
                   <Link href="/#pricing">Zobrazit ceník</Link>
                 </Button>
               </div>
-              <div className="border border-slate-700 rounded-lg p-3 space-y-2">
-                <input
-                  className="w-full rounded bg-slate-950 border border-slate-600 px-3 py-2 text-sm"
-                  placeholder="Zeptat se AI…"
-                  value={ask}
-                  onChange={(e) => setAsk(e.target.value)}
-                />
-                <Button size="sm" variant="secondary" onClick={() => void submitAsk()}>
-                  Odeslat dotaz
-                </Button>
-                {askReply ? <p className="text-sm text-slate-300">{askReply}</p> : null}
-              </div>
             </>
           )}
         </div>
 
-        <ProductDemoPortalShell step={step} />
+        <div className="order-first lg:order-none lg:col-span-1 min-h-[360px]">
+          <ProductDemoPortalShell
+            step={demoStepForShell ?? step}
+            overrideView={tourPausedByUser ? demo.view : undefined}
+            overrideHighlight={tourPausedByUser ? demo.highlight : undefined}
+          />
+        </div>
       </div>
     </div>
   );

@@ -5,7 +5,7 @@ export type ProductDemoInterest =
   | "production"
   | "full";
 
-export type ProductDemoMode = "quick" | "detailed";
+export type ProductDemoMode = "quick" | "detailed" | "complete";
 
 export type DemoView =
   | "dashboard"

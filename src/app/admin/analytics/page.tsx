@@ -2,6 +2,7 @@
 
 import { AdminAnalyticsDashboard } from "@/components/admin/admin-analytics-dashboard";
 import { AdminPortalAnalyticsDashboard } from "@/components/admin/admin-portal-analytics-dashboard";
+import { AdminProductTourAnalytics } from "@/components/admin/admin-product-tour-analytics";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function AdminAnalyticsPage() {
@@ -18,12 +19,16 @@ export default function AdminAnalyticsPage() {
         <TabsList className="flex flex-wrap h-auto gap-1">
           <TabsTrigger value="portal">Portál a organizace</TabsTrigger>
           <TabsTrigger value="web">Veřejný web</TabsTrigger>
+          <TabsTrigger value="tour">AI prohlídka</TabsTrigger>
         </TabsList>
         <TabsContent value="portal" className="mt-4">
           <AdminPortalAnalyticsDashboard />
         </TabsContent>
         <TabsContent value="web" className="mt-4">
           <AdminAnalyticsDashboard />
+        </TabsContent>
+        <TabsContent value="tour" className="mt-4">
+          <AdminProductTourAnalytics />
         </TabsContent>
       </Tabs>
     </div>

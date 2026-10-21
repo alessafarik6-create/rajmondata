@@ -43,11 +43,13 @@ function highlightNav(label: string, highlight?: DemoHighlight): boolean {
 
 type Props = {
   step?: ProductDemoStep;
+  overrideView?: DemoView;
+  overrideHighlight?: DemoHighlight;
 };
 
-export function ProductDemoPortalShell({ step }: Props) {
-  const view: DemoView = step?.demoView ?? "dashboard";
-  const highlight = step?.highlight;
+export function ProductDemoPortalShell({ step, overrideView, overrideHighlight }: Props) {
+  const view: DemoView = overrideView ?? step?.demoView ?? "dashboard";
+  const highlight = overrideHighlight ?? step?.highlight;
   const [typedTitle, setTypedTitle] = useState("");
 
   useEffect(() => {

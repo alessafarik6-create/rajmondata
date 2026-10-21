@@ -10,6 +10,7 @@ const DEMO_EVENTS = new Set([
   "demo_started",
   "demo_quick_started",
   "demo_detailed_started",
+  "demo_complete_started",
   "demo_step_viewed",
   "demo_completed",
   "demo_skipped",
@@ -20,6 +21,10 @@ const DEMO_EVENTS = new Set([
   "demo_voice_on",
   "demo_voice_off",
   "demo_voice_error",
+  "demo_chat_message",
+  "demo_voice_input",
+  "demo_company_type",
+  "demo_resume_tour",
 ]);
 
 export async function POST(request: NextRequest) {
