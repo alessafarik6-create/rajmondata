@@ -68,6 +68,8 @@ export async function POST(request: NextRequest) {
     event,
     visitorIdHash: ipHash.slice(0, 16),
     stepId: String(body.stepId ?? "").slice(0, 80) || null,
+    errorCode: String(body.errorCode ?? "").slice(0, 80) || null,
+    engine: String(body.engine ?? "").slice(0, 20) || null,
     interest: String(body.interest ?? "").slice(0, 40) || null,
     mode: String(body.mode ?? "").slice(0, 20) || null,
     path: String(body.path ?? "/prohlidka").slice(0, 200),

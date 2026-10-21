@@ -34,6 +34,7 @@
     "test:editor-railway-api": "node scripts/test-editor-railway-api.mjs",
     "postinstall": "node scripts/copy-pdf-fonts.mjs && node scripts/copy-pdf-worker.mjs && node scripts/copy-hikvision-jssdk.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
+    "generate:product-tour-audio": "npx tsx scripts/generate-product-tour-audio.ts",
     "seed-superadmin": "node scripts/seed-superadmin.js"
   },
   "dependencies": {
@@ -107,7 +108,8 @@
     "tailwindcss-animate": "^1.0.7",
     "web-push": "^3.6.7",
     "xlsx": "^0.18.5",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "edge-tts-node": "^1.5.7"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["puppeteer-core", "@sparticuz/chromium", "imapflow", "mailparser"],
+  serverExternalPackages: [
+    "puppeteer-core",
+    "@sparticuz/chromium",
+    "imapflow",
+    "mailparser",
+    "edge-tts-node",
+  ],
   experimental: {
     serverActions: {
       bodySizeLimit: "16mb",
@@ -15,6 +21,10 @@ const nextConfig: NextConfig = {
       {
         source: "/hikvision-jssdk/:path*",
         headers: [{ key: "Cache-Control", value: "public, max-age=86400, must-revalidate" }],
+      },
+      {
+        source: "/product-tour/audio/:path*.mp3",
+        headers: [{ key: "Cache-Control", value: "public, max-age=604800, immutable" }],
       },
     ];
   },

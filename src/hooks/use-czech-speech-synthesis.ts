@@ -89,12 +89,15 @@ export function useCzechSpeechSynthesis(options?: {
         setState("idle");
         onEndRef.current?.();
       };
-      u.onerror = () => {
+      u.onerror = (ev) => {
         utterRef.current = null;
+        const code = (ev as SpeechSynthesisErrorEvent).error ?? "unknown";
+        if (code === "canceled" || code === "interrupted") {
+          setState("idle");
+          return;
+        }
         setState("error");
-        onErrorRef.current?.(
-          "Hlasový výklad se nepodařilo přehrát. Zkuste obnovit stránku nebo vypnout režim úspory dat."
-        );
+        onErrorRef.current?.("Zvuk se nepodařilo načíst. Zkusit znovu.");
         onEndRef.current?.();
       };
       utterRef.current = u;

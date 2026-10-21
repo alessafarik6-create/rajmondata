@@ -13,8 +13,18 @@ import {
   type ProductDemoMode,
   type ProductDemoStep,
 } from "@/lib/ai-tutor/product-demo-script";
-import { useCzechSpeechSynthesis } from "@/hooks/use-czech-speech-synthesis";
-import { Pause, Play, SkipForward, Volume2, VolumeX } from "lucide-react";
+import { useProductTourNarration } from "@/hooks/use-product-tour-narration";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Pause,
+  Play,
+  RotateCcw,
+  SkipForward,
+  Square,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 
 const VISITOR_KEY = "rajmondata_vid_v1";
@@ -54,8 +64,14 @@ export function ProductDemoPage() {
   const [completed, setCompleted] = useState(false);
   const [ask, setAsk] = useState("");
   const [askReply, setAskReply] = useState<string | null>(null);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
-  const advanceLock = useRef(false);
+  const [needsSoundGesture, setNeedsSoundGesture] = useState(false);
+
+  const narration = useProductTourNarration();
+  const skipNextPlayRef = useRef(false);
+  const startedRef = useRef(false);
+  const pausedRef = useRef(false);
+  pausedRef.current = paused;
+  startedRef.current = started;
 
   const steps = useMemo((): ProductDemoStep[] => {
     if (mode === "detailed") return buildDetailedDemoSteps();
@@ -67,11 +83,7 @@ export function ProductDemoPage() {
   const chapters = useMemo(() => (mode === "detailed" ? detailedChapterLabels() : []), [mode]);
 
   const advanceStep = useCallback(() => {
-    if (advanceLock.current) return;
-    advanceLock.current = true;
-    window.setTimeout(() => {
-      advanceLock.current = false;
-    }, 400);
+    if (pausedRef.current) return;
     setStepIndex((i) => {
       if (i >= steps.length - 1) {
         setCompleted(true);
@@ -84,16 +96,34 @@ export function ProductDemoPage() {
     });
   }, [steps, mode]);
 
-  const tts = useCzechSpeechSynthesis({
-    onEnd: () => {
-      if (!started || paused) return;
-      advanceStep();
+  const playCurrentStep = useCallback(
+    (index: number) => {
+      const s = steps[index];
+      if (!s || !startedRef.current) return;
+      void narration.playStep({
+        stepId: s.id,
+        narration: s.narration,
+        muted,
+        durationSec: s.durationSec,
+        volume: narration.volume,
+        onEnded: () => {
+          if (!pausedRef.current && startedRef.current) advanceStep();
+        },
+        onDiagnostic: (code, engine) => {
+          trackDemo("demo_voice_error", {
+            mode: mode ?? "",
+            stepId: s.id,
+            errorCode: code,
+            engine,
+          });
+          if (process.env.NODE_ENV === "development") {
+            console.debug("[product-tour/narration]", { stepId: s.id, code, engine });
+          }
+        },
+      });
     },
-    onError: (msg) => {
-      setVoiceError(msg);
-      trackDemo("demo_voice_error", { mode: mode ?? "" });
-    },
-  });
+    [steps, muted, narration, advanceStep, mode]
+  );
 
   useEffect(() => {
     trackDemo("demo_opened");
@@ -106,28 +136,34 @@ export function ProductDemoPage() {
   }, []);
 
   useEffect(() => {
-    if (!started || paused || !step) return;
-    tts.cancel();
-    setVoiceError(null);
-    if (muted) {
-      const t = window.setTimeout(() => advanceStep(), step.durationSec * 1000);
-      return () => window.clearTimeout(t);
+    if (!started || !step) return;
+    if (skipNextPlayRef.current) {
+      skipNextPlayRef.current = false;
+      return;
     }
-    tts.speak(step.narration, false);
-    return () => tts.cancel();
+    if (paused) {
+      narration.pause();
+      return;
+    }
+    playCurrentStep(stepIndex);
+    const preload = steps.slice(stepIndex + 1, stepIndex + 4).map((s) => s.id);
+    void narration.preloadSteps(preload);
+    return () => narration.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [started, paused, stepIndex, step?.id, muted]);
+  }, [started, stepIndex, step?.id, muted, paused]);
 
   useEffect(() => {
-    if (paused && tts.state === "speaking") tts.pause();
-    if (!paused && tts.state === "paused") tts.resume();
-  }, [paused, tts]);
+    if (!mode || !steps.length) return;
+    void narration.preloadSteps(steps.slice(0, 3).map((s) => s.id));
+  }, [mode, steps, narration]);
 
   const pickMode = (m: ProductDemoMode) => {
     setMode(m);
     setStepIndex(0);
     setStarted(false);
     setCompleted(false);
+    setPaused(false);
+    narration.stop();
     try {
       sessionStorage.setItem(MODE_KEY, m);
     } catch {
@@ -136,36 +172,94 @@ export function ProductDemoPage() {
     trackDemo(m === "quick" ? "demo_quick_started" : "demo_detailed_started");
   };
 
-  const begin = () => {
+  const beginWithVoice = async () => {
+    skipNextPlayRef.current = true;
+    const unlocked = await narration.unlockAudio();
+    setNeedsSoundGesture(!unlocked && narration.getDiagnostics().needsGesture);
     setStarted(true);
     setCompleted(false);
     setStepIndex(0);
+    setPaused(false);
     setMuted(false);
     trackDemo("demo_started", { mode: mode ?? "" });
     trackDemo("demo_voice_on", { mode: mode ?? "" });
     trackDemo("demo_step_viewed", { stepId: steps[0]?.id ?? "intro", mode: mode ?? "" });
+    playCurrentStep(0);
+  };
+
+  const continueWithSound = async () => {
+    await narration.unlockAudio();
+    setNeedsSoundGesture(false);
+    setMuted(false);
+    playCurrentStep(stepIndex);
+  };
+
+  const exitTour = () => {
+    narration.stop();
+    setStarted(false);
+    setPaused(false);
+    setStepIndex(0);
+  };
+
+  const prevStep = () => {
+    narration.stop();
+    setStepIndex((i) => Math.max(0, i - 1));
+  };
+
+  const nextStep = () => {
+    narration.stop();
+    if (stepIndex >= steps.length - 1) {
+      setCompleted(true);
+      trackDemo("demo_completed", { mode: mode ?? "" });
+      return;
+    }
+    setStepIndex((i) => i + 1);
   };
 
   const skipStep = () => {
-    tts.cancel();
+    narration.stop();
     trackDemo("demo_chapter_skipped", { stepId: step?.id ?? "", mode: mode ?? "" });
     trackDemo("demo_skipped", { stepId: step?.id ?? "" });
-    advanceStep();
+    nextStep();
+  };
+
+  const togglePause = () => {
+    setPaused((p) => {
+      const next = !p;
+      if (next) narration.pause();
+      else narration.resume();
+      return next;
+    });
   };
 
   const toggleMute = () => {
     setMuted((m) => {
       const next = !m;
       trackDemo(next ? "demo_voice_off" : "demo_voice_on", { mode: mode ?? "" });
-      if (next) tts.cancel();
+      if (next) narration.stop();
+      else playCurrentStep(stepIndex);
       return next;
+    });
+  };
+
+  const repeatVoice = () => {
+    if (!step) return;
+    narration.repeatCurrent({
+      stepId: step.id,
+      narration: step.narration,
+      muted,
+      durationSec: step.durationSec,
+      volume: narration.volume,
+      onEnded: () => {
+        if (!pausedRef.current && startedRef.current) advanceStep();
+      },
     });
   };
 
   const jumpChapter = (chapterId: string) => {
     const idx = steps.findIndex((s) => s.chapterId === chapterId);
     if (idx >= 0) {
-      tts.cancel();
+      narration.stop();
       setStepIndex(idx);
       trackDemo("demo_step_viewed", { stepId: steps[idx]?.id ?? "", mode: mode ?? "" });
     }
@@ -184,6 +278,19 @@ export function ProductDemoPage() {
     if (json.ok) setAskReply(json.answer);
     trackDemo("demo_ask");
   }, [ask]);
+
+  const statusLine =
+    narration.playState === "loading"
+      ? "Načítám hlas…"
+      : narration.playState === "playing"
+        ? narration.engine === "mp3"
+          ? "Přehrávám namluvený výklad…"
+          : narration.engine === "speech"
+            ? "Mluvím (hlas prohlížeče)…"
+            : "Titulky — časovač"
+        : paused
+          ? "Pauza"
+          : "";
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
@@ -236,38 +343,60 @@ export function ProductDemoPage() {
               </p>
               <div className="flex flex-wrap gap-2 items-center">
                 {!started ? (
-                  <Button className="bg-orange-500 hover:bg-orange-600" onClick={begin}>
-                    <Play className="mr-2 h-4 w-4" /> Spustit prohlídku
+                  <Button className="bg-orange-500 hover:bg-orange-600 text-base px-5 py-6 h-auto" onClick={() => void beginWithVoice()}>
+                    ▶ Spustit prohlídku s českým hlasovým průvodcem
                   </Button>
                 ) : (
-                  <Button variant="outline" onClick={() => setPaused((p) => !p)} aria-label={paused ? "Pokračovat" : "Pauza"}>
-                    {paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-                  </Button>
+                  <>
+                    <Button variant="outline" onClick={togglePause} aria-label={paused ? "Pokračovat" : "Pauza"}>
+                      {paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                    </Button>
+                    <Button variant="ghost" onClick={repeatVoice} aria-label="Zopakovat hlas">
+                      <RotateCcw className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" onClick={prevStep} disabled={stepIndex <= 0} aria-label="Předchozí krok">
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" onClick={nextStep} aria-label="Další krok">
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" onClick={skipStep}>
+                      <SkipForward className="h-4 w-4" /> Přeskočit
+                    </Button>
+                    <Button variant="ghost" onClick={exitTour} aria-label="Ukončit">
+                      <Square className="h-4 w-4" />
+                    </Button>
+                  </>
                 )}
-                <Button variant="ghost" onClick={toggleMute} aria-label="Zvuk">
+                <Button variant="ghost" onClick={toggleMute} aria-label="Zvuk" disabled={!started}>
                   {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                 </Button>
-                {started ? (
-                  <Button variant="ghost" onClick={skipStep}>
-                    <SkipForward className="h-4 w-4" /> Přeskočit krok
-                  </Button>
-                ) : null}
               </div>
+              {needsSoundGesture ? (
+                <Button variant="secondary" className="w-full sm:w-auto" onClick={() => void continueWithSound()}>
+                  Pokračovat se zvukem
+                </Button>
+              ) : null}
               {!muted && started ? (
                 <div className="flex items-center gap-3 max-w-xs">
                   <span className="text-xs text-slate-400 shrink-0">Hlasitost</span>
                   <Slider
-                    value={[Math.round(tts.volume * 100)]}
+                    value={[Math.round(narration.volume * 100)]}
                     max={100}
                     step={5}
-                    onValueChange={(v) => tts.setVolume((v[0] ?? 100) / 100)}
+                    onValueChange={(v) => narration.setVolume((v[0] ?? 100) / 100)}
                     className="flex-1"
                   />
                 </div>
               ) : null}
-              {voiceError ? <p className="text-xs text-amber-400">{voiceError}</p> : null}
-              {!tts.supported && started ? (
-                <p className="text-xs text-amber-400">Hlas není v prohlížeči dostupný — používáme textové titulky a časovač.</p>
+              {narration.userMessage ? (
+                <p
+                  className={cnMessage(
+                    narration.userMessage.tone === "warn" ? "text-amber-400" : "text-slate-300"
+                  )}
+                >
+                  {narration.userMessage.text}
+                </p>
               ) : null}
               {step ? (
                 <Card className="bg-slate-900/80 border-primary/30">
@@ -279,7 +408,7 @@ export function ProductDemoPage() {
                     </p>
                     <p className="mt-2 text-[10px] text-slate-500">
                       Krok {stepIndex + 1} / {steps.length}
-                      {tts.state === "speaking" ? " · mluvím…" : paused ? " · pauza" : ""}
+                      {statusLine ? ` · ${statusLine}` : ""}
                     </p>
                   </CardContent>
                 </Card>
@@ -326,4 +455,8 @@ export function ProductDemoPage() {
       </div>
     </div>
   );
+}
+
+function cnMessage(extra: string) {
+  return `text-xs ${extra}`;
 }
