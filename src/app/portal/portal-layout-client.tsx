@@ -47,9 +47,8 @@ import {
 } from "@/lib/employee-portal-menu-resolver";
 import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
 import { MobilePushPromptSheet } from "@/components/pwa/mobile-push-prompt-sheet";
-import { ChatAssistant } from "@/components/portal/ChatAssistant";
+import { RajmondataAIAssistant } from "@/components/portal/ChatAssistant";
 import { OnboardingOverlay } from "@/components/portal/OnboardingOverlay";
-import { AiTutorShell } from "@/components/ai-tutor/ai-tutor-shell";
 import { useIsBelowLg } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import { PortalPermissionsProvider } from "@/contexts/portal-permissions-context";
@@ -949,9 +948,8 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       {!isPortalCustomerOnly && user ? <LeadReminderAlarmHost /> : null}
-      <ChatAssistant />
+      <RajmondataAIAssistant tutorEnabled={!isPortalEmployeeOnly && !isPortalCustomerOnly} />
       <OnboardingOverlay enabled={!isPortalEmployeeOnly && !isPortalCustomerOnly} />
-      <AiTutorShell enabled={!isPortalEmployeeOnly && !isPortalCustomerOnly} />
       <MobilePushPromptSheet
         enabled={Boolean(user && authResolved && !isProfileLoading && profile)}
       />

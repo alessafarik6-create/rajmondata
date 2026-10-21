@@ -3,7 +3,16 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { collection, getDocs, limit, query, where } from "firebase/firestore";
-import { Loader2, MessageCircle, Mic, Send, Sparkles, Square, User } from "lucide-react";
+import { BookOpen, Loader2, MapPin, Mic, Send, Sparkles, Square, User } from "lucide-react";
+import { AiAssistantTutorPanel } from "@/components/ai-tutor/ai-assistant-tutor-panel";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useIsBelowLg } from "@/hooks/use-mobile";
 import { useDraggableFabPosition } from "@/hooks/use-draggable-fab-position";
 import { usePortalAssistantVoice } from "@/hooks/use-portal-assistant-voice";
@@ -64,9 +73,15 @@ const EXAMPLE_QUESTIONS = [
 const quickChipClass =
   "inline-flex min-h-8 max-w-full items-center rounded-md border border-slate-300 bg-[#f3f4f6] px-2.5 py-1.5 text-left text-xs font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#e5e7eb] hover:border-slate-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50";
 
-const FAB_BOTTOM_DESKTOP = "bottom-[calc(16px+env(safe-area-inset-bottom,0px))]";
+const TUTOR_WELCOME_KEY = "rajmondata_ai_tutor_welcome_v1";
 
-export function ChatAssistant() {
+type AssistantTab = "help" | "tutor";
+
+type ChatAssistantProps = {
+  tutorEnabled?: boolean;
+};
+
+export function ChatAssistant({ tutorEnabled = true }: ChatAssistantProps) {
   const pathname = usePathname() || "";
   const router = useRouter();
   const firestore = useFirestore();
@@ -75,11 +90,13 @@ export function ChatAssistant() {
   const isMobileLayout = useIsBelowLg();
   const onChatRoute = pathname.startsWith("/portal/chat") || pathname.includes("/messages");
   const fabDrag = useDraggableFabPosition({
-    enabled: isMobileLayout,
+    enabled: true,
     avoidBottomInset: onChatRoute ? 72 : 0,
   });
 
   const [open, setOpen] = useState(false);
+  const [assistantTab, setAssistantTab] = useState<AssistantTab>("help");
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const [draft, setDraft] = useState("");
   const [typing, setTyping] = useState(false);
@@ -260,45 +277,88 @@ export function ChatAssistant() {
   });
 
   const quickTop = helpRows.slice(0, 6);
+  const showTutor = tutorEnabled && !!user && !!companyId;
 
-  /** Na mobilu je zprávy v bottom nav — floating bublina nepřekrývá obsah. */
-  if (isMobileLayout) {
-    return null;
-  }
+  useEffect(() => {
+    if (!showTutor || !user) return;
+    try {
+      if (localStorage.getItem(TUTOR_WELCOME_KEY) === "1") return;
+      setWelcomeOpen(true);
+    } catch {
+      setWelcomeOpen(true);
+    }
+  }, [showTutor, user]);
+
+  const dismissWelcome = (startTutor: boolean) => {
+    try {
+      localStorage.setItem(TUTOR_WELCOME_KEY, "1");
+    } catch {
+      /* ignore */
+    }
+    setWelcomeOpen(false);
+    if (startTutor) {
+      setAssistantTab("tutor");
+      setOpen(true);
+      window.dispatchEvent(
+        new CustomEvent("rajmondata:start-ai-tutorial", { detail: { tutorialId: "first-job" } })
+      );
+    }
+  };
+
+  const fabStyle = {
+    left: fabDrag.pos.left,
+    top: fabDrag.pos.top,
+    touchAction: "none" as const,
+  };
 
   return (
     <>
+      {showTutor ? (
+        <Dialog open={welcomeOpen} onOpenChange={setWelcomeOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-orange-500" />
+                Vítejte v RAJMONDATA
+              </DialogTitle>
+              <DialogDescription className="text-base leading-relaxed pt-2">
+                Jsem vaše AI průvodkyně. Nápovědu, učitele a interaktivní návody najdete v jednom panelu vpravo dole.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex-col gap-2 sm:flex-col sm:items-stretch">
+              <Button type="button" onClick={() => dismissWelcome(true)}>
+                Zahájit průvodce
+              </Button>
+              <Button type="button" variant="outline" onClick={() => dismissWelcome(false)}>
+                Přeskočit — otevřu asistenta sám
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+
       {!open ? (
         <button
           type="button"
-          aria-label="Otevřít nápovědu k portálu"
-          onPointerDown={isMobileLayout ? fabDrag.onPointerDown : undefined}
-          onPointerMove={isMobileLayout ? fabDrag.onPointerMove : undefined}
-          onPointerUp={isMobileLayout ? fabDrag.onPointerUp : undefined}
+          aria-label="Otevřít RAJMONDATA AI asistenta"
+          onPointerDown={fabDrag.onPointerDown}
+          onPointerMove={fabDrag.onPointerMove}
+          onPointerUp={fabDrag.onPointerUp}
           onClick={() => {
-            if (isMobileLayout && fabDrag.wasDragged()) {
+            if (fabDrag.wasDragged()) {
               fabDrag.resetDragFlag();
               return;
             }
             setOpen(true);
           }}
-          style={
-            isMobileLayout
-              ? {
-                  left: fabDrag.pos.left,
-                  top: fabDrag.pos.top,
-                  touchAction: "none",
-                }
-              : undefined
-          }
+          style={fabStyle}
           className={cn(
-            "fixed z-[80] flex h-14 w-14 min-h-[56px] min-w-[56px] items-center justify-center rounded-full shadow-lg",
-            !isMobileLayout && `right-4 ${FAB_BOTTOM_DESKTOP}`,
-            "bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-            "transition-transform hover:scale-105 active:scale-95 print:hidden"
+            "fixed z-[80] flex h-14 w-14 min-h-[56px] min-w-[56px] items-center justify-center rounded-full shadow-lg print:hidden",
+            "bg-orange-500 text-white hover:bg-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2",
+            "transition-transform hover:scale-105 active:scale-95 animate-in fade-in zoom-in duration-500"
           )}
         >
-          <MessageCircle className="h-7 w-7" aria-hidden />
+          <Sparkles className="h-7 w-7" aria-hidden />
         </button>
       ) : null}
 
@@ -312,10 +372,10 @@ export function ChatAssistant() {
               : "sm:max-w-md h-[100dvh] max-h-[100dvh]"
           )}
         >
-          <SheetHeader className="shrink-0 border-b border-slate-100 px-4 py-4 text-left space-y-1">
+          <SheetHeader className="shrink-0 border-b border-slate-100 px-4 py-4 text-left space-y-2">
             <SheetTitle className="flex items-center gap-2 text-base font-semibold text-slate-900">
-              <Sparkles className="h-5 w-5 text-primary shrink-0" />
-              AI nápověda
+              <Sparkles className="h-5 w-5 text-orange-500 shrink-0" />
+              RAJMONDATA AI – váš průvodce
             </SheetTitle>
             <SheetDescription className="text-xs text-slate-600 leading-snug">
               Modul: <span className="font-medium text-slate-800">{helpModule}</span>
@@ -323,8 +383,36 @@ export function ChatAssistant() {
               Stránka:{" "}
               <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px] text-slate-800">{pathname || "/"}</code>
             </SheetDescription>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={assistantTab === "help" ? "default" : "outline"}
+                className={assistantTab === "help" ? "bg-orange-500 hover:bg-orange-600" : ""}
+                onClick={() => setAssistantTab("help")}
+              >
+                Zeptat se AI
+              </Button>
+              {showTutor ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={assistantTab === "tutor" ? "default" : "outline"}
+                  className={assistantTab === "tutor" ? "bg-orange-500 hover:bg-orange-600" : ""}
+                  onClick={() => setAssistantTab("tutor")}
+                >
+                  <BookOpen className="h-3.5 w-3.5 mr-1" /> Naučit se funkci
+                </Button>
+              ) : null}
+            </div>
           </SheetHeader>
 
+          {assistantTab === "tutor" && showTutor ? (
+            <ScrollArea className="min-h-0 flex-1 px-4 py-3 overflow-hidden">
+              <AiAssistantTutorPanel enabled={showTutor} />
+            </ScrollArea>
+          ) : (
+            <>
           <div className="shrink-0 border-b border-slate-100 px-3 py-3 space-y-2 bg-slate-50/80">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 px-0.5">
               Rychlé otázky
@@ -482,9 +570,20 @@ export function ChatAssistant() {
                 <Send className="h-4 w-4" />
               </Button>
             </div>
+            <p className="text-xs text-slate-500 px-0.5 flex items-start gap-1">
+              <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" aria-hidden />
+              Plovoucí ikonu přetáhněte prstem nebo myší; krátké klepnutí otevře tento panel.
+            </p>
           </form>
+            </>
+          )}
         </SheetContent>
       </Sheet>
     </>
   );
+}
+
+/** Sjednocený AI asistent portálu (nápověda + učitel). */
+export function RajmondataAIAssistant(props: ChatAssistantProps) {
+  return <ChatAssistant {...props} />;
 }

@@ -8,12 +8,18 @@ import { isBotUserAgent } from "@/lib/analytics/public-paths";
 const DEMO_EVENTS = new Set([
   "demo_opened",
   "demo_started",
+  "demo_quick_started",
+  "demo_detailed_started",
   "demo_step_viewed",
   "demo_completed",
   "demo_skipped",
+  "demo_chapter_skipped",
   "demo_cta_clicked",
   "demo_interest_selected",
   "demo_ask",
+  "demo_voice_on",
+  "demo_voice_off",
+  "demo_voice_error",
 ]);
 
 export async function POST(request: NextRequest) {
@@ -63,6 +69,7 @@ export async function POST(request: NextRequest) {
     visitorIdHash: ipHash.slice(0, 16),
     stepId: String(body.stepId ?? "").slice(0, 80) || null,
     interest: String(body.interest ?? "").slice(0, 40) || null,
+    mode: String(body.mode ?? "").slice(0, 20) || null,
     path: String(body.path ?? "/prohlidka").slice(0, 200),
     createdAt: FieldValue.serverTimestamp(),
   });
