@@ -158,7 +158,7 @@ export default function CustomersPage() {
         {canWriteCustomers ? (
         <Dialog open={isNewCustomerOpen} onOpenChange={setIsNewCustomerOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
+            <Button className="gap-2 min-h-[44px] w-full sm:w-auto" data-tour-id="customers-new">
               <UserPlus className="w-4 h-4" /> Nový zákazník
             </Button>
           </DialogTrigger>

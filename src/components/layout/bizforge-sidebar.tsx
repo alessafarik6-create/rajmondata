@@ -70,6 +70,7 @@ const adminLinksStatic: PortalNavLink[] = [
   { label: 'Podpora / dotazy', href: '/admin/support-tickets', icon: LifeBuoy },
   { label: 'Nápověda portálu', href: '/admin/help-content', icon: CircleHelp },
   { label: 'Průvodce portálem', href: '/admin/onboarding', icon: Sparkles },
+  { label: 'AI učitel', href: '/admin/ai-tutor', icon: Sparkles },
 ];
 
 export type BizForgeSidebarProps = {

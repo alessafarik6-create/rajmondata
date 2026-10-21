@@ -93,6 +93,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { usePortalPermissionsOptional } from "@/contexts/portal-permissions-context";
 import { BankDashboardWidget } from "@/components/bank/bank-dashboard-widget";
+import { SetupProgressCard } from "@/components/ai-tutor/setup-progress-card";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
 
@@ -1198,6 +1199,7 @@ export default function CompanyDashboard() {
 
       {showAdminDashboard ? (
         <div className="space-y-4 sm:space-y-5">
+          {companyId ? <SetupProgressCard /> : null}
           {companyId ? (
             <DashboardMergedTasksProvider
               companyId={companyId}

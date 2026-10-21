@@ -25,6 +25,14 @@ export function PublicLandingHeroCtas() {
           {ctaLabel}
         </Link>
       </Button>
+      <Button
+        size="default"
+        variant="secondary"
+        className="h-11 w-full min-w-0 border border-orange-500/40 bg-orange-500/15 text-orange-100 hover:bg-orange-500/25 sm:h-10 sm:w-auto sm:px-6"
+        asChild
+      >
+        <Link href="/prohlidka">▶ AI prohlídka — 2 minuty</Link>
+      </Button>
       {trialEnabled ? (
         <p className="w-full text-xs text-slate-300 sm:text-sm">
           {trialDays} dní zdarma · bez závazku · bez platební karty

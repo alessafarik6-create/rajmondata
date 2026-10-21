@@ -1,0 +1,222 @@
+import type { AiSetupChecklistItem, AiTutorialDef } from "@/lib/ai-tutor/types";
+
+/** Modulární katalog průvodců — verze se ukládá v progress dokumentu. */
+export const AI_TUTORIALS: AiTutorialDef[] = [
+  {
+    id: "first-job",
+    version: 1,
+    title: "První zakázka",
+    summary: "Vytvoření zakázky od menu po uložení.",
+    moduleId: "jobs",
+    requiredAccess: "write",
+    hideWhenMilestone: "first_job_created",
+    enabled: true,
+    steps: [
+      {
+        id: "nav-jobs",
+        title: "Otevřete Zakázky",
+        body: "V levém menu klikněte na Zakázky.",
+        routePrefix: "/portal",
+        navTarget: "jobs",
+      },
+      {
+        id: "new-job",
+        title: "Nová zakázka",
+        body: "Klikněte na tlačítko Nová zakázka a vyplňte název, zákazníka a typ ceny.",
+        routePrefix: "/portal/jobs",
+        tourTarget: "jobs-new",
+      },
+      {
+        id: "save-job",
+        title: "Uložte zakázku",
+        body: "Po vyplnění formuláře uložte zakázku. Jakmile ji uvidíte v seznamu, krok je hotový.",
+        routePrefix: "/portal/jobs",
+        requiresUserAction: true,
+      },
+    ],
+  },
+  {
+    id: "first-customer",
+    version: 1,
+    title: "První zákazník",
+    summary: "Založení zákazníka v CRM.",
+    moduleId: "customers",
+    requiredAccess: "write",
+    hideWhenMilestone: "first_customer_created",
+    enabled: true,
+    steps: [
+      {
+        id: "nav-customers",
+        title: "Zákazníci",
+        body: "Otevřete sekci Zákazníci v menu.",
+        routePrefix: "/portal",
+        navTarget: "customers",
+      },
+      {
+        id: "new-customer",
+        title: "Nový zákazník",
+        body: "Přidejte zákazníka — jméno, kontakt a IČO podle potřeby.",
+        routePrefix: "/portal/customers",
+        tourTarget: "customers-new",
+        requiresUserAction: true,
+      },
+    ],
+  },
+  {
+    id: "connect-email",
+    version: 1,
+    title: "Firemní e-mail",
+    summary: "Propojení schránky pro odesílání z portálu.",
+    moduleId: "settings",
+    roles: ["owner", "admin"],
+    requiredAccess: "read",
+    hideWhenMilestone: "email_connected",
+    enabled: true,
+    steps: [
+      {
+        id: "nav-settings",
+        title: "Nastavení",
+        body: "Otevřete Nastavení firmy.",
+        routePrefix: "/portal",
+        navTarget: "settings",
+      },
+      {
+        id: "integrace-email",
+        title: "Integrace e-mailu",
+        body: "V záložce Integrace připojte firemní schránku (SMTP nebo OAuth poskytovatele).",
+        routePrefix: "/portal/settings",
+        tourTarget: "settings-email",
+        requiresUserAction: true,
+      },
+    ],
+  },
+  {
+    id: "first-employee",
+    version: 1,
+    title: "První zaměstnanec",
+    summary: "Pozvání kolegy a role v portálu.",
+    moduleId: "employees",
+    requiredAccess: "write",
+    hideWhenMilestone: "first_employee_created",
+    enabled: true,
+    steps: [
+      {
+        id: "nav-employees",
+        title: "Zaměstnanci",
+        body: "Přejděte do sekce Zaměstnanci.",
+        routePrefix: "/portal",
+        navTarget: "employees",
+      },
+      {
+        id: "add-employee",
+        title: "Přidat zaměstnance",
+        body: "Vytvořte záznam, nastavte roli a oprávnění modulů.",
+        routePrefix: "/portal/employees",
+        tourTarget: "employees-new",
+        requiresUserAction: true,
+      },
+    ],
+  },
+  {
+    id: "advance-invoice",
+    version: 1,
+    title: "Zálohová faktura",
+    summary: "Vystavení zálohy ze zakázky.",
+    moduleId: "invoices",
+    requiredAccess: "write",
+    enabled: true,
+    steps: [
+      {
+        id: "nav-invoices",
+        title: "Fakturace",
+        body: "Otevřete modul Fakturace.",
+        routePrefix: "/portal",
+        navTarget: "invoices",
+      },
+      {
+        id: "new-invoice",
+        title: "Nová faktura",
+        body: "Vytvořte zálohovou fakturu a propojte ji se zakázkou.",
+        routePrefix: "/portal/invoices",
+        tourTarget: "invoices-new",
+        requiresUserAction: true,
+      },
+    ],
+  },
+  {
+    id: "gps-fleet",
+    version: 1,
+    title: "GPS vozový park",
+    summary: "Propojení SatelitníSledování.cz.",
+    moduleId: "fleet",
+    requiredAccess: "read",
+    hideWhenMilestone: "gps_connected",
+    enabled: true,
+    steps: [
+      {
+        id: "nav-fleet",
+        title: "Vozový park",
+        body: "Otevřete Vozový park v menu.",
+        routePrefix: "/portal",
+        navTarget: "fleet",
+      },
+      {
+        id: "fleet-connect",
+        title: "Připojení GPS",
+        body: "V Nastavení → Integrace propojte SatelitníSledování.cz a spusťte synchronizaci.",
+        routePrefix: "/portal/fleet",
+        requiresUserAction: true,
+      },
+    ],
+  },
+];
+
+export const AI_SETUP_CHECKLIST: AiSetupChecklistItem[] = [
+  {
+    id: "first_customer_created",
+    label: "První zákazník",
+    moduleId: "customers",
+    requiredAccess: "write",
+    href: "/portal/customers",
+  },
+  {
+    id: "first_job_created",
+    label: "První zakázka",
+    moduleId: "jobs",
+    requiredAccess: "write",
+    href: "/portal/jobs",
+  },
+  {
+    id: "first_employee_created",
+    label: "První zaměstnanec",
+    moduleId: "employees",
+    requiredAccess: "write",
+    roles: ["owner", "admin", "manager"],
+    href: "/portal/employees",
+  },
+  {
+    id: "email_connected",
+    label: "Firemní e-mail",
+    moduleId: "settings",
+    roles: ["owner", "admin"],
+    href: "/portal/settings?tab=integrace",
+  },
+  {
+    id: "first_invoice_created",
+    label: "První faktura",
+    moduleId: "invoices",
+    requiredAccess: "write",
+    href: "/portal/invoices",
+  },
+  {
+    id: "gps_connected",
+    label: "GPS vozidla",
+    moduleId: "fleet",
+    requiredAccess: "read",
+    href: "/portal/fleet",
+  },
+];
+
+export function getTutorialById(id: string): AiTutorialDef | undefined {
+  return AI_TUTORIALS.find((t) => t.id === id && t.enabled);
+}

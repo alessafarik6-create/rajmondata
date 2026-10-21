@@ -1308,6 +1308,7 @@ function JobsPageContent() {
             <Button
               type="button"
               className="gap-2 min-h-[44px]"
+              data-tour-id="jobs-new"
               onClick={() => setIsNewJobOpen(true)}
             >
               <Plus className="w-4 h-4" /> Nová zakázka

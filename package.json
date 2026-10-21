@@ -18,6 +18,7 @@
     "test:import-lead-sync": "npx --yes tsx src/lib/import-lead-sync.test.ts",
     "test:portal-permissions-manager": "npx --yes tsx src/lib/portal-permissions-manager.test.ts",
     "test:document-email-send-access": "npx --yes tsx src/lib/document-email-send-access.test.ts",
+    "test:ai-tutor-ask": "npx --yes tsx src/lib/ai-tutor/tutor-ask.test.ts",
     "test:portal-permissions-persistence": "npx --yes tsx src/lib/portal-permissions-persistence.test.ts",
     "test:labor-payroll-access": "npx --yes tsx src/lib/labor/labor-payroll-access.test.ts",
     "test:portal-analytics": "npx --yes tsx src/lib/portal-analytics/portal-analytics.test.ts",
