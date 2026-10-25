@@ -3374,5 +3374,10 @@ service cloud.firestore {
     match /mail_notify_dedup/{id} {
       allow read, write: if false;
     }
+
+    /** Veřejné tokeny k podpisu předávacího protokolu — pouze Admin SDK. */
+    match /handoverPublicSignTokens/{tokenId} {
+      allow read, write: if false;
+    }
   }
 }

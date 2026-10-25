@@ -122,12 +122,16 @@ export const HANDOVER_DEFECT_STATUS_LABELS: Record<HandoverDefectStatus, string>
 };
 
 export const HANDOVER_PROTOCOL_STATUS_LABELS: Record<HandoverProtocolStatus, string> = {
-  draft: "Koncept",
-  sent: "Odesláno",
-  signed_by_customer: "Podepsáno zákazníkem",
+  draft: "Rozpracovaný",
+  sent: "Odeslaný zákazníkovi",
+  signed_by_customer: "Podepsaný",
   signed_by_contractor: "Podepsáno zhotovitelem",
-  completed: "Dokončeno",
+  completed: "Podepsaný",
 };
+
+export function handoverProtocolIsLocked(status: HandoverProtocolStatus | string | undefined): boolean {
+  return status === "signed_by_customer" || status === "completed";
+}
 
 export function newHandoverDefectRow(): HandoverDefectRow {
   return {

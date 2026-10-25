@@ -78,6 +78,8 @@ import {
   type HandoverDefectStatus,
   type HandoverProtocolForm,
   type HandoverSignatureMeta,
+  handoverProtocolIsLocked,
+  type HandoverProtocolStatus,
 } from "@/lib/handover-protocol-types";
 import type { WorkContractDoc } from "@/lib/work-contract-print-html-build";
 import { getFirebaseStorage } from "@/firebase/storage";
@@ -162,6 +164,7 @@ export function HandoverProtocolFormDialog(props: {
     useState<HandoverSignatureMeta | null>(null);
   const [editCustomerSignature, setEditCustomerSignature] =
     useState<HandoverSignatureMeta | null>(null);
+  const [editStatus, setEditStatus] = useState<HandoverProtocolStatus | null>(null);
 
   const contractOptions = useMemo(
     () => handoverEligibleContracts(workContracts),
@@ -304,6 +307,7 @@ export function HandoverProtocolFormDialog(props: {
           return;
         }
         const d = snap.data() as Record<string, unknown>;
+        setEditStatus(String(d.status ?? "draft") as HandoverProtocolStatus);
         const wcId = String(d.workContractId ?? "").trim();
         setWorkContractId(wcId);
         const parsed = handoverProtocolFormFromDoc(d);
@@ -350,6 +354,14 @@ export function HandoverProtocolFormDialog(props: {
     "Uživatel";
 
   const save = async () => {
+    if (editProtocolId && handoverProtocolIsLocked(editStatus ?? undefined)) {
+      toast({
+        variant: "destructive",
+        title: "Protokol je uzamčen",
+        description: "Podepsaný protokol nelze upravit. Vytvořte novou verzi.",
+      });
+      return;
+    }
     const contractId =
       workContractId.trim() || pickDefaultHandoverContractId(workContracts, null) || "";
     if (!contractId) {

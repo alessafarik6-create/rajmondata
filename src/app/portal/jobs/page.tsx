@@ -116,6 +116,23 @@ import {
 } from "@/lib/contracted-jobs-export";
 import { useIsBelowLg } from "@/hooks/use-mobile";
 import {
+  hasFieldErrors,
+  validateNewCustomerForJob,
+  type NewJobCustomerFieldErrors,
+} from "@/lib/job-create-customer-validation";
+import { assignEmployeeToJob } from "@/lib/job-employee-assignments";
+import { JobCreateEmployeePicker } from "@/components/jobs/job-create-employee-picker";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   countJobsByStatusFilter,
   DEFAULT_JOB_LIST_SORT,
   DEFAULT_JOB_STATUS_FILTER,
@@ -400,6 +417,12 @@ function JobsPageContent() {
   );
 
   const [isNewJobOpen, setIsNewJobOpen] = useState(false);
+  const [newJobFieldErrors, setNewJobFieldErrors] = useState<NewJobCustomerFieldErrors>({});
+  const [createEmployeeIds, setCreateEmployeeIds] = useState<string[]>([]);
+  const [duplicateCustomerOffer, setDuplicateCustomerOffer] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
   const [newJob, setNewJob] = useState({
     name: "",
     description: "",
@@ -549,6 +572,34 @@ function JobsPageContent() {
     }
   }, [searchParams]);
 
+  useEffect(() => {
+    if (!newJob.customerId?.trim()) return;
+    const c = customers.find(
+      (x: { id?: string }) => x.id === newJob.customerId.trim()
+    ) as
+      | {
+          companyName?: string;
+          firstName?: string;
+          lastName?: string;
+          email?: string;
+          phone?: string;
+          address?: string;
+        }
+      | undefined;
+    if (!c) return;
+    setNewJob((prev) => ({
+      ...prev,
+      quickCustomerName:
+        c.companyName ||
+        `${c.firstName || ""} ${c.lastName || ""}`.trim() ||
+        prev.quickCustomerName,
+      quickCustomerEmail: c.email?.trim() || prev.quickCustomerEmail,
+      quickCustomerPhone: c.phone?.trim() || prev.quickCustomerPhone,
+      quickCustomerAddress: c.address?.trim() || prev.quickCustomerAddress,
+    }));
+    setNewJobFieldErrors({});
+  }, [newJob.customerId, customers]);
+
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyId || !user) return;
@@ -582,45 +633,15 @@ function JobsPageContent() {
       } else {
         const qName = newJob.quickCustomerName.trim();
         const qAddr = newJob.quickCustomerAddress.trim();
-        const budgetEarly = newJob.budget.trim();
 
-        if (!qName) {
-          toast({
-            variant: "destructive",
-            title: "Zákazník",
-            description:
-              "Vyberte zákazníka ze seznamu, nebo vyplňte název firmy / jméno pro nového zákazníka.",
-          });
-          setIsSubmitting(false);
-          return;
-        }
-        if (!qAddr) {
-          toast({
-            variant: "destructive",
-            title: "Adresa",
-            description:
-              "Při zadání nového zákazníka ručně je adresa povinná.",
-          });
-          setIsSubmitting(false);
-          return;
-        }
-        if (!budgetEarly) {
-          toast({
-            variant: "destructive",
-            title: "Rozpočet",
-            description:
-              "Při zadání nového zákazníka ručně je rozpočet zakázky povinný.",
-          });
-          setIsSubmitting(false);
-          return;
-        }
-        const budgetNumEarly = Math.round(Number(budgetEarly));
-        if (!Number.isFinite(budgetNumEarly) || budgetNumEarly <= 0) {
-          toast({
-            variant: "destructive",
-            title: "Rozpočet",
-            description: "Zadejte platnou částku větší než 0.",
-          });
+        const fieldErrors = validateNewCustomerForJob({
+          name: qName,
+          email: newJob.quickCustomerEmail,
+          phone: newJob.quickCustomerPhone,
+          address: qAddr,
+        });
+        setNewJobFieldErrors(fieldErrors);
+        if (hasFieldErrors(fieldErrors)) {
           setIsSubmitting(false);
           return;
         }
@@ -655,8 +676,14 @@ function JobsPageContent() {
         }
 
         if (candidates.length) {
-          customerSnapshot = candidates[0];
-          customerId = customerSnapshot.id;
+          const c0 = candidates[0];
+          const label =
+            c0.companyName ||
+            `${c0.firstName || ""} ${c0.lastName || ""}`.trim() ||
+            c0.id;
+          setDuplicateCustomerOffer({ id: c0.id, label });
+          setIsSubmitting(false);
+          return;
         } else {
           const customerPayload = {
             companyName: qName,
@@ -795,6 +822,36 @@ function JobsPageContent() {
       }
       const createdJobRef = await addDoc(jobsColRef, payload);
 
+      const jobRecordForAssign = {
+        ...payload,
+        id: createdJobRef.id,
+        name: newJob.name,
+      } as Record<string, unknown>;
+
+      if (createEmployeeIds.length > 0) {
+        const emps = (Array.isArray(employeesRaw) ? employeesRaw : []) as Array<{
+          id: string;
+          authUserId?: string;
+        }>;
+        for (const empId of createEmployeeIds) {
+          const emp = emps.find((e) => e.id === empId);
+          if (!emp) continue;
+          try {
+            await assignEmployeeToJob({
+              firestore,
+              companyId,
+              jobId: createdJobRef.id,
+              jobRecord: jobRecordForAssign,
+              employeeId: emp.id,
+              authUserId: emp.authUserId ?? null,
+              updatedByUid: user.uid,
+            });
+          } catch (assignErr) {
+            console.error("[JobsPage] assignEmployeeToJob", assignErr);
+          }
+        }
+      }
+
       try {
         await syncAutoCustomerTasksForJob(
           firestore,
@@ -851,6 +908,8 @@ function JobsPageContent() {
         description: `Zakázka "${newJob.name}" byla úspěšně přidána.`,
       });
       setIsNewJobOpen(false);
+      setNewJobFieldErrors({});
+      setCreateEmployeeIds([]);
       setNewJob({
         name: "",
         description: "",
@@ -1365,8 +1424,8 @@ function JobsPageContent() {
                         </AlertTitle>
                         <AlertDescription className="text-xs sm:text-sm">
                           Po uložení bude zákazník vytvořen v adresáři a propojen
-                          s touto zakázkou. Vyplňte povinně jméno, adresu a
-                          rozpočet.
+                          s touto zakázkou. Povinné: jméno nebo firma, e-mail,
+                          telefon a adresa.
                         </AlertDescription>
                       </Alert>
                     ) : null}
@@ -1380,8 +1439,7 @@ function JobsPageContent() {
                         </AlertTitle>
                         <AlertDescription className="text-xs sm:text-sm">
                           Pokud není vybrán zákazník v poli výše, vyplňte v sekci
-                          „Rychlé údaje o zákazníkovi“ název, adresu a rozpočet —
-                          jinak zakázku nelze uložit.
+                          „Rychlé údaje o zákazníkovi“ povinné údaje (označené *).
                         </AlertDescription>
                       </Alert>
                     ) : null}
@@ -1543,10 +1601,7 @@ function JobsPageContent() {
                         </select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="budget">
-                          Rozpočet (Kč)
-                          {newJob.customerId ? "" : " *"}
-                        </Label>
+                        <Label htmlFor="budget">Rozpočet (Kč)</Label>
                         <Input
                           id="budget"
                           type="number"
@@ -1560,12 +1615,9 @@ function JobsPageContent() {
                               : "Částka bez DPH"
                           }
                           min={1}
-                          required={!newJob.customerId}
                         />
                         <p className="text-xs text-muted-foreground">
-                          {newJob.customerId
-                            ? "Volitelné. Hodnota odpovídá typu ceny."
-                            : "Povinné při ručním zadání zákazníka. Hodnota odpovídá typu ceny."}
+                          Volitelné. Hodnota odpovídá typu ceny (bez DPH / s DPH).
                         </p>
                       </div>
                       <div className="space-y-2">
@@ -1597,11 +1649,12 @@ function JobsPageContent() {
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2 col-span-2">
                             <Label htmlFor="quickCustomerName">
-                              Název firmy / jméno
+                              Název firmy / jméno {!newJob.customerId ? "*" : ""}
                             </Label>
                             <Input
                               id="quickCustomerName"
                               value={newJob.quickCustomerName}
+                              disabled={Boolean(newJob.customerId)}
                               onChange={(e) =>
                                 setNewJob({
                                   ...newJob,
@@ -1609,34 +1662,58 @@ function JobsPageContent() {
                                 })
                               }
                               placeholder="Např. Novákovi s.r.o."
+                              aria-invalid={Boolean(newJobFieldErrors.quickCustomerName)}
                             />
+                            {newJobFieldErrors.quickCustomerName ? (
+                              <p className="text-xs text-destructive">
+                                {newJobFieldErrors.quickCustomerName}
+                              </p>
+                            ) : null}
                           </div>
                           <div className="space-y-2">
-                            <Label htmlFor="quickCustomerEmail">Email</Label>
+                            <Label htmlFor="quickCustomerEmail">
+                              E-mail {!newJob.customerId ? "*" : ""}
+                            </Label>
                             <Input
                               id="quickCustomerEmail"
                               type="email"
                               value={newJob.quickCustomerEmail}
+                              disabled={Boolean(newJob.customerId)}
                               onChange={(e) =>
                                 setNewJob({
                                   ...newJob,
                                   quickCustomerEmail: e.target.value,
                                 })
                               }
+                              aria-invalid={Boolean(newJobFieldErrors.quickCustomerEmail)}
                             />
+                            {newJobFieldErrors.quickCustomerEmail ? (
+                              <p className="text-xs text-destructive">
+                                {newJobFieldErrors.quickCustomerEmail}
+                              </p>
+                            ) : null}
                           </div>
                           <div className="space-y-2">
-                            <Label htmlFor="quickCustomerPhone">Telefon</Label>
+                            <Label htmlFor="quickCustomerPhone">
+                              Telefon {!newJob.customerId ? "*" : ""}
+                            </Label>
                             <Input
                               id="quickCustomerPhone"
                               value={newJob.quickCustomerPhone}
+                              disabled={Boolean(newJob.customerId)}
                               onChange={(e) =>
                                 setNewJob({
                                   ...newJob,
                                   quickCustomerPhone: e.target.value,
                                 })
                               }
+                              aria-invalid={Boolean(newJobFieldErrors.quickCustomerPhone)}
                             />
+                            {newJobFieldErrors.quickCustomerPhone ? (
+                              <p className="text-xs text-destructive">
+                                {newJobFieldErrors.quickCustomerPhone}
+                              </p>
+                            ) : null}
                           </div>
                           <div className="space-y-2 col-span-2">
                             <Label htmlFor="quickCustomerAddress">
@@ -1654,7 +1731,13 @@ function JobsPageContent() {
                               }
                               placeholder="Ulice, město, PSČ"
                               required={!newJob.customerId}
+                              aria-invalid={Boolean(newJobFieldErrors.quickCustomerAddress)}
                             />
+                            {newJobFieldErrors.quickCustomerAddress ? (
+                              <p className="text-xs text-destructive">
+                                {newJobFieldErrors.quickCustomerAddress}
+                              </p>
+                            ) : null}
                           </div>
                           <div className="space-y-2 col-span-2">
                             <Label htmlFor="quickCustomerNotes">Poznámka</Label>
@@ -1671,6 +1754,19 @@ function JobsPageContent() {
                           </div>
                         </div>
                       </div>
+                      <JobCreateEmployeePicker
+                        employees={
+                          (Array.isArray(employeesRaw) ? employeesRaw : []) as {
+                            id: string;
+                            firstName?: string;
+                            lastName?: string;
+                            jobTitle?: string;
+                            position?: string;
+                          }[]
+                        }
+                        selectedIds={createEmployeeIds}
+                        onChange={setCreateEmployeeIds}
+                      />
                       <div className="space-y-2 col-span-2">
                         <Label htmlFor="measuring">Měření</Label>
                         <Textarea
@@ -1751,6 +1847,48 @@ function JobsPageContent() {
                 </DialogContent>
         </Dialog>
       ) : null}
+
+      <AlertDialog
+        open={Boolean(duplicateCustomerOffer)}
+        onOpenChange={(o) => {
+          if (!o) setDuplicateCustomerOffer(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Existující zákazník</AlertDialogTitle>
+            <AlertDialogDescription>
+              V adresáři už je zákazník „{duplicateCustomerOffer?.label}“. Chcete ho
+              propojit s novou zakázkou místo vytvoření duplicity?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDuplicateCustomerOffer(null)}>
+              Zrušit
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!duplicateCustomerOffer) return;
+                setNewJob((prev) => ({
+                  ...prev,
+                  customerId: duplicateCustomerOffer.id,
+                  quickCustomerName: "",
+                  quickCustomerEmail: "",
+                  quickCustomerPhone: "",
+                  quickCustomerAddress: "",
+                }));
+                setDuplicateCustomerOffer(null);
+                toast({
+                  title: "Zákazník propojen",
+                  description: "Údaje byly načteny ze seznamu. Dokončete vytvoření zakázky.",
+                });
+              }}
+            >
+              Propojit se stávajícím zákazníkem
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Card
         className={cn(

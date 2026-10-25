@@ -201,6 +201,7 @@ import { toArraySafe } from "@/lib/to-array-safe";
 import type { JobNotificationRecipient } from "@/lib/job-notification-recipients";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
 import { JobHandoverProtocolsSection } from "@/components/handover-protocols/job-handover-protocols-section";
+import { JobEmployeeAssignmentsSection } from "@/components/jobs/job-employee-assignments-section";
 import { pickDefaultHandoverContractId } from "@/lib/handover-protocol-contracts";
 import { JobCuttingPlanExcelSection } from "@/components/jobs/job-cutting-plan-excel-section";
 import {
@@ -10888,27 +10889,19 @@ export function JobDetailPageContent({
               </CardTitle>
             </CardHeader>
             <CardContent className={cn(JD.cardContentCompact, JD.mobileCardBody)}>
-              <div className="space-y-1.5">
-                {toArraySafe<string>(job.assignedEmployeeIds).map((empId: string) => (
-                  <div
-                    key={empId}
-                    className="flex items-center gap-2 rounded-md border border-gray-200 px-2 py-1.5"
-                  >
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
-                      <User className="h-3.5 w-3.5" />
-                    </div>
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                      {empId === user?.uid ? "Já" : `Pracovník (${empId.substring(0, 5)})`}
-                    </span>
-                    <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-                      Aktivní
-                    </Badge>
-                  </div>
-                ))}
-                {!toArraySafe(job.assignedEmployeeIds).length && (
-                  <p className="text-[13px] text-gray-700">Žádní pracovníci nejsou přiřazeni.</p>
-                )}
-              </div>
+              {companyId && jobFirestoreId && firestore ? (
+                <JobEmployeeAssignmentsSection
+                  embedded
+                  firestore={firestore}
+                  companyId={companyId}
+                  jobId={jobFirestoreId}
+                  user={user}
+                  jobRecord={job ? (job as Record<string, unknown>) : null}
+                  canManage={canManageFolders}
+                />
+              ) : (
+                <p className="text-[13px] text-gray-700">Načítání…</p>
+              )}
             </CardContent>
           </Card>
 

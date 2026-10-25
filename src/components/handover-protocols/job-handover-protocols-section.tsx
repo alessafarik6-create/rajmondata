@@ -38,6 +38,7 @@ import { HandoverProtocolSignatureDialog } from "@/components/handover-protocols
 import {
   HANDOVER_PROTOCOL_STATUS_LABELS,
   handoverProtocolFormFromDoc,
+  handoverProtocolIsLocked,
   type HandoverProtocolDoc,
 } from "@/lib/handover-protocol-types";
 import type { WorkContractDoc } from "@/lib/work-contract-print-html-build";
@@ -86,6 +87,7 @@ export function JobHandoverProtocolsSection(props: {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [emailCtx, setEmailCtx] = useState<HandoverProtocolDoc | null>(null);
   const [signCtx, setSignCtx] = useState<HandoverProtocolDoc | null>(null);
+  const [signRole, setSignRole] = useState<"customer" | "contractor">("customer");
   const [deleting, setDeleting] = useState(false);
 
   const editProtocolId = editProtocolIdProp ?? editId;
@@ -245,6 +247,7 @@ export function JobHandoverProtocolsSection(props: {
           {rows.map((row) => {
             const form = handoverProtocolFormFromDoc(row as unknown as Record<string, unknown>);
             const status = row.status ?? "draft";
+            const locked = handoverProtocolIsLocked(status);
             return (
               <li key={row.id} className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
                 <div className="flex flex-wrap justify-between gap-2">
@@ -271,7 +274,7 @@ export function JobHandoverProtocolsSection(props: {
                   >
                     <FolderOpen className="h-3.5 w-3.5 mr-1" /> Otevřít
                   </Button>
-                  {canEdit ? (
+                  {canEdit && !locked ? (
                     <Button
                       type="button"
                       size="sm"
@@ -323,24 +326,45 @@ export function JobHandoverProtocolsSection(props: {
                       >
                         <Mail className="h-3.5 w-3.5 mr-1" /> Odeslat e-mailem
                       </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="h-8 text-xs"
-                        onClick={() => setSignCtx({ ...row, form })}
-                      >
-                        <PenLine className="h-3.5 w-3.5 mr-1" /> Podpis zhotovitele
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="destructive"
-                        className="h-8 text-xs"
-                        onClick={() => setDeleteId(row.id)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5 mr-1" /> Smazat
-                      </Button>
+                      {!locked ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="h-8 text-xs"
+                            onClick={() => {
+                              setSignRole("customer");
+                              setSignCtx({ ...row, form });
+                            }}
+                          >
+                            <PenLine className="h-3.5 w-3.5 mr-1" /> Předat zákazníkovi k podpisu
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 text-xs"
+                            onClick={() => {
+                              setSignRole("contractor");
+                              setSignCtx({ ...row, form });
+                            }}
+                          >
+                            Podpis zhotovitele
+                          </Button>
+                        </>
+                      ) : null}
+                      {!locked ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          className="h-8 text-xs"
+                          onClick={() => setDeleteId(row.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Smazat
+                        </Button>
+                      ) : null}
                     </>
                   ) : null}
                 </div>
@@ -427,7 +451,12 @@ export function JobHandoverProtocolsSection(props: {
           companyId={companyId}
           protocolId={signCtx.id}
           user={user}
-          role="contractor"
+          role={signRole}
+          title={
+            signRole === "customer"
+              ? "Podpis zákazníka na tomto zařízení"
+              : "Podpis zhotovitele"
+          }
         />
       ) : null}
 

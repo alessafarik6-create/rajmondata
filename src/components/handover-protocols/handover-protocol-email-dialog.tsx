@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export function HandoverProtocolEmailDialog(props: {
   open: boolean;
@@ -45,6 +46,7 @@ export function HandoverProtocolEmailDialog(props: {
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [includeSignLink, setIncludeSignLink] = useState(true);
 
   useEffect(() => {
     if (!open) return;
@@ -65,6 +67,23 @@ export function HandoverProtocolEmailDialog(props: {
     try {
       const token = await user.getIdToken();
       const origin = typeof window !== "undefined" ? window.location.origin : "";
+      let bodyMessage = message.trim();
+      if (includeSignLink) {
+        const linkRes = await fetch("/api/company/handover-protocols/sign-link", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ companyId, protocolId, origin }),
+        });
+        const linkData = (await linkRes.json()) as { ok?: boolean; url?: string; error?: string };
+        if (linkRes.ok && linkData.ok && linkData.url) {
+          bodyMessage += `\n\nPro elektronický podpis bez registrace otevřete odkaz (platnost 14 dní):\n${linkData.url}`;
+        } else if (!linkRes.ok) {
+          throw new Error(linkData.error || "Nepodařilo se vytvořit odkaz k podpisu.");
+        }
+      }
       const res = await fetch("/api/company/handover-protocols/send-email", {
         method: "POST",
         headers: {
@@ -76,7 +95,7 @@ export function HandoverProtocolEmailDialog(props: {
           protocolId,
           to: to.trim(),
           subject: subject.trim(),
-          message: message.trim(),
+          message: bodyMessage,
           origin,
         }),
       });
@@ -119,6 +138,15 @@ export function HandoverProtocolEmailDialog(props: {
             <Label htmlFor="hp-mail-subj">Předmět</Label>
             <Input id="hp-mail-subj" value={subject} onChange={(e) => setSubject(e.target.value)} />
           </div>
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <Checkbox
+              checked={includeSignLink}
+              onCheckedChange={(v) => setIncludeSignLink(v === true)}
+            />
+            <span>
+              Přidat bezpečný odkaz pro vzdálený podpis zákazníka (bez přihlášení do RAJMONDATA)
+            </span>
+          </label>
           <div className="space-y-1.5">
             <Label htmlFor="hp-mail-body">Text zprávy</Label>
             <Textarea
