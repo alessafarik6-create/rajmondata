@@ -85,6 +85,7 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
   const [preferWonJobs, setPreferWonJobs] = useState(true);
   const [storeAiQueryText, setStoreAiQueryText] = useState(false);
   const [aiQueryRetentionDays, setAiQueryRetentionDays] = useState(90);
+  const [chatWorkIntentAnalysis, setChatWorkIntentAnalysis] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
 
   const [editorOpen, setEditorOpen] = useState(false);
@@ -121,6 +122,7 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
       setPreferWonJobs(defaults.knowledge.preferWonJobs);
       setStoreAiQueryText(false);
       setAiQueryRetentionDays(90);
+      setChatWorkIntentAnalysis(true);
       return;
     }
     const k =
@@ -144,6 +146,7 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
         ? Math.min(365, Math.round(al.retentionDays))
         : 90
     );
+    setChatWorkIntentAnalysis(data.chatWorkIntentAnalysis !== false);
   }, [settingsRaw, companyId]);
 
   const rules = useMemo(() => {
@@ -210,6 +213,7 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
             storeQueryText: storeAiQueryText,
             retentionDays: Math.min(365, Math.max(7, aiQueryRetentionDays)),
           },
+          chatWorkIntentAnalysis,
           updatedAt: serverTimestamp(),
           updatedByUid: user.uid,
         } satisfies AiAssistantSettingsDoc,
@@ -402,6 +406,20 @@ export function AiAssistantSettingsCard({ companyId }: Props) {
                   </p>
                 </div>
                 <Switch id="ai-enabled" checked={enabled} onCheckedChange={setEnabled} />
+              </div>
+              <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                <div>
+                  <Label htmlFor="ai-chat-work-intent">AI rozpoznávání zakázek v chatu</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Analýza textu a příloh ve firemním chatu (WhatsApp screenshoty, seznamy termínů).
+                  </p>
+                </div>
+                <Switch
+                  id="ai-chat-work-intent"
+                  checked={chatWorkIntentAnalysis}
+                  disabled={!enabled}
+                  onCheckedChange={setChatWorkIntentAnalysis}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ai-base-instructions">Základní instrukce pro AI</Label>

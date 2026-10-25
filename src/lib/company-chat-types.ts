@@ -33,6 +33,8 @@ export type ChatAttachmentAnalysisStatus =
   | "saved"
   | "error";
 
+export type ChatWorkIntentStatus = "idle" | "analyzing" | "ready" | "error" | "applied";
+
 export type ChatAttachmentMeta = {
   id: string;
   fileName: string;
@@ -48,6 +50,8 @@ export type ChatAttachmentMeta = {
   /** AI doklad — bez opakované analýzy */
   aiDocumentAnalysisId?: string | null;
   analysisStatus?: ChatAttachmentAnalysisStatus;
+  aiWorkIntentAnalysisId?: string | null;
+  workIntentStatus?: ChatWorkIntentStatus;
   linkedDocumentId?: string | null;
   createdDocumentId?: string | null;
   createdDocumentType?: string | null;
@@ -72,6 +76,8 @@ export type ChatMessageDoc = {
   conversationId?: string;
   participantIds?: string[];
   attachments?: ChatAttachmentMeta[];
+  aiWorkIntentAnalysisId?: string | null;
+  workIntentStatus?: ChatWorkIntentStatus;
   createdByRole?: string;
   authorRole?: string;
   /** DM: uid příjemce (pro unread u zaměstnance) */

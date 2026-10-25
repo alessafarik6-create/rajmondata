@@ -22,6 +22,8 @@ import { generatePlainTextWithOpenAi } from "@/lib/ai/openai-client";
 import { parseKnowledgeQueryIntent } from "@/lib/ai/knowledge-query-intent";
 import { retrieveKnowledgeForQuery } from "@/lib/ai/knowledge-service";
 import { getPortalAssistantReply, type PortalAssistantReply } from "@/lib/portal-assistant-knowledge";
+import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
+import type { ChatWorkIntentAnalysisDoc } from "@/lib/chat/chat-work-intent-types";
 
 export type PortalAssistantAnswer = PortalAssistantReply & {
   usedAi?: boolean;
@@ -108,11 +110,56 @@ function parseAssistantJson(text: string): PortalAssistantReply | null {
   }
 }
 
+async function loadChatWorkIntentContext(
+  db: Firestore,
+  companyId: string,
+  messageId: string
+): Promise<string> {
+  const msgSnap = await db
+    .collection(COMPANIES_COLLECTION)
+    .doc(companyId)
+    .collection("chat")
+    .doc(messageId)
+    .get();
+  if (!msgSnap.exists) return "";
+  const data = msgSnap.data() as { aiWorkIntentAnalysisId?: string; text?: string };
+  const analysisId = String(data.aiWorkIntentAnalysisId ?? "").trim();
+  if (!analysisId) {
+    const text = String(data.text ?? "").trim().slice(0, 500);
+    return text
+      ? `\n\nKontext chat zprávy (jen pro orientaci, neprováděj zápis):\n${text}`
+      : "";
+  }
+  const aSnap = await db
+    .collection(COMPANIES_COLLECTION)
+    .doc(companyId)
+    .collection("chatWorkIntentAnalyses")
+    .doc(analysisId)
+    .get();
+  if (!aSnap.exists) return "";
+  const analysis = { id: aSnap.id, ...(aSnap.data() as object) } as ChatWorkIntentAnalysisDoc;
+  if (analysis.organizationId !== companyId) return "";
+  const proposals = (analysis.proposals ?? [])
+    .slice(0, 8)
+    .map(
+      (p, i) =>
+        `${i + 1}. [${p.kind}] ${p.jobTitle ?? p.description ?? "—"} · zákazník: ${
+          p.customerName ?? p.companyName ?? "?"
+        } · termín: ${p.scheduledDate ?? "?"}`
+    )
+    .join("\n");
+  return (
+    `\n\nKontext AI analýzy chat zprávy (návrhy — uživatel musí potvrdit v UI chatu, ty data neukládej):\n` +
+    `${analysis.summaryCs}\n${proposals}`
+  );
+}
+
 export async function answerPortalAssistantQuestion(params: {
   db: Firestore;
   caller: VerifiedCompanyCaller;
   question: string;
   pathname: string;
+  chatMessageId?: string;
 }): Promise<PortalAssistantAnswer> {
   const question = params.question.trim();
   const permissions = await resolveCallerPortalPermissions(params.db, params.caller);
@@ -162,6 +209,19 @@ export async function answerPortalAssistantQuestion(params: {
     /* manuály nejsou povinné */
   }
 
+  let chatCtx = "";
+  if (params.chatMessageId && params.pathname.includes("/chat")) {
+    try {
+      chatCtx = await loadChatWorkIntentContext(
+        params.db,
+        params.caller.companyId,
+        params.chatMessageId
+      );
+    } catch {
+      chatCtx = "";
+    }
+  }
+
   if (isAiFeatureEnabled()) {
     const portalCtx = serializePortalHelpForPrompt(registry, params.pathname);
     const permCtx = permissionSummaryForPrompt(permissions, params.caller.role);
@@ -175,6 +235,7 @@ Oprávnění uživatele (role ${params.caller.role}):
 ${permCtx}
 
 ${knowledgeBlock}
+${chatCtx}
 
 Vrať JSON: {"text":"krátká praktická odpověď v češtině","openHref":"/portal/... nebo null","openLabel":"popisek tlačítka nebo null"}
 Pravidla: 1) kde to je 2) co kliknout 3) co uložit. Pokud nemá WRITE, upozorni. Nepiš, že měníš data. openHref jen z výše uvedených rout.`;

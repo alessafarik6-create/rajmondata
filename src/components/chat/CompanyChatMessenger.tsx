@@ -86,7 +86,7 @@ import {
 } from "@/components/chat/chat-new-conversation-dialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
-import { ChatAttachmentDocumentPanel } from "@/components/chat/chat-attachment-document-panel";
+import { ChatMessageAiSection } from "@/components/chat/chat-message-ai-section";
 
 export type CompanyChatSenderMode = "employee" | "admin";
 
@@ -205,6 +205,9 @@ export function CompanyChatMessenger({
   );
   const { data: profile } = useDoc<Record<string, unknown>>(userRef);
   const role = String(profile?.role ?? "").trim();
+  const canUseDocumentAi =
+    mode === "admin" &&
+    ["owner", "admin", "manager", "accountant"].includes(role);
   const canManageGroups =
     mode === "admin" && ["owner", "admin", "manager"].includes(role);
 
@@ -827,6 +830,35 @@ export function CompanyChatMessenger({
       setDraft("");
       setPendingFiles([]);
       scrollMessagesToBottom("smooth");
+
+      const analyzableIds = attachments
+        .filter(
+          (a) =>
+            a.mimeType.startsWith("image/") || a.mimeType.toLowerCase().includes("pdf")
+        )
+        .map((a) => a.id);
+      if (canUseDocumentAi && (text || analyzableIds.length > 0)) {
+        void (async () => {
+          try {
+            const token = await user.getIdToken();
+            await fetch("/api/company/chat/analyze-work-intent", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                companyId,
+                messageId: msgRef.id,
+                attachmentIds: analyzableIds,
+                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              }),
+            });
+          } catch {
+            /* pozadí */
+          }
+        })();
+      }
     } finally {
       setSending(false);
     }
@@ -1197,20 +1229,6 @@ export function CompanyChatMessenger({
                           Přiřadit k zakázce
                         </Button>
                       ) : null}
-                      {att.mimeType.startsWith("image/") ||
-                      att.mimeType.includes("pdf") ? (
-                        <ChatAttachmentDocumentPanel
-                          companyId={companyId}
-                          messageId={m.id}
-                          attachment={att}
-                          conversationId={activeConversationId}
-                          chatBasePath={
-                            mode === "employee"
-                              ? "/portal/employee/messages"
-                              : "/portal/chat"
-                          }
-                        />
-                      ) : null}
                     </div>
                   ))}
                   {(m.attachments?.length ?? 0) > 1 && jobsAccess.canWrite ? (
@@ -1233,6 +1251,17 @@ export function CompanyChatMessenger({
                       Přiřadit všechny k zakázce
                     </Button>
                   ) : null}
+                  <ChatMessageAiSection
+                    companyId={companyId}
+                    message={m}
+                    chatBasePath={
+                      mode === "employee"
+                        ? "/portal/employee/messages"
+                        : "/portal/chat"
+                    }
+                    canApplyJobs={jobsAccess.canWrite && canUseDocumentAi}
+                    canUseDocumentAi={canUseDocumentAi}
+                  />
                 </div>
               </div>
               </React.Fragment>

@@ -2634,6 +2634,18 @@ service cloud.firestore {
           request.auth.uid == stateUserId;
       }
 
+      /** AI analýza zakázek z chatu — zápis pouze Admin SDK. */
+      match /chatWorkIntentAnalyses/{analysisId} {
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          portalModuleReadOk(companyId, 'chat');
+        allow write: if false;
+      }
+
+      /** Idempotentní apply návrhů z chatu — pouze Admin SDK. */
+      match /chatWorkIntentApplies/{applyId} {
+        allow read, write: if false;
+      }
+
       /** Skupinové / metadata konverzací chatu. */
       match /chatConversations/{conversationId} {
         allow read: if signedIn() && sameCompany(companyId) &&

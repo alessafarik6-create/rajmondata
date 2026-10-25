@@ -33,6 +33,8 @@ export type AiAssistantSettingsDoc = {
   knowledge: AiKnowledgeSourceSettings;
   /** Audit dotazů na firemní AI asistentku (metadata vs. text dotazu). */
   activityLog?: AiActivityLogSettingsDoc;
+  /** AI rozpoznávání zakázek z chatu a příloh (výchozí zapnuto při enabled). */
+  chatWorkIntentAnalysis?: boolean;
   updatedAt?: unknown;
   updatedByUid?: string | null;
 };

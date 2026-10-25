@@ -9,6 +9,7 @@ export const maxDuration = 45;
 type Body = {
   question?: string;
   pathname?: string;
+  chatMessageId?: string;
 };
 
 export async function POST(request: NextRequest) {
@@ -26,11 +27,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Zadejte otázku." }, { status: 400 });
     }
 
+    const chatMessageId = String(body.chatMessageId ?? "").trim() || undefined;
+
     const reply = await answerPortalAssistantQuestion({
       db: auth.db,
       caller: auth.caller,
       question,
       pathname,
+      chatMessageId,
     });
 
     return NextResponse.json({ ok: true, reply });
