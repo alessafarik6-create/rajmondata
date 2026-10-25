@@ -184,6 +184,7 @@ export async function applyChatWorkIntentProposals(input: {
         }
         if (typeId) payload.jobNumberTypeId = typeId;
         if (p.scheduledDate) payload.startDate = p.scheduledDate;
+        if (p.scheduledEndDate) payload.endDate = p.scheduledEndDate;
 
         const jobRef = await input.db
           .collection(COMPANIES_COLLECTION)

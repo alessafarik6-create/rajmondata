@@ -98,6 +98,7 @@ export async function POST(request: NextRequest) {
       attachmentIds,
       createdByUid: caller.uid,
       timeZone: body.timeZone ?? "Europe/Prague",
+      force: body.force === true,
     });
 
     if (!outcome.ok) {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { extractPdfTextContent } from "@/lib/ai/document-pdf-text";
@@ -12,6 +13,7 @@ import type { ChatAttachmentMeta } from "@/lib/company-chat-types";
 import { analyzeChatWorkIntentWithOpenAi } from "@/lib/chat/openai-chat-work-intent-client";
 import type {
   ChatWorkIntentAnalysisDoc,
+  ChatWorkIntentDetectedItem,
   ChatWorkIntentProposal,
 } from "@/lib/chat/chat-work-intent-types";
 import {
@@ -21,6 +23,11 @@ import {
   matchCustomerForProposal,
   matchJobsForProposal,
 } from "@/lib/chat/chat-work-intent-matching";
+import {
+  prepareImageTilesForVision,
+  resolveImageMimeType,
+} from "@/lib/chat/chat-work-intent-image-media";
+import { mergeAnalysisProposals } from "@/lib/chat/chat-work-intent-merge";
 import { AI_SETTINGS_DOC_ID } from "@/lib/ai/ai-settings-types";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 
@@ -29,23 +36,46 @@ function isAnalyzableMime(mime: string): boolean {
   return m.startsWith("image/") || m.includes("pdf");
 }
 
-async function attachmentToMedia(att: ChatAttachmentMeta): Promise<DocumentAiInputContent | null> {
+function buildAnalysisDocId(messageId: string, attachmentIds: string[]): string {
+  const key = `${messageId}:${[...attachmentIds].sort().join(",")}`;
+  const hash = createHash("sha256").update(key).digest("hex").slice(0, 24);
+  return `cwi_${hash}`;
+}
+
+async function attachmentToMediaParts(
+  att: ChatAttachmentMeta
+): Promise<{ parts: DocumentAiInputContent[]; bytes: number }> {
   let buffer =
     (att.storagePath ? await downloadChatAttachmentBuffer(att.storagePath) : null) ??
     (att.downloadUrl ? await fetchUrlBuffer(att.downloadUrl) : null);
-  if (!buffer?.length || buffer.length > OPENAI_DOCUMENT_MAX_BYTES) return null;
-  const mime = att.mimeType.toLowerCase().split(";")[0].trim();
-  if (mime.startsWith("image/")) {
-    return { kind: "image", mimeType: mime, base64: buffer.toString("base64") };
+  if (!buffer?.length || buffer.length > OPENAI_DOCUMENT_MAX_BYTES) {
+    return { parts: [], bytes: 0 };
   }
-  if (mime.includes("pdf")) {
+  const mime = resolveImageMimeType(buffer, att.mimeType, att.fileName);
+  if (mime.startsWith("image/")) {
+    const tiles = await prepareImageTilesForVision(buffer, mime);
+    if (!tiles.length) return { parts: [], bytes: 0 };
+    const parts: DocumentAiInputContent[] = tiles.map((t) => ({
+      kind: "image",
+      mimeType: t.mimeType,
+      base64: t.base64,
+    }));
+    return { parts, bytes: buffer.length };
+  }
+  if (mime.includes("pdf") || att.mimeType.includes("pdf")) {
     const text = await extractPdfTextContent(buffer).catch(() => "");
     if (text.trim().length >= 40) {
-      return { kind: "pdf_text", text, fileName: att.fileName };
+      return {
+        parts: [{ kind: "pdf_text", text, fileName: att.fileName }],
+        bytes: buffer.length,
+      };
     }
-    return { kind: "pdf", base64: buffer.toString("base64"), fileName: att.fileName };
+    return {
+      parts: [{ kind: "pdf", base64: buffer.toString("base64"), fileName: att.fileName }],
+      bytes: buffer.length,
+    };
   }
-  return null;
+  return { parts: [], bytes: 0 };
 }
 
 export async function isChatWorkIntentEnabledForOrg(
@@ -62,6 +92,37 @@ export async function isChatWorkIntentEnabledForOrg(
   if (data && data.enabled === false) return false;
   if (data && data.chatWorkIntentAnalysis === false) return false;
   return true;
+}
+
+function parseDetectedItems(raw: unknown): ChatWorkIntentDetectedItem[] {
+  if (!raw || typeof raw !== "object") return [];
+  const items = (raw as { detectedItems?: unknown }).detectedItems;
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item, idx) => {
+      if (!item || typeof item !== "object") return null;
+      const o = item as Record<string, unknown>;
+      return {
+        itemId: String(o.itemId ?? `d${idx + 1}`),
+        type: String(o.type ?? "unclear") as ChatWorkIntentDetectedItem["type"],
+        title: o.title != null ? String(o.title) : null,
+        customerName: o.customerName != null ? String(o.customerName) : null,
+        companyName: o.companyName != null ? String(o.companyName) : null,
+        phone: o.phone != null ? String(o.phone) : null,
+        email: o.email != null ? String(o.email) : null,
+        address: o.address != null ? String(o.address) : null,
+        description: o.description != null ? String(o.description) : null,
+        startDate: o.startDate != null ? String(o.startDate) : null,
+        endDate: o.endDate != null ? String(o.endDate) : null,
+        scheduledTime: o.scheduledTime != null ? String(o.scheduledTime) : null,
+        sourceText: o.sourceText != null ? String(o.sourceText) : null,
+        yearNeedsConfirmation: o.yearNeedsConfirmation === true,
+        confidence: Number(o.confidence ?? 0.5),
+        assignedEmployeeHint:
+          o.assignedEmployeeHint != null ? String(o.assignedEmployeeHint) : null,
+      } satisfies ChatWorkIntentDetectedItem;
+    })
+    .filter(Boolean) as ChatWorkIntentDetectedItem[];
 }
 
 function parseAiProposals(raw: unknown): ChatWorkIntentProposal[] {
@@ -85,6 +146,7 @@ function parseAiProposals(raw: unknown): ChatWorkIntentProposal[] {
         description: o.description != null ? String(o.description) : null,
         budgetText: o.budgetText != null ? String(o.budgetText) : null,
         scheduledDate: o.scheduledDate != null ? String(o.scheduledDate) : null,
+        scheduledEndDate: o.scheduledEndDate != null ? String(o.scheduledEndDate) : null,
         scheduledTime: o.scheduledTime != null ? String(o.scheduledTime) : null,
         dateNeedsConfirmation: o.dateNeedsConfirmation === true,
         assignedEmployeeHint:
@@ -109,6 +171,7 @@ export async function analyzeChatWorkIntent(params: {
   attachmentIds: string[];
   createdByUid: string;
   timeZone?: string;
+  force?: boolean;
 }): Promise<
   | { ok: true; analysis: ChatWorkIntentAnalysisDoc; cached: boolean }
   | { ok: false; status: number; error: string }
@@ -119,20 +182,24 @@ export async function analyzeChatWorkIntent(params: {
   }
 
   const timeZone = params.timeZone ?? "Europe/Prague";
-  const analysisId = `cwi_${params.messageId}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 120);
+  const analysisId = buildAnalysisDocId(params.messageId, params.attachmentIds);
   const ref = params.db
     .collection(COMPANIES_COLLECTION)
     .doc(params.companyId)
     .collection("chatWorkIntentAnalyses")
     .doc(analysisId);
 
-  const existing = await ref.get();
-  if (existing.exists) {
-    return {
-      ok: true,
-      cached: true,
-      analysis: { id: analysisId, ...(existing.data() as object) } as ChatWorkIntentAnalysisDoc,
-    };
+  if (params.force) {
+    await ref.delete().catch(() => undefined);
+  } else {
+    const existing = await ref.get();
+    if (existing.exists) {
+      return {
+        ok: true,
+        cached: true,
+        analysis: { id: analysisId, ...(existing.data() as object) } as ChatWorkIntentAnalysisDoc,
+      };
+    }
   }
 
   const selected = params.attachments.filter(
@@ -140,9 +207,26 @@ export async function analyzeChatWorkIntent(params: {
   );
 
   const media: DocumentAiInputContent[] = [];
+  let imageBytesSent = 0;
+  let imageTilesSent = 0;
+
   for (const att of selected) {
-    const m = await attachmentToMedia(att);
-    if (m) media.push(m);
+    const { parts, bytes } = await attachmentToMediaParts(att);
+    if (parts.length) {
+      imageBytesSent += bytes;
+      imageTilesSent += parts.filter((p) => p.kind === "image").length;
+      media.push(...parts);
+    }
+  }
+
+  const expectsImage = selected.length > 0;
+  if (expectsImage && media.length === 0) {
+    return {
+      ok: false,
+      status: 422,
+      error:
+        "Obrázek se nepodařilo načíst ze storage. Zkuste znovu odeslat přílohu nebo spusťte analýzu znovu.",
+    };
   }
 
   if (!params.messageText.trim() && media.length === 0) {
@@ -160,12 +244,38 @@ export async function analyzeChatWorkIntent(params: {
       referenceDateIso,
       timeZone,
       media,
+      imageTilesSent,
     });
     const parsed = JSON.parse(ai.outputText) as Record<string, unknown>;
     const readable = parsed.readable !== false;
     const unreadableReason =
       parsed.unreadableReason != null ? String(parsed.unreadableReason) : null;
-    let proposals = parseAiProposals(parsed);
+
+    if (expectsImage && imageTilesSent === 0) {
+      return {
+        ok: false,
+        status: 422,
+        error: "Analýza neobdržela obrazová data — zkuste to znovu.",
+      };
+    }
+
+    const documentType =
+      parsed.documentType != null ? String(parsed.documentType) : "unknown";
+    const extractedTextPreview = String(parsed.extractedTextPreview ?? "").trim();
+    const detectedItems = parseDetectedItems(parsed);
+    const aiProposals = parseAiProposals(parsed);
+
+    const { proposals: mergedProposals, overlapWarningIds } = mergeAnalysisProposals({
+      aiProposals,
+      detectedItems,
+      documentType,
+      extractedTextPreview,
+      referenceDate: refDate,
+    });
+
+    let proposals = mergedProposals.map((p) =>
+      overlapWarningIds.includes(p.proposalId) ? { ...p, overlapWarning: true } : p
+    );
 
     const customers = await loadCustomersForMatching(params.db, params.companyId);
     const jobs = await loadRecentJobs(params.db, params.companyId);
@@ -190,9 +300,14 @@ export async function analyzeChatWorkIntent(params: {
       timeZone,
       readable,
       unreadableReason,
+      documentType,
+      extractedTextPreview: extractedTextPreview.slice(0, 8000),
+      detectedItems,
       summaryCs: String(parsed.summaryCs ?? "").trim() || "Analýza dokončena.",
       proposals,
       model: ai.model,
+      imageTilesSent,
+      imageBytesSent,
       createdBy: params.createdByUid,
     };
 

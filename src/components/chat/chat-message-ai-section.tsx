@@ -27,7 +27,7 @@ export function ChatMessageAiSection(props: {
   if (!hasText && docLike.length === 0) return null;
 
   return (
-    <div className="mt-2 space-y-1 border-t border-white/10 pt-2">
+    <div className="mt-2 space-y-1 rounded-lg border border-border bg-background text-foreground p-2 shadow-sm">
       {docLike.map((att) => (
         <ChatAttachmentDocumentPanel
           key={att.id}

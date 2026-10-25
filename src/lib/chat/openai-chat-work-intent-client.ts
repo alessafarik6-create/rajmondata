@@ -54,24 +54,19 @@ function parseUsage(data: Record<string, unknown>): AiTokenUsage {
   };
 }
 
-export async function analyzeChatWorkIntentWithOpenAi(params: {
+export function buildChatWorkIntentOpenAiContentParts(params: {
   messageText: string;
   referenceDateIso: string;
   timeZone: string;
   media: DocumentAiInputContent[];
-}): Promise<{ outputText: string; model: string; usage: AiTokenUsage }> {
-  const apiKey = getOpenAiApiKey();
-  if (!apiKey) {
-    throw new OpenAiClientError(503, "OpenAI API není nakonfigurováno.");
-  }
-
-  const model = getOpenAiDocumentModel();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), OPENAI_REQUEST_TIMEOUT_MS);
-
+  imageTilesSent?: number;
+}): Array<Record<string, unknown>> {
   const userIntro =
     `Referenční datum a čas zprávy: ${params.referenceDateIso} (${params.timeZone}).\n` +
-    `Text zprávy:\n${params.messageText.slice(0, 8000) || "(bez textu — analyzuj pouze přílohy)"}\n`;
+    `Text zprávy:\n${params.messageText.slice(0, 8000) || "(bez textu — analyzuj pouze přílohy)"}\n` +
+    (params.imageTilesSent
+      ? `\nPříloha je rozdělena na ${params.imageTilesSent} částí — projdi všechny.\n`
+      : "");
 
   const contentParts: Array<Record<string, unknown>> = [
     { type: "input_text", text: userIntro },
@@ -95,6 +90,33 @@ export async function analyzeChatWorkIntentWithOpenAi(params: {
         text: `Text z PDF (${input.fileName}):\n${input.text.slice(0, 12000)}`,
       });
     }
+  }
+  return contentParts;
+}
+
+export async function analyzeChatWorkIntentWithOpenAi(params: {
+  messageText: string;
+  referenceDateIso: string;
+  timeZone: string;
+  media: DocumentAiInputContent[];
+  imageTilesSent?: number;
+}): Promise<{ outputText: string; model: string; usage: AiTokenUsage }> {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    throw new OpenAiClientError(503, "OpenAI API není nakonfigurováno.");
+  }
+
+  const model = getOpenAiDocumentModel();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OPENAI_REQUEST_TIMEOUT_MS);
+
+  const contentParts = buildChatWorkIntentOpenAiContentParts(params);
+  const imageParts = contentParts.filter((p) => p.type === "input_image");
+  if (params.media.some((m) => m.kind === "image") && imageParts.length === 0) {
+    throw new OpenAiClientError(
+      422,
+      "Obrázek se nepodařilo připravit pro AI analýzu."
+    );
   }
 
   try {

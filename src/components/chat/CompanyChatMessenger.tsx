@@ -840,6 +840,7 @@ export function CompanyChatMessenger({
       if (canUseDocumentAi && (text || analyzableIds.length > 0)) {
         void (async () => {
           try {
+            await new Promise((r) => setTimeout(r, 2500));
             const token = await user.getIdToken();
             await fetch("/api/company/chat/analyze-work-intent", {
               method: "POST",
