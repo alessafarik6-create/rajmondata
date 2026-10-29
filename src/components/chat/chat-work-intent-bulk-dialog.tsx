@@ -25,6 +25,8 @@ import {
   filterEmployeesForAssignment,
   formatEmployeeDisplayName,
 } from "@/lib/employee-active";
+import { mergeProposalWithDraft } from "@/lib/chat/chat-work-intent-draft-utils";
+import { validateNewCustomerForJob } from "@/lib/job-create-customer-validation";
 
 export type BulkRowState = ChatWorkIntentApplyDraftsByProposal[string] & {
   proposalId: string;
@@ -74,6 +76,9 @@ export function ChatWorkIntentBulkDialog(props: {
     jobId?: string;
     jobName?: string;
   }> | null;
+  draftsByProposalId?: ChatWorkIntentApplyDraftsByProposal;
+  onDraftsChange?: (drafts: ChatWorkIntentApplyDraftsByProposal) => void;
+  onEditProposal?: (proposalId: string) => void;
   onSubmit: (drafts: ChatWorkIntentApplyDraftsByProposal, selectedIds: string[]) => void;
   onRetryFailed?: () => void;
 }) {
@@ -107,16 +112,29 @@ export function ChatWorkIntentBulkDialog(props: {
   const [bulkNotify, setBulkNotify] = useState(true);
   const [overwriteManual, setOverwriteManual] = useState(false);
   const [empFilter, setEmpFilter] = useState("");
+  const [step, setStep] = useState<"edit" | "confirm">("edit");
 
   useEffect(() => {
     if (!props.open) return;
+    setStep("edit");
     setRows(
-      selectedProposals.map((p, idx) =>
-        proposalToRow(p, props.proposals.findIndex((x) => x.proposalId === p.proposalId))
-      )
+      selectedProposals.map((p) => {
+        const idx = props.proposals.findIndex((x) => x.proposalId === p.proposalId);
+        const base = proposalToRow(p, idx >= 0 ? idx : 0);
+        const merged = mergeProposalWithDraft(
+          p,
+          props.draftsByProposalId?.[p.proposalId],
+          idx >= 0 ? idx : 0
+        );
+        return {
+          ...base,
+          ...merged,
+          proposalId: p.proposalId,
+        } as BulkRowState;
+      })
     );
     setValidationErrors({});
-  }, [props.open, selectedProposals, props.proposals]);
+  }, [props.open, selectedProposals, props.proposals, props.draftsByProposalId]);
 
   const searchCustomers = useCallback(
     async (q: string) => {
@@ -173,18 +191,22 @@ export function ChatWorkIntentBulkDialog(props: {
     const errs: Record<string, string> = {};
     for (const r of rows) {
       if (!r.jobTitle?.trim()) errs[r.proposalId] = "Chybí název zakázky.";
-      else if (props.applyMode === "jobs" && !r.customerId && !r.createNewCustomer) {
-        if (!r.customerName?.trim() || !r.email?.trim() || !r.phone?.trim() || !r.address?.trim()) {
-          errs[r.proposalId] = "Vyberte zákazníka nebo vyplňte nového (jméno, e-mail, telefon, adresa).";
-        }
+      else if (props.applyMode === "jobs" && !r.customerId) {
+        const fieldErrs = validateNewCustomerForJob({
+          name: r.customerName ?? "",
+          email: r.email ?? "",
+          phone: r.phone ?? "",
+          address: r.address ?? "",
+        });
+        const first = Object.values(fieldErrs)[0];
+        if (first) errs[r.proposalId] = first;
       }
     }
     setValidationErrors(errs);
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = () => {
-    if (!validate()) return;
+  const buildDrafts = (): ChatWorkIntentApplyDraftsByProposal => {
     const drafts: ChatWorkIntentApplyDraftsByProposal = {};
     for (const r of rows) {
       drafts[r.proposalId] = {
@@ -196,14 +218,37 @@ export function ChatWorkIntentBulkDialog(props: {
         email: r.email,
         phone: r.phone,
         address: r.address,
-        createNewCustomer: r.createNewCustomer,
+        createNewCustomer: !r.customerId,
         note: r.note,
         assignedEmployeeIds: r.assignedEmployeeIds,
-        notifyEmployee: r.notifyEmployee,
+        notifyEmployee:
+          (r.assignedEmployeeIds?.length ?? 0) > 0 ? r.notifyEmployee !== false : false,
       };
     }
+    return drafts;
+  };
+
+  const handleContinueToConfirm = () => {
+    if (!validate()) return;
+    const drafts = buildDrafts();
+    props.onDraftsChange?.(drafts);
+    setStep("confirm");
+  };
+
+  const handleSubmit = () => {
+    if (!validate()) return;
+    const drafts = buildDrafts();
+    props.onDraftsChange?.(drafts);
     props.onSubmit(drafts, rows.map((r) => r.proposalId));
   };
+
+  const employeeLabel = (ids: string[] | undefined) =>
+    (ids ?? [])
+      .map((id) => {
+        const emp = employees.find((e) => String(e.id) === id);
+        return emp ? formatEmployeeDisplayName(emp, id) : id;
+      })
+      .join(", ");
 
   const filteredEmployees = useMemo(() => {
     const q = empFilter.trim().toLowerCase();
@@ -223,11 +268,39 @@ export function ChatWorkIntentBulkDialog(props: {
       <DialogContent className="max-w-[min(96vw,980px)] max-h-[92vh] flex flex-col p-0 gap-0">
         <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
           <DialogTitle>
-            Hromadná kontrola ({rows.length} {rows.length === 1 ? "položka" : "položek"})
+            {step === "confirm"
+              ? `Závěrečná kontrola (${rows.length} zakázek)`
+              : `Hromadná kontrola (${rows.length} ${rows.length === 1 ? "položka" : "položek"})`}
           </DialogTitle>
         </DialogHeader>
 
         <div className="px-6 pb-3 space-y-3 overflow-y-auto flex-1 min-h-0">
+          {step === "confirm" ? (
+            <ul className="space-y-3 text-sm">
+              {rows.map((r, idx) => (
+                <li key={r.proposalId} className="rounded-lg border p-3 space-y-1">
+                  <p className="font-semibold">
+                    {idx + 1}. {r.jobTitle}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {r.scheduledDate || "—"}
+                    {r.scheduledEndDate ? ` – ${r.scheduledEndDate}` : ""}
+                  </p>
+                  <p className="text-xs">Zákazník: {r.customerName || "—"}</p>
+                  <p className="text-xs">
+                    Zaměstnanci: {employeeLabel(r.assignedEmployeeIds) || "—"}
+                  </p>
+                  {r.note?.trim() ? <p className="text-xs">Pokyny: {r.note}</p> : null}
+                  <p className="text-xs">
+                    Zpráva:{" "}
+                    {(r.assignedEmployeeIds?.length ?? 0) > 0 && r.notifyEmployee !== false
+                      ? "ano"
+                      : "ne"}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
           <div className="rounded-lg border bg-muted/30 p-3 space-y-2 text-sm">
             <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground">
               Použít pro všechny vybrané zakázky
@@ -303,10 +376,12 @@ export function ChatWorkIntentBulkDialog(props: {
               Přepsat i ručně upravené karty
             </label>
             <Button type="button" size="sm" variant="secondary" onClick={applyBulkToAll}>
-              Použít hromadné nastavení
+              Přiřadit zaměstnance všem / použít nastavení
             </Button>
           </div>
+          )}
 
+          {step === "edit" ? (
           <ul className="space-y-4">
             {rows.map((r, idx) => (
               <li
@@ -317,21 +392,41 @@ export function ChatWorkIntentBulkDialog(props: {
                   failedIds.has(r.proposalId) && "ring-2 ring-destructive/40"
                 )}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="font-bold text-sm uppercase tracking-wide">
-                    Zakázka {idx + 1}
-                  </p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 text-xs text-destructive"
-                    onClick={() =>
-                      setRows((list) => list.filter((x) => x.proposalId !== r.proposalId))
-                    }
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Odebrat
-                  </Button>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="font-bold text-sm uppercase tracking-wide">
+                      Zakázka {idx + 1}
+                    </p>
+                    {employeeLabel(r.assignedEmployeeIds) ? (
+                      <p className="text-xs text-orange-700 dark:text-orange-300">
+                        {employeeLabel(r.assignedEmployeeIds)}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {props.onEditProposal ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs"
+                        onClick={() => props.onEditProposal?.(r.proposalId)}
+                      >
+                        Upravit
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 text-xs text-destructive"
+                      onClick={() =>
+                        setRows((list) => list.filter((x) => x.proposalId !== r.proposalId))
+                      }
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" /> Odebrat
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-3">
@@ -478,7 +573,7 @@ export function ChatWorkIntentBulkDialog(props: {
                 </div>
 
                 <div className="space-y-1 border-t pt-3">
-                  <Label>Poznámka k zakázce</Label>
+                  <Label>Pokyny pro zaměstnance</Label>
                   <Textarea
                     rows={3}
                     value={r.note ?? ""}
@@ -488,14 +583,21 @@ export function ChatWorkIntentBulkDialog(props: {
                   />
                 </div>
 
-                <label className="flex items-center gap-2 text-xs">
+                <label
+                  className={`flex items-center gap-2 text-xs ${
+                    (r.assignedEmployeeIds?.length ?? 0) === 0 ? "opacity-60" : ""
+                  }`}
+                >
                   <Checkbox
-                    checked={r.notifyEmployee}
+                    disabled={(r.assignedEmployeeIds?.length ?? 0) === 0}
+                    checked={
+                      (r.assignedEmployeeIds?.length ?? 0) > 0 && r.notifyEmployee !== false
+                    }
                     onCheckedChange={(v) =>
                       updateRow(r.proposalId, { notifyEmployee: v === true })
                     }
                   />
-                  Odeslat zaměstnanci zprávu
+                  Po vytvoření zakázky odeslat zaměstnanci zprávu
                 </label>
 
                 {validationErrors[r.proposalId] ? (
@@ -504,6 +606,7 @@ export function ChatWorkIntentBulkDialog(props: {
               </li>
             ))}
           </ul>
+          ) : null}
 
           {props.applyResults?.length ? (
             <ul className="text-xs space-y-1 border-t pt-3">
@@ -531,27 +634,43 @@ export function ChatWorkIntentBulkDialog(props: {
           ) : null}
         </div>
 
-        <DialogFooter className="px-6 py-4 border-t bg-background shrink-0 sticky bottom-0">
+        <DialogFooter className="px-6 py-4 border-t bg-background shrink-0 sticky bottom-0 flex-wrap gap-2">
           <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
             Zavřít
           </Button>
+          {step === "confirm" ? (
+            <Button type="button" variant="secondary" onClick={() => setStep("edit")}>
+              Zpět k úpravám
+            </Button>
+          ) : null}
           {failedIds.size > 0 && props.onRetryFailed ? (
             <Button type="button" variant="secondary" onClick={props.onRetryFailed}>
               Opakovat neúspěšné ({failedIds.size})
             </Button>
           ) : null}
-          <Button
-            type="button"
-            className="bg-orange-600 hover:bg-orange-700 text-white min-w-[180px]"
-            disabled={props.applying || rows.length === 0}
-            onClick={handleSubmit}
-          >
-            {props.applying ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              `Vytvořit ${rows.length} zakázek`
-            )}
-          </Button>
+          {step === "edit" ? (
+            <Button
+              type="button"
+              className="bg-orange-600 hover:bg-orange-700 text-white min-w-[180px]"
+              disabled={rows.length === 0}
+              onClick={handleContinueToConfirm}
+            >
+              Pokračovat ke kontrole
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              className="bg-orange-600 hover:bg-orange-700 text-white min-w-[180px]"
+              disabled={props.applying || rows.length === 0}
+              onClick={handleSubmit}
+            >
+              {props.applying ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                `Potvrdit vytvoření (${rows.length})`
+              )}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

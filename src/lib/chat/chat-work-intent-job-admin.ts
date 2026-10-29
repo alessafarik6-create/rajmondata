@@ -16,8 +16,8 @@ export async function assignEmployeesToJobAdmin(
   employeeIds: string[],
   updatedByUid: string,
   accessMode: JobAccessMode = "limited"
-): Promise<string[]> {
-  const authUserIds: string[] = [];
+): Promise<Array<{ employeeId: string; authUserId: string | null }>> {
+  const assigned: Array<{ employeeId: string; authUserId: string | null }> = [];
   const perms = memberPermissionsForAccessMode(accessMode);
   const assignedAt = new Date().toISOString();
 
@@ -82,10 +82,10 @@ export async function assignEmployeesToJobAdmin(
       updatedAt: FieldValue.serverTimestamp(),
     };
     await jobRef.update(patch);
-    if (authUserId) authUserIds.push(authUserId);
+    assigned.push({ employeeId: eid, authUserId: authUserId || null });
   }
 
-  return [...new Set(authUserIds)];
+  return assigned;
 }
 
 export async function addJobNoteCommentAdmin(

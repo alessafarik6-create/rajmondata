@@ -108,6 +108,20 @@ export function JobEmployeeAssignmentsSection({
       ? jobRecord.jobLeadEmployeeId
       : null;
 
+  const assignmentAckRows = useMemo(() => {
+    const raw = jobRecord?.employeeAssignmentResponses;
+    if (!raw || typeof raw !== "object") return [];
+    return Object.entries(raw as Record<string, Record<string, unknown>>).map(
+      ([key, row]) => ({
+        key,
+        employeeId: String(row.employeeId ?? key),
+        status: String(row.status ?? "pending"),
+        respondedAt: String(row.respondedAt ?? row.invitedAt ?? ""),
+        declineReason: String(row.declineReason ?? "").trim(),
+      })
+    );
+  }, [jobRecord?.employeeAssignmentResponses]);
+
   const employeesCol = useMemoFirebase(
     () =>
       firestore && companyId
@@ -260,6 +274,49 @@ export function JobEmployeeAssignmentsSection({
         </div>
       ) : (
         <>
+          {assignmentAckRows.length > 0 ? (
+            <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Potvrzení převzetí zakázky
+              </p>
+              <ul className="space-y-1.5 text-xs">
+                {assignmentAckRows.map((row) => {
+                  const emp = employees.find((e) => e.id === row.employeeId);
+                  const label = emp ? formatEmployeeDisplayName(emp, emp.id) : row.employeeId;
+                  const statusLabel =
+                    row.status === "accepted"
+                      ? "Přijato"
+                      : row.status === "declined"
+                        ? "Odmítnuto"
+                        : "Čeká na potvrzení";
+                  return (
+                    <li key={row.key} className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{label}</span>
+                      <Badge
+                        variant={
+                          row.status === "accepted"
+                            ? "default"
+                            : row.status === "declined"
+                              ? "destructive"
+                              : "secondary"
+                        }
+                        className="text-[10px] h-5"
+                      >
+                        {statusLabel}
+                      </Badge>
+                      {row.respondedAt ? (
+                        <span className="text-muted-foreground">{formatAssignedDate(row.respondedAt)}</span>
+                      ) : null}
+                      {row.declineReason ? (
+                        <span className="text-destructive w-full">{row.declineReason}</span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+
           {canManage ? (
             <Button
               type="button"

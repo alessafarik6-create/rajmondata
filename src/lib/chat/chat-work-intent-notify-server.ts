@@ -15,20 +15,21 @@ export async function sendJobAssignmentChatAndNotification(params: {
   adminUid: string;
   adminName: string;
   employeeAuthUserId: string;
+  employeeDocId?: string | null;
   jobId: string;
   jobName: string;
   messageText: string;
   eventKey: string;
-}): Promise<void> {
+}): Promise<{ chatMessageId: string | null }> {
   const recipient = String(params.employeeAuthUserId ?? "").trim();
-  if (!recipient || recipient === params.adminUid) return;
+  if (!recipient || recipient === params.adminUid) return { chatMessageId: null };
 
   const conversationId = buildDirectConversationId(params.adminUid, recipient);
   const participantIds = directMessageParticipantIds(params.adminUid, recipient);
-  if (!conversationId) return;
+  if (!conversationId) return { chatMessageId: null };
 
   const chatRef = params.db.collection(COMPANIES_COLLECTION).doc(params.companyId).collection("chat");
-  await chatRef.add({
+  const msgRef = await chatRef.add({
     companyId: params.companyId,
     organizationId: params.companyId,
     senderId: params.adminUid,
@@ -43,6 +44,9 @@ export async function sendJobAssignmentChatAndNotification(params: {
     recipientUserId: recipient,
     linkedJobId: params.jobId,
     linkedJobName: params.jobName,
+    jobAssignmentTargetUserId: recipient,
+    jobAssignmentEmployeeId: String(params.employeeDocId ?? "").trim() || null,
+    jobAssignmentStatus: "pending",
     createdAt: FieldValue.serverTimestamp(),
     createdAtMs: Date.now(),
   });
@@ -67,4 +71,6 @@ export async function sendJobAssignmentChatAndNotification(params: {
     eventId: params.eventKey,
     source: "chat_ai_bulk",
   });
+
+  return { chatMessageId: msgRef.id };
 }

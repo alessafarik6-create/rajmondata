@@ -299,9 +299,9 @@ export async function applyChatWorkIntentProposals(input: {
           .add(payload);
 
         const employeeIds = (draft?.assignedEmployeeIds ?? []).map(String).filter(Boolean);
-        let authUserIds: string[] = [];
+        let assignedEmployees: Array<{ employeeId: string; authUserId: string | null }> = [];
         if (employeeIds.length) {
-          authUserIds = await assignEmployeesToJobAdmin(
+          assignedEmployees = await assignEmployeesToJobAdmin(
             input.db,
             input.companyId,
             jobRef.id,
@@ -309,6 +309,23 @@ export async function applyChatWorkIntentProposals(input: {
             employeeIds,
             input.callerUid
           );
+          const invitedAt = new Date().toISOString();
+          const responsePatch: Record<string, unknown> = {
+            updatedAt: FieldValue.serverTimestamp(),
+          };
+          for (const row of assignedEmployees) {
+            responsePatch[`employeeAssignmentResponses.${row.employeeId}`] = {
+              employeeId: row.employeeId,
+              authUserId: row.authUserId,
+              status: "pending",
+              invitedAt,
+              invitedByUid: input.callerUid,
+              invitedByName: input.callerName,
+            };
+          }
+          if (Object.keys(responsePatch).length > 1) {
+            await jobRef.update(responsePatch);
+          }
         }
 
         if (note) {
@@ -324,7 +341,7 @@ export async function applyChatWorkIntentProposals(input: {
         }
 
         const notify = draft?.notifyEmployee !== false;
-        if (notify && authUserIds.length) {
+        if (notify && assignedEmployees.length) {
           const msgText = buildJobAssignmentMessageText({
             jobName: title,
             customerName,
@@ -333,21 +350,30 @@ export async function applyChatWorkIntentProposals(input: {
             note,
             assignerLabel: input.callerName,
           });
-          for (const authUid of authUserIds) {
-            const nKey = `${p.proposalId}:${authUid}:${jobRef.id}`;
+          for (const row of assignedEmployees) {
+            const authUid = String(row.authUserId ?? "").trim();
+            if (!authUid) continue;
+            const nKey = `${p.proposalId}:${row.employeeId}:${jobRef.id}`;
             if (notificationsSent.has(nKey)) continue;
             notificationsSent.add(nKey);
-            await sendJobAssignmentChatAndNotification({
+            const sent = await sendJobAssignmentChatAndNotification({
               db: input.db,
               companyId: input.companyId,
               adminUid: input.callerUid,
               adminName: input.callerName,
               employeeAuthUserId: authUid,
+              employeeDocId: row.employeeId,
               jobId: jobRef.id,
               jobName: title,
               messageText: msgText,
               eventKey: `${input.idempotencyKey}:${nKey}`,
             });
+            if (sent.chatMessageId) {
+              await jobRef.update({
+                [`employeeAssignmentResponses.${row.employeeId}.chatMessageId`]:
+                  sent.chatMessageId,
+              });
+            }
           }
         }
 

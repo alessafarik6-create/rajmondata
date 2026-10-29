@@ -86,6 +86,12 @@ export type ChatMessageDoc = {
   readAtBy?: Record<string, unknown>;
   linkedJobId?: string | null;
   linkedJobName?: string | null;
+  /** DM: pozvánka k potvrzení převzetí zakázky */
+  jobAssignmentTargetUserId?: string | null;
+  jobAssignmentEmployeeId?: string | null;
+  jobAssignmentStatus?: "pending" | "accepted" | "declined" | null;
+  jobAssignmentDeclineReason?: string | null;
+  jobAssignmentRespondedAt?: string | null;
 };
 
 export function buildDirectConversationId(uidA: string, uidB: string): string {

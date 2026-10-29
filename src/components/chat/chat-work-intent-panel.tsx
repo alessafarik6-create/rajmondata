@@ -3,19 +3,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatWorkIntentStatus } from "@/lib/company-chat-types";
 import Link from "next/link";
-import { Brain, CalendarDays, Loader2, Pencil, RefreshCw, Sparkles, X } from "lucide-react";
+import { Brain, CalendarDays, Loader2, Pencil, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { useUser } from "@/firebase";
 import { cn } from "@/lib/utils";
 import type { ChatAttachmentMeta } from "@/lib/company-chat-types";
@@ -25,6 +15,18 @@ import type {
 } from "@/lib/chat/chat-work-intent-types";
 import type { ChatWorkIntentApplyDraftsByProposal } from "@/lib/chat/chat-work-intent-apply-types";
 import { ChatWorkIntentBulkDialog } from "@/components/chat/chat-work-intent-bulk-dialog";
+import { ChatWorkIntentProposalEditDialog } from "@/components/chat/chat-work-intent-proposal-edit-dialog";
+import type { ChatWorkIntentJobApplyDraft } from "@/lib/chat/chat-work-intent-apply-types";
+import {
+  mergeProposalWithDraft,
+  proposalToApplyDraft,
+} from "@/lib/chat/chat-work-intent-draft-utils";
+import { useFirestore, useMemoFirebase, useCollection } from "@/firebase";
+import { collection } from "firebase/firestore";
+import {
+  filterEmployeesForAssignment,
+  formatEmployeeDisplayName,
+} from "@/lib/employee-active";
 
 const KIND_LABEL: Record<string, string> = {
   new_job: "Nová zakázka",
@@ -63,13 +65,41 @@ export function ChatWorkIntentPanel(props: {
   const [analysis, setAnalysis] = useState<ChatWorkIntentAnalysisDoc | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
-  const [editProposal, setEditProposal] = useState<ChatWorkIntentProposal | null>(null);
   const [proposals, setProposals] = useState<ChatWorkIntentProposal[]>([]);
   const [applyResults, setApplyResults] = useState<
     Array<{ proposalId: string; jobId?: string; jobName?: string; ok: boolean; error?: string }>
   | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [applyMode, setApplyMode] = useState<"jobs" | "meetings" | "tasks">("jobs");
+  const [draftsByProposalId, setDraftsByProposalId] = useState<
+    Record<string, ChatWorkIntentJobApplyDraft>
+  >({});
+  const [editProposalId, setEditProposalId] = useState<string | null>(null);
+
+  const firestore = useFirestore();
+  const employeesQuery = useMemoFirebase(() => {
+    if (!firestore || !props.companyId) return null;
+    return collection(firestore, "companies", props.companyId, "employees");
+  }, [firestore, props.companyId]);
+  const { data: employeeRows = [] } = useCollection<Record<string, unknown> & { id: string }>(
+    employeesQuery
+  );
+  const employeesForLabels = useMemo(
+    () => filterEmployeesForAssignment(employeeRows ?? []),
+    [employeeRows]
+  );
+
+  const syncDraftsFromProposals = useCallback((list: ChatWorkIntentProposal[]) => {
+    setDraftsByProposalId((prev) => {
+      const next = { ...prev };
+      list.forEach((p, idx) => {
+        if (!next[p.proposalId]) {
+          next[p.proposalId] = proposalToApplyDraft(p, idx);
+        }
+      });
+      return next;
+    });
+  }, []);
 
   const visibleProposals = useMemo(
     () => proposals.filter((p) => !excluded.has(p.proposalId)),
@@ -99,8 +129,10 @@ export function ChatWorkIntentPanel(props: {
         };
         if (cancelled || !res.ok || !data.ok || !data.analysis?.readable) return;
         setAnalysis(data.analysis);
-        setProposals(data.analysis.proposals ?? []);
-        setSelected(new Set((data.analysis.proposals ?? []).map((p) => p.proposalId)));
+        const loaded = data.analysis.proposals ?? [];
+        setProposals(loaded);
+        syncDraftsFromProposals(loaded);
+        setSelected(new Set(loaded.map((p) => p.proposalId)));
       } catch {
         /* ignore */
       }
@@ -108,7 +140,7 @@ export function ChatWorkIntentPanel(props: {
     return () => {
       cancelled = true;
     };
-  }, [user, props.initialAnalysisId, props.workIntentStatus, analysis?.id]);
+  }, [user, props.initialAnalysisId, props.workIntentStatus, analysis?.id, syncDraftsFromProposals]);
 
   const runAnalyze = useCallback(async () => {
     if (!user) return;
@@ -143,8 +175,10 @@ export function ChatWorkIntentPanel(props: {
         throw new Error(data.analysis.unreadableReason ?? "Obsah nelze přečíst.");
       }
       setAnalysis(data.analysis);
-      setProposals(data.analysis.proposals ?? []);
-      setSelected(new Set((data.analysis.proposals ?? []).map((p) => p.proposalId)));
+      const loaded = data.analysis.proposals ?? [];
+      setProposals(loaded);
+      syncDraftsFromProposals(loaded);
+      setSelected(new Set(loaded.map((p) => p.proposalId)));
       setExcluded(new Set());
       props.onPatched?.();
     } catch (e) {
@@ -152,7 +186,51 @@ export function ChatWorkIntentPanel(props: {
     } finally {
       setLoading(false);
     }
-  }, [user, props, attachmentIds]);
+  }, [user, props, attachmentIds, syncDraftsFromProposals]);
+
+  const formatAssignedLabels = (proposalId: string): string => {
+    const ids = draftsByProposalId[proposalId]?.assignedEmployeeIds ?? [];
+    if (!ids.length) return "";
+    return ids
+      .map((id) => {
+        const emp = employeesForLabels.find((e) => String(e.id) === id);
+        return emp ? formatEmployeeDisplayName(emp, id) : id;
+      })
+      .join(", ");
+  };
+
+  const editProposal = useMemo(
+    () => proposals.find((p) => p.proposalId === editProposalId) ?? null,
+    [proposals, editProposalId]
+  );
+  const editDraft = useMemo(() => {
+    if (!editProposal) return null;
+    const idx = proposals.findIndex((p) => p.proposalId === editProposal.proposalId);
+    return mergeProposalWithDraft(
+      editProposal,
+      draftsByProposalId[editProposal.proposalId],
+      idx >= 0 ? idx : 0
+    );
+  }, [editProposal, draftsByProposalId, proposals]);
+
+  const saveProposalEdit = (updated: ChatWorkIntentProposal, draft: ChatWorkIntentJobApplyDraft) => {
+    const mergedProposal: ChatWorkIntentProposal = {
+      ...updated,
+      jobTitle: draft.jobTitle,
+      scheduledDate: draft.scheduledDate ?? updated.scheduledDate,
+      scheduledEndDate: draft.scheduledEndDate ?? updated.scheduledEndDate,
+      customerName: draft.customerName ?? updated.customerName,
+      companyName: draft.customerName ?? updated.companyName,
+      email: draft.email ?? updated.email,
+      phone: draft.phone ?? updated.phone,
+      address: draft.address ?? updated.address,
+    };
+    setProposals((list) =>
+      list.map((x) => (x.proposalId === mergedProposal.proposalId ? mergedProposal : x))
+    );
+    setDraftsByProposalId((prev) => ({ ...prev, [updated.proposalId]: draft }));
+    setEditProposalId(null);
+  };
 
   const proposalsForApply = useMemo(() => {
     return proposals.map((p) => {
@@ -374,23 +452,41 @@ export function ChatWorkIntentPanel(props: {
                           Nutno doplnit
                         </Badge>
                       ) : null}
+                      {formatAssignedLabels(p.proposalId) ? (
+                        <p className="text-[10px] text-orange-800 dark:text-orange-200 mt-1">
+                          Zaměstnanci: {formatAssignedLabels(p.proposalId)}
+                        </p>
+                      ) : null}
+                      {draftsByProposalId[p.proposalId]?.note?.trim() ? (
+                        <p className="text-[10px] text-muted-foreground line-clamp-2">
+                          Pokyny: {draftsByProposalId[p.proposalId]?.note}
+                        </p>
+                      ) : null}
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex flex-wrap gap-1">
                       <Button
                         type="button"
                         size="sm"
                         variant="ghost"
                         className="h-7 px-2 text-[10px]"
-                        onClick={() => setEditProposal(p)}
+                        onClick={() => setEditProposalId(p.proposalId)}
                       >
                         <Pencil className="h-3 w-3 mr-0.5" /> Upravit
                       </Button>
                       <Button
                         type="button"
-                        size="icon"
+                        size="sm"
                         variant="ghost"
-                        className="h-7 w-7"
-                        aria-label="Vyřadit"
+                        className="h-7 px-2 text-[10px]"
+                        onClick={() => setEditProposalId(p.proposalId)}
+                      >
+                        Přiřadit zaměstnance
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-[10px] text-destructive"
                         onClick={() => {
                           setExcluded((s) => new Set(s).add(p.proposalId));
                           setSelected((s) => {
@@ -400,7 +496,7 @@ export function ChatWorkIntentPanel(props: {
                           });
                         }}
                       >
-                        <X className="h-3.5 w-3.5" />
+                        Odebrat
                       </Button>
                     </div>
                   </div>
@@ -478,108 +574,17 @@ export function ChatWorkIntentPanel(props: {
         </ul>
       ) : null}
 
-      <Dialog open={!!editProposal} onOpenChange={(o) => !o && setEditProposal(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Upravit návrh</DialogTitle>
-          </DialogHeader>
-          {editProposal ? (
-            <div className="space-y-3 text-sm">
-              <div className="space-y-1">
-                <Label>Název / zakázka</Label>
-                <Input
-                  value={editProposal.jobTitle ?? ""}
-                  onChange={(e) =>
-                    setEditProposal({ ...editProposal, jobTitle: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Zákazník</Label>
-                <Input
-                  value={editProposal.customerName ?? editProposal.companyName ?? ""}
-                  onChange={(e) =>
-                    setEditProposal({
-                      ...editProposal,
-                      customerName: e.target.value,
-                      companyName: e.target.value,
-                    })
-                  }
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label>E-mail</Label>
-                  <Input
-                    value={editProposal.email ?? ""}
-                    onChange={(e) => setEditProposal({ ...editProposal, email: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Telefon</Label>
-                  <Input
-                    value={editProposal.phone ?? ""}
-                    onChange={(e) => setEditProposal({ ...editProposal, phone: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label>Adresa</Label>
-                <Input
-                  value={editProposal.address ?? ""}
-                  onChange={(e) => setEditProposal({ ...editProposal, address: e.target.value })}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label>Zahájení (YYYY-MM-DD)</Label>
-                  <Input
-                    value={editProposal.scheduledDate ?? ""}
-                    onChange={(e) =>
-                      setEditProposal({ ...editProposal, scheduledDate: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Dokončení (YYYY-MM-DD)</Label>
-                  <Input
-                    value={editProposal.scheduledEndDate ?? ""}
-                    onChange={(e) =>
-                      setEditProposal({ ...editProposal, scheduledEndDate: e.target.value })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label>Popis</Label>
-                <Textarea
-                  value={editProposal.description ?? ""}
-                  onChange={(e) =>
-                    setEditProposal({ ...editProposal, description: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditProposal(null)}>
-              Zrušit
-            </Button>
-            <Button
-              type="button"
-              onClick={() => {
-                if (!editProposal) return;
-                setProposals((list) =>
-                  list.map((x) => (x.proposalId === editProposal.proposalId ? editProposal : x))
-                );
-                setEditProposal(null);
-              }}
-            >
-              Uložit úpravy
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ChatWorkIntentProposalEditDialog
+        open={!!editProposalId}
+        onOpenChange={(o) => !o && setEditProposalId(null)}
+        companyId={props.companyId}
+        proposal={editProposal}
+        draft={editDraft}
+        proposalIndex={
+          editProposal ? Math.max(0, proposals.findIndex((x) => x.proposalId === editProposal.proposalId)) : 0
+        }
+        onSave={saveProposalEdit}
+      />
 
       <ChatWorkIntentBulkDialog
         open={bulkOpen}
@@ -591,7 +596,13 @@ export function ChatWorkIntentPanel(props: {
         applying={applying}
         applyError={error}
         applyResults={applyResults}
-        onSubmit={(drafts, ids) => void applyWithDrafts(drafts, ids)}
+        draftsByProposalId={draftsByProposalId}
+        onDraftsChange={setDraftsByProposalId}
+        onEditProposal={(proposalId) => setEditProposalId(proposalId)}
+        onSubmit={(drafts, ids) => {
+          setDraftsByProposalId(drafts);
+          void applyWithDrafts(drafts, ids);
+        }}
         onRetryFailed={() => {
           if (!applyResults) return;
           const failed = new Set(applyResults.filter((r) => !r.ok).map((r) => r.proposalId));

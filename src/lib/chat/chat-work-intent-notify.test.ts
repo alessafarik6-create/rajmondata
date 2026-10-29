@@ -20,7 +20,8 @@ test("buildJobAssignmentMessageText includes job fields", () => {
     note: "Připravit materiál",
     assignerLabel: "Administrátor",
   });
+  assert.match(text, /NOVÁ ZAKÁZKA/);
   assert.match(text, /Montáž pergoly Novák/);
-  assert.match(text, /02\. 12\. 2026/);
-  assert.match(text, /Připravit materiál/);
+  assert.match(text, /Pokyny: Připravit materiál/);
+  assert.match(text, /Přiřadil: Administrátor/);
 });

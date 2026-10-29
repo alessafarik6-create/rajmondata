@@ -5,6 +5,26 @@ export function formatCsJobDate(iso: string | null | undefined): string {
   return `${m[3]}. ${m[2]}. ${m[1]}`;
 }
 
+export function formatCsJobDateRange(
+  startDate?: string | null,
+  endDate?: string | null
+): string {
+  const a = formatCsJobDate(startDate);
+  const b = formatCsJobDate(endDate);
+  if (a === "—" && b === "—") return "—";
+  if (a !== "—" && b !== "—" && a !== b) {
+    const yStart = /^(\d{2})\. (\d{2})\. (\d{4})$/.exec(a)?.[3];
+    const yEnd = /^(\d{2})\. (\d{2})\. (\d{4})$/.exec(b)?.[3];
+    if (yStart && yEnd && yStart === yEnd) {
+      const d1 = /^(\d{2})\. (\d{2})/.exec(a);
+      const d2 = /^(\d{2})\. (\d{2})/.exec(b);
+      if (d1 && d2) return `${Number(d1[1])}. ${d1[2]}. – ${Number(d2[1])}. ${d2[2]}. ${yEnd}`;
+    }
+    return `${a} – ${b}`;
+  }
+  return a !== "—" ? a : b;
+}
+
 export function buildJobAssignmentMessageText(params: {
   jobName: string;
   customerName: string;
@@ -14,15 +34,16 @@ export function buildJobAssignmentMessageText(params: {
   assignerLabel: string;
 }): string {
   const lines = [
-    "Byla vám přiřazena nová zakázka.",
+    "NOVÁ ZAKÁZKA",
+    "",
+    "Byla vám přiřazena zakázka:",
     "",
     `Název: ${params.jobName}`,
+    `Termín: ${formatCsJobDateRange(params.startDate, params.endDate)}`,
     `Zákazník: ${params.customerName || "—"}`,
-    `Zahájení: ${formatCsJobDate(params.startDate)}`,
-    `Dokončení: ${formatCsJobDate(params.endDate)}`,
   ];
   const note = String(params.note ?? "").trim();
-  if (note) lines.push(`Poznámka: ${note}`);
-  lines.push("", `Zakázku vám přiřadil ${params.assignerLabel}.`);
+  if (note) lines.push(`Pokyny: ${note}`);
+  lines.push("", `Přiřadil: ${params.assignerLabel}`);
   return lines.join("\n");
 }
