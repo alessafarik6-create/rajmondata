@@ -7,6 +7,7 @@ import {
 } from "@/lib/chat-attachment-access-server";
 import { applyChatWorkIntentProposals } from "@/lib/chat/chat-work-intent-apply-server";
 import type { ChatWorkIntentProposal } from "@/lib/chat/chat-work-intent-types";
+import type { ChatWorkIntentApplyDraftsByProposal } from "@/lib/chat/chat-work-intent-apply-types";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { errorMessageFromUnknown } from "@/lib/server-error-serialize";
 
@@ -47,6 +48,8 @@ export async function POST(request: NextRequest) {
       createMissingCustomers?: boolean;
       linkJobIdByProposal?: Record<string, string>;
       timeZone?: string;
+      draftsByProposalId?: ChatWorkIntentApplyDraftsByProposal;
+      sourceAttachmentId?: string | null;
     };
     try {
       body = await request.json();
@@ -103,6 +106,10 @@ export async function POST(request: NextRequest) {
       String(userData.displayName ?? userData.name ?? "").trim() ||
       String(userData.email ?? "Uživatel");
 
+    const sourceAttachmentId =
+      String(body.sourceAttachmentId ?? "").trim() ||
+      (loaded.attachments[0]?.id ?? null);
+
     const { results, duplicate } = await applyChatWorkIntentProposals({
       db,
       companyId,
@@ -112,8 +119,11 @@ export async function POST(request: NextRequest) {
       timeZone: body.timeZone ?? "Europe/Prague",
       idempotencyKey,
       analysisId,
+      messageId,
+      sourceAttachmentId,
       proposals,
       selectedProposalIds: selected,
+      draftsByProposalId: body.draftsByProposalId,
       options: {
         createMissingCustomers: body.createMissingCustomers !== false,
         linkJobIdByProposal: body.linkJobIdByProposal,

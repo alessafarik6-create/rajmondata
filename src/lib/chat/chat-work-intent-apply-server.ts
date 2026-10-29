@@ -5,6 +5,7 @@ import type {
   ChatWorkIntentApplyResult,
   ChatWorkIntentProposal,
 } from "@/lib/chat/chat-work-intent-types";
+import type { ChatWorkIntentApplyDraftsByProposal } from "@/lib/chat/chat-work-intent-apply-types";
 import {
   validateCustomerEmail,
   validateCustomerPhone,
@@ -15,6 +16,12 @@ import {
   createOrganizationCalendarMeeting,
   type CalendarMeetingDraft,
 } from "@/lib/calendar/create-organization-meeting-server";
+import {
+  addJobNoteCommentAdmin,
+  assignEmployeesToJobAdmin,
+} from "@/lib/chat/chat-work-intent-job-admin";
+import { buildJobAssignmentMessageText } from "@/lib/chat/chat-work-intent-notify-message";
+import { sendJobAssignmentChatAndNotification } from "@/lib/chat/chat-work-intent-notify-server";
 
 function customerDisplayName(p: ChatWorkIntentProposal): string {
   return (
@@ -31,27 +38,90 @@ function jobTitleFromProposal(p: ChatWorkIntentProposal): string {
   return `Zakázka — ${cust}`;
 }
 
+async function findCustomerByEmailOrPhone(
+  db: Firestore,
+  companyId: string,
+  email: string,
+  phone: string
+): Promise<string | null> {
+  const em = email.trim().toLowerCase();
+  const ph = phone.replace(/\D/g, "");
+  if (em) {
+    const snap = await db
+      .collection(COMPANIES_COLLECTION)
+      .doc(companyId)
+      .collection("customers")
+      .where("email", "==", em)
+      .limit(1)
+      .get()
+      .catch(() => null);
+    if (snap?.docs[0]) return snap.docs[0].id;
+  }
+  if (ph.length >= 9) {
+    const snap = await db
+      .collection(COMPANIES_COLLECTION)
+      .doc(companyId)
+      .collection("customers")
+      .limit(300)
+      .get();
+    for (const d of snap.docs) {
+      const p = String(d.data().phone ?? "").replace(/\D/g, "");
+      if (p === ph) return d.id;
+    }
+  }
+  return null;
+}
+
 async function resolveCustomerId(
   db: Firestore,
   companyId: string,
   p: ChatWorkIntentProposal,
+  draft: ChatWorkIntentApplyDraftsByProposal[string] | undefined,
   createIfMissing: boolean,
   createdBy: string
-): Promise<{ customerId: string | null; error?: string }> {
-  if (p.customerMatch?.customerId) {
-    return { customerId: p.customerMatch.customerId };
+): Promise<{ customerId: string | null; customerName: string; error?: string }> {
+  const draftCustomerId = String(draft?.customerId ?? "").trim();
+  if (draftCustomerId) {
+    const snap = await db
+      .collection(COMPANIES_COLLECTION)
+      .doc(companyId)
+      .collection("customers")
+      .doc(draftCustomerId)
+      .get();
+    if (snap.exists) {
+      const data = snap.data() as Record<string, unknown>;
+      const name = String(data.companyName ?? data.name ?? draft?.customerName ?? "").trim();
+      return { customerId: draftCustomerId, customerName: name || customerDisplayName(p) };
+    }
   }
-  if (!createIfMissing) return { customerId: null };
 
-  const name = customerDisplayName(p);
-  const email = String(p.email ?? "").trim();
-  const phone = String(p.phone ?? "").trim();
-  const address = String(p.address ?? "").trim();
+  if (p.customerMatch?.customerId) {
+    return {
+      customerId: p.customerMatch.customerId,
+      customerName: p.customerMatch.label || customerDisplayName(p),
+    };
+  }
+
+  const name = String(draft?.customerName ?? "").trim() || customerDisplayName(p);
+  const email = String(draft?.email ?? p.email ?? "").trim();
+  const phone = String(draft?.phone ?? p.phone ?? "").trim();
+  const address = String(draft?.address ?? p.address ?? "").trim();
+
+  const existing = await findCustomerByEmailOrPhone(db, companyId, email, phone);
+  if (existing) {
+    return { customerId: existing, customerName: name };
+  }
+
+  if (!createIfMissing && !draft?.createNewCustomer) {
+    return { customerId: null, customerName: name, error: "Vyberte zákazníka nebo doplňte údaje." };
+  }
+
   const emailErr = validateCustomerEmail(email);
   const phoneErr = validateCustomerPhone(phone);
   if (!name || emailErr || phoneErr || !address) {
     return {
       customerId: null,
+      customerName: name,
       error: "Pro nového zákazníka chybí povinné údaje (jméno, e-mail, telefon, adresa).",
     };
   }
@@ -67,7 +137,7 @@ async function resolveCustomerId(
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
-  return { customerId: ref.id };
+  return { customerId: ref.id, customerName: name };
 }
 
 export async function applyChatWorkIntentProposals(input: {
@@ -79,8 +149,11 @@ export async function applyChatWorkIntentProposals(input: {
   timeZone: string;
   idempotencyKey: string;
   analysisId: string;
+  messageId?: string;
+  sourceAttachmentId?: string | null;
   proposals: ChatWorkIntentProposal[];
   selectedProposalIds: string[];
+  draftsByProposalId?: ChatWorkIntentApplyDraftsByProposal;
   options?: {
     createMissingCustomers?: boolean;
     linkJobIdByProposal?: Record<string, string>;
@@ -101,6 +174,8 @@ export async function applyChatWorkIntentProposals(input: {
     };
   }
 
+  const drafts = input.draftsByProposalId ?? {};
+  const notificationsSent = new Set<string>();
   const selected = new Set(input.selectedProposalIds);
   const toApply = input.proposals.filter((p) => selected.has(p.proposalId));
   const results: ChatWorkIntentApplyResult[] = [];
@@ -116,18 +191,31 @@ export async function applyChatWorkIntentProposals(input: {
       continue;
     }
 
+    const draftEarly = drafts[p.proposalId];
     if (p.completionStatus === "needs_input" && p.kind === "new_job") {
-      results.push({
-        proposalId: p.proposalId,
-        kind: p.kind,
-        ok: false,
-        error: `Doplňte: ${(p.missingFields ?? []).join(", ")}`,
-      });
-      continue;
+      const hasCustomer =
+        Boolean(draftEarly?.customerId?.trim()) ||
+        Boolean(
+          draftEarly?.createNewCustomer &&
+            draftEarly.customerName?.trim() &&
+            draftEarly.email?.trim() &&
+            draftEarly.phone?.trim() &&
+            draftEarly.address?.trim()
+        );
+      if (!hasCustomer) {
+        results.push({
+          proposalId: p.proposalId,
+          kind: p.kind,
+          ok: false,
+          error: `Doplňte: ${(p.missingFields ?? []).join(", ")}`,
+        });
+        continue;
+      }
     }
 
     try {
       if (p.kind === "new_job") {
+        const draft = drafts[p.proposalId];
         const linkId = input.options?.linkJobIdByProposal?.[p.proposalId];
         if (linkId) {
           results.push({
@@ -140,10 +228,22 @@ export async function applyChatWorkIntentProposals(input: {
           continue;
         }
 
-        const { customerId, error: custErr } = await resolveCustomerId(
+        const title = String(draft?.jobTitle ?? p.jobTitle ?? "").trim();
+        if (!title) {
+          results.push({
+            proposalId: p.proposalId,
+            kind: p.kind,
+            ok: false,
+            error: "Chybí název zakázky.",
+          });
+          continue;
+        }
+
+        const { customerId, customerName, error: custErr } = await resolveCustomerId(
           input.db,
           input.companyId,
           p,
+          draft,
           input.options?.createMissingCustomers !== false,
           input.callerUid
         );
@@ -162,29 +262,35 @@ export async function applyChatWorkIntentProposals(input: {
           /* optional */
         }
 
-        const name = jobTitleFromProposal(p);
+        const startDate = String(draft?.scheduledDate ?? p.scheduledDate ?? "").trim();
+        const endDate = String(draft?.scheduledEndDate ?? p.scheduledEndDate ?? "").trim();
+        const note = String(draft?.note ?? p.description ?? "").trim();
         const payload: Record<string, unknown> = {
-          name,
+          name: title,
           description: String(p.description ?? p.sourceQuote ?? "").trim(),
           status: "nová",
           companyId: input.companyId,
           customerId: customerId ?? null,
-          customerName: customerDisplayName(p),
-          customerPhone: p.phone ?? "",
-          customerEmail: p.email ?? "",
+          customerName,
+          customerPhone: String(draft?.phone ?? p.phone ?? ""),
+          customerEmail: String(draft?.email ?? p.email ?? ""),
           assignedEmployeeIds: [input.callerUid],
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
           createdBy: input.callerUid,
+          createdByName: input.callerName,
           sourceChatAnalysisId: input.analysisId,
+          sourceChatMessageId: input.messageId ?? null,
+          sourceChatAttachmentId: input.sourceAttachmentId ?? null,
+          internalNoteFromChatAi: note || null,
         };
         if (jobNumber) {
           payload.jobNumber = jobNumber;
           payload.orderNumber = jobNumber;
         }
         if (typeId) payload.jobNumberTypeId = typeId;
-        if (p.scheduledDate) payload.startDate = p.scheduledDate;
-        if (p.scheduledEndDate) payload.endDate = p.scheduledEndDate;
+        if (startDate) payload.startDate = startDate;
+        if (endDate) payload.endDate = endDate;
 
         const jobRef = await input.db
           .collection(COMPANIES_COLLECTION)
@@ -192,12 +298,65 @@ export async function applyChatWorkIntentProposals(input: {
           .collection("jobs")
           .add(payload);
 
+        const employeeIds = (draft?.assignedEmployeeIds ?? []).map(String).filter(Boolean);
+        let authUserIds: string[] = [];
+        if (employeeIds.length) {
+          authUserIds = await assignEmployeesToJobAdmin(
+            input.db,
+            input.companyId,
+            jobRef.id,
+            payload,
+            employeeIds,
+            input.callerUid
+          );
+        }
+
+        if (note) {
+          await addJobNoteCommentAdmin(
+            input.db,
+            input.companyId,
+            jobRef.id,
+            note,
+            input.callerUid,
+            input.callerName,
+            input.callerRole
+          );
+        }
+
+        const notify = draft?.notifyEmployee !== false;
+        if (notify && authUserIds.length) {
+          const msgText = buildJobAssignmentMessageText({
+            jobName: title,
+            customerName,
+            startDate: startDate || null,
+            endDate: endDate || null,
+            note,
+            assignerLabel: input.callerName,
+          });
+          for (const authUid of authUserIds) {
+            const nKey = `${p.proposalId}:${authUid}:${jobRef.id}`;
+            if (notificationsSent.has(nKey)) continue;
+            notificationsSent.add(nKey);
+            await sendJobAssignmentChatAndNotification({
+              db: input.db,
+              companyId: input.companyId,
+              adminUid: input.callerUid,
+              adminName: input.callerName,
+              employeeAuthUserId: authUid,
+              jobId: jobRef.id,
+              jobName: title,
+              messageText: msgText,
+              eventKey: `${input.idempotencyKey}:${nKey}`,
+            });
+          }
+        }
+
         results.push({
           proposalId: p.proposalId,
           kind: p.kind,
           ok: true,
           jobId: jobRef.id,
-          jobName: name,
+          jobName: title,
           customerId: customerId ?? undefined,
         });
         continue;
@@ -324,6 +483,7 @@ export async function applyChatWorkIntentProposals(input: {
     analysisId: input.analysisId,
     idempotencyKey: input.idempotencyKey,
     results,
+    notificationsSent: [...notificationsSent],
     createdAt: FieldValue.serverTimestamp(),
     createdBy: input.callerUid,
   });

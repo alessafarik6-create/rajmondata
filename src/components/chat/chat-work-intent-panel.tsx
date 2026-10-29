@@ -23,6 +23,8 @@ import type {
   ChatWorkIntentAnalysisDoc,
   ChatWorkIntentProposal,
 } from "@/lib/chat/chat-work-intent-types";
+import type { ChatWorkIntentApplyDraftsByProposal } from "@/lib/chat/chat-work-intent-apply-types";
+import { ChatWorkIntentBulkDialog } from "@/components/chat/chat-work-intent-bulk-dialog";
 
 const KIND_LABEL: Record<string, string> = {
   new_job: "Nová zakázka",
@@ -161,14 +163,17 @@ export function ChatWorkIntentPanel(props: {
     });
   }, [proposals, selected, excluded, applyMode]);
 
-  const applySelected = useCallback(async () => {
+  const applyWithDrafts = useCallback(
+    async (drafts?: ChatWorkIntentApplyDraftsByProposal, proposalIds?: string[]) => {
     if (!user || !analysis || selectedCount === 0) return;
     setApplying(true);
     setError(null);
-    setBulkOpen(false);
     try {
       const token = await user.getIdToken();
       const idempotencyKey = `apply_${analysis.id}_${Date.now()}`;
+      const selectedProposalIds =
+        proposalIds ??
+        [...selected].filter((id) => visibleProposals.some((p) => p.proposalId === id));
       const res = await fetch("/api/company/chat/apply-work-intent", {
         method: "POST",
         headers: {
@@ -180,10 +185,10 @@ export function ChatWorkIntentPanel(props: {
           messageId: props.messageId,
           analysisId: analysis.id,
           idempotencyKey,
-          selectedProposalIds: [...selected].filter((id) =>
-            visibleProposals.some((p) => p.proposalId === id)
-          ),
+          selectedProposalIds,
           proposals: proposalsForApply,
+          draftsByProposalId: drafts,
+          sourceAttachmentId: attachmentIds[0] ?? null,
           createMissingCustomers: true,
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
@@ -203,13 +208,22 @@ export function ChatWorkIntentPanel(props: {
         throw new Error(data.error ?? "Uložení se nezdařilo.");
       }
       setApplyResults(data.results ?? []);
+      const allOk = (data.results ?? []).every((r) => r.ok);
+      if (allOk) setBulkOpen(false);
       props.onPatched?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Chyba uložení.");
     } finally {
       setApplying(false);
     }
-  }, [user, analysis, selected, selectedCount, visibleProposals, proposalsForApply, props]);
+  },
+    [user, analysis, selected, selectedCount, visibleProposals, proposalsForApply, props, attachmentIds]
+  );
+
+  const openCreateFlow = () => {
+    if (applyMode === "jobs") setBulkOpen(true);
+    else void applyWithDrafts();
+  };
 
   const itemCount = visibleProposals.length;
   const isReservationDoc = analysis?.documentType === "reservation_schedule";
@@ -429,7 +443,7 @@ export function ChatWorkIntentPanel(props: {
               size="sm"
               className="w-full h-9 text-xs bg-orange-600 hover:bg-orange-700 text-white"
               disabled={applying || selectedCount === 0}
-              onClick={() => setBulkOpen(true)}
+              onClick={openCreateFlow}
             >
               {applying ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -567,89 +581,23 @@ export function ChatWorkIntentPanel(props: {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Hromadná kontrola ({selectedCount} položek)</DialogTitle>
-          </DialogHeader>
-          <p className="text-xs text-muted-foreground">
-            Typ uložení:{" "}
-            {applyMode === "jobs" ? "zakázky" : applyMode === "meetings" ? "kalendář" : "úkoly"}
-          </p>
-          <ul className="space-y-3 text-sm">
-            {visibleProposals
-              .filter((p) => selected.has(p.proposalId))
-              .map((p) => (
-                <li key={p.proposalId} className="rounded-md border p-2 space-y-2">
-                  <Input
-                    value={p.jobTitle ?? ""}
-                    onChange={(e) =>
-                      setProposals((list) =>
-                        list.map((x) =>
-                          x.proposalId === p.proposalId ? { ...x, jobTitle: e.target.value } : x
-                        )
-                      )
-                    }
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input
-                      placeholder="Zahájení"
-                      value={p.scheduledDate ?? ""}
-                      onChange={(e) =>
-                        setProposals((list) =>
-                          list.map((x) =>
-                            x.proposalId === p.proposalId
-                              ? { ...x, scheduledDate: e.target.value }
-                              : x
-                          )
-                        )
-                      }
-                    />
-                    <Input
-                      placeholder="Dokončení"
-                      value={p.scheduledEndDate ?? ""}
-                      onChange={(e) =>
-                        setProposals((list) =>
-                          list.map((x) =>
-                            x.proposalId === p.proposalId
-                              ? { ...x, scheduledEndDate: e.target.value }
-                              : x
-                          )
-                        )
-                      }
-                    />
-                  </div>
-                  <Input
-                    placeholder="Zákazník"
-                    value={p.customerName ?? p.companyName ?? ""}
-                    onChange={(e) =>
-                      setProposals((list) =>
-                        list.map((x) =>
-                          x.proposalId === p.proposalId
-                            ? { ...x, customerName: e.target.value, companyName: e.target.value }
-                            : x
-                        )
-                      )
-                    }
-                  />
-                </li>
-              ))}
-          </ul>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setBulkOpen(false)}>
-              Zpět
-            </Button>
-            <Button
-              type="button"
-              className="bg-orange-600 hover:bg-orange-700"
-              disabled={applying}
-              onClick={() => void applySelected()}
-            >
-              {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Potvrdit a vytvořit"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ChatWorkIntentBulkDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        companyId={props.companyId}
+        proposals={proposalsForApply}
+        selectedIds={selected}
+        applyMode={applyMode}
+        applying={applying}
+        applyError={error}
+        applyResults={applyResults}
+        onSubmit={(drafts, ids) => void applyWithDrafts(drafts, ids)}
+        onRetryFailed={() => {
+          if (!applyResults) return;
+          const failed = new Set(applyResults.filter((r) => !r.ok).map((r) => r.proposalId));
+          setSelected(failed);
+        }}
+      />
     </div>
   );
 }

@@ -1174,6 +1174,26 @@ export function CompanyChatMessenger({
                   {m.text ? (
                     <p className="whitespace-pre-wrap break-words">{m.text}</p>
                   ) : null}
+                  {m.linkedJobId ? (
+                    <div className="mt-2">
+                      <Link
+                        href={
+                          mode === "employee"
+                            ? `/portal/employee/jobs/${encodeURIComponent(m.linkedJobId)}`
+                            : `/portal/jobs/${encodeURIComponent(m.linkedJobId)}`
+                        }
+                        className={cn(
+                          "inline-flex items-center rounded-md px-3 py-1.5 text-xs font-semibold",
+                          mine
+                            ? "bg-primary-foreground/15 text-primary-foreground underline"
+                            : "bg-orange-600 text-white hover:bg-orange-700"
+                        )}
+                      >
+                        Otevřít zakázku
+                        {m.linkedJobName ? `: ${m.linkedJobName}` : ""}
+                      </Link>
+                    </div>
+                  ) : null}
                   {(m.attachments ?? []).map((att) => (
                     <div key={att.id} className="mt-2 space-y-1">
                       {att.mimeType.startsWith("image/") ? (

@@ -84,6 +84,8 @@ export type ChatMessageDoc = {
   recipientUserId?: string | null;
   /** Kdo zprávu přečetl — uid → timestamp (DM / skupina). */
   readAtBy?: Record<string, unknown>;
+  linkedJobId?: string | null;
+  linkedJobName?: string | null;
 };
 
 export function buildDirectConversationId(uidA: string, uidB: string): string {
