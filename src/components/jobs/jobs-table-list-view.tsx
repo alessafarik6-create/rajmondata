@@ -6,6 +6,7 @@ import type { JobListRow } from "@/lib/job-list-filters";
 import { formatJobListDate, resolveJobDeadlineDisplay } from "@/lib/job-list-filters";
 import { resolveJobDisplayNumber } from "@/lib/jobs/job-timeline-utils";
 import { JobStatusBadge } from "@/components/jobs/job-status-badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -13,6 +14,9 @@ type Props = {
   getCustomerName: (id: string | undefined | null) => string;
   isPortalEmployee?: boolean;
   dark?: boolean;
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (jobId: string) => void;
 };
 
 export function JobsTableListView({
@@ -20,6 +24,9 @@ export function JobsTableListView({
   getCustomerName,
   isPortalEmployee = false,
   dark = false,
+  selectable = false,
+  selectedIds,
+  onToggleSelect,
 }: Props) {
   const router = useRouter();
   const href = (id: string) =>
@@ -40,8 +47,10 @@ export function JobsTableListView({
           )}
         >
           <tr>
+            {selectable ? <th className="p-2 w-8" /> : null}
             <th className="p-2">Číslo</th>
             <th className="p-2">Název</th>
+            <th className="p-2">Založeno</th>
             <th className="p-2">Zákazník</th>
             <th className="p-2">Termín</th>
             <th className="p-2">Stav</th>
@@ -61,11 +70,25 @@ export function JobsTableListView({
                 )}
                 onClick={() => id && router.push(href(id))}
               >
+                {selectable && id ? (
+                  <td className="p-2" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selectedIds?.has(id) ?? false}
+                      onCheckedChange={() => onToggleSelect?.(id)}
+                      aria-label="Vybrat zakázku"
+                    />
+                  </td>
+                ) : selectable ? (
+                  <td className="p-2" />
+                ) : null}
                 <td className="p-2 font-mono text-xs whitespace-nowrap">
                   {resolveJobDisplayNumber(job) || "—"}
                 </td>
                 <td className="p-2 font-medium max-w-[14rem] truncate" title={job.name}>
                   {job.name ?? "—"}
+                </td>
+                <td className="p-2 whitespace-nowrap text-xs">
+                  {formatJobListDate(job.createdAt)}
                 </td>
                 <td className="p-2 max-w-[12rem] truncate">
                   {getCustomerName(job.customerId)}

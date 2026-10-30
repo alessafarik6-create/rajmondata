@@ -4,9 +4,11 @@ import {
   jobNumberCounterDocId,
   parseJobNumberingSettings,
   previewNextJobNumber,
+  resolveNumberingTypeById,
   resolveNumberingTypeForJobTag,
   type JobNumberingSettings,
 } from "@/lib/jobs/job-numbering";
+import { parseRecordDate } from "@/lib/organization-reports";
 
 export function pragueCalendarYear(now = new Date()): number {
   const y = new Intl.DateTimeFormat("en-CA", {
@@ -24,10 +26,39 @@ export async function loadJobNumberingSettings(
   return parseJobNumberingSettings(snap.data()?.jobNumberingSettings);
 }
 
+export async function previewNextJobNumberAdmin(
+  db: Firestore,
+  companyId: string,
+  jobTag: string | null | undefined,
+  opts?: { typeId?: string | null }
+): Promise<{ preview: string; typeId: string }> {
+  const settings = await loadJobNumberingSettings(db, companyId);
+  const byId = resolveNumberingTypeById(settings, opts?.typeId);
+  const rule =
+    byId && byId.active !== false ? byId : resolveNumberingTypeForJobTag(settings, jobTag);
+  const year = pragueCalendarYear();
+  const counterId = jobNumberCounterDocId(settings, rule.id, year);
+  const counterSnap = await db
+    .collection("companies")
+    .doc(companyId)
+    .collection("job_number_counters")
+    .doc(counterId)
+    .get();
+  const start = rule.startSequence ?? 1;
+  const nextSeq = counterSnap.exists
+    ? Math.max(start, Number(counterSnap.data()?.nextSequence ?? start))
+    : start;
+  return {
+    preview: previewNextJobNumber(settings, rule, nextSeq, year),
+    typeId: rule.id,
+  };
+}
+
 export async function allocateJobNumberAdmin(
   db: Firestore,
   companyId: string,
-  jobTag: string | null | undefined
+  jobTag: string | null | undefined,
+  opts?: { typeId?: string | null }
 ): Promise<{ jobNumber: string; typeId: string }> {
   const companyRef = db.collection("companies").doc(companyId);
   const year = pragueCalendarYear();
@@ -35,7 +66,14 @@ export async function allocateJobNumberAdmin(
   return db.runTransaction(async (tx) => {
     const companySnap = await tx.get(companyRef);
     const settings = parseJobNumberingSettings(companySnap.data()?.jobNumberingSettings);
-    const rule = resolveNumberingTypeForJobTag(settings, jobTag);
+    const byId = resolveNumberingTypeById(settings, opts?.typeId);
+    const rule =
+      byId && byId.active !== false
+        ? byId
+        : resolveNumberingTypeForJobTag(settings, jobTag);
+    if (rule.active === false) {
+      throw new Error("INACTIVE_NUMBERING_SERIES");
+    }
     const counterId = jobNumberCounterDocId(settings, rule.id, year);
     const counterRef = companyRef.collection("job_number_counters").doc(counterId);
     const counterSnap = await tx.get(counterRef);
@@ -90,7 +128,14 @@ export async function migrateMissingJobNumbersAdmin(
   const jobsSnap = await db.collection("companies").doc(companyId).collection("jobs").get();
   const rows: JobNumberMigrationRow[] = [];
 
-  for (const doc of jobsSnap.docs) {
+  const sortedDocs = [...jobsSnap.docs].sort((a, b) => {
+    const ta = parseRecordDate(a.data().createdAt)?.getTime() ?? 0;
+    const tb = parseRecordDate(b.data().createdAt)?.getTime() ?? 0;
+    if (ta !== tb) return ta - tb;
+    return a.id.localeCompare(b.id);
+  });
+
+  for (const doc of sortedDocs) {
     const data = doc.data() as Record<string, unknown>;
     const existing = String(data.jobNumber ?? data.orderNumber ?? "").trim();
     if (existing) continue;

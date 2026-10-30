@@ -6,11 +6,13 @@ export type JobNumberingTypeRule = {
   id: string;
   name: string;
   prefix: string;
-  /** Např. {PREFIX}-{YEAR}-{SEQ:3} */
+  /** Např. {PREFIX}{SEQ:4} nebo {PREFIX}-{YEAR}-{SEQ:3} */
   format: string;
   /** Volitelná vazba na jobTag (case-insensitive contains or exact) */
   jobTagMatch?: string;
   startSequence?: number;
+  /** Neaktivní řada se nenabízí při zakládání */
+  active?: boolean;
 };
 
 export type JobNumberingSettings = {
@@ -23,14 +25,21 @@ export const DEFAULT_JOB_NUMBERING_SETTINGS: JobNumberingSettings = {
   resetYearly: true,
   defaultTypeId: "ostatni",
   types: [
-    { id: "rodinny_dum", name: "Rodinný dům", prefix: "RD", format: "{PREFIX}-{YEAR}-{SEQ:3}", jobTagMatch: "rodinn" },
+    { id: "rodinny_dum", name: "Rodinný dům", prefix: "RD", format: "{PREFIX}{SEQ:4}", jobTagMatch: "rodinn" },
     { id: "pergola", name: "Pergola", prefix: "PG", format: "{PREFIX}-{YEAR}-{SEQ:3}", jobTagMatch: "pergol" },
     { id: "zimni_zahrada", name: "Zimní zahrada", prefix: "ZZ", format: "{PREFIX}-{YEAR}-{SEQ:3}", jobTagMatch: "zimní" },
     { id: "rekreacni_dum", name: "Rekreační dům", prefix: "RE", format: "{PREFIX}-{YEAR}-{SEQ:3}", jobTagMatch: "rekrea" },
     { id: "dokumentace", name: "Dokumentace", prefix: "DOC", format: "{PREFIX}-{YEAR}-{SEQ:3}", jobTagMatch: "dokument" },
-    { id: "ostatni", name: "Ostatní", prefix: "ZAK", format: "{PREFIX}-{YEAR}-{SEQ:3}" },
+    { id: "montaz", name: "Montáž", prefix: "M", format: "{PREFIX}{SEQ:4}", jobTagMatch: "montá" },
+    { id: "servis", name: "Servis", prefix: "SERV", format: "{PREFIX}{SEQ:4}", jobTagMatch: "servis" },
+    { id: "ostatni", name: "Obecná zakázka", prefix: "ZAK", format: "{PREFIX}{SEQ:4}" },
   ],
 };
+
+export function formatPresetPrefixSeq(prefix: string, digits = 4): string {
+  const d = Math.max(1, Math.min(8, digits));
+  return `{PREFIX}{SEQ:${d}}`;
+}
 
 export function parseJobNumberingSettings(raw: unknown): JobNumberingSettings {
   if (!raw || typeof raw !== "object") return DEFAULT_JOB_NUMBERING_SETTINGS;
@@ -55,6 +64,7 @@ export function parseJobNumberingSettings(raw: unknown): JobNumberingSettings {
     if (row.jobTagMatch != null && String(row.jobTagMatch).trim()) {
       rule.jobTagMatch = String(row.jobTagMatch).trim();
     }
+    if (row.active === false) rule.active = false;
     types.push(rule);
   }
   const defaultTypeId =
@@ -71,17 +81,28 @@ export function resolveNumberingTypeForJobTag(
   settings: JobNumberingSettings,
   jobTag: string | null | undefined
 ): JobNumberingTypeRule {
+  const activeTypes = settings.types.filter((t) => t.active !== false);
+  const pool = activeTypes.length ? activeTypes : settings.types;
   const tag = String(jobTag ?? "").trim().toLowerCase();
   if (tag) {
-    for (const rule of settings.types) {
+    for (const rule of pool) {
       const m = String(rule.jobTagMatch ?? "").trim().toLowerCase();
       if (m && (tag === m || tag.includes(m))) return rule;
     }
   }
   return (
-    settings.types.find((t) => t.id === settings.defaultTypeId) ??
-    settings.types[settings.types.length - 1]!
+    pool.find((t) => t.id === settings.defaultTypeId) ??
+    pool[pool.length - 1]!
   );
+}
+
+export function resolveNumberingTypeById(
+  settings: JobNumberingSettings,
+  typeId: string | null | undefined
+): JobNumberingTypeRule | null {
+  const id = String(typeId ?? "").trim();
+  if (!id) return null;
+  return settings.types.find((t) => t.id === id) ?? null;
 }
 
 export function formatJobNumberFromParts(

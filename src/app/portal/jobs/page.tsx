@@ -106,6 +106,17 @@ import {
   type JobsListExportPreset,
 } from "@/lib/jobs/jobs-list-export-utils";
 import { JobsExportPrintMenu } from "@/components/portal/jobs-export-print-menu";
+import { JobsExportDialog } from "@/components/jobs/jobs-export-dialog";
+import {
+  buildJobsAdvancedExportRows,
+  exportJobsAdvancedCsv,
+  exportJobsAdvancedPdf,
+  exportJobsAdvancedXlsx,
+  printJobsAdvancedHtml,
+  type JobsAdvancedExportColumnKey,
+} from "@/lib/jobs/jobs-list-advanced-export";
+import type { JobNumberingTypeRule } from "@/lib/jobs/job-numbering";
+import { resolveNumberingTypeForJobTag } from "@/lib/jobs/job-numbering";
 import { logPortalExportAudit } from "@/lib/portal-export-audit-client";
 import { exportContractedJobsToPdf } from "@/lib/pdf/exportContractedJobsToPdf";
 import { sumJobExpensesFromFirestore } from "@/lib/pdf/sum-job-expenses-client";
@@ -213,6 +224,10 @@ type JobRow = {
   orderNumber?: string | null;
   /** Typ / štítek zakázky (např. pergola, domy). */
   jobTag?: string | null;
+  jobNumberTypeId?: string | null;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  customerName?: string | null;
   createdAt?: unknown;
   updatedAt?: unknown;
   completedAt?: unknown;
@@ -237,6 +252,7 @@ function JobsPageContent() {
     canExport: canExportJobs,
   } = usePortalModuleAccess("jobs");
   const { canExport: canExportFinance } = usePortalModuleAccess("finance");
+  const { canRead: canReadCustomers } = usePortalModuleAccess("customers");
   const canExportContracted = canExportJobs && canExportFinance;
 
   const companyId = profile?.companyId;
@@ -344,6 +360,11 @@ function JobsPageContent() {
   const jobsViewMode =
     jobsViewParam === "list" || jobsViewParam === "timeline" ? jobsViewParam : "cards";
   const assigneeFilter = searchParams.get("assignee") ?? "";
+  const createdFromFilter = searchParams.get("createdFrom") ?? "";
+  const createdToFilter = searchParams.get("createdTo") ?? "";
+  const realizationFromFilter = searchParams.get("realFrom") ?? "";
+  const realizationToFilter = searchParams.get("realTo") ?? "";
+  const numberingSeriesFilter = searchParams.get("series") ?? "";
 
   const jobAssigneeOptions = useMemo(
     () =>
@@ -364,6 +385,11 @@ function JobsPageContent() {
       deadline?: JobDeadlineFilterKey | null;
       view?: "cards" | "list" | "timeline";
       assignee?: string;
+      createdFrom?: string;
+      createdTo?: string;
+      realFrom?: string;
+      realTo?: string;
+      series?: string;
     }) => {
       const params = new URLSearchParams(searchParams.toString());
       const nextStatus = patch.status ?? statusFilter;
@@ -376,6 +402,16 @@ function JobsPageContent() {
       const nextView = patch.view ?? jobsViewMode;
       const nextAssignee =
         patch.assignee !== undefined ? patch.assignee : assigneeFilter;
+      const nextCreatedFrom =
+        patch.createdFrom !== undefined ? patch.createdFrom : createdFromFilter;
+      const nextCreatedTo =
+        patch.createdTo !== undefined ? patch.createdTo : createdToFilter;
+      const nextRealFrom =
+        patch.realFrom !== undefined ? patch.realFrom : realizationFromFilter;
+      const nextRealTo =
+        patch.realTo !== undefined ? patch.realTo : realizationToFilter;
+      const nextSeries =
+        patch.series !== undefined ? patch.series : numberingSeriesFilter;
 
       if (nextStatus === DEFAULT_JOB_STATUS_FILTER) params.delete("status");
       else params.set("status", nextStatus);
@@ -400,6 +436,17 @@ function JobsPageContent() {
       if (nextAssignee.trim()) params.set("assignee", nextAssignee.trim());
       else params.delete("assignee");
 
+      if (nextCreatedFrom.trim()) params.set("createdFrom", nextCreatedFrom.trim());
+      else params.delete("createdFrom");
+      if (nextCreatedTo.trim()) params.set("createdTo", nextCreatedTo.trim());
+      else params.delete("createdTo");
+      if (nextRealFrom.trim()) params.set("realFrom", nextRealFrom.trim());
+      else params.delete("realFrom");
+      if (nextRealTo.trim()) params.set("realTo", nextRealTo.trim());
+      else params.delete("realTo");
+      if (nextSeries.trim()) params.set("series", nextSeries.trim());
+      else params.delete("series");
+
       const qs = params.toString();
       router.replace(qs ? `/portal/jobs?${qs}` : "/portal/jobs", { scroll: false });
     },
@@ -413,6 +460,11 @@ function JobsPageContent() {
       deadlineFilter,
       jobsViewMode,
       assigneeFilter,
+      createdFromFilter,
+      createdToFilter,
+      realizationFromFilter,
+      realizationToFilter,
+      numberingSeriesFilter,
     ]
   );
 
@@ -442,7 +494,13 @@ function JobsPageContent() {
     quickCustomerNotes: "",
     jobTag: "",
     jobTagCustom: "",
+    jobNumberTypeId: "",
   });
+  const [newJobNumberPreview, setNewJobNumberPreview] = useState("");
+  const [numberingTypes, setNumberingTypes] = useState<JobNumberingTypeRule[]>([]);
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(() => new Set());
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [advancedExportLoading, setAdvancedExportLoading] = useState(false);
 
   const jobTagFilterOptions = useMemo(
     () => collectJobTagFilterOptions(jobs as { jobTag?: string | null }[]),
@@ -501,6 +559,11 @@ function JobsPageContent() {
       tagFilter: jobTagFilter,
       statusFilter,
       deadlineFilter,
+      createdFrom: createdFromFilter,
+      createdTo: createdToFilter,
+      realizationFrom: realizationFromFilter,
+      realizationTo: realizationToFilter,
+      numberingTypeId: numberingSeriesFilter,
       getCustomerName,
     });
     let list = sortJobs(filtered, sortKey, getCustomerName);
@@ -522,7 +585,73 @@ function JobsPageContent() {
     getCustomerName,
     assigneeFilter,
     user?.uid,
+    createdFromFilter,
+    createdToFilter,
+    realizationFromFilter,
+    realizationToFilter,
+    numberingSeriesFilter,
   ]);
+
+  useEffect(() => {
+    if (!user || !companyId) return;
+    void (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/jobs/job-numbering-settings?companyId=${encodeURIComponent(companyId)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const data = (await res.json()) as { ok?: boolean; settings?: { types?: JobNumberingTypeRule[] } };
+        if (data.ok && data.settings?.types) {
+          setNumberingTypes(data.settings.types.filter((t) => t.active !== false));
+        }
+      } catch {
+        /* optional */
+      }
+    })();
+  }, [user, companyId]);
+
+  const toggleJobSelect = useCallback((jobId: string) => {
+    setSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  }, []);
+
+  const selectAllFilteredJobs = useCallback(() => {
+    setSelectedJobIds(
+      new Set(displayJobs.map((j) => String(j.id ?? "").trim()).filter(Boolean))
+    );
+  }, [displayJobs]);
+
+  const clearJobSelection = useCallback(() => setSelectedJobIds(new Set()), []);
+
+  const formatEmployeeIdsForExport = useCallback(
+    (ids: string[] | undefined) => {
+      const list = (ids ?? []).map(String).filter(Boolean);
+      if (!list.length) return "";
+      const emps = (Array.isArray(employeesRaw) ? employeesRaw : []) as Array<{
+        id?: string;
+        firstName?: string;
+        lastName?: string;
+        displayName?: string;
+      }>;
+      return list
+        .map((id) => {
+          const e = emps.find((x) => x.id === id);
+          if (!e) return id;
+          return (
+            e.displayName?.trim() ||
+            `${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() ||
+            id
+          );
+        })
+        .join(", ");
+    },
+    [employeesRaw]
+  );
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [templateValues, setTemplateValues] = useState<JobTemplateValues>({});
@@ -571,6 +700,58 @@ function JobsPageContent() {
       setTasksDialogOpen(true);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!isNewJobOpen || !user || !companyId) {
+      setNewJobNumberPreview("");
+      return;
+    }
+    const resolvedTag =
+      newJob.jobTag === JOB_TAG_CUSTOM_VALUE
+        ? newJob.jobTagCustom.trim()
+        : newJob.jobTag.trim();
+    const typeId =
+      newJob.jobNumberTypeId.trim() ||
+      (numberingTypes.length
+        ? resolveNumberingTypeForJobTag(
+            { resetYearly: true, defaultTypeId: "ostatni", types: numberingTypes },
+            resolvedTag || null
+          ).id
+        : "");
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const token = await user.getIdToken();
+          const res = await fetch("/api/company/jobs/allocate-number", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              companyId,
+              jobTag: resolvedTag || null,
+              typeId: typeId || null,
+              preview: true,
+            }),
+          });
+          const data = (await res.json()) as { ok?: boolean; preview?: string };
+          setNewJobNumberPreview(data.ok && data.preview ? data.preview : "");
+        } catch {
+          setNewJobNumberPreview("");
+        }
+      })();
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [
+    isNewJobOpen,
+    user,
+    companyId,
+    newJob.jobTag,
+    newJob.jobTagCustom,
+    newJob.jobNumberTypeId,
+    numberingTypes,
+  ]);
 
   useEffect(() => {
     if (!newJob.customerId?.trim()) return;
@@ -773,6 +954,11 @@ function JobsPageContent() {
           "",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        createdBy: user.uid,
+        createdByName:
+          (typeof profile?.displayName === "string" && profile.displayName.trim()) ||
+          user.email ||
+          user.uid,
       };
       const resolvedJobTag =
         newJob.jobTag === JOB_TAG_CUSTOM_VALUE
@@ -792,6 +978,7 @@ function JobsPageContent() {
           body: JSON.stringify({
             companyId,
             jobTag: resolvedJobTag || null,
+            typeId: newJob.jobNumberTypeId.trim() || null,
           }),
         });
         const numData = (await numRes.json()) as {
@@ -929,7 +1116,9 @@ function JobsPageContent() {
         quickCustomerNotes: "",
         jobTag: "",
         jobTagCustom: "",
+        jobNumberTypeId: "",
       });
+      setNewJobNumberPreview("");
       setSelectedTemplateId("");
       setTemplateValues({});
     } catch (error) {
@@ -1058,6 +1247,116 @@ function JobsPageContent() {
         format: "print",
         metadata: { preset, count: exportJobs.length },
       });
+    }
+  };
+
+  const handleAdvancedExport = async (params: {
+    scope: "filtered" | "selected";
+    format: "xlsx" | "csv" | "pdf" | "print";
+    columns: JobsAdvancedExportColumnKey[];
+  }) => {
+    if (!canExportJobs || !firestore || !companyId) {
+      toast({
+        variant: "destructive",
+        title: "Export",
+        description: "K exportu zakázek nemáte oprávnění.",
+      });
+      return;
+    }
+    const base =
+      params.scope === "selected"
+        ? displayJobs.filter((j) => selectedJobIds.has(String(j.id ?? "").trim()))
+        : displayJobs;
+    if (base.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Export",
+        description:
+          params.scope === "selected"
+            ? "Nejsou vybrány žádné zakázky."
+            : "Nejsou žádné zakázky odpovídající filtrům.",
+      });
+      return;
+    }
+    setAdvancedExportLoading(true);
+    try {
+      const rows = await buildJobsAdvancedExportRows({
+        firestore,
+        companyId,
+        jobs: base,
+        getCustomerName,
+        getCustomerAddress,
+        formatEmployeeIds: formatEmployeeIdsForExport,
+        includeFinance: canExportFinance,
+        includeContact: canReadCustomers,
+      });
+      const stamp = new Date().toISOString().slice(0, 10);
+      const fileBase = `export-zakazek-${stamp}`;
+      const title =
+        statusFilter === "all"
+          ? "Export filtrovaných zakázek"
+          : `Export — ${jobStatusLabel(
+              statusFilter === "new"
+                ? "nová"
+                : statusFilter === "in_progress"
+                  ? "rozpracovaná"
+                  : statusFilter === "waiting"
+                    ? "čekající"
+                    : statusFilter === "paused"
+                      ? "pozastavená"
+                      : statusFilter === "completed"
+                        ? "dokončená"
+                        : statusFilter === "cancelled"
+                          ? "zrušená"
+                          : "nová"
+            )}`;
+      if (params.format === "csv") {
+        exportJobsAdvancedCsv(rows, params.columns, fileBase);
+      } else if (params.format === "xlsx") {
+        exportJobsAdvancedXlsx(rows, params.columns, fileBase, "Zakázky");
+      } else if (params.format === "pdf") {
+        exportJobsAdvancedPdf(
+          rows,
+          params.columns,
+          fileBase,
+          title,
+          tenantCompanyName || "Organizace"
+        );
+      } else {
+        printJobsAdvancedHtml(
+          rows,
+          params.columns,
+          tenantCompanyName || "Organizace",
+          title
+        );
+      }
+      if (user) {
+        void logPortalExportAudit(user, {
+          actionType: params.format === "print" ? "DOCUMENT_PRINTED" : "JOB_EXPORTED",
+          moduleId: "jobs",
+          entityType: "jobs_list",
+          format: params.format,
+          metadata: {
+            scope: params.scope,
+            count: base.length,
+            statusFilter,
+            columns: params.columns,
+          },
+        });
+      }
+      toast({
+        title: "Export dokončen",
+        description: `${base.length} zakázek`,
+      });
+      setExportDialogOpen(false);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Export",
+        description: e instanceof Error ? e.message : "Export se nezdařil.",
+      });
+    } finally {
+      setAdvancedExportLoading(false);
     }
   };
 
@@ -1224,8 +1523,9 @@ function JobsPageContent() {
                 <div key="export" className="min-w-0 flex items-center justify-center">
                   <JobsExportPrintMenu
                     mobile
-                    loading={exportPdfLoading}
+                    loading={exportPdfLoading || advancedExportLoading}
                     disabled={displayJobs.length === 0}
+                    onOpenAdvancedExport={() => setExportDialogOpen(true)}
                     onExportPdf={(p) => void handleExportJobsPdf(p)}
                     onExportCsv={handleExportJobsCsv}
                     onPrint={handlePrintJobsList}
@@ -1326,8 +1626,9 @@ function JobsPageContent() {
           )}
           {canExportJobs ? (
             <JobsExportPrintMenu
-              loading={exportPdfLoading}
+              loading={exportPdfLoading || advancedExportLoading}
               disabled={displayJobs.length === 0}
+              onOpenAdvancedExport={() => setExportDialogOpen(true)}
               onExportPdf={(p) => void handleExportJobsPdf(p)}
               onExportCsv={handleExportJobsCsv}
               onPrint={handlePrintJobsList}
@@ -1532,6 +1833,37 @@ function JobsPageContent() {
                           />
                         ) : null}
                       </div>
+                      {numberingTypes.length > 0 ? (
+                        <div className="space-y-2 col-span-2">
+                          <Label htmlFor="new-job-number-series">Číselná řada</Label>
+                          <select
+                            id="new-job-number-series"
+                            className={NATIVE_SELECT_CLASS}
+                            value={newJob.jobNumberTypeId}
+                            onChange={(e) =>
+                              setNewJob({ ...newJob, jobNumberTypeId: e.target.value })
+                            }
+                          >
+                            <option value="">Automaticky podle typu</option>
+                            {numberingTypes.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.name} ({t.prefix})
+                              </option>
+                            ))}
+                          </select>
+                          {newJobNumberPreview ? (
+                            <p className="text-xs text-muted-foreground">
+                              Náhled čísla:{" "}
+                              <span className="font-mono font-semibold text-orange-700">
+                                {newJobNumberPreview}
+                              </span>
+                              <span className="block text-[11px]">
+                                Konečné číslo přidělí server při uložení.
+                              </span>
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <div className="space-y-2">
                         <Label htmlFor="new-job-customer">Zákazník</Label>
                         <select
@@ -2017,6 +2349,69 @@ function JobsPageContent() {
               </div>
             </div>
           )}
+          <div
+            className={cn(
+              "mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3",
+              belowLg && "text-slate-100"
+            )}
+          >
+            <div className="space-y-1">
+              <Label className="text-xs">Datum založení od</Label>
+              <Input
+                type="date"
+                className={belowLg ? "border-white/35 bg-slate-950 text-white [color-scheme:dark]" : ""}
+                value={createdFromFilter}
+                onChange={(e) => syncJobsListUrl({ createdFrom: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Datum založení do</Label>
+              <Input
+                type="date"
+                className={belowLg ? "border-white/35 bg-slate-950 text-white [color-scheme:dark]" : ""}
+                value={createdToFilter}
+                onChange={(e) => syncJobsListUrl({ createdTo: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Realizace od</Label>
+              <Input
+                type="date"
+                className={belowLg ? "border-white/35 bg-slate-950 text-white [color-scheme:dark]" : ""}
+                value={realizationFromFilter}
+                onChange={(e) => syncJobsListUrl({ realFrom: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Realizace do</Label>
+              <Input
+                type="date"
+                className={belowLg ? "border-white/35 bg-slate-950 text-white [color-scheme:dark]" : ""}
+                value={realizationToFilter}
+                onChange={(e) => syncJobsListUrl({ realTo: e.target.value })}
+              />
+            </div>
+            {numberingTypes.length > 0 ? (
+              <div className="space-y-1 sm:col-span-2 lg:col-span-1">
+                <Label className="text-xs">Číselná řada</Label>
+                <select
+                  className={cn(
+                    NATIVE_SELECT_CLASS,
+                    belowLg && "border-white/35 bg-slate-950 text-white [color-scheme:dark]"
+                  )}
+                  value={numberingSeriesFilter}
+                  onChange={(e) => syncJobsListUrl({ series: e.target.value })}
+                >
+                  <option value="">Všechny řady</option>
+                  {numberingTypes.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.prefix})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
 
@@ -2059,6 +2454,33 @@ function JobsPageContent() {
             belowLg ? "overflow-x-hidden bg-slate-950" : "overflow-x-hidden"
           )}
         >
+          {canExportJobs && displayJobs.length > 0 ? (
+            <div
+              className={cn(
+                "flex flex-wrap items-center gap-2 border-b px-3 py-2 text-xs sm:px-4",
+                belowLg ? "border-white/10 bg-slate-900/80 text-slate-200" : "border-slate-200 bg-slate-50"
+              )}
+            >
+              <span className="font-medium">
+                Vybráno: {selectedJobIds.size} / {displayJobs.length}
+              </span>
+              <Button type="button" size="sm" variant="outline" className="h-8" onClick={selectAllFilteredJobs}>
+                Vybrat vše ve filtru
+              </Button>
+              <Button type="button" size="sm" variant="ghost" className="h-8" onClick={clearJobSelection}>
+                Zrušit výběr
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 bg-orange-600 hover:bg-orange-700"
+                disabled={selectedJobIds.size === 0}
+                onClick={() => setExportDialogOpen(true)}
+              >
+                Exportovat označené
+              </Button>
+            </div>
+          ) : null}
           {isLoading ? (
             <div
               className={cn(
@@ -2099,6 +2521,12 @@ function JobsPageContent() {
                     search: "",
                     tag: "",
                     deadline: null,
+                    createdFrom: "",
+                    createdTo: "",
+                    realFrom: "",
+                    realTo: "",
+                    series: "",
+                    assignee: "",
                   })
                 }
               >
@@ -2119,6 +2547,9 @@ function JobsPageContent() {
                 getCustomerName={getCustomerName}
                 isPortalEmployee={isPortalEmployee}
                 dark={belowLg}
+                selectable={canExportJobs}
+                selectedIds={selectedJobIds}
+                onToggleSelect={toggleJobSelect}
               />
             ) : (
               <JobsListView
@@ -2128,6 +2559,9 @@ function JobsPageContent() {
                 isPortalEmployee={isPortalEmployee}
                 isAdmin={canWriteJobs}
                 dark={belowLg}
+                selectable={canExportJobs}
+                selectedIds={selectedJobIds}
+                onToggleSelect={toggleJobSelect}
               />
             )
           ) : (
@@ -2181,6 +2615,18 @@ function JobsPageContent() {
           employeeId={profile?.employeeId as string | undefined}
         />
       ) : null}
+
+      <JobsExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        filteredCount={displayJobs.length}
+        selectedCount={selectedJobIds.size}
+        statusFilter={statusFilter}
+        includeFinance={canExportFinance}
+        includeContact={canReadCustomers}
+        exporting={advancedExportLoading}
+        onExport={(p) => void handleAdvancedExport(p)}
+      />
 
     </div>
   );

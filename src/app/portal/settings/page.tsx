@@ -777,7 +777,11 @@ export default function SettingsPage() {
                   ) : null}
 
                   {isAdmin && companyId ? (
-                    <div className="pt-4">
+                    <div className="pt-6 space-y-2">
+                      <div>
+                        <h3 className="text-lg font-semibold">Zakázky</h3>
+                        <p className="text-sm text-muted-foreground">Číselné řady evidenčních čísel</p>
+                      </div>
                       <JobNumberingSettingsCard companyId={companyId} canManage={isAdmin} />
                     </div>
                   ) : null}

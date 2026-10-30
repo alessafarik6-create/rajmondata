@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCompanyBearerWithPortalAccess } from "@/lib/api-company-auth";
-import { allocateJobNumberAdmin } from "@/lib/jobs/job-numbering-server";
+import {
+  allocateJobNumberAdmin,
+  previewNextJobNumberAdmin,
+} from "@/lib/jobs/job-numbering-server";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +29,21 @@ export async function POST(request: NextRequest) {
   }
 
   const jobTag = body.jobTag != null ? String(body.jobTag).trim() : null;
+  const typeId = body.typeId != null ? String(body.typeId).trim() : null;
+  const preview = body.preview === true;
 
   try {
-    const { jobNumber, typeId } = await allocateJobNumberAdmin(v.db, companyId, jobTag);
-    return NextResponse.json({ ok: true, jobNumber, typeId });
+    if (preview) {
+      const out = await previewNextJobNumberAdmin(v.db, companyId, jobTag, { typeId });
+      return NextResponse.json({ ok: true, preview: out.preview, typeId: out.typeId });
+    }
+    const { jobNumber, typeId: assignedTypeId } = await allocateJobNumberAdmin(
+      v.db,
+      companyId,
+      jobTag,
+      { typeId }
+    );
+    return NextResponse.json({ ok: true, jobNumber, typeId: assignedTypeId });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg === "DUPLICATE_JOB_NUMBER") {

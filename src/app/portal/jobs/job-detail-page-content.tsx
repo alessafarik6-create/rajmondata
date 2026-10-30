@@ -257,6 +257,9 @@ import {
   workContractDocToForm,
 } from "@/lib/work-contract-print-html-build";
 import { formatJobTemplateDataPlainText } from "@/lib/work-contract-job-template-data";
+import { formatJobListDate } from "@/lib/job-list-filters";
+import { resolveJobDisplayNumber } from "@/lib/jobs/job-timeline-utils";
+import { formatCsDateTimeDot } from "@/lib/date-safe";
 import {
   CONTRACT_TEMPLATES_COLLECTION,
   updateContractTemplate,
@@ -10631,6 +10634,11 @@ export function JobDetailPageContent({
             </Button>
             <h1 className={cn(JD.headerTitle, "min-w-0 flex-1 break-words")}>{job.name}</h1>
             <div className="hidden sm:flex sm:flex-wrap sm:items-center sm:gap-2">
+              {resolveJobDisplayNumber(job as Record<string, unknown>) ? (
+                <Badge variant="outline" className="font-mono text-xs font-semibold text-orange-700 border-orange-300">
+                  {resolveJobDisplayNumber(job as Record<string, unknown>)}
+                </Badge>
+              ) : null}
               {(job as { jobTag?: string }).jobTag?.trim() ? (
                 <Badge variant="secondary" className="max-w-[12rem] truncate text-xs font-normal">
                   {jobTagLabel((job as { jobTag?: string }).jobTag)}
@@ -10644,6 +10652,34 @@ export function JobDetailPageContent({
               </Badge>
             </div>
           </div>
+          <p className="text-xs text-slate-600 max-md:pl-11 sm:pl-12 flex flex-wrap gap-x-3 gap-y-1">
+            {resolveJobDisplayNumber(job as Record<string, unknown>) ? (
+              <span>
+                <span className="text-slate-500">Číslo:</span>{" "}
+                <span className="font-mono font-semibold text-orange-700">
+                  {resolveJobDisplayNumber(job as Record<string, unknown>)}
+                </span>
+              </span>
+            ) : null}
+            {formatJobListDate((job as { createdAt?: unknown }).createdAt) !== "—" ? (
+              <span>
+                <span className="text-slate-500">Založeno:</span>{" "}
+                {formatCsDateTimeDot((job as { createdAt?: unknown }).createdAt)}
+              </span>
+            ) : null}
+            {(job as { createdByName?: string }).createdByName?.trim() ? (
+              <span>
+                <span className="text-slate-500">Založil:</span>{" "}
+                {(job as { createdByName?: string }).createdByName}
+              </span>
+            ) : null}
+            {formatJobListDate((job as { updatedAt?: unknown }).updatedAt) !== "—" ? (
+              <span>
+                <span className="text-slate-500">Poslední změna:</span>{" "}
+                {formatCsDateTimeDot((job as { updatedAt?: unknown }).updatedAt)}
+              </span>
+            ) : null}
+          </p>
           <div className={cn(JD.headerMetaRow, "sm:hidden")}>
             <Badge variant="secondary" className="text-xs font-normal capitalize">
               {job?.status ?? "—"}

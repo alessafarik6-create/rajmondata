@@ -31,6 +31,10 @@ export type JobListRow = {
   jobTag?: string | null;
   jobNumber?: string | null;
   orderNumber?: string | null;
+  jobNumberTypeId?: string | null;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  customerName?: string | null;
   assignedEmployeeIds?: string[];
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -229,6 +233,63 @@ export function filterJobsByStatus(
   return jobs.filter((j) => jobMatchesStatusFilter(j.status, statusFilter));
 }
 
+function parseIsoDayStart(iso: string): Date | null {
+  const raw = String(iso ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const d = new Date(`${raw}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export function filterJobsByCreatedDateRange(
+  jobs: JobListRow[],
+  fromIso?: string | null,
+  toIso?: string | null
+): JobListRow[] {
+  const from = parseIsoDayStart(fromIso ?? "");
+  const to = parseIsoDayStart(toIso ?? "");
+  if (!from && !to) return jobs;
+  if (to) to.setHours(23, 59, 59, 999);
+  return jobs.filter((j) => {
+    const ts = jobCreatedTimestamp(j);
+    if (!ts) return false;
+    if (from && ts < from.getTime()) return false;
+    if (to && ts > to.getTime()) return false;
+    return true;
+  });
+}
+
+/** Filtr podle termínu realizace (startDate / endDate zakázky). */
+export function filterJobsByRealizationDateRange(
+  jobs: JobListRow[],
+  fromIso?: string | null,
+  toIso?: string | null
+): JobListRow[] {
+  const from = parseIsoDayStart(fromIso ?? "");
+  const to = parseIsoDayStart(toIso ?? "");
+  if (!from && !to) return jobs;
+  const toEnd = to ? new Date(to.getTime()) : null;
+  if (toEnd) toEnd.setHours(23, 59, 59, 999);
+  return jobs.filter((j) => {
+    const start = parseIsoDayStart(String(j.startDate ?? ""));
+    const end = parseIsoDayStart(String(j.endDate ?? "")) ?? start;
+    if (!start && !end) return false;
+    const rangeStart = start ?? end!;
+    const rangeEnd = end ?? start!;
+    if (from && rangeEnd.getTime() < from.getTime()) return false;
+    if (toEnd && rangeStart.getTime() > toEnd.getTime()) return false;
+    return true;
+  });
+}
+
+export function filterJobsByNumberingTypeId(
+  jobs: JobListRow[],
+  typeId: string | null | undefined
+): JobListRow[] {
+  const id = String(typeId ?? "").trim();
+  if (!id) return jobs;
+  return jobs.filter((j) => String(j.jobNumberTypeId ?? "").trim() === id);
+}
+
 export function filterJobsByDeadlineExtra(
   jobs: JobListRow[],
   deadlineFilter: JobDeadlineFilterKey | null,
@@ -254,6 +315,11 @@ export function applyJobListFilters(
     tagFilter?: string;
     statusFilter?: JobStatusFilterKey;
     deadlineFilter?: JobDeadlineFilterKey | null;
+    createdFrom?: string | null;
+    createdTo?: string | null;
+    realizationFrom?: string | null;
+    realizationTo?: string | null;
+    numberingTypeId?: string | null;
     getCustomerName?: (customerId: string | undefined | null) => string;
     now?: Date;
   }
@@ -264,6 +330,9 @@ export function applyJobListFilters(
   list = filterJobsBySearch(list, opts.search ?? "", getCustomerName);
   list = filterJobsByTag(list, opts.tagFilter ?? "");
   list = filterJobsByStatus(list, opts.statusFilter ?? DEFAULT_JOB_STATUS_FILTER);
+  list = filterJobsByCreatedDateRange(list, opts.createdFrom, opts.createdTo);
+  list = filterJobsByRealizationDateRange(list, opts.realizationFrom, opts.realizationTo);
+  list = filterJobsByNumberingTypeId(list, opts.numberingTypeId);
   list = filterJobsByDeadlineExtra(
     list,
     opts.deadlineFilter ?? null,

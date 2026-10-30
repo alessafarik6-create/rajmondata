@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/firebase";
 import type { JobNumberingSettings, JobNumberingTypeRule } from "@/lib/jobs/job-numbering";
+import { formatPresetPrefixSeq } from "@/lib/jobs/job-numbering";
 import { Loader2 } from "lucide-react";
 
 type Props = {
@@ -129,12 +130,16 @@ export function JobNumberingSettingsCard({ companyId, canManage }: Props) {
     );
   }
 
+  const setDefaultTypeId = (id: string) => {
+    setSettings((s) => (s ? { ...s, defaultTypeId: id } : s));
+  };
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Číslování zakázek</CardTitle>
+        <CardTitle>Číselné řady</CardTitle>
         <CardDescription>
-          Předpony a formát čísel podle typu zakázky. Nové zakázky dostanou číslo automaticky.
+          Evidenční čísla zakázek (např. RD0001, M0001). Změna předpony nemění již přidělená čísla.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -148,56 +153,118 @@ export function JobNumberingSettingsCard({ companyId, canManage }: Props) {
         </div>
 
         <div className="space-y-3">
-          {settings.types.map((t) => (
-            <div key={t.id} className="rounded-lg border p-3 space-y-2">
-              <div className="grid gap-2 sm:grid-cols-3">
-                <div>
-                  <Label className="text-xs">Název typu</Label>
-                  <Input
-                    value={t.name}
-                    disabled={!canManage}
-                    onChange={(e) => updateType(t.id, { name: e.target.value })}
-                  />
+          {settings.types.map((t) => {
+            const seqMatch = t.format.match(/\{SEQ:(\d+)\}/i);
+            const digitWidth = seqMatch ? seqMatch[1] : "4";
+            const isDefault = settings.defaultTypeId === t.id;
+            return (
+              <div key={t.id} className="rounded-lg border p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium">{t.name || t.id}</p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={t.active !== false}
+                        disabled={!canManage}
+                        onCheckedChange={(v) =>
+                          updateType(t.id, { active: v ? undefined : false })
+                        }
+                      />
+                      <Label className="text-xs">Aktivní</Label>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                      <input
+                        type="radio"
+                        name="default-numbering-series"
+                        checked={isDefault}
+                        disabled={!canManage}
+                        onChange={() => setDefaultTypeId(t.id)}
+                      />
+                      Výchozí řada
+                    </label>
+                  </div>
                 </div>
-                <div>
-                  <Label className="text-xs">Předpona</Label>
-                  <Input
-                    value={t.prefix}
-                    disabled={!canManage}
-                    onChange={(e) => updateType(t.id, { prefix: e.target.value.toUpperCase() })}
-                  />
+                <div className="grid gap-2 sm:grid-cols-4">
+                  <div>
+                    <Label className="text-xs">Název řady</Label>
+                    <Input
+                      value={t.name}
+                      disabled={!canManage}
+                      onChange={(e) => updateType(t.id, { name: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Předpona</Label>
+                    <Input
+                      value={t.prefix}
+                      disabled={!canManage}
+                      onChange={(e) =>
+                        updateType(t.id, { prefix: e.target.value.toUpperCase() })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Počet číslic</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={digitWidth}
+                      disabled={!canManage}
+                      onChange={(e) => {
+                        const d = Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 4));
+                        updateType(t.id, { format: formatPresetPrefixSeq(t.prefix, d) });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Počáteční číslo</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={t.startSequence ?? 1}
+                      disabled={!canManage}
+                      onChange={(e) =>
+                        updateType(t.id, {
+                          startSequence: Math.max(1, parseInt(e.target.value, 10) || 1),
+                        })
+                      }
+                    />
+                  </div>
                 </div>
-                <div>
-                  <Label className="text-xs">Formát</Label>
-                  <Input
-                    value={t.format}
-                    disabled={!canManage}
-                    onChange={(e) => updateType(t.id, { format: e.target.value })}
-                  />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <Label className="text-xs">Formát (pokročilé)</Label>
+                    <Input
+                      value={t.format}
+                      disabled={!canManage}
+                      onChange={(e) => updateType(t.id, { format: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Typ zakázky / štítek</Label>
+                    <Input
+                      value={t.jobTagMatch ?? ""}
+                      disabled={!canManage}
+                      placeholder="např. montá"
+                      onChange={(e) =>
+                        updateType(t.id, { jobTagMatch: e.target.value || undefined })
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div>
-                  <Label className="text-xs">Shoda se štítkem (volitelné)</Label>
-                  <Input
-                    value={t.jobTagMatch ?? ""}
-                    disabled={!canManage}
-                    placeholder="např. pergol"
-                    onChange={(e) => updateType(t.id, { jobTagMatch: e.target.value || undefined })}
-                  />
-                </div>
-                <div className="text-xs text-muted-foreground self-end pb-2">
-                  Další číslo:{" "}
+                <div className="text-xs text-muted-foreground">
+                  Další volné číslo:{" "}
                   <span className="font-mono font-semibold text-slate-800">
                     {previews[t.id]?.nextPreview ?? "—"}
                   </span>
                   {previews[t.id]?.lastAssigned ? (
-                    <span className="block">Poslední: {previews[t.id]?.lastAssigned}</span>
+                    <span className="ml-2">Poslední přidělené: {previews[t.id]?.lastAssigned}</span>
                   ) : null}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {canManage ? (

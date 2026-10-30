@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
   CollapsibleContent,
@@ -45,6 +46,9 @@ type JobsListViewProps = {
   isPortalEmployee?: boolean;
   isAdmin?: boolean;
   dark?: boolean;
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (jobId: string) => void;
 };
 
 const UNTAGGED_KEY = "";
@@ -181,18 +185,26 @@ function JobListCard({
   href,
   onOpen,
   dark,
+  selectable,
+  selected,
+  onToggleSelect,
 }: {
   job: JobListRow;
   customerName: string;
   href: string;
   onOpen: () => void;
   dark?: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const jid = job?.id;
   const completed = isCompletedJobStatus(job.status);
   const jobName = String(job?.name ?? "—");
   const pct = jobCompletionPercent(job);
   const activity = formatRelativeActivityLabel(job);
+  const createdLabel = formatJobListDate(job.createdAt);
+  const jobNumber = resolveJobDisplayNumber(job);
 
   return (
     <article
@@ -218,9 +230,28 @@ function JobListCard({
             )
       )}
     >
-      {resolveJobDisplayNumber(job) ? (
-        <p className={cn("font-mono text-[11px] text-slate-500", dark && "text-slate-400")}>
-          {resolveJobDisplayNumber(job)}
+      <div className="flex items-start justify-between gap-2">
+        {jobNumber ? (
+          <p
+            className={cn(
+              "font-mono text-xs font-bold text-orange-600",
+              dark && "text-orange-400"
+            )}
+          >
+            {jobNumber}
+          </p>
+        ) : (
+          <span />
+        )}
+        {selectable && jid && onToggleSelect ? (
+          <div onClick={(e) => e.stopPropagation()}>
+            <Checkbox checked={selected} onCheckedChange={onToggleSelect} aria-label="Vybrat zakázku" />
+          </div>
+        ) : null}
+      </div>
+      {createdLabel && createdLabel !== "—" ? (
+        <p className={cn("text-[10px] text-slate-500", dark && "text-slate-400")}>
+          Založeno: {createdLabel}
         </p>
       ) : null}
       <h3
@@ -303,6 +334,9 @@ function MobileTagSection({
   openJobDetail,
   getCustomerName,
   defaultOpen,
+  selectable,
+  selectedIds,
+  onToggleSelect,
 }: {
   column: JobTagColumn;
   dark?: boolean;
@@ -310,6 +344,9 @@ function MobileTagSection({
   openJobDetail: (id: string | undefined) => void;
   getCustomerName: (customerId: string | undefined | null) => string;
   defaultOpen?: boolean;
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (jobId: string) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen ?? true);
 
@@ -353,6 +390,11 @@ function MobileTagSection({
               href={href}
               onOpen={() => openJobDetail(jid)}
               dark={dark}
+              selectable={selectable}
+              selected={jid ? selectedIds?.has(jid) : false}
+              onToggleSelect={
+                jid && onToggleSelect ? () => onToggleSelect(jid) : undefined
+              }
             />
           );
         })}
@@ -366,6 +408,9 @@ export function JobsListView({
   getCustomerName,
   isPortalEmployee = false,
   dark = false,
+  selectable = false,
+  selectedIds,
+  onToggleSelect,
 }: JobsListViewProps) {
   const router = useRouter();
 
@@ -395,6 +440,9 @@ export function JobsListView({
             openJobDetail={openJobDetail}
             getCustomerName={getCustomerName}
             defaultOpen={idx < 2}
+            selectable={selectable}
+            selectedIds={selectedIds}
+            onToggleSelect={onToggleSelect}
           />
         ))}
       </div>
@@ -429,6 +477,11 @@ export function JobsListView({
                   customerName={getCustomerName(job?.customerId)}
                   href={href}
                   onOpen={() => openJobDetail(jid)}
+                  selectable={selectable}
+                  selected={jid ? selectedIds?.has(jid) : false}
+                  onToggleSelect={
+                    jid && onToggleSelect ? () => onToggleSelect(jid) : undefined
+                  }
                 />
               );
             })}

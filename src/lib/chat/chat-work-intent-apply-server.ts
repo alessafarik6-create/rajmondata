@@ -343,6 +343,7 @@ export async function applyChatWorkIntentProposals(input: {
         const notify = draft?.notifyEmployee !== false;
         if (notify && assignedEmployees.length) {
           const msgText = buildJobAssignmentMessageText({
+            jobNumber: jobNumber ?? null,
             jobName: title,
             customerName,
             startDate: startDate || null,

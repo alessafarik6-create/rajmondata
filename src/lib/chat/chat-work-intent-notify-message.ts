@@ -26,6 +26,7 @@ export function formatCsJobDateRange(
 }
 
 export function buildJobAssignmentMessageText(params: {
+  jobNumber?: string | null;
   jobName: string;
   customerName: string;
   startDate?: string | null;
@@ -38,6 +39,9 @@ export function buildJobAssignmentMessageText(params: {
     "",
     "Byla vám přiřazena zakázka:",
     "",
+    ...(String(params.jobNumber ?? "").trim()
+      ? [`Evidenční číslo: ${String(params.jobNumber).trim()}`, ""]
+      : []),
     `Název: ${params.jobName}`,
     `Termín: ${formatCsJobDateRange(params.startDate, params.endDate)}`,
     `Zákazník: ${params.customerName || "—"}`,

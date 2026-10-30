@@ -24,6 +24,7 @@ export function JobsExportPrintMenu(props: {
   onExportContractedCsv?: () => void;
   showContracted?: boolean;
   contractedLoading?: boolean;
+  onOpenAdvancedExport?: () => void;
 }) {
   const {
     disabled,
@@ -36,6 +37,7 @@ export function JobsExportPrintMenu(props: {
     onExportContractedCsv,
     showContracted,
     contractedLoading,
+    onOpenAdvancedExport,
   } = props;
 
   const trigger = mobile ? (
@@ -65,6 +67,14 @@ export function JobsExportPrintMenu(props: {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
+        {onOpenAdvancedExport ? (
+          <>
+            <DropdownMenuItem onClick={() => onOpenAdvancedExport()}>
+              <FileDown className="mr-2 h-4 w-4" /> Export podle filtrů…
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
         <DropdownMenuLabel>Přehled zakázek (filtry)</DropdownMenuLabel>
         <DropdownMenuItem onClick={() => onExportPdf("current")}>
           <FileDown className="mr-2 h-4 w-4" /> Přehled zakázek PDF

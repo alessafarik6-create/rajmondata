@@ -87,13 +87,21 @@ export async function PATCH(request: NextRequest) {
   }
 
   const settings = parseJobNumberingSettings(body.settings ?? body.jobNumberingSettings);
-  await v.db.collection("companies").doc(companyId).set(
+  const companyRef = v.db.collection("companies").doc(companyId);
+  await companyRef.set(
     {
       jobNumberingSettings: settings,
       updatedAt: FieldValue.serverTimestamp(),
     },
     { merge: true }
   );
+  await companyRef.collection("settingsAudit").add({
+    type: "job_numbering_settings",
+    changedBy: v.caller.uid,
+    changedByRole: v.caller.role,
+    settingsSnapshot: settings,
+    createdAt: FieldValue.serverTimestamp(),
+  });
 
   return NextResponse.json({ ok: true, settings });
 }
