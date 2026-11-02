@@ -12,6 +12,7 @@ import type {
   ProductionTaskStatus,
   ProductionTimeEndReason,
 } from "@/lib/production-qr/production-task-types";
+import { localDayKeyFromIsoTimestamp } from "@/lib/labor/employee-work-statement";
 
 function tsToIso(v: unknown): string | null {
   if (!v) return null;
@@ -114,12 +115,19 @@ export async function startProductionTimeViaQr(
     input.shiftDateIso ?? new Date().toISOString().split("T")[0]!;
   const entriesCol = productionTimeEntriesCol(db, companyId);
   const taskRef = productionTasksCol(db, companyId, jobId).doc(productionTaskId);
+  const jobRef = db.collection("companies").doc(companyId).collection("jobs").doc(jobId);
   const sessionRef = productionQrSessionsCol(db, companyId).doc(employeeId);
 
   return db.runTransaction(async (tx) => {
     const taskSnap = await tx.get(taskRef);
     if (!taskSnap.exists) throw new Error("task_not_found");
     const taskData = taskSnap.data() as Record<string, unknown>;
+    const jobSnap = await tx.get(jobRef);
+    const jobData = jobSnap.exists ? (jobSnap.data() as Record<string, unknown>) : {};
+    const jobNumber =
+      String(jobData.jobNumber ?? jobData.orderNumber ?? "").trim() || null;
+    const jobName =
+      String(jobData.name ?? jobData.productionInternalLabel ?? "").trim() || null;
     if (taskData.active === false) throw new Error("task_inactive");
 
     const activeQ = entriesCol
@@ -189,11 +197,19 @@ export async function startProductionTimeViaQr(
     }
 
     const newRef = entriesCol.doc();
+    const startedIso = now.toDate().toISOString();
+    const workDateIso =
+      shiftDateIso || localDayKeyFromIsoTimestamp(startedIso) || null;
+    const taskNameStored = String(taskData.name ?? productionTaskId);
     tx.set(newRef, {
       companyId,
       jobId,
+      jobNumber,
+      jobName,
       productionTaskId,
+      taskName: taskNameStored,
       employeeId,
+      workDateIso,
       startedAt: now,
       endedAt: null,
       durationSeconds: null,
@@ -212,7 +228,6 @@ export async function startProductionTimeViaQr(
       });
     }
 
-    const taskName = String(taskData.name ?? productionTaskId);
     tx.set(
       sessionRef,
       {
@@ -220,7 +235,9 @@ export async function startProductionTimeViaQr(
         employeeId,
         jobId,
         productionTaskId,
-        taskName,
+        jobNumber,
+        jobName,
+        taskName: taskNameStored,
         displayStatus: "active",
         activeEntryId: newRef.id,
         pendingResume: false,

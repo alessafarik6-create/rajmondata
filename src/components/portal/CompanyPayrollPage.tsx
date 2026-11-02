@@ -116,6 +116,8 @@ import {
 } from "@/lib/employee-day-payout";
 import { getPaymentBadgeLabel } from "@/lib/payroll-entry-display";
 import { buildPayrollOverviewRows } from "@/lib/payroll-overview-compute";
+import { PayrollHoursBySourceCard } from "@/components/labor/payroll-hours-by-source-card";
+import { LaborPayrollWorkOverviewTable } from "@/components/labor/labor-payroll-work-overview-table";
 import {
   dateStrInInclusiveRange,
   payrollPeriodBounds,
@@ -2771,6 +2773,18 @@ function PayrollAdminPageInner() {
         <p className="text-black">Vyberte zaměstnance.</p>
       ) : selectedEmployeeId === "all" ? (
         <div className="space-y-3">
+        {companyId ? (
+          <Card className="border-slate-200 bg-white">
+            <CardHeader>
+              <CardTitle className="text-lg text-black">
+                Přehled zaměstnanců — docházka a QR
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <LaborPayrollWorkOverviewTable companyId={companyId} />
+            </CardContent>
+          </Card>
+        ) : null}
         <Tabs defaultValue="worklogs" className="w-full">
           <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-slate-100 p-1 print:hidden">
             <TabsTrigger
@@ -3855,6 +3869,15 @@ function PayrollAdminPageInner() {
                   {formatKc(payrollSummaryFromDailyDetail.netAfterAdvancesKc)}
                 </p>
               </div>
+
+              {companyId && payrollTargetEmployee ? (
+                <PayrollHoursBySourceCard
+                  companyId={companyId}
+                  employeeId={payrollTargetEmployee.id}
+                  fromIso={periodBounds.startStr}
+                  toIso={periodBounds.endStr}
+                />
+              ) : null}
 
               <div className="min-w-0 max-w-full rounded-lg border border-slate-200 p-3 sm:p-4">
                 <h3 className="mb-2 font-semibold">Rozpis po dnech</h3>

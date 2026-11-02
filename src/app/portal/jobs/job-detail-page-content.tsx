@@ -61,6 +61,7 @@ import {
   companyDocumentRefForJobLegacyPhoto,
 } from "@/lib/job-linked-document-sync";
 import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
+import { JobQrLaborSection } from "@/components/jobs/job-qr-labor-section";
 import { JobWorkBudgetSection } from "@/components/jobs/job-work-budget-section";
 import { JobBillingInvoicesSection } from "@/components/jobs/job-billing-invoices-section";
 import { JobContractDepositSection } from "@/components/jobs/job-contract-deposit-section";
@@ -2415,6 +2416,19 @@ export function JobDetailPageContent({
               workContractsForJob={workContractsForJob}
               jobInvoices={jobInvoicesForDeposit}
               jobIncomes={jobIncomesSorted}
+            />
+          ) : null,
+      },
+      {
+        id: "qr_job_labor",
+        visible: Boolean(user && companyId && jobFirestoreId && vyrobaModuleOn),
+        summary: "QR intervaly práce",
+        children:
+          companyId && jobFirestoreId ? (
+            <JobQrLaborSection
+              companyId={companyId}
+              jobId={String(jobFirestoreId)}
+              canViewCosts={canManageFolders}
             />
           ) : null,
       },

@@ -37,8 +37,13 @@ export type ProductionTimeEntryRow = {
   id: string;
   companyId: string;
   jobId: string;
+  jobNumber?: string | null;
+  jobName?: string | null;
   productionTaskId: string;
+  taskName?: string | null;
   employeeId: string;
+  /** Kalendářní den práce (Europe/Prague), YYYY-MM-DD */
+  workDateIso?: string | null;
   startedAt: string;
   endedAt?: string | null;
   durationSeconds?: number | null;

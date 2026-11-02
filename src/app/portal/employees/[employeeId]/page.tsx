@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EmployeePortalRolePermissionsEditor } from "@/components/employees/employee-portal-role-permissions-editor";
+import { EmployeeWorkStatementTab } from "@/components/labor/employee-work-statement-tab";
 import { EmployeeEffectiveAccessPanel } from "@/components/employees/employee-effective-access-panel";
 import {
   calendarLevelsForAdminEditor,
@@ -283,6 +284,7 @@ export default function EmployeeDetailPage() {
     | "contracts"
     | "photos"
     | "signatures"
+    | "work-report"
   >("overview");
 
   useEffect(() => {
@@ -297,7 +299,8 @@ export default function EmployeeDetailPage() {
       t === "documents" ||
       t === "contracts" ||
       t === "photos" ||
-      t === "signatures"
+      t === "signatures" ||
+      t === "work-report"
     ) {
       setTab(t);
     }
@@ -1385,6 +1388,9 @@ export default function EmployeeDetailPage() {
           <TabsTrigger value="work" className={tabTriggerCls}>
             {belowLg ? "Mzda" : "Práce a mzda"}
           </TabsTrigger>
+          <TabsTrigger value="work-report" className={tabTriggerCls}>
+            {belowLg ? "Výkaz QR" : "Pracovní výkaz / QR"}
+          </TabsTrigger>
           <TabsTrigger value="terminal" className={tabTriggerCls}>
             {belowLg ? "PIN" : "Terminál a PIN"}
           </TabsTrigger>
@@ -1685,6 +1691,25 @@ export default function EmployeeDetailPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="work-report" className="mt-4 space-y-4">
+          {companyId && employeeId ? (
+            <Card className={cardCls}>
+              <CardHeader>
+                <CardTitle className={cardTitleCls}>Pracovní výkaz / QR zakázky</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <EmployeeWorkStatementTab
+                  companyId={companyId}
+                  employeeId={employeeId}
+                  employeeName={display}
+                  organizationName={companyName ?? "Organizace"}
+                  canExportMoney={canManage}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="work" className="mt-4 space-y-4">

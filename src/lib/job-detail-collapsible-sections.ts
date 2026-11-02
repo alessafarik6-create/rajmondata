@@ -12,6 +12,7 @@ export const JOB_DETAIL_COLLAPSIBLE_SECTION_IDS = [
   "production_team",
   "contract_deposit",
   "expenses",
+  "qr_job_labor",
   "product_catalogs",
 ] as const;
 
@@ -31,6 +32,7 @@ export const JOB_DETAIL_COLLAPSIBLE_SECTION_LABELS: Record<
   production_team: "Výroba – přiřazení a viditelnost",
   contract_deposit: "Smlouva a zálohy",
   expenses: "Náklady zakázky",
+  qr_job_labor: "Práce zaměstnanců (QR)",
   product_catalogs: "Produktové katalogy pro zákazníka",
 };
 
