@@ -20,7 +20,7 @@ import {
 import { resolveInquiryOfferAuthor } from "@/lib/inquiry-offer-author-resolve";
 import { buildInquiryOfferFooterData } from "@/lib/inquiry-offer-footer";
 import { parseAttachmentRefs, shouldAttachAsFile } from "@/lib/inquiry-offer-attachments";
-import { prepareInquiryOfferEmailImages } from "@/lib/inquiry-offer-inline-images";
+import { prepareInquiryOfferEmailImages } from "@/lib/inquiry-offer-inline-images-server";
 import { formatInquiryOfferAttachmentLine } from "@/lib/inquiry-offer-history";
 import {
   buildInquiryOfferSendPlan,

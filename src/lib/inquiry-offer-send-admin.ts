@@ -8,7 +8,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import nodemailer from "nodemailer";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
-import { prepareInquiryOfferEmailImages } from "@/lib/inquiry-offer-inline-images";
+import { prepareInquiryOfferEmailImages } from "@/lib/inquiry-offer-inline-images-server";
 import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
 import {
   buildInquiryOfferEmailHtml,
