@@ -27,6 +27,8 @@ import {
   parseInquiryOfferLibraryDoc,
   formatAttachmentSizeBytes,
   INQUIRY_ATTACHMENT_SOURCE_LABELS,
+  prepareInquiryOfferAttachmentForAdd,
+  shouldAttachAsFile,
   type InquiryOfferAttachmentRef,
   type InquiryOfferLibraryItem,
 } from "@/lib/inquiry-offer-attachments";
@@ -98,9 +100,18 @@ export function InquiryOfferAttachmentsField(props: Props) {
   );
 
   const addRef = (refItem: InquiryOfferAttachmentRef) => {
-    if (existingKeys.has(attachmentRefKey(refItem))) return;
-    props.onChange([...props.attachments, refItem]);
+    if (existingKeys.has(attachmentRefKey(refItem))) {
+      toast({ title: "Tento soubor už v nabídce je." });
+      return;
+    }
+    const next = prepareInquiryOfferAttachmentForAdd(refItem, props.attachments);
+    props.onChange([...props.attachments, next]);
   };
+
+  const fileAttachments = useMemo(
+    () => props.attachments.filter(shouldAttachAsFile),
+    [props.attachments]
+  );
 
   const removeRef = (id: string) => {
     props.onChange(props.attachments.filter((a) => a.id !== id));
@@ -145,15 +156,20 @@ export function InquiryOfferAttachmentsField(props: Props) {
         const sref = ref(storage, path);
         await uploadBytes(sref, file, { contentType: file.type || undefined });
         const url = await getDownloadURL(sref);
-        added.push({
-          id,
-          source: "upload",
-          filename: file.name,
-          contentType: file.type || null,
-          sizeBytes: file.size,
-          storagePath: path,
-          downloadUrl: url,
-        });
+        added.push(
+          prepareInquiryOfferAttachmentForAdd(
+            {
+              id,
+              source: "upload",
+              filename: file.name,
+              contentType: file.type || null,
+              sizeBytes: file.size,
+              storagePath: path,
+              downloadUrl: url,
+            },
+            [...props.attachments, ...added]
+          )
+        );
       }
       props.onChange([...props.attachments, ...added]);
       toast({ title: `Přidáno ${added.length} příloh` });
@@ -195,9 +211,9 @@ export function InquiryOfferAttachmentsField(props: Props) {
         multiple
         onChange={(e) => void handleUploadFiles(e.target.files)}
       />
-      {props.attachments.length > 0 ? (
+      {fileAttachments.length > 0 ? (
         <ul className="space-y-1.5 rounded-md border border-slate-200 bg-slate-50/80 p-2">
-          {props.attachments.map((a) => (
+          {fileAttachments.map((a) => (
             <li
               key={a.id}
               className="flex items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs"

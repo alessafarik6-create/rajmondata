@@ -395,6 +395,8 @@ export function stripHtmlToPlain(html: string): string {
 
 export function buildInquiryOfferEmailHtml(params: {
   bodyHtmlContent: string;
+  /** Galerie fotografií (cid: nebo data URL v náhledu) — před firemním podpisem. */
+  inlineGalleryHtml?: string;
   organizationName: string;
   /** Firemní patička s IČO, sídlem, kontakty a autorem. */
   footer: import("@/lib/inquiry-offer-footer").InquiryOfferFooterData;
@@ -425,6 +427,7 @@ export function buildInquiryOfferEmailHtml(params: {
         </td></tr>
         <tr><td style="padding:8px 20px 16px;font-family:system-ui,Segoe UI,sans-serif;font-size:15px;line-height:1.55;color:#0f172a;">
           ${params.bodyHtmlContent}
+          ${params.inlineGalleryHtml ?? ""}
         </td></tr>
         <tr><td style="padding:16px 20px 22px;border-top:1px solid #e2e8f0;font-family:system-ui,Segoe UI,sans-serif;">
           ${footerInner}

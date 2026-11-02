@@ -10,6 +10,9 @@ export type SendTransactionalEmailAttachment = {
   filename: string;
   content: Buffer;
   contentType?: string;
+  /** Content-ID pro inline obrázky v HTML (cid:…). */
+  cid?: string;
+  contentDisposition?: "inline" | "attachment";
 };
 
 export type SendTransactionalEmailInput = {
@@ -68,6 +71,7 @@ export async function sendTransactionalEmail(
             filename: a.filename,
             content: a.content,
             content_type: a.contentType ?? "application/octet-stream",
+            ...(a.cid ? { content_id: a.cid } : {}),
           })),
         }
       : {};

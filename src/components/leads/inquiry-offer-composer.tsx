@@ -39,6 +39,7 @@ import {
 } from "@/lib/inquiry-offer-pricing";
 import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
 import { InquiryOfferAttachmentsField } from "@/components/leads/inquiry-offer-attachments-field";
+import { InquiryOfferInlineImagesField } from "@/components/leads/inquiry-offer-inline-images-field";
 import { InquiryOfferFooterPreview } from "@/components/leads/inquiry-offer-footer-preview";
 import { InquiryOfferEmailPreviewDialog } from "@/components/leads/inquiry-offer-email-preview-dialog";
 import type { InquiryOfferReuseInitial } from "@/lib/inquiry-offer-history";
@@ -572,12 +573,17 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
               </div>
             ) : null}
 
-            <div className="px-4 py-3 sm:px-6">
+            <div className="space-y-4 px-4 py-3 sm:px-6">
               <InquiryOfferAttachmentsField
                 companyId={props.companyId}
                 attachments={attachments}
                 onChange={setAttachments}
                 uploadSessionId={uploadSessionId}
+              />
+              <InquiryOfferInlineImagesField
+                attachments={attachments}
+                onChange={setAttachments}
+                disabled={fieldsDisabled}
               />
             </div>
 

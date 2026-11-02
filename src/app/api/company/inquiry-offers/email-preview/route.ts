@@ -19,7 +19,8 @@ import {
 } from "@/lib/inquiry-offer-pricing";
 import { resolveInquiryOfferAuthor } from "@/lib/inquiry-offer-author-resolve";
 import { buildInquiryOfferFooterData } from "@/lib/inquiry-offer-footer";
-import { parseAttachmentRefs } from "@/lib/inquiry-offer-attachments";
+import { parseAttachmentRefs, shouldAttachAsFile } from "@/lib/inquiry-offer-attachments";
+import { prepareInquiryOfferEmailImages } from "@/lib/inquiry-offer-inline-images";
 import { formatInquiryOfferAttachmentLine } from "@/lib/inquiry-offer-history";
 import {
   buildInquiryOfferSendPlan,
@@ -106,16 +107,34 @@ export async function POST(request: NextRequest) {
     const bodyPlain = userBodyPlain
       ? buildInquiryOfferSentBodyPlain(userBodyPlain, pricing)
       : "";
+    const attachmentRefs = parseAttachmentRefs(body.attachments);
+    let inlineGalleryHtml = "";
+    if (attachmentRefs.length > 0 && bodyPlain) {
+      try {
+        const prepared = await prepareInquiryOfferEmailImages({
+          attachmentRefs,
+          previewMode: true,
+        });
+        inlineGalleryHtml = prepared.inlineGalleryHtml;
+      } catch (err) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: err instanceof Error ? err.message : "Fotografie se nepodařilo načíst pro náhled.",
+          },
+          { status: 400 }
+        );
+      }
+    }
     const bodyInnerHtml = bodyPlain ? plainTextToHtmlParagraphs(bodyPlain) : "";
     const html = bodyPlain
       ? buildInquiryOfferEmailHtml({
           bodyHtmlContent: bodyInnerHtml,
+          inlineGalleryHtml,
           organizationName: planResult.fromDisplayName,
           footer,
         })
       : "";
-
-    const attachmentRefs = parseAttachmentRefs(body.attachments);
     const toNorm = String(body.to ?? "").trim().toLowerCase();
 
     let copyLabel: string | null = null;
@@ -151,7 +170,7 @@ export async function POST(request: NextRequest) {
           vatAmountLabel: formatInquiryPriceCz(pricing.vatAmount),
           priceGrossLabel: formatInquiryPriceCz(pricing.priceGross),
         },
-        attachments: attachmentRefs.map((a) => ({
+        attachments: attachmentRefs.filter(shouldAttachAsFile).map((a) => ({
           ...a,
           line: formatInquiryOfferAttachmentLine(a),
         })),

@@ -8,10 +8,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import nodemailer from "nodemailer";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
-import {
-  mergeAttachmentRefsWithResolvedSizes,
-  resolveInquiryOfferAttachmentsForEmail,
-} from "@/lib/inquiry-offer-attachment-resolve";
+import { prepareInquiryOfferEmailImages } from "@/lib/inquiry-offer-inline-images";
 import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
 import {
   buildInquiryOfferEmailHtml,
@@ -145,6 +142,8 @@ async function deliverViaSmtp(
         filename: a.filename,
         content: a.content,
         contentType: a.contentType,
+        ...(a.cid ? { cid: a.cid } : {}),
+        contentDisposition: a.contentDisposition ?? (a.cid ? "inline" : "attachment"),
       })),
       envelope: {
         from: plan.fromEmailTechnical,
@@ -319,18 +318,17 @@ export async function sendInquiryOfferEmail(
   const authorHistory = buildInquiryOfferAuthorHistoryFields(author);
 
   const bodyInnerHtml = plainTextToHtmlParagraphs(bodyPlain);
-  const html = buildInquiryOfferEmailHtml({
-    bodyHtmlContent: bodyInnerHtml,
-    organizationName: plan.fromDisplayName,
-    footer: offerFooter,
-  });
-
   const subject = params.subject.trim();
   let messageId: string | null = customMessageId;
   const attachmentRefs = params.attachments ?? [];
   let emailAttachments: SendTransactionalEmailAttachment[] = [];
+  let inlineGalleryHtml = "";
+  let resolvedSizeByRefId: Record<string, number> = {};
   try {
-    emailAttachments = await resolveInquiryOfferAttachmentsForEmail(attachmentRefs);
+    const prepared = await prepareInquiryOfferEmailImages({ attachmentRefs });
+    inlineGalleryHtml = prepared.inlineGalleryHtml;
+    emailAttachments = prepared.emailAttachments;
+    resolvedSizeByRefId = prepared.resolvedSizeByRefId;
   } catch (err) {
     return {
       ok: false,
@@ -339,10 +337,17 @@ export async function sendInquiryOfferEmail(
     };
   }
 
-  const attachmentsForHistory = mergeAttachmentRefsWithResolvedSizes(
-    attachmentRefs,
-    emailAttachments
-  );
+  const html = buildInquiryOfferEmailHtml({
+    bodyHtmlContent: bodyInnerHtml,
+    inlineGalleryHtml,
+    organizationName: plan.fromDisplayName,
+    footer: offerFooter,
+  });
+
+  const attachmentsForHistory = attachmentRefs.map((ref) => ({
+    ...ref,
+    sizeBytes: resolvedSizeByRefId[ref.id] ?? ref.sizeBytes ?? null,
+  }));
   const isStandalone =
     params.isStandalone === true || params.leadKey === INQUIRY_OFFER_STANDALONE_LEAD_KEY;
 
@@ -583,11 +588,25 @@ export async function saveInquiryOfferDraft(
   const createdByFields = buildInquiryOfferCreatedByFields(author);
 
   const bodyInnerHtml = bodyPlain ? plainTextToHtmlParagraphs(bodyPlain) : "";
+  let inlineGalleryHtml = "";
+  const attachmentRefs = params.attachments ?? [];
+  if (attachmentRefs.length > 0 && bodyPlain) {
+    try {
+      const prepared = await prepareInquiryOfferEmailImages({
+        attachmentRefs,
+        previewMode: true,
+      });
+      inlineGalleryHtml = prepared.inlineGalleryHtml;
+    } catch {
+      inlineGalleryHtml = "";
+    }
+  }
   const html =
     params.bodyHtml?.trim() ||
     (bodyPlain && plan
       ? buildInquiryOfferEmailHtml({
           bodyHtmlContent: bodyInnerHtml,
+          inlineGalleryHtml,
           organizationName: plan.fromDisplayName,
           footer: offerFooter,
         })
