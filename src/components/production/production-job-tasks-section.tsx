@@ -141,6 +141,15 @@ export function ProductionJobTasksSection({ jobId, jobDisplayName, canManage, ge
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (loading || tasks.length === 0) return;
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    if (!hash.startsWith("#production-task-")) return;
+    const id = hash.slice(1);
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [loading, tasks]);
+
   const saveTask = async (values: ProductionTaskFormValues, taskId?: string) => {
     setBusy(true);
     try {
@@ -428,7 +437,8 @@ export function ProductionJobTasksSection({ jobId, jobDisplayName, canManage, ge
               {tasks.map((t) => (
                 <div
                   key={t.id}
-                  className="flex gap-2 rounded-lg border border-slate-200 bg-white p-2.5 max-lg:border-slate-600 max-lg:bg-slate-800/90 max-lg:text-slate-100"
+                  id={`production-task-${t.id}`}
+                  className="flex gap-2 rounded-lg border border-slate-200 bg-white p-2.5 max-lg:border-slate-600 max-lg:bg-slate-800/90 max-lg:text-slate-100 scroll-mt-24"
                 >
                   {t.scanUrl ? (
                     <button

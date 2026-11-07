@@ -52,6 +52,7 @@ export function useProductionActiveWorkers(getToken: () => Promise<string>, refr
         const token = await getToken();
         const res = await fetch("/api/company/production/active-workers", {
           headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
         });
         const data = await res.json();
         if (!cancelled && data.ok) {
@@ -63,10 +64,17 @@ export function useProductionActiveWorkers(getToken: () => Promise<string>, refr
       }
     };
     void load();
-    const t = window.setInterval(() => void load(), refreshMs);
+    const t = window.setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, refreshMs);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       cancelled = true;
       window.clearInterval(t);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, [getToken, refreshMs]);
 

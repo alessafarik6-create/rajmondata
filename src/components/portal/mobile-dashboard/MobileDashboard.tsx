@@ -69,6 +69,8 @@ export function MobileDashboard(props: {
   contractedJobsCustomersById?: Map<string, Record<string, unknown>>;
   /** AI sekretářka — součást toku mobilního dashboardu (nesmí být fixed). */
   aiSecretary?: React.ReactNode;
+  /** Aktuálně ve výrobě (stejný API zdroj jako desktop karta). */
+  productionActiveWorkers?: React.ReactNode;
 }) {
   const greet = dayPartGreeting();
   const name = props.displayName || "uživateli";
@@ -118,6 +120,10 @@ export function MobileDashboard(props: {
 
         {props.aiSecretary ? (
           <div className="min-w-0 max-w-full overflow-x-hidden">{props.aiSecretary}</div>
+        ) : null}
+
+        {props.productionActiveWorkers ? (
+          <div className="min-w-0 max-w-full overflow-x-hidden">{props.productionActiveWorkers}</div>
         ) : null}
 
         {props.schedulePreview ? (

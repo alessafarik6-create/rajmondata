@@ -82,6 +82,7 @@ import { MeetingRecordFormDialog } from "@/components/meeting-records/meeting-re
 import type { ActivityActorProfile } from "@/lib/activity-log";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { MobileDashboard } from "@/components/portal/mobile-dashboard/MobileDashboard";
+import { MobileProductionActiveWorkers } from "@/components/portal/mobile-dashboard/MobileProductionActiveWorkers";
 import { DashboardAiSecretaryPanel } from "@/components/portal/dashboard-ai-secretary-panel";
 import { PlatformCampaignDashboardSection } from "@/components/portal/platform-campaign-dashboard-section";
 import { czechTimeGreeting } from "@/lib/ai/organization-ai-briefing";
@@ -1043,6 +1044,9 @@ export default function CompanyDashboard() {
           belowLg && showAdminDashboard && companyId && showAiSecretary ? (
             <DashboardAiSecretaryPanel companyId={companyId} />
           ) : undefined
+        }
+        productionActiveWorkers={
+          belowLg && showAdminDashboard ? <MobileProductionActiveWorkers /> : undefined
         }
       />
       <MobileBottomNav unreadMessages={unreadEmployeeChatCount} role={role} />
