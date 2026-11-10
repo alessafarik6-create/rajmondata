@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { collection, doc, query, where, orderBy } from "firebase/firestore";
@@ -13,7 +13,7 @@ import {
   useCompany,
 } from "@/firebase";
 import { Button } from "@/components/ui/button";
-import { Loader2, ChevronLeft, Printer, Download, Pencil, Mail, Split } from "lucide-react";
+import { Loader2, ChevronLeft, Printer, Download, Pencil, Mail, Split, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
 import {
@@ -28,6 +28,7 @@ import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice
 import { formatCsDateTimeDot } from "@/lib/date-safe";
 import {
   canEditPortalInvoicesByModuleAccess,
+  canManagePortalInvoices,
   canPrintPortalInvoices,
 } from "@/lib/portal-invoice-permissions";
 import { usePortalModuleAccess } from "@/hooks/use-portal-module-access";
@@ -47,12 +48,9 @@ import {
   parseWorkBudgetAdvanceFromFirestore,
   WORK_BUDGET_ADVANCES_COLLECTION,
 } from "@/lib/work-budget-advances";
-import {
-  formatBankBlockPlainLines,
-  resolveBankSnapshotFromInvoiceDoc,
-  type OrgBankAccountRow,
-} from "@/lib/invoice-billing-meta";
-import { patchInvoiceHtmlBankBox } from "@/lib/invoice-a4-html";
+import { type OrgBankAccountRow } from "@/lib/invoice-billing-meta";
+import { useInvoicePreviewHtml } from "@/hooks/use-invoice-preview-html";
+import { PortalInvoicePdfBulkRefresh } from "@/components/invoices/portal-invoice-pdf-bulk-refresh";
 import { logActivitySafe } from "@/lib/activity-log";
 
 export default function InvoiceDocumentPage() {
@@ -214,26 +212,16 @@ export default function InvoiceDocumentPage() {
     );
   }, [invoice]);
 
-  const html = useMemo(() => {
-    const h =
-      invoice && typeof (invoice as { pdfHtml?: string }).pdfHtml === "string"
-        ? (invoice as { pdfHtml: string }).pdfHtml
-        : "";
-    const base = h.trim();
-    if (!base || !invoice) return base;
-    const inv = invoice as Record<string, unknown>;
-    const bankSnap = resolveBankSnapshotFromInvoiceDoc(inv, orgBankAccounts);
-    const vs = String(inv.variableSymbol ?? inv.documentNumber ?? inv.invoiceNumber ?? "").trim();
-    const amountGross = Number(inv.amountGross ?? 0);
-    const dueDate = String(inv.dueDate ?? inv.paymentDueDate ?? "").trim();
-    const paymentBlock = formatBankBlockPlainLines(bankSnap, {
-      variableSymbol: vs || undefined,
-      amountGross: Number.isFinite(amountGross) ? amountGross : undefined,
-      dueDate: dueDate || undefined,
-      currency: "CZK",
-    });
-    return patchInvoiceHtmlBankBox(base, paymentBlock);
-  }, [invoice, orgBankAccounts]);
+  const canManageInvoices = canManagePortalInvoices(String(profile?.role ?? ""));
+  const preview = useInvoicePreviewHtml({
+    user,
+    invoiceId,
+    invoice: invoice as Record<string, unknown> | null | undefined,
+    companyDoc: (company as Record<string, unknown> | null | undefined) ?? null,
+    orgBankAccounts,
+  });
+  const html = preview.html;
+  const [refreshBusy, setRefreshBusy] = useState(false);
 
   const [largePreviewOpen, setLargePreviewOpen] = useState(false);
 
@@ -296,34 +284,60 @@ export default function InvoiceDocumentPage() {
     }
   };
 
+  const downloadPdfVariant = useCallback(
+    async (variant: "current" | "original") => {
+      if (!user) {
+        handlePrint();
+        return;
+      }
+      setPdfBusy(true);
+      try {
+        const token = await user.getIdToken();
+        const q = variant === "original" ? "?variant=original" : "";
+        const res = await fetch(
+          `/api/company/portal-invoices/${encodeURIComponent(invoiceId)}/pdf${q}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!res.ok) throw new Error("PDF se nepodařilo stáhnout.");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const suffix = variant === "original" ? "_original" : "";
+        a.download = `${title.replace(/[^\w.-]+/g, "_") || "faktura"}${suffix}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "Export PDF",
+          description: e instanceof Error ? e.message : "Zkuste tisk → Uložit jako PDF.",
+        });
+        handlePrint();
+      } finally {
+        setPdfBusy(false);
+      }
+    },
+    [user, invoiceId, title, toast]
+  );
+
   const handleDownloadPdf = async () => {
-    if (!user || !isPortalManual) {
-      handlePrint();
-      return;
-    }
-    setPdfBusy(true);
+    await downloadPdfVariant("current");
+  };
+
+  const handlePersistPdfPreview = async () => {
+    if (!canManageInvoices) return;
+    setRefreshBusy(true);
     try {
-      const token = await user.getIdToken();
-      const res = await fetch(`/api/company/portal-invoices/${encodeURIComponent(invoiceId)}/pdf`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("PDF se nepodařilo stáhnout.");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${title.replace(/[^\w.-]+/g, "_") || "faktura"}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      toast({
-        variant: "destructive",
-        title: "Export PDF",
-        description: e instanceof Error ? e.message : "Zkuste tisk → Uložit jako PDF.",
-      });
-      handlePrint();
+      const ok = await preview.persistPreview();
+      if (ok) {
+        toast({
+          title: "Náhled PDF aktualizován",
+          description: "Originál dokladu zůstal v archivu beze změny.",
+        });
+      }
     } finally {
-      setPdfBusy(false);
+      setRefreshBusy(false);
     }
   };
 
@@ -447,14 +461,49 @@ export default function InvoiceDocumentPage() {
           {canPrintInvoice ? (
           <Button type="button" className="gap-2" disabled={!html || pdfBusy} onClick={() => void handleDownloadPdf()}>
             {pdfBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            Stáhnout PDF
+            Stáhnout PDF (aktuální)
           </Button>
+          ) : null}
+          {canPrintInvoice && preview.hasOriginalArchive ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2 border-neutral-950"
+              disabled={pdfBusy}
+              onClick={() => void downloadPdfVariant("original")}
+            >
+              <Download className="h-4 w-4" />
+              Originál PDF
+            </Button>
+          ) : null}
+          {canManageInvoices ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2 border-neutral-950"
+              disabled={refreshBusy || !html}
+              onClick={() => void handlePersistPdfPreview()}
+            >
+              {refreshBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Aktualizovat vzhled PDF
+            </Button>
           ) : null}
         </div>
       </div>
       <p className="text-sm text-neutral-700">
-        Náhled odpovídá exportu PDF. U portálových faktur lze stáhnout PDF přímo nebo použít tisk.
+        Náhled se skládá z uložených fakturačních dat a aktuální A4 šablony
+        {preview.outdated ? " (starší PDF bylo přepsáno náhledem bez změny účetních údajů)." : "."}
+        {preview.loading ? " Načítám náhled…" : null}
       </p>
+      {preview.error ? (
+        <Alert variant="destructive">
+          <AlertTitle>Náhled</AlertTitle>
+          <AlertDescription>{preview.error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {canManageInvoices ? (
+        <PortalInvoicePdfBulkRefresh user={user} className="rounded-lg border border-neutral-200 bg-white p-3" />
+      ) : null}
       {companyId && invoiceId ? (
         <PortalInvoicePaymentsPanel
           companyId={companyId}

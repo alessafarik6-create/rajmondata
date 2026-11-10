@@ -37,6 +37,7 @@ import {
 } from "@/lib/server-error-serialize";
 import { buildWorkContractHtmlForEmailAdmin } from "@/lib/work-contract-server-pdf-html";
 import { buildWorkBudgetAdvanceSettlementFromInvoiceDoc } from "@/lib/work-budget-invoice-settlement";
+import { buildInvoicePreviewHtmlAdmin } from "@/lib/invoice-pdf-admin";
 
 const MAX_PDF_BYTES = 9 * 1024 * 1024;
 const LOG = "[document-email-pdf]";
@@ -586,16 +587,14 @@ async function resolveInvoiceDocumentEmailPdf(
     }
   }
 
+  const previewBuilt = await buildInvoicePreviewHtmlAdmin(db, companyId, invoiceId);
+  if (previewBuilt.ok && trimField(previewBuilt.html)) {
+    return htmlToPdfAttachment(previewBuilt.html, filename);
+  }
+
   const pdfHtml = trimField(data.pdfHtml);
   if (pdfHtml) {
     return htmlToPdfAttachment(pdfHtml, filename);
-  }
-
-  if (trimField(data.type) === PORTAL_MANUAL_INVOICE_TYPE) {
-    const rebuilt = await rebuildPortalManualInvoiceHtmlAdmin(db, companyId, data);
-    if (rebuilt) {
-      return htmlToPdfAttachment(rebuilt, filename);
-    }
   }
 
   return {

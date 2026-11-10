@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyBearerAndLoadCaller } from "@/lib/api-verify-company-user";
 import { renderStoredHtmlToPdfBuffer } from "@/lib/document-email-pdf-server";
-import { PORTAL_MANUAL_INVOICE_TYPE } from "@/lib/portal-manual-invoice";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { errorMessageFromUnknown } from "@/lib/server-error-serialize";
 import { canViewPortalInvoices } from "@/lib/portal-invoice-permissions";
+import { buildInvoicePreviewHtmlAdmin } from "@/lib/invoice-pdf-admin";
+import { INVOICE_PDF_FIELD_ARCHIVE } from "@/lib/invoice-pdf-template";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -49,22 +50,32 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Faktura nenalezena." }, { status: 404 });
     }
     const data = snap.data() as Record<string, unknown>;
-    if (String(data.type ?? "") !== PORTAL_MANUAL_INVOICE_TYPE) {
-      return NextResponse.json({ ok: false, error: "Nepodporovaný typ faktury." }, { status: 400 });
+    const variant = (request.nextUrl.searchParams.get("variant") || "current").toLowerCase();
+    let html = "";
+    if (variant === "original" || variant === "archive") {
+      const archive = String(data[INVOICE_PDF_FIELD_ARCHIVE] ?? "").trim();
+      html = archive || (typeof data.pdfHtml === "string" ? data.pdfHtml.trim() : "");
+    } else {
+      const built = await buildInvoicePreviewHtmlAdmin(db, companyId, id);
+      if (built.ok && built.html.trim()) {
+        html = built.html.trim();
+      } else {
+        html = typeof data.pdfHtml === "string" ? data.pdfHtml.trim() : "";
+      }
     }
-    const html = typeof data.pdfHtml === "string" ? data.pdfHtml.trim() : "";
     if (!html) {
       return NextResponse.json({ ok: false, error: "Chybí HTML faktury." }, { status: 400 });
     }
 
     const pdf = await renderStoredHtmlToPdfBuffer(html);
-    const num = String(data.invoiceNumber ?? id).replace(/[^\w.-]+/g, "_");
+    const num = String(data.invoiceNumber ?? data.documentNumber ?? id).replace(/[^\w.-]+/g, "_");
+    const suffix = variant === "original" || variant === "archive" ? "_original" : "";
 
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${num || "faktura"}.pdf"`,
+        "Content-Disposition": `attachment; filename="${num || "faktura"}${suffix}.pdf"`,
         "Cache-Control": "no-store, no-cache, must-revalidate",
         Pragma: "no-cache",
       },

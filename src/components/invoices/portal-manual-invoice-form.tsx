@@ -55,6 +55,7 @@ import {
   recipientDisplayName,
   buildRecipientAddressMultiline,
 } from "@/lib/portal-manual-invoice";
+import { withIssuedInvoicePdfHtml } from "@/lib/invoice-pdf-template";
 import { syncPortalInvoiceToDocuments } from "@/lib/portal-invoice-documents-sync";
 import { logActivitySafe } from "@/lib/activity-log";
 import {
@@ -724,7 +725,7 @@ export function PortalManualInvoiceForm({
       paymentStatus: (initialInvoice as { paymentStatus?: string })?.paymentStatus ?? "unpaid",
       requiresPayment: true,
       variableSymbol: variableSymbolFinal,
-      pdfHtml: html,
+      ...withIssuedInvoicePdfHtml(html),
       issueDate,
       dueDate,
       taxSupplyDate,
@@ -765,7 +766,7 @@ export function PortalManualInvoiceForm({
           }));
           const rebuilt = buildPortalManualInvoiceHtml(buildHtmlParams(invoiceNumberStr));
           html = rebuilt.html;
-          basePayload.pdfHtml = html;
+          Object.assign(basePayload, withIssuedInvoicePdfHtml(html));
           basePayload.amountNet = amountNet;
           basePayload.vatAmount = vatAmount;
           basePayload.amountGross = amountGross;
