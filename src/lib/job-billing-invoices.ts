@@ -430,7 +430,12 @@ export async function createAdvanceInvoiceFromContract(params: {
     job: params.jobBank ?? null,
     legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
-  const bankText = formatBankBlockPlainLines(bankSnap);
+  const bankText = formatBankBlockPlainLines(bankSnap, {
+    variableSymbol: vs,
+    amountGross,
+    dueDate,
+    currency: "CZK",
+  });
 
   const recipient = resolveInvoiceRecipient({
     contractCustomerBlock: params.contract.client,
@@ -632,7 +637,12 @@ export async function createManualAdvanceInvoice(params: {
     job: params.jobBank ?? null,
     legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
-  const bankText = formatBankBlockPlainLines(bankSnap);
+  const bankText = formatBankBlockPlainLines(bankSnap, {
+    variableSymbol: vs,
+    amountGross,
+    dueDate,
+    currency: "CZK",
+  });
 
   const recipient = resolveInvoiceRecipient({
     contractCustomerBlock: c?.client,
@@ -876,7 +886,12 @@ export async function updateAdvanceInvoiceItems(params: {
     job: jobBankSnap,
     legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
-  const bankText = formatBankBlockPlainLines(bankSnap);
+  const bankText = formatBankBlockPlainLines(bankSnap, {
+    variableSymbol: vs,
+    amountGross,
+    dueDate,
+    currency: "CZK",
+  });
 
   const supplierParty = formatSupplierPartyLines({
     companyName: params.supplierName,
@@ -1081,7 +1096,12 @@ export async function createTaxReceiptForAdvancePayment(params: {
     parentDocumentBankAccountId: parentAdvBankId,
     legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
-  const bankText = formatBankBlockPlainLines(bankSnap);
+  const bankText = formatBankBlockPlainLines(bankSnap, {
+    variableSymbol: vs,
+    amountGross,
+    dueDate: params.paymentDate,
+    currency: "CZK",
+  });
 
   const recipient = resolveInvoiceRecipient({
     fallbackCustomerName: params.customerName,
@@ -1628,7 +1648,12 @@ export async function createFinalSettlementInvoice(params: {
     job: params.jobBank ?? null,
     legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
-  const bankText = formatBankBlockPlainLines(bankSnap);
+  const bankText = formatBankBlockPlainLines(bankSnap, {
+    variableSymbol: vs,
+    amountGross,
+    dueDate,
+    currency: "CZK",
+  });
 
   const recipient = resolveInvoiceRecipient({
     contractCustomerBlock: primaryContract?.client,
@@ -1896,7 +1921,12 @@ export async function updateFinalSettlementInvoice(params: {
     job: jobBankFinal,
     legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
-  const bankText = formatBankBlockPlainLines(bankSnap);
+  const bankText = formatBankBlockPlainLines(bankSnap, {
+    variableSymbol: vs,
+    amountGross,
+    dueDate,
+    currency: "CZK",
+  });
 
   const supplierParty = formatSupplierPartyLines({
     companyName: params.supplierName,
@@ -2156,8 +2186,6 @@ export async function updateTaxReceiptDocument(params: {
     parentDocumentBankAccountId: parentAdvBankId,
     legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
-  const bankText = formatBankBlockPlainLines(bankSnap);
-
   const snapRecipient: InvoiceCustomerSnapshot =
     params.customerSnapshot ??
     snapshotFromInvoiceRecord({
@@ -2216,6 +2244,13 @@ export async function updateTaxReceiptDocument(params: {
   const vatRate = normalizeVatRate(Number(inv.vatRate) || 21);
   const vatAmount = Number(inv.vatAmount) || 0;
   const amountGross = Number(inv.amountGross) || 0;
+
+  const bankText = formatBankBlockPlainLines(bankSnap, {
+    variableSymbol: vs,
+    amountGross,
+    dueDate: paymentDate,
+    currency: "CZK",
+  });
 
   const qr = buildInvoicePaymentQr({
     iban: bankSnap.iban,

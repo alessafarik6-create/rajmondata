@@ -47,7 +47,12 @@ import {
   parseWorkBudgetAdvanceFromFirestore,
   WORK_BUDGET_ADVANCES_COLLECTION,
 } from "@/lib/work-budget-advances";
-import type { OrgBankAccountRow } from "@/lib/invoice-billing-meta";
+import {
+  formatBankBlockPlainLines,
+  resolveBankSnapshotFromInvoiceDoc,
+  type OrgBankAccountRow,
+} from "@/lib/invoice-billing-meta";
+import { patchInvoiceHtmlBankBox } from "@/lib/invoice-a4-html";
 import { logActivitySafe } from "@/lib/activity-log";
 
 export default function InvoiceDocumentPage() {
@@ -214,8 +219,21 @@ export default function InvoiceDocumentPage() {
       invoice && typeof (invoice as { pdfHtml?: string }).pdfHtml === "string"
         ? (invoice as { pdfHtml: string }).pdfHtml
         : "";
-    return h.trim();
-  }, [invoice]);
+    const base = h.trim();
+    if (!base || !invoice) return base;
+    const inv = invoice as Record<string, unknown>;
+    const bankSnap = resolveBankSnapshotFromInvoiceDoc(inv, orgBankAccounts);
+    const vs = String(inv.variableSymbol ?? inv.documentNumber ?? inv.invoiceNumber ?? "").trim();
+    const amountGross = Number(inv.amountGross ?? 0);
+    const dueDate = String(inv.dueDate ?? inv.paymentDueDate ?? "").trim();
+    const paymentBlock = formatBankBlockPlainLines(bankSnap, {
+      variableSymbol: vs || undefined,
+      amountGross: Number.isFinite(amountGross) ? amountGross : undefined,
+      dueDate: dueDate || undefined,
+      currency: "CZK",
+    });
+    return patchInvoiceHtmlBankBox(base, paymentBlock);
+  }, [invoice, orgBankAccounts]);
 
   const [largePreviewOpen, setLargePreviewOpen] = useState(false);
 

@@ -126,6 +126,16 @@ function bankBoxHtml(bankAccountText: string | null | undefined): string {
   return `<div class="bank-box"><h3>Platební údaje</h3><div>${brJoinEscaped(t)}</div></div>`;
 }
 
+/** Aktualizuje blok platebních údajů v uloženém HTML (náhled historických faktur). */
+export function patchInvoiceHtmlBankBox(
+  html: string,
+  bankAccountText: string | null | undefined
+): string {
+  const next = bankBoxHtml(bankAccountText);
+  if (!next.trim() || !html.includes("bank-box")) return html;
+  return html.replace(/<div class="bank-box">[\s\S]*?<\/div>/, next);
+}
+
 export function buildAdvanceInvoiceHtml(params: {
   logoUrl?: string | null;
   title: string;

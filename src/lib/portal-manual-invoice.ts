@@ -475,7 +475,12 @@ export function buildPortalManualInvoiceHtml(params: BuildPortalManualInvoiceHtm
     job: null,
     legacyCompanyBankLine: params.legacyCompanyBankLine ?? null,
   });
-  const bankText = formatBankBlockPlainLines(bankSnap);
+  const bankText = formatBankBlockPlainLines(bankSnap, {
+    variableSymbol: vs,
+    amountGross,
+    dueDate: params.dueDate,
+    currency: "CZK",
+  });
   const qr = buildInvoicePaymentQr({
     iban: bankSnap.iban,
     bankAccountNumber: bankSnap.bankAccountNumber,

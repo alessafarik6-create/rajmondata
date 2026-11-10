@@ -164,22 +164,16 @@ function resolvedFromParsedLine(
   const iban = parsed.iban || null;
   const acc = parsed.accountNumber || null;
   const code = parsed.bankCode || null;
-  const display =
-    iban != null
-      ? `IBAN: ${iban}`
-      : acc && code
-        ? `${acc}/${code}`
-        : fallbackDisplay.trim() || "—";
-  return {
+  return enrichResolvedBankSnapshot({
     bankAccountId: null,
     bankAccountNumber: acc,
     bankCode: code,
     iban,
     swift: null,
-    displayPrimary: display,
+    displayPrimary: fallbackDisplay.trim() || "—",
     accountName: null,
     source,
-  };
+  });
 }
 
 function pickDefaultAccount(
@@ -302,20 +296,19 @@ export function resolveBankAccountForInvoice(params: {
     const iban = (chosen.iban || "").trim();
     const swift = (chosen.swift || "").trim();
     const cz = formatCzechAccount(chosen);
-    const displayPrimary = iban
-      ? `IBAN: ${iban}${swift ? ` · SWIFT: ${swift}` : ""}`
-      : cz || iban || (params.legacyCompanyBankLine || "").trim() || "—";
     const name = (chosen.name || "").trim() || null;
-    return finalizeBankSnapForQrDebug({
-      bankAccountId: chosen.id,
-      bankAccountNumber: (chosen.accountNumber || "").trim() || null,
-      bankCode: (chosen.bankCode || "").trim() || null,
-      iban: iban || null,
-      swift: swift || null,
-      displayPrimary,
-      accountName: name,
-      source,
-    });
+    return finalizeBankSnapForQrDebug(
+      enrichResolvedBankSnapshot({
+        bankAccountId: chosen.id,
+        bankAccountNumber: (chosen.accountNumber || "").trim() || null,
+        bankCode: (chosen.bankCode || "").trim() || null,
+        iban: iban || null,
+        swift: swift || null,
+        displayPrimary: cz || iban || (params.legacyCompanyBankLine || "").trim() || "—",
+        accountName: name,
+        source,
+      })
+    );
   }
 
   const legacy = (params.legacyCompanyBankLine || "").trim();
@@ -343,24 +336,198 @@ export function resolveBankAccountForInvoice(params: {
   });
 }
 
-/** Text do HTML boxu „Platební údaje“ */
-export function formatBankBlockPlainLines(snap: ResolvedBankSnapshot): string {
-  const lines: string[] = [];
-  const accName = (snap.accountName || "").trim();
-  if (accName) {
-    lines.push(`Účet: ${accName}`);
+/** CZ IBAN → domácí číslo účtu / kód banky (pouze jednoznačný CZ formát). */
+export function czIbanToDomesticAccount(ibanRaw: string): {
+  accountNumber: string;
+  bankCode: string;
+} | null {
+  const iban = String(ibanRaw ?? "")
+    .replace(/\s/g, "")
+    .toUpperCase();
+  if (!iban.startsWith("CZ") || iban.length !== 24 || !validateIbanMod97(iban)) return null;
+  const bban = iban.slice(4);
+  const bankCode = bban.slice(0, 4);
+  if (!/^\d{4}$/.test(bankCode)) return null;
+  const rest = bban.slice(4);
+  if (!/^\d{16}$/.test(rest)) return null;
+  const prefixRaw = rest.slice(0, 6);
+  const accountRaw = rest.slice(6);
+  const prefix = prefixRaw.replace(/^0+/, "");
+  const account = accountRaw.replace(/^0+/, "") || "0";
+  let accountNumber: string;
+  if (!prefix || /^0+$/.test(prefixRaw)) {
+    accountNumber = account;
+  } else {
+    accountNumber = `${prefix}-${account}`;
   }
-  const iban = (snap.iban || "").trim();
-  const swift = (snap.swift || "").trim();
-  const acc = (snap.bankAccountNumber || "").trim();
-  const code = (snap.bankCode || "").trim();
-  if (iban) {
-    lines.push(`IBAN: ${iban}`);
-    if (swift) lines.push(`SWIFT: ${swift}`);
-  } else if (acc && code) {
+  return { accountNumber, bankCode };
+}
+
+export function formatIbanDisplay(iban: string): string {
+  const compact = iban.replace(/\s/g, "").toUpperCase();
+  return compact.replace(/(.{4})/g, "$1 ").trim();
+}
+
+export function enrichResolvedBankSnapshot(snap: ResolvedBankSnapshot): ResolvedBankSnapshot {
+  let bankAccountNumber = (snap.bankAccountNumber || "").trim() || null;
+  let bankCode = (snap.bankCode || "").trim() || null;
+  let iban = (snap.iban || "").trim().replace(/\s/g, "").toUpperCase() || null;
+  const swift = (snap.swift || "").trim().toUpperCase() || null;
+
+  if (iban && validateIbanMod97(iban) && (!bankAccountNumber || !bankCode)) {
+    const derived = czIbanToDomesticAccount(iban);
+    if (derived) {
+      bankAccountNumber = bankAccountNumber || derived.accountNumber;
+      bankCode = bankCode || derived.bankCode;
+    }
+  }
+  if (!iban && bankAccountNumber && bankCode) {
+    const derivedIban = convertToIban(bankAccountNumber, bankCode);
+    if (derivedIban) iban = derivedIban;
+  }
+
+  const cz =
+    bankAccountNumber && bankCode ? `${bankAccountNumber}/${bankCode}` : null;
+  const displayPrimary = cz
+    ? iban
+      ? `${cz} (IBAN ${formatIbanDisplay(iban)})`
+      : cz
+    : iban
+      ? `IBAN: ${formatIbanDisplay(iban)}`
+      : snap.displayPrimary;
+
+  return {
+    ...snap,
+    bankAccountNumber,
+    bankCode,
+    iban,
+    swift,
+    displayPrimary,
+  };
+}
+
+export type InvoicePaymentBlockOptions = {
+  variableSymbol?: string | null;
+  constantSymbol?: string | null;
+  specificSymbol?: string | null;
+  amountGross?: number | null;
+  currency?: string | null;
+  dueDate?: string | null;
+};
+
+function formatCsInvoiceDueDate(isoOrText: string): string {
+  const t = String(isoOrText ?? "").trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
+  if (m) return `${Number(m[3])}. ${Number(m[2])}. ${m[1]}`;
+  return t;
+}
+
+function formatKcAmount(n: number): string {
+  return `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
+}
+
+/** Validace VS (jen číslice, max 10 znaků — běžná praxe u CZ plateb). */
+export function validateInvoiceVariableSymbol(vs: string): boolean {
+  const t = String(vs ?? "").trim();
+  if (!t || t.length > 10) return false;
+  return /^\d+$/.test(t);
+}
+
+/** Kontrola bankovního snapu před vystavením dokladu / QR. */
+export function validateBankSnapshotForDocuments(snap: ResolvedBankSnapshot): string | null {
+  const s = enrichResolvedBankSnapshot(snap);
+  if (!s.iban && !(s.bankAccountNumber && s.bankCode)) {
+    return "Chybí číslo účtu nebo IBAN pro platební údaje.";
+  }
+  if (s.bankCode && !/^\d{4}$/.test(s.bankCode)) {
+    return "Kód banky musí mít 4 číslice.";
+  }
+  if (s.iban && !validateIbanMod97(s.iban)) {
+    return "IBAN neprošel kontrolním součtem.";
+  }
+  if (s.iban && s.bankAccountNumber && s.bankCode) {
+    const fromDomestic = convertToIban(s.bankAccountNumber, s.bankCode);
+    if (fromDomestic && fromDomestic !== s.iban.replace(/\s/g, "").toUpperCase()) {
+      return "Číslo účtu a IBAN k sobě nesedí — zkontrolujte bankovní údaje.";
+    }
+  }
+  return null;
+}
+
+/**
+ * Údaje uložené na faktuře při vystavení (nemění se při změně výchozího účtu firmy).
+ */
+export function resolveBankSnapshotFromInvoiceDoc(
+  inv: Record<string, unknown>,
+  orgAccounts: OrgBankAccountRow[]
+): ResolvedBankSnapshot {
+  const overrideId =
+    inv.bankAccountId != null ? String(inv.bankAccountId).trim() || null : null;
+  const base = resolvePaymentAccount({
+    bankAccounts: orgAccounts,
+    overrideBankAccountId: overrideId,
+    legacyCompanyBankLine: null,
+  });
+  const storedNumber =
+    inv.bankAccountNumber != null ? String(inv.bankAccountNumber).trim() || null : null;
+  const storedCode = inv.bankCode != null ? String(inv.bankCode).trim() || null : null;
+  const storedIban = inv.iban != null ? String(inv.iban).trim() || null : null;
+  const storedSwift = inv.swift != null ? String(inv.swift).trim() || null : null;
+
+  return enrichResolvedBankSnapshot({
+    bankAccountId: overrideId ?? base.bankAccountId,
+    bankAccountNumber: storedNumber ?? base.bankAccountNumber,
+    bankCode: storedCode ?? base.bankCode,
+    iban: storedIban ?? base.iban,
+    swift: storedSwift ?? base.swift,
+    displayPrimary: base.displayPrimary,
+    accountName: base.accountName,
+    source: overrideId ? "override" : base.source,
+  });
+}
+
+/** Text do HTML boxu „Platební údaje“ */
+export function formatBankBlockPlainLines(
+  snap: ResolvedBankSnapshot,
+  payment?: InvoicePaymentBlockOptions
+): string {
+  const s = enrichResolvedBankSnapshot(snap);
+  const lines: string[] = [];
+  const accName = (s.accountName || "").trim();
+  if (accName) {
+    lines.push(`Banka: ${accName}`);
+  }
+  const acc = (s.bankAccountNumber || "").trim();
+  const code = (s.bankCode || "").trim();
+  if (acc && code) {
     lines.push(`Číslo účtu: ${acc}/${code}`);
-  } else if (snap.displayPrimary && snap.displayPrimary !== "—") {
-    lines.push(snap.displayPrimary);
+    lines.push(`Kód banky: ${code}`);
+  }
+  const iban = (s.iban || "").trim();
+  if (iban) {
+    lines.push(`IBAN: ${formatIbanDisplay(iban)}`);
+  }
+  const swift = (s.swift || "").trim();
+  if (swift) {
+    lines.push(`SWIFT/BIC: ${swift}`);
+  }
+  const vs = normalizeLine(payment?.variableSymbol);
+  if (vs) lines.push(`Variabilní symbol: ${vs}`);
+  const ks = normalizeLine(payment?.constantSymbol);
+  if (ks) lines.push(`Konstantní symbol: ${ks}`);
+  const ss = normalizeLine(payment?.specificSymbol);
+  if (ss) lines.push(`Specifický symbol: ${ss}`);
+  const amount = payment?.amountGross;
+  if (amount != null && Number.isFinite(amount) && amount > 0) {
+    lines.push(`Částka k úhradě: ${formatKcAmount(amount)}`);
+  }
+  const currency = normalizeLine(payment?.currency) || "CZK";
+  if (currency) lines.push(`Měna: ${currency}`);
+  const due = payment?.dueDate ? formatCsInvoiceDueDate(payment.dueDate) : "";
+  if (due) lines.push(`Splatnost: ${due}`);
+
+  if (lines.length === 0 && s.displayPrimary && s.displayPrimary !== "—") {
+    lines.push(s.displayPrimary);
   }
   return lines.join("\n");
 }
