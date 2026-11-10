@@ -10,17 +10,22 @@ export function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** CSS pro obrazovku + tisk — jedna stránka A4, fixní rozměry. */
+/** CSS pro obrazovku + tisk A4 — bez vynucené výšky stránky (správné stránkování PDF). */
 export const INVOICE_A4_SCREEN_AND_PRINT_CSS = `
-@page { size: A4; margin: 12mm; }
-@media print {
-  html, body { background: #fff !important; }
-  .a4-sheet { box-shadow: none !important; margin: 0 !important; }
-}
+@page { size: A4 portrait; margin: 12mm; }
 * { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; background: #e5e5e5; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #e8e8e8;
+  color: #111;
+  font-family: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.4;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
 .a4-wrap {
-  min-height: 100vh;
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -28,49 +33,164 @@ html, body { margin: 0; padding: 0; background: #e5e5e5; }
 }
 .a4-sheet {
   width: 210mm;
-  min-height: 297mm;
+  max-width: 100%;
   background: #fff;
-  color: #111;
-  font-family: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-size: 10pt;
-  line-height: 1.45;
-  padding: 14mm 16mm;
+  padding: 12mm 14mm;
   box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
-.doc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 14px; border-bottom: 2px solid #111; padding-bottom: 12px; }
-.doc-header > div:first-child { min-width: 0; }
-.doc-logo { flex-shrink: 0; margin-bottom: 8px; max-width: 100%; }
+@media print {
+  html, body { background: #fff !important; }
+  .a4-wrap { display: block; padding: 0 !important; min-height: auto !important; }
+  .a4-sheet {
+    width: auto;
+    max-width: none;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+}
+.doc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #222;
+}
+.doc-header > div:first-child { min-width: 0; flex: 1 1 auto; }
+.doc-header-supplier {
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 10pt;
+  color: #222;
+  max-width: 42%;
+}
+.doc-logo { margin-bottom: 6px; max-width: 100%; }
 .doc-logo img {
-  max-height: 100px;
-  max-width: 340px;
+  max-height: 72px;
+  max-width: 280px;
   width: auto;
   height: auto;
   object-fit: contain;
   object-position: left top;
   display: block;
 }
-.bank-box { border: 1px solid #ccc; padding: 10px; margin: 12px 0; font-size: 9.5pt; background: #fafafa; }
-.bank-box h3 { margin: 0 0 6px; font-size: 10pt; font-weight: 600; }
-.doc-title { font-size: 16pt; font-weight: 700; margin: 0 0 4px; }
-.doc-meta { font-size: 9.5pt; color: #333; }
-.doc-meta p { margin: 2px 0; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
-.box { border: 1px solid #ccc; padding: 10px; }
-.box h3 { margin: 0 0 6px; font-size: 10pt; }
-.box div { white-space: pre-wrap; font-size: 9.5pt; }
-table.items { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 9pt; }
-table.items th, table.items td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
-table.items th { background: #f6f6f6; font-weight: 600; }
+.doc-title { font-size: 15pt; font-weight: 700; margin: 0 0 6px; color: #111; letter-spacing: -0.02em; }
+.doc-meta { font-size: 9pt; color: #444; }
+.doc-meta p { margin: 1px 0; }
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+.box {
+  border: 1px solid #d4d4d4;
+  padding: 8px 10px;
+  background: #fafafa;
+}
+.box h3 { margin: 0 0 4px; font-size: 9.5pt; font-weight: 600; color: #222; }
+.box div { white-space: pre-wrap; font-size: 9pt; color: #333; }
+.payment-section {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: start;
+  margin: 8px 0 10px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.payment-section--qr-only { grid-template-columns: auto; justify-content: flex-start; }
+.payment-section__bank { min-width: 0; }
+.payment-section__bank .bank-box { margin: 0; }
+.bank-box {
+  border: 1px solid #d4d4d4;
+  padding: 8px 10px;
+  font-size: 9pt;
+  background: #fafafa;
+  line-height: 1.35;
+}
+.bank-box h3 { margin: 0 0 4px; font-size: 9.5pt; font-weight: 600; }
+.payment-section__qr { text-align: center; }
+.payment-qr-label { margin: 0 0 4px; font-size: 8.5pt; font-weight: 600; color: #444; }
+.payment-section__qr img {
+  width: 108px;
+  height: 108px;
+  border: 1px solid #ddd;
+  background: #fff;
+  display: block;
+}
+.payment-warn {
+  margin: 6px 0 0;
+  font-size: 8.5pt;
+  color: #8a3b00;
+  background: #fff3e8;
+  border: 1px solid #f2c39b;
+  padding: 5px 8px;
+  break-inside: avoid;
+}
+table.items {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 8.5pt;
+}
+table.items thead { display: table-header-group; }
+table.items th, table.items td {
+  border: 1px solid #d4d4d4;
+  padding: 5px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+table.items th { background: #f0f0f0; font-weight: 600; color: #222; }
 table.items td.num, table.items th.num { text-align: right; white-space: nowrap; }
-table.totals { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 10pt; }
-table.totals td { padding: 6px 8px; border-bottom: 1px solid #eee; }
-table.totals td:first-child { width: 55%; color: #333; }
+table.items tbody tr { break-inside: avoid; page-break-inside: avoid; }
+.line-discount { margin-top: 3px; font-size: 8pt; color: #555; }
+.summary-block {
+  margin-top: 6px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+table.totals {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9.5pt;
+}
+table.totals td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #eee;
+}
+table.totals td:first-child { width: 58%; color: #333; }
 table.totals td:last-child { text-align: right; font-weight: 600; }
-table.totals tr.grand td { font-size: 12pt; border-top: 2px solid #111; border-bottom: none; padding-top: 10px; }
-.note { font-size: 9pt; color: #333; margin-top: 14px; }
-.payment-qr-grid { display:grid; grid-template-columns: 1fr 120px; gap:10px; align-items:center; margin-top: 8px; }
-.payment-qr-grid img { width:120px; height:120px; border:1px solid #ddd; background:#fff; }
-.payment-warn { margin-top:8px; font-size:9pt; color:#8a3b00; background:#fff3e8; border:1px solid #f2c39b; padding:6px 8px; }
+table.totals tr.grand td {
+  font-size: 11.5pt;
+  border-top: 2px solid #222;
+  border-bottom: none;
+  padding-top: 8px;
+  color: #111;
+}
+table.totals tr.grand td:last-child { color: #c2410c; }
+.note {
+  font-size: 8.5pt;
+  color: #444;
+  margin-top: 10px;
+  line-height: 1.4;
+}
+.doc-footer-stamp { margin-top: 10px; }
+.doc-footer-stamp img { max-height: 80px; max-width: 200px; object-fit: contain; }
+h3.section-title { font-size: 9.5pt; margin: 10px 0 5px; font-weight: 600; color: #222; }
+/* zpětná kompatibilita starého HTML */
+.payment-qr-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: start;
+  margin: 8px 0;
+}
+.payment-qr-grid img { width: 108px; height: 108px; border: 1px solid #ddd; }
 `;
 
 export type InvoiceLineRow = {
@@ -124,6 +244,29 @@ function bankBoxHtml(bankAccountText: string | null | undefined): string {
   const t = (bankAccountText || "").trim();
   if (!t) return "";
   return `<div class="bank-box"><h3>Platební údaje</h3><div>${brJoinEscaped(t)}</div></div>`;
+}
+
+function paymentSectionHtml(
+  bankAccountText: string | null | undefined,
+  paymentQrUrl: string | null | undefined,
+  paymentQrWarning: string | null | undefined
+): string {
+  const bank = bankBoxHtml(bankAccountText);
+  const qrUrl = paymentQrUrl ? String(paymentQrUrl).trim() : "";
+  const qrPart = qrUrl
+    ? `<div class="payment-section__qr"><p class="payment-qr-label">QR platba</p><img src="${escapeHtml(
+        qrUrl
+      )}" alt="QR platba" width="108" height="108"/></div>`
+    : "";
+  const warn = paymentQrWarning
+    ? `<div class="payment-warn">${escapeHtml(String(paymentQrWarning).trim())}</div>`
+    : "";
+  if (!bank && !qrPart) return warn;
+  if (bank && qrPart) {
+    return `<section class="payment-section"><div class="payment-section__bank">${bank}</div>${qrPart}</section>${warn}`;
+  }
+  if (bank) return `${bank}${warn}`;
+  return `<section class="payment-section payment-section--qr-only">${qrPart}</section>${warn}`;
 }
 
 /** Aktualizuje blok platebních údajů v uloženém HTML (náhled historických faktur). */
@@ -209,20 +352,11 @@ export function buildAdvanceInvoiceHtml(params: {
     .join("");
 
   const vs = params.variableSymbol ? String(params.variableSymbol).trim() : "";
-  const bankHtml = bankBoxHtml(params.bankAccountText);
-  const paymentMeta = `<div class="doc-meta">
-    ${params.variableSymbol ? `<p><strong>VS:</strong> ${escapeHtml(String(params.variableSymbol))}</p>` : ""}
-    ${params.paymentDueDate ? `<p><strong>Splatnost:</strong> ${escapeHtml(params.paymentDueDate)}</p>` : ""}
-    <p><strong>Částka:</strong> ${fmtKc(params.amountGross)}</p>
-  </div>`;
-  const qrHtml = params.paymentQrUrl
-    ? `<div class="payment-qr-grid"><div>${paymentMeta}</div><img src="${escapeHtml(
-        String(params.paymentQrUrl)
-      )}" alt="QR platba"/></div>`
-    : "";
-  const qrWarn = params.paymentQrWarning
-    ? `<div class="payment-warn">${escapeHtml(params.paymentQrWarning)}</div>`
-    : "";
+  const paymentHtml = paymentSectionHtml(
+    params.bankAccountText,
+    params.paymentQrUrl,
+    params.paymentQrWarning
+  );
 
   const settlement = params.advanceSettlement ?? null;
   const breakdownSource = settlement
@@ -352,7 +486,7 @@ export function buildAdvanceInvoiceHtml(params: {
           ${vs ? `<p><strong>Variabilní symbol:</strong> ${escapeHtml(vs)}</p>` : ""}
         </div>
       </div>
-      <div class="doc-meta" style="text-align:right">
+      <div class="doc-header-supplier">
         <strong>${escapeHtml(params.supplierName)}</strong>
       </div>
     </div>
@@ -360,9 +494,7 @@ export function buildAdvanceInvoiceHtml(params: {
       <div class="box"><h3>Dodavatel</h3><div>${supplierLines}</div></div>
       <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
     </div>
-    ${bankHtml}
-    ${qrHtml}
-    ${qrWarn}
+    ${paymentHtml}
     <table class="items">
       <thead>
         <tr>
@@ -378,15 +510,15 @@ export function buildAdvanceInvoiceHtml(params: {
       </thead>
       <tbody>${rowsHtml}</tbody>
     </table>
-    <table class="totals">
-      ${totalsRowsHtml}
-    </table>
+    <div class="summary-block">
+      <table class="totals">${totalsRowsHtml}</table>
+    </div>
     <p class="note">${escapeHtml(params.note ?? "Doklad slouží jako zálohová faktura dle smlouvy o dílo.")}</p>
     ${
       params.supplierStampUrl && String(params.supplierStampUrl).trim()
-        ? `<div style="margin-top:14px;text-align:right"><img src="${escapeHtml(
+        ? `<div class="doc-footer-stamp"><img src="${escapeHtml(
             String(params.supplierStampUrl).trim()
-          )}" alt="Razítko / podpis" style="max-height:78px;max-width:240px;object-fit:contain"/></div>`
+          )}" alt="Razítko / podpis"/></div>`
         : ""
     }
     ${
@@ -432,20 +564,11 @@ export function buildTaxReceiptHtml(params: {
       : "";
   const taxSupply =
     (params.taxSupplyDate && String(params.taxSupplyDate).trim()) || params.paymentDate;
-  const bankHtml = bankBoxHtml(params.bankAccountText);
-  const paymentMeta = `<div class="doc-meta">
-    ${params.variableSymbol ? `<p><strong>VS:</strong> ${escapeHtml(String(params.variableSymbol))}</p>` : ""}
-    <p><strong>Částka:</strong> ${fmtKc(params.amountGross)}</p>
-    <p><strong>Datum:</strong> ${escapeHtml(params.paymentDate)}</p>
-  </div>`;
-  const qrHtml = params.paymentQrUrl
-    ? `<div class="payment-qr-grid"><div>${paymentMeta}</div><img src="${escapeHtml(
-        String(params.paymentQrUrl)
-      )}" alt="QR platba"/></div>`
-    : "";
-  const qrWarn = params.paymentQrWarning
-    ? `<div class="payment-warn">${escapeHtml(params.paymentQrWarning)}</div>`
-    : "";
+  const paymentHtml = paymentSectionHtml(
+    params.bankAccountText,
+    params.paymentQrUrl,
+    params.paymentQrWarning
+  );
 
   return `<!DOCTYPE html>
 <html lang="cs">
@@ -471,20 +594,20 @@ export function buildTaxReceiptHtml(params: {
           ${params.variableSymbol ? `<p><strong>Variabilní symbol:</strong> ${escapeHtml(params.variableSymbol)}</p>` : ""}
         </div>
       </div>
-      <div class="doc-meta" style="text-align:right"><strong>${escapeHtml(params.supplierName)}</strong></div>
+      <div class="doc-header-supplier"><strong>${escapeHtml(params.supplierName)}</strong></div>
     </div>
     <div class="grid2">
       <div class="box"><h3>Dodavatel</h3><div>${supplierLines}</div></div>
       <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
     </div>
-    ${bankHtml}
-    ${qrHtml}
-    ${qrWarn}
-    <table class="totals">
-      <tr><td>Základ daně</td><td>${fmtKc(params.amountNet)}</td></tr>
-      <tr><td>DPH (${params.vatRate} %)</td><td>${fmtKc(params.vatAmount)}</td></tr>
-      <tr class="grand"><td><strong>Uhrazeno celkem</strong></td><td>${fmtKc(params.amountGross)}</td></tr>
-    </table>
+    ${paymentHtml}
+    <div class="summary-block">
+      <table class="totals">
+        <tr><td>Základ daně</td><td>${fmtKc(params.amountNet)}</td></tr>
+        <tr><td>DPH (${params.vatRate} %)</td><td>${fmtKc(params.vatAmount)}</td></tr>
+        <tr class="grand"><td><strong>Uhrazeno celkem</strong></td><td>${fmtKc(params.amountGross)}</td></tr>
+      </table>
+    </div>
     <p class="note">${escapeHtml(params.note ?? "Doklad potvrzuje přijetí platby na účet a plní účetní funkci daňového dokladu k přijaté platbě.")}</p>
   </div>
 </div>
@@ -538,20 +661,11 @@ export function buildFinalSettlementInvoiceHtml(params: {
   const vs = params.variableSymbol ? String(params.variableSymbol).trim() : "";
   const taxSupply =
     (params.taxSupplyDate && String(params.taxSupplyDate).trim()) || params.issueDate;
-  const bankHtml = bankBoxHtml(params.bankAccountText);
-  const paymentMeta = `<div class="doc-meta">
-    ${params.variableSymbol ? `<p><strong>VS:</strong> ${escapeHtml(String(params.variableSymbol))}</p>` : ""}
-    ${params.paymentDueDate ? `<p><strong>Splatnost:</strong> ${escapeHtml(params.paymentDueDate)}</p>` : ""}
-    <p><strong>Částka:</strong> ${fmtKc(params.amountGross)}</p>
-  </div>`;
-  const qrHtml = params.paymentQrUrl
-    ? `<div class="payment-qr-grid"><div>${paymentMeta}</div><img src="${escapeHtml(
-        String(params.paymentQrUrl)
-      )}" alt="QR platba"/></div>`
-    : "";
-  const qrWarn = params.paymentQrWarning
-    ? `<div class="payment-warn">${escapeHtml(params.paymentQrWarning)}</div>`
-    : "";
+  const paymentHtml = paymentSectionHtml(
+    params.bankAccountText,
+    params.paymentQrUrl,
+    params.paymentQrWarning
+  );
 
   const advanceTable =
     params.advanceRows.length > 0
@@ -606,25 +720,23 @@ export function buildFinalSettlementInvoiceHtml(params: {
           ${vs ? `<p><strong>Variabilní symbol:</strong> ${escapeHtml(vs)}</p>` : ""}
         </div>
       </div>
-      <div class="doc-meta" style="text-align:right"><strong>${escapeHtml(params.supplierName)}</strong></div>
+      <div class="doc-header-supplier"><strong>${escapeHtml(params.supplierName)}</strong></div>
     </div>
     <div class="grid2">
       <div class="box"><h3>Dodavatel</h3><div>${supplierLines}</div></div>
       <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
     </div>
-    ${bankHtml}
-    ${qrHtml}
-    ${qrWarn}
+    ${paymentHtml}
     ${
       params.contractBreakdownHtml
-        ? `<h3 style="font-size:10pt;margin:12px 0 6px">Celková hodnota prací</h3>${params.contractBreakdownHtml}`
-        : `<table class="totals">
+        ? `<h3 class="section-title">Celková hodnota prací</h3>${params.contractBreakdownHtml}`
+        : `<div class="summary-block"><table class="totals">
       <tr><td>Celková cena zakázky (s DPH)</td><td>${fmtKc(params.totalContractGross)}</td></tr>
-    </table>`
+    </table></div>`
     }
-    <h3 style="font-size:10pt;margin:12px 0 6px">Odečtené zálohy</h3>
+    <h3 class="section-title">Odečtené zálohy</h3>
     ${advanceTable}
-    <h3 style="font-size:10pt;margin:12px 0 6px">Položky — doplatek</h3>
+    <h3 class="section-title">Položky — doplatek</h3>
     <table class="items">
       <thead>
         <tr>
@@ -640,11 +752,13 @@ export function buildFinalSettlementInvoiceHtml(params: {
       </thead>
       <tbody>${rowsHtml}</tbody>
     </table>
-    <table class="totals">
-      <tr><td>Základ daně celkem</td><td>${fmtKc(params.amountNet)}</td></tr>
-      <tr><td>DPH${params.primaryVatRateLabel ? ` (${escapeHtml(params.primaryVatRateLabel)})` : ""}</td><td>${fmtKc(params.vatAmount)}</td></tr>
-      <tr class="grand"><td><strong>Celkem k úhradě (doplatek)</strong></td><td>${fmtKc(params.amountGross)}</td></tr>
-    </table>
+    <div class="summary-block">
+      <table class="totals">
+        <tr><td>Základ daně celkem</td><td>${fmtKc(params.amountNet)}</td></tr>
+        <tr><td>DPH${params.primaryVatRateLabel ? ` (${escapeHtml(params.primaryVatRateLabel)})` : ""}</td><td>${fmtKc(params.vatAmount)}</td></tr>
+        <tr class="grand"><td><strong>Celkem k úhradě (doplatek)</strong></td><td><strong>${fmtKc(params.amountGross)}</strong></td></tr>
+      </table>
+    </div>
     ${
       params.vatRegimeNote
         ? `<p class="note"><strong>${escapeHtml(params.vatRegimeNote)}</strong></p>`
